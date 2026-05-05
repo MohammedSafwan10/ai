@@ -45,6 +45,12 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, isThinking]);
 
+  useEffect(() => {
+    if (thought && isThinking) {
+      setIsThoughtOpen(true);
+    }
+  }, [thought, isThinking]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -89,7 +95,7 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
                 : "items-start w-full text-[var(--privora-text)] transition-colors duration-500"
             )}
           >
-          {!isUser && thought && (
+          {!isUser && (thought || isThinking) && (
             <div className="w-full flex flex-col items-start max-w-[100%] mb-1.5">
                <button 
                   onClick={() => setIsThoughtOpen(!isThoughtOpen)}
@@ -112,7 +118,7 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
                    >
                       <div className="border border-[var(--privora-border)]/60 bg-[var(--privora-text)]/[0.04] backdrop-blur-md px-5 py-4 rounded-[20px] max-w-[95%]">
                         <div className="prose prose-sm max-w-none text-[var(--privora-muted)] prose-p:leading-relaxed prose-p:my-1 opacity-90 transition-colors duration-500 font-sans">
-                            <Markdown>{thought}</Markdown>
+                            {thought ? <Markdown>{thought}</Markdown> : <span className="animate-text-shimmer">Thinking...</span>}
                         </div>
                       </div>
                    </motion.div>

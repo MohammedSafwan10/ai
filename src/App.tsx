@@ -315,15 +315,14 @@ export default function App() {
         role: "model",
         content: "",
         ...(selectedModelIsCliproxy && isThinkingEnabled
-          ? { thought: "Waiting for GPT-5.5 reasoning summary...", isThinking: true }
+          ? { isThinking: true }
           : {}),
       },
     ]);
 
     if (selectedModelIsCliproxy) {
       let currentText = "";
-      let currentThought = isThinkingEnabled ? "Waiting for GPT-5.5 reasoning summary..." : "";
-      let hasRealThought = false;
+      let currentThought = "";
 
       try {
         await streamCliproxyResponse({
@@ -350,10 +349,6 @@ export default function App() {
             });
           },
           onThoughtDelta: (delta) => {
-            if (!hasRealThought) {
-              currentThought = "";
-              hasRealThought = true;
-            }
             currentThought += delta;
             setMessages((prev) => {
               const newMessages = [...prev];
