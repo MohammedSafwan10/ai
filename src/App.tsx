@@ -3,6 +3,8 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { Send, Loader2, Plus, Moon, Sun, Square, ChevronDown, PanelLeft, MessageCircle, Trash2, Edit2, MoreHorizontal, Pencil, Star, Brain, Paperclip, Camera, FolderPlus, Blocks, Workflow, Globe, Feather, Search } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage } from "./components/ChatMessage";
+import { getModelLabel, isCliproxyModel, isGeminiModel, modelOptions } from "./lib/models";
+import { streamCliproxyResponse } from "./lib/cliproxy/responses";
 
 export interface Attachment {
   url: string;
@@ -59,6 +61,9 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const selectedModelLabel = getModelLabel(selectedModel, isThinkingEnabled);
+  const selectedModelIsGemini = isGeminiModel(selectedModel);
+  const selectedModelIsCliproxy = isCliproxyModel(selectedModel);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -159,14 +164,16 @@ export default function App() {
 
   useEffect(() => {
     // Initialize chat session on mount
-    chatSessionRef.current = ai.chats.create({
-      model: selectedModel,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
-        temperature: 0.85, // Slightly higher for more creative/human-like tangents
-        ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
-      },
-    });
+    if (selectedModelIsGemini) {
+      chatSessionRef.current = ai.chats.create({
+        model: selectedModel,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+          temperature: 0.85, // Slightly higher for more creative/human-like tangents
+          ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+        },
+      });
+    }
   }, []);
 
   const scrollToBottom = () => {
@@ -189,14 +196,18 @@ export default function App() {
     setChats([newChat, ...chats]);
     setCurrentChatId(newChatId);
     setMessages([]);
-    chatSessionRef.current = ai.chats.create({
-      model: selectedModel,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
-        temperature: 0.85,
-        ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
-      },
-    });
+    if (selectedModelIsGemini) {
+      chatSessionRef.current = ai.chats.create({
+        model: selectedModel,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+          temperature: 0.85,
+          ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+        },
+      });
+    } else {
+      chatSessionRef.current = null;
+    }
   };
 
   const selectChat = (id: string) => {
@@ -205,31 +216,35 @@ export default function App() {
       setCurrentChatId(id);
       setMessages(chat.messages);
       // Re-initialize session with history
-      chatSessionRef.current = ai.chats.create({
-        model: selectedModel,
-        history: chat.messages.map(m => {
-          const parts: any[] = [{ text: m.content }];
-          if (m.attachments && m.attachments.length > 0) {
-             m.attachments.forEach(att => {
-                parts.push({
-                   inlineData: {
-                      data: att.base64,
-                      mimeType: att.mimeType
-                   }
-                });
-             });
-          }
-          return {
-            role: m.role === "user" ? "user" : "model",
-            parts
-          };
-        }),
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
-          temperature: 0.85,
-          ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
-        },
-      });
+      if (selectedModelIsGemini) {
+        chatSessionRef.current = ai.chats.create({
+          model: selectedModel,
+          history: chat.messages.map(m => {
+            const parts: any[] = [{ text: m.content }];
+            if (m.attachments && m.attachments.length > 0) {
+               m.attachments.forEach(att => {
+                  parts.push({
+                     inlineData: {
+                        data: att.base64,
+                        mimeType: att.mimeType
+                     }
+                  });
+               });
+            }
+            return {
+              role: m.role === "user" ? "user" : "model",
+              parts
+            };
+          }),
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+            temperature: 0.85,
+            ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+          },
+        });
+      } else {
+        chatSessionRef.current = null;
+      }
     }
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
@@ -295,6 +310,91 @@ export default function App() {
     
     // Create an empty model message to stream into
     setMessages((prev) => [...prev, { role: "model", content: "" }]);
+
+    if (selectedModelIsCliproxy) {
+      let currentText = "";
+      let currentThought = "";
+
+      try {
+        await streamCliproxyResponse({
+          model: selectedModel,
+          instructions:
+            SYSTEM_INSTRUCTION +
+            (isWebSearchEnabled
+              ? "\n\n10. Web Search is ENABLED through the OpenAI Responses web search tool when the proxy/provider supports it. Use it for recent or verifiable facts, and say when search is unavailable instead of guessing."
+              : ""),
+          history: newHistory,
+          reasoningEffort: isThinkingEnabled ? "medium" : "none",
+          webSearchEnabled: isWebSearchEnabled,
+          signal: abortControllerRef.current.signal,
+          onTextDelta: (delta) => {
+            currentText += delta;
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMsg = { ...newMessages[newMessages.length - 1] };
+              if (lastMsg.role === "model") {
+                lastMsg.content = currentText;
+                newMessages[newMessages.length - 1] = lastMsg;
+              }
+              return newMessages;
+            });
+          },
+          onThoughtDelta: (delta) => {
+            currentThought += delta;
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMsg = { ...newMessages[newMessages.length - 1] };
+              if (lastMsg.role === "model") {
+                lastMsg.thought = currentThought;
+                lastMsg.isThinking = true;
+                newMessages[newMessages.length - 1] = lastMsg;
+              }
+              return newMessages;
+            });
+          },
+        });
+
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const lastMsg = { ...newMessages[newMessages.length - 1] };
+          if (lastMsg.role === "model") {
+            lastMsg.isThinking = false;
+            newMessages[newMessages.length - 1] = lastMsg;
+          }
+          return newMessages;
+        });
+
+        setChats(prevChats => {
+          return prevChats.map(c => {
+            if (c.id === currentChatId) {
+              const updatedMessages: Message[] = [...newHistory, { role: "model" as const, content: currentText, thought: currentThought }];
+              const title = c.title === "New Conversation" ? text.slice(0, 30) + (text.length > 30 ? "..." : "") : c.title;
+              return { ...c, messages: updatedMessages, title };
+            }
+            return c;
+          });
+        });
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || abortControllerRef.current?.signal.aborted) {
+          console.log("Generation stopped by user");
+        } else {
+          console.error("Error generating CLIProxy response:", error);
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const lastMsg = newMessages[newMessages.length - 1];
+            if (lastMsg.role === "model" && !lastMsg.content) {
+                 lastMsg.content = "I could not reach CLIProxy at the moment. Make sure `cliproxy` is running on http://127.0.0.1:8317.";
+            }
+            return newMessages;
+          });
+        }
+      } finally {
+        setIsTyping(false);
+        abortControllerRef.current = null;
+      }
+
+      return;
+    }
 
     // Always recreate session to ensure latest model, history, and thinking config
     chatSessionRef.current = ai.chats.create({
@@ -934,7 +1034,7 @@ export default function App() {
               <input 
                 type="file" 
                 multiple 
-                accept="image/*,application/pdf,text/plain"
+                accept="image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv,.json,.ts,.tsx,.js,.jsx,.py,.java,.cs,.cpp,.c,.html,.css"
                 ref={fileInputRef} 
                 onChange={handleFileSelect} 
                 className="hidden" 
@@ -948,10 +1048,10 @@ export default function App() {
                        ? "bg-[var(--privora-text)] text-[var(--privora-bg)]"
                        : "text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
                    }`}
-                   title={isThinkingEnabled ? "Reasoning Enabled" : "Reasoning Disabled"}
+                   title={isThinkingEnabled ? "Medium reasoning enabled" : "No reasoning / instant mode"}
                  >
                    <Brain className="w-3.5 h-3.5" />
-                   {isThinkingEnabled ? "Thinking" : "Non-thinking"}
+                   {isThinkingEnabled ? "Medium" : "Instant"}
                  </button>
                  
                  <button
@@ -960,7 +1060,7 @@ export default function App() {
                    className="text-[var(--privora-muted)] text-[13px] px-2 py-1.5 flex items-center gap-1.5 font-sans cursor-pointer hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] rounded-md transition-colors"
                    title="Select AI Model"
                  >
-                   {selectedModel === "gemini-3-flash-preview" ? "Gemini 3 Flash" : selectedModel === "gemini-3.1-pro-preview" ? "Gemini 3.1 Pro" : "Gemini 3.1 Flash Lite"}
+                   {selectedModelLabel}
                    <ChevronDown className="w-3.5 h-3.5 opacity-50" />
                  </button>
                  
@@ -976,29 +1076,34 @@ export default function App() {
                          animate={{ opacity: 1, y: 0, scale: 1 }}
                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
                          transition={{ duration: 0.15 }}
-                         className="absolute bottom-full left-0 mb-2 w-56 flex flex-col bg-[var(--privora-bg)] rounded-xl border border-[var(--privora-border)] shadow-xl z-50 overflow-hidden"
+                         className="absolute bottom-full left-0 mb-2 w-64 flex flex-col bg-[var(--privora-bg)] rounded-xl border border-[var(--privora-border)] shadow-xl z-50 overflow-hidden"
                        >
-                         <button 
-                           type="button"
-                           onClick={() => { setSelectedModel("gemini-3-flash-preview"); setIsModelDropdownOpen(false); }}
-                           className={`text-left px-4 py-3 text-[13px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${selectedModel === "gemini-3-flash-preview" ? "text-[var(--privora-accent)] font-medium bg-[var(--privora-text)]/5" : "text-[var(--privora-text)]"}`}
-                         >
-                           Gemini 3 Flash
-                         </button>
-                         <button 
-                           type="button"
-                           onClick={() => { setSelectedModel("gemini-3.1-flash-lite-preview"); setIsModelDropdownOpen(false); }}
-                           className={`text-left px-4 py-3 text-[13px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${selectedModel === "gemini-3.1-flash-lite-preview" ? "text-[var(--privora-accent)] font-medium bg-[var(--privora-text)]/5" : "text-[var(--privora-text)]"}`}
-                         >
-                           Gemini 3.1 Flash Lite
-                         </button>
-                         <button 
-                           type="button"
-                           onClick={() => { setSelectedModel("gemini-3.1-pro-preview"); setIsModelDropdownOpen(false); }}
-                           className={`text-left px-4 py-3 text-[13px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${selectedModel === "gemini-3.1-pro-preview" ? "text-[var(--privora-accent)] font-medium bg-[var(--privora-text)]/5" : "text-[var(--privora-text)]"}`}
-                         >
-                           Gemini 3.1 Pro
-                         </button>
+                         {modelOptions.map((option) => {
+                           const isActive =
+                             option.provider === "cliproxy"
+                               ? selectedModel === option.id && selectedModelLabel === option.label
+                               : selectedModel === option.id;
+
+                           return (
+                             <button
+                               key={`${option.provider}-${option.label}`}
+                               type="button"
+                               onClick={() => {
+                                 setSelectedModel(option.id);
+                                 if (option.provider === "cliproxy") {
+                                   setIsThinkingEnabled(option.label.includes("Thinking"));
+                                 }
+                                 setIsModelDropdownOpen(false);
+                               }}
+                               className={`text-left px-4 py-3 font-sans hover:bg-[var(--privora-surface)] transition-colors ${
+                                 isActive ? "text-[var(--privora-accent)] font-medium bg-[var(--privora-text)]/5" : "text-[var(--privora-text)]"
+                               }`}
+                             >
+                               <span className="block text-[13px] leading-none">{option.label}</span>
+                               <span className="block text-[11px] mt-1.5 text-[var(--privora-muted)] leading-snug">{option.description}</span>
+                             </button>
+                           );
+                         })}
                        </motion.div>
                      </>
                    )}

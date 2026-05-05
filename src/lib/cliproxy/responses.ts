@@ -1,0 +1,177 @@
+import type { Attachment } from "../../App";
+
+export interface CliproxyMessage {
+  role: "user" | "model";
+  content: string;
+  attachments?: Attachment[];
+}
+
+interface StreamCliproxyResponseOptions {
+  model: string;
+  instructions: string;
+  history: CliproxyMessage[];
+  reasoningEffort: "none" | "medium";
+  webSearchEnabled: boolean;
+  signal: AbortSignal;
+  onTextDelta: (delta: string) => void;
+  onThoughtDelta: (delta: string) => void;
+}
+
+const getCliproxyApiKey = () =>
+  ((import.meta as any).env?.VITE_CLIPROXY_API_KEY as string | undefined) || "dummy-key";
+
+const toDataUrl = (attachment: Attachment) =>
+  `data:${attachment.mimeType || "application/octet-stream"};base64,${attachment.base64}`;
+
+const toInputContent = (message: CliproxyMessage) => {
+  const content: Array<Record<string, unknown>> = [];
+
+  if (message.content) {
+    content.push({
+      type: "input_text",
+      text: message.content,
+    });
+  }
+
+  message.attachments?.forEach((attachment) => {
+    if (attachment.mimeType.startsWith("image/")) {
+      content.push({
+        type: "input_image",
+        image_url: toDataUrl(attachment),
+        detail: "auto",
+      });
+      return;
+    }
+
+    content.push({
+      type: "input_file",
+      filename: attachment.name,
+      file_data: toDataUrl(attachment),
+      detail: "low",
+    });
+  });
+
+  return content.length > 0 ? content : [{ type: "input_text", text: "" }];
+};
+
+const toResponsesInput = (history: CliproxyMessage[]) =>
+  history.map((message) => ({
+    role: message.role === "model" ? "assistant" : "user",
+    content: toInputContent(message),
+  }));
+
+const extractTextDelta = (event: string | undefined, data: any) => {
+  if (typeof data?.delta === "string" && event?.includes("output_text")) {
+    return data.delta;
+  }
+
+  if (typeof data?.choices?.[0]?.delta?.content === "string") {
+    return data.choices[0].delta.content;
+  }
+
+  if (typeof data?.message?.content === "string") {
+    return data.message.content;
+  }
+
+  return "";
+};
+
+const extractThoughtDelta = (event: string | undefined, data: any) => {
+  if (typeof data?.delta === "string" && event?.includes("reasoning")) {
+    return data.delta;
+  }
+
+  if (typeof data?.summary?.[0]?.text === "string") {
+    return data.summary[0].text;
+  }
+
+  return "";
+};
+
+export async function streamCliproxyResponse({
+  model,
+  instructions,
+  history,
+  reasoningEffort,
+  webSearchEnabled,
+  signal,
+  onTextDelta,
+  onThoughtDelta,
+}: StreamCliproxyResponseOptions) {
+  const body: Record<string, unknown> = {
+    model,
+    instructions,
+    input: toResponsesInput(history),
+    reasoning: {
+      effort: reasoningEffort,
+      ...(reasoningEffort === "medium" ? { summary: "auto" } : {}),
+    },
+    stream: true,
+    temperature: 0.85,
+  };
+
+  if (webSearchEnabled) {
+    body.tools = [{ type: "web_search_preview" }];
+  }
+
+  const response = await fetch("/cliproxy/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getCliproxyApiKey()}`,
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(errorText || `CLIProxy request failed with ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const flushEvent = (rawEvent: string) => {
+    const lines = rawEvent.split("\n");
+    const event = lines
+      .find((line) => line.startsWith("event:"))
+      ?.slice("event:".length)
+      .trim();
+    const dataLines = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trim());
+
+    for (const dataLine of dataLines) {
+      if (!dataLine || dataLine === "[DONE]") continue;
+
+      try {
+        const data = JSON.parse(dataLine);
+        const thoughtDelta = extractThoughtDelta(event, data);
+        const textDelta = extractTextDelta(event, data);
+
+        if (thoughtDelta) onThoughtDelta(thoughtDelta);
+        if (textDelta) onTextDelta(textDelta);
+      } catch {
+        if (!event || event.includes("output_text")) {
+          onTextDelta(dataLine);
+        }
+      }
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    events.forEach(flushEvent);
+  }
+
+  if (buffer.trim()) {
+    flushEvent(buffer);
+  }
+}
