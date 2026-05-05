@@ -157,4 +157,4 @@ src/
 
 ## License
 
-MIT
+Private project. No license is granted for public reuse, redistribution, or commercial use without explicit permission from the owner.
