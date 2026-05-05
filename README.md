@@ -1,88 +1,160 @@
-# Nexus AI Chat
+# Privora
 
-A premium, highly-polished conversational AI interface powered by Google's Gemini models. Nexus AI is designed to feel like a native application with smooth animations, meticulous high-contrast themes, and a natural, engaging conversational AI personality.
+Privora is a polished local-first AI chat app built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly and GPT-5.5 through CLIProxyAPI, with streaming responses, reasoning summaries, web search signals, local chat history, markdown/math rendering, and multimodal attachments.
 
-## ✨ Features
+## Features
 
-* **Conversational Personality:** Tuned with a custom system prompt to be engaging, witty, and human-like via the official `@google/genai` Node SDK.
-* **Intelligent "Thinking" Process:** View the model's internal reasoning process in a collapsible, beautifully animated "Thought Process" block complete with a shimmering loading state and markdown support.
-* **Typing & Generating Indicators:** Custom animated 4-angle lotus wireframe typing indicator that seamlessly transitions into the model's response.
-* **Image & Attachment Support:** Upload images to include in your prompt. The app handles base64 encoding and displays attachments beautifully before sending.
-* **Rich Markdown Rendering:** Math through KaTeX, GitHub-flavored markdown, tables, task lists, and broad syntax highlighting for code blocks.
-* **Instant Model Switching:** Seamlessly swap between Google's Gemini models and GPT-5.5 modes routed through CLIProxyAPI.
-* **GPT-5.5 via CLIProxy:** Use `GPT-5.5 Instant` with `reasoning.effort: "none"` or `GPT-5.5 Thinking` with `reasoning.effort: "medium"` through an OpenAI Responses-compatible local proxy.
-* **Real-time Streaming & Abort:** Watch responses generate in real-time. Change your mind? Hit the custom stop button to instantly sever the stream using an `AbortController`.
-* **Smart Auto-expanding Input:** The message box grows naturally as you type or paste code, matching standard native messaging app behaviors.
-* **Premium Theming:** Includes a beautiful ChatGPT-style High-Contrast Minimalist Dark Mode and a Calm Beige Light Mode, complete with adaptive monochrome icons.
-* **Fluid Animations:** Powered by `motion` for buttery smooth layout transitions, pop-layouts, and sequence animations.
+- Calm beige/light and high-contrast dark themes.
+- Claude-style sidebar with a compact collapsed icon rail.
+- Local chat history stored in IndexedDB through Dexie.
+- Gemini 3.1/3 model options through `@google/genai`.
+- GPT-5.5 through CLIProxyAPI using an OpenAI Responses-compatible endpoint.
+- Instant and Medium reasoning modes.
+- Live reasoning/thought UI with a collapsible thought process panel.
+- Gemini grounding/web-search status display.
+- CLIProxy web-search event display when the proxy/provider emits search events.
+- Image, PDF, document, text, and code attachments with model-aware validation.
+- Rich markdown with GitHub-flavored markdown, KaTeX math, Shiki syntax highlighting, copy buttons, and collapsed long code blocks.
+- Retry, edit, copy, star, rename, and delete chat controls.
 
-## 🚀 Tech Stack
+## Tech Stack
 
-* **React** (via Vite)
-* **TypeScript**
-* **Tailwind CSS** (for styling)
-* **Motion** (for animations)
-* **Lucide React** (for icons)
-* **@google/genai** (Google GenAI SDK)
-* **React Markdown** (with remark-gfm for Github Flavored Markdown)
-* **CLIProxyAPI** (optional local OpenAI-compatible proxy for GPT-5.5)
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS 4
+- Motion
+- Lucide React
+- Dexie / IndexedDB
+- `@google/genai`
+- React Markdown, remark-gfm, remark-math, rehype-katex
+- KaTeX
+- Shiki via `react-shiki`
+- CLIProxyAPI for local GPT-5.5 routing
 
-## 🛠️ Setup & Installation
+## Setup
 
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+Install dependencies:
 
-2. **Environment setup:**
-   Create a `.env` file in the root directory and add your Google Gemini API Key. 
-   *(Note: The AI Studio environment injects `process.env.GEMINI_API_KEY` automatically. If running a standard Vite app locally, you might need to adjust this to `import.meta.env.VITE_GEMINI_API_KEY` inside `App.tsx` depending on your build setup, or run it through a Node backend.)*
-   ```env
-   GEMINI_API_KEY=your_api_key_here
-   ```
-
-   Optional CLIProxy/GPT-5.5 setup:
-   ```env
-   CLIPROXY_BASE_URL=http://127.0.0.1:8317
-   VITE_CLIPROXY_API_KEY=sk-dummy
-   ```
-
-   Start CLIProxyAPI in another terminal:
-   ```powershell
-   cliproxy --config C:\Users\Thumbeja\config.yaml
-   ```
-
-3. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
-
-## GPT-5.5 / CLIProxy Notes
-
-The GPT path is separate from the Gemini path:
-
-```text
-src/lib/cliproxy/
+```bash
+npm install
 ```
 
-The browser sends GPT requests to:
+Create `.env`:
 
-```text
-/cliproxy/v1/responses
+```env
+GEMINI_API_KEY=your_gemini_api_key
+CLIPROXY_BASE_URL=http://127.0.0.1:8317
+VITE_CLIPROXY_API_KEY=sk-dummy
 ```
 
-Vite proxies that to:
+Run the dev server:
 
-```text
-http://127.0.0.1:8317/v1/responses
+```bash
+npm run dev
 ```
 
-The two GPT-5.5 modes are:
+The app runs on:
 
-* **GPT-5.5 Instant:** `reasoning.effort = "none"`
-* **GPT-5.5 Thinking:** `reasoning.effort = "medium"`
+```text
+http://127.0.0.1:3000
+```
 
-OpenAI's official docs list `gpt-5.5` as supporting reasoning levels including `none` and `medium`, text and image input, text output, vision, and Responses API file inputs. See `docs/cliproxy-openai.md` for the exact implementation notes and caveats.
+## CLIProxy / GPT-5.5
 
-## 🎨 Design Philosophy
-Every UI element in Nexus AI is crafted with intent. From abandoning default browser selection menus, to building custom SVG indicators and fine-tuning exact hex codes for dark mode contrast, Nexus is built to demonstrate how a simple LLM chat interface can feel like a high-end consumer product.
+Privora calls CLIProxy through Vite:
+
+```text
+Browser -> /cliproxy/v1/responses -> http://127.0.0.1:8317/v1/responses
+```
+
+Start CLIProxy in another terminal before using GPT-5.5:
+
+```powershell
+cliproxy --config C:\Users\Thumbeja\config.yaml
+```
+
+GPT modes in the app:
+
+- `Instant`: no `reasoning` object is sent.
+- `Medium`: sends `reasoning: { effort: "medium", summary: "auto" }`.
+
+This avoids the CLIProxy warning about zero thinking budgets for instant GPT requests.
+
+## Gemini
+
+Gemini requests use `@google/genai` with streaming:
+
+- Instant mode sends normal streaming content.
+- Medium mode enables `thinkingConfig` with `ThinkingLevel.MEDIUM` and `includeThoughts: true`.
+- Web search enables Gemini's `googleSearch` tool and displays grounding/search state when metadata is returned.
+
+## Attachments
+
+Privora uses native provider payloads:
+
+- Gemini: sends attachments as `inlineData`.
+- GPT-5.5/CLIProxy: sends images as `input_image` and files as `input_file`.
+
+Current in-app limits:
+
+- Max attachments per message: `15`.
+- Gemini inline payload limit in this app: `20 MB` total.
+- GPT/CLIProxy attachment payload limit in this app: `50 MB` total.
+
+Supported attachment types in the UI:
+
+- Images: PNG, JPG/JPEG, WEBP, GIF; Gemini also accepts HEIC/HEIF when supported by the browser/file type.
+- Documents: PDF, TXT, Markdown, CSV, JSON, HTML/XML.
+- Code/text files: JS, JSX, TS, TSX, Python, Java, C#, C/C++, CSS, SQL, YAML, TOML, shell scripts, Dart, Go, Rust, logs, and similar text formats.
+- GPT/CLIProxy also allows common Office-style documents through `input_file` when supported by the upstream provider.
+
+For large or reusable files, the better production architecture is a small backend that uploads through each provider's Files API and stores file IDs instead of base64 data in the browser.
+
+## Local Data
+
+Chats are stored in the browser's IndexedDB database:
+
+```text
+privora-local-db
+```
+
+This is local to the current browser profile. Attachments are also persisted as base64 in local chat history, so avoid storing private documents in shared browser profiles.
+
+## Security Notes
+
+- `.env` files are ignored by git.
+- `.env.example` is safe to commit.
+- This app currently injects `GEMINI_API_KEY` into the frontend build for local/private use.
+- For public deployment, move Gemini and CLIProxy calls behind a backend so real API keys never ship to browsers.
+- Do not commit local CLIProxy auth files, personal configs, `.env`, or generated `dist` output.
+
+## Scripts
+
+```bash
+npm run dev
+npm run lint
+npm run build
+npm run preview
+```
+
+## Project Structure
+
+```text
+src/
+  components/
+    ChatMessage.tsx
+    MarkdownRenderer.tsx
+    TypingIndicator.tsx
+  lib/
+    cliproxy/
+      responses.ts
+    db.ts
+    models.ts
+  App.tsx
+  index.css
+```
+
+## License
+
+MIT
