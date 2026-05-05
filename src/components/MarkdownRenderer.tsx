@@ -42,7 +42,10 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   };
 
   return (
-    <div className="group/code my-4 overflow-hidden rounded-2xl border border-[var(--privora-border)] bg-[#fffdf9] shadow-sm dark:bg-[#1f1f1f]">
+    <div
+      className="group/code my-4 overflow-hidden rounded-2xl border border-[var(--privora-border)] shadow-sm"
+      style={{ backgroundColor: isDarkMode ? "#1f1f1f" : "#fffdf9" }}
+    >
       <div className="flex min-h-10 items-center justify-between border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.035] px-4 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--privora-muted)]">
           {language || "code"}
