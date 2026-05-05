@@ -1,0 +1,183 @@
+import Dexie, { type Table } from "dexie";
+
+export interface AttachmentRecord {
+  url: string;
+  base64: string;
+  mimeType: string;
+  name: string;
+  size?: number;
+}
+
+export interface ChatMessageRecord {
+  id: string;
+  chatId: string;
+  role: "user" | "model";
+  content: string;
+  thought?: string;
+  isThinking?: boolean;
+  webSearchStatus?: "searching" | "searched";
+  webSearchQueries?: string[];
+  attachments?: AttachmentRecord[];
+  createdAt: number;
+}
+
+export interface ChatRecord {
+  id: string;
+  title: string;
+  messages: ChatMessageRecord[];
+  isStarred?: boolean;
+  createdAt: number;
+  updatedAt: number;
+  model?: string;
+}
+
+type ChatRow = Omit<ChatRecord, "messages">;
+
+class PrivoraDatabase extends Dexie {
+  chats!: Table<ChatRow, string>;
+  messages!: Table<ChatMessageRecord, string>;
+
+  constructor() {
+    super("privora-local-db");
+    this.version(1).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+    });
+  }
+}
+
+export const db = new PrivoraDatabase();
+
+export const createId = (prefix: string) => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `${prefix}_${crypto.randomUUID()}`;
+  }
+
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+};
+
+export const normalizeMessage = (
+  message: Partial<ChatMessageRecord> & Pick<ChatMessageRecord, "role" | "content">,
+  chatId: string,
+  fallbackCreatedAt = Date.now()
+): ChatMessageRecord => ({
+  id: message.id || createId("msg"),
+  chatId,
+  role: message.role,
+  content: message.content,
+  thought: message.thought,
+  isThinking: message.isThinking,
+  webSearchStatus: message.webSearchStatus,
+  webSearchQueries: message.webSearchQueries,
+  attachments: message.attachments,
+  createdAt: message.createdAt || fallbackCreatedAt,
+});
+
+export const loadChats = async (): Promise<ChatRecord[]> => {
+  const chatRows = await db.chats.orderBy("updatedAt").reverse().toArray();
+  const chats = await Promise.all(
+    chatRows.map(async chat => {
+      const messages = await db.messages.where("chatId").equals(chat.id).sortBy("createdAt");
+      return { ...chat, messages };
+    })
+  );
+
+  return chats;
+};
+
+export const createChat = async (chat: ChatRecord) => {
+  const { messages, ...chatRow } = chat;
+  await db.transaction("rw", db.chats, db.messages, async () => {
+    await db.chats.put(chatRow);
+    if (messages.length > 0) {
+      await db.messages.bulkPut(messages);
+    }
+  });
+};
+
+export const updateChatMeta = async (
+  chatId: string,
+  patch: Partial<Pick<ChatRecord, "title" | "isStarred" | "updatedAt" | "model">>
+) => {
+  await db.chats.update(chatId, {
+    ...patch,
+    updatedAt: patch.updatedAt || Date.now(),
+  });
+};
+
+export const replaceChatMessages = async (
+  chatId: string,
+  messages: ChatMessageRecord[],
+  metaPatch: Partial<Pick<ChatRecord, "title" | "updatedAt" | "model">> = {}
+) => {
+  await db.transaction("rw", db.chats, db.messages, async () => {
+    await db.messages.where("chatId").equals(chatId).delete();
+    if (messages.length > 0) {
+      await db.messages.bulkPut(messages);
+    }
+    await db.chats.update(chatId, {
+      ...metaPatch,
+      updatedAt: metaPatch.updatedAt || Date.now(),
+    });
+  });
+};
+
+export const deleteChatFromDb = async (chatId: string) => {
+  await db.transaction("rw", db.chats, db.messages, async () => {
+    await db.messages.where("chatId").equals(chatId).delete();
+    await db.chats.delete(chatId);
+  });
+};
+
+export const migrateLocalStorageChats = async () => {
+  const migrated = localStorage.getItem("privora-indexeddb-migrated");
+  if (migrated) return;
+
+  const rawChats = localStorage.getItem("privora-chats");
+  if (!rawChats) {
+    localStorage.setItem("privora-indexeddb-migrated", "true");
+    return;
+  }
+
+  try {
+    const existing = await db.chats.count();
+    if (existing > 0) {
+      localStorage.setItem("privora-indexeddb-migrated", "true");
+      return;
+    }
+
+    const parsedChats = JSON.parse(rawChats) as Array<{
+      id?: string;
+      title?: string;
+      messages?: Array<Partial<ChatMessageRecord> & Pick<ChatMessageRecord, "role" | "content">>;
+      isStarred?: boolean;
+    }>;
+
+    const now = Date.now();
+    await db.transaction("rw", db.chats, db.messages, async () => {
+      for (const [chatIndex, oldChat] of parsedChats.entries()) {
+        const chatId = oldChat.id || createId("chat");
+        const createdAt = now + chatIndex;
+        const messages = (oldChat.messages || []).map((message, messageIndex) =>
+          normalizeMessage(message, chatId, createdAt + messageIndex)
+        );
+
+        await db.chats.put({
+          id: chatId,
+          title: oldChat.title || "New Conversation",
+          isStarred: oldChat.isStarred,
+          createdAt,
+          updatedAt: createdAt + messages.length,
+        });
+
+        if (messages.length > 0) {
+          await db.messages.bulkPut(messages);
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Failed to migrate localStorage chats", error);
+  } finally {
+    localStorage.setItem("privora-indexeddb-migrated", "true");
+  }
+};

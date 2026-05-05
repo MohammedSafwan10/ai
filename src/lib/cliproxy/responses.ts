@@ -15,10 +15,14 @@ interface StreamCliproxyResponseOptions {
   signal: AbortSignal;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
+  onWebSearch?: (event: { status: "searching" | "searched"; queries?: string[] }) => void;
 }
 
 const getCliproxyApiKey = () =>
   ((import.meta as any).env?.VITE_CLIPROXY_API_KEY as string | undefined) || "dummy-key";
+
+const isSupportedVisionImage = (attachment: Attachment) =>
+  ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(attachment.mimeType);
 
 const toDataUrl = (attachment: Attachment) =>
   `data:${attachment.mimeType || "application/octet-stream"};base64,${attachment.base64}`;
@@ -35,7 +39,7 @@ const toInputContent = (message: CliproxyMessage) => {
   }
 
   message.attachments?.forEach((attachment) => {
-    if (attachment.mimeType.startsWith("image/")) {
+    if (isSupportedVisionImage(attachment)) {
       content.push({
         type: "input_image",
         image_url: toDataUrl(attachment),
@@ -48,7 +52,6 @@ const toInputContent = (message: CliproxyMessage) => {
       type: "input_file",
       filename: attachment.name,
       file_data: toDataUrl(attachment),
-      detail: "low",
     });
   });
 
@@ -107,6 +110,27 @@ const extractThoughtDelta = (event: string | undefined, data: any) => {
   return "";
 };
 
+const extractWebSearchEvent = (event: string | undefined, data: any) => {
+  const payload = data?.item || data?.output_item || data;
+  const type = `${event || ""} ${data?.type || ""} ${payload?.type || ""}`;
+
+  if (!type.includes("web_search")) {
+    return null;
+  }
+
+  const rawQueries = [
+    payload?.action?.query,
+    data?.action?.query,
+    ...(Array.isArray(payload?.action?.queries) ? payload.action.queries : []),
+    ...(Array.isArray(data?.action?.queries) ? data.action.queries : []),
+  ];
+  const queries = rawQueries.filter((query): query is string => typeof query === "string" && query.trim().length > 0);
+  const status: "searching" | "searched" =
+    payload?.status === "completed" || data?.status === "completed" ? "searched" : "searching";
+
+  return { status, queries: queries.length > 0 ? queries : undefined };
+};
+
 export async function streamCliproxyResponse({
   model,
   instructions,
@@ -116,18 +140,22 @@ export async function streamCliproxyResponse({
   signal,
   onTextDelta,
   onThoughtDelta,
+  onWebSearch,
 }: StreamCliproxyResponseOptions) {
   const body: Record<string, unknown> = {
     model,
     instructions,
     input: toResponsesInput(history),
-    reasoning: {
-      effort: reasoningEffort,
-      ...(reasoningEffort === "medium" ? { summary: "auto" } : {}),
-    },
     stream: true,
     temperature: 0.85,
   };
+
+  if (reasoningEffort === "medium") {
+    body.reasoning = {
+      effort: "medium",
+      summary: "auto",
+    };
+  }
 
   if (webSearchEnabled) {
     body.tools = [{ type: "web_search_preview" }];
@@ -169,7 +197,9 @@ export async function streamCliproxyResponse({
         const data = JSON.parse(dataLine);
         const thoughtDelta = extractThoughtDelta(event, data);
         const textDelta = extractTextDelta(event, data);
+        const webSearchEvent = extractWebSearchEvent(event, data);
 
+        if (webSearchEvent) onWebSearch?.(webSearchEvent);
         if (thoughtDelta) onThoughtDelta(thoughtDelta);
         if (textDelta) onTextDelta(textDelta);
       } catch {

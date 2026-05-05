@@ -1,35 +1,131 @@
 import { useState, useRef, useEffect } from "react";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import { Send, Loader2, Plus, Moon, Sun, Square, ChevronDown, PanelLeft, MessageCircle, Trash2, Edit2, MoreHorizontal, Pencil, Star, Brain, Paperclip, Camera, FolderPlus, Blocks, Workflow, Globe, Feather, Search } from "lucide-react";
+import { Plus, Moon, Sun, Square, ChevronDown, PanelLeft, MessageCircle, Trash2, MoreHorizontal, Pencil, Star, Brain, Paperclip, Camera, FolderPlus, Blocks, Workflow, Globe, Feather, Search } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage } from "./components/ChatMessage";
-import { getModelLabel, isCliproxyModel, isGeminiModel, modelOptions } from "./lib/models";
+import { getModelOption, getModelLabel, getReasoningModeLabel, isCliproxyModel, isGeminiModel, modelOptions } from "./lib/models";
 import { streamCliproxyResponse } from "./lib/cliproxy/responses";
+import {
+  createChat,
+  createId,
+  deleteChatFromDb,
+  loadChats,
+  migrateLocalStorageChats,
+  normalizeMessage,
+  replaceChatMessages,
+  updateChatMeta,
+  type AttachmentRecord,
+  type ChatMessageRecord,
+  type ChatRecord,
+} from "./lib/db";
 
-export interface Attachment {
-  url: string;
-  base64: string; 
-  mimeType: string;
-  name: string;
-}
-
-interface Message {
-  role: "user" | "model";
-  content: string;
-  thought?: string;
-  isThinking?: boolean;
-  attachments?: Attachment[];
-}
-
-interface Chat {
-  id: string;
-  title: string;
-  messages: Message[];
-  isStarred?: boolean;
-}
+export type Attachment = AttachmentRecord;
+type Message = ChatMessageRecord;
+type Chat = ChatRecord;
 
 // Initialize the API only once outside the component
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const SETTINGS_STORAGE_KEY = "privora-ui-settings";
+const DEFAULT_MODEL_ID = "gemini-3.1-flash-lite-preview";
+const MAX_ATTACHMENTS = 15;
+const CLIPROXY_MAX_ATTACHMENT_PAYLOAD_BYTES = 50 * 1024 * 1024;
+const GEMINI_MAX_INLINE_PAYLOAD_BYTES = 20 * 1024 * 1024;
+const CLIPROXY_VISION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const CLIPROXY_FILE_MIME_TYPES = new Set([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/csv",
+  "text/tsv",
+  "application/json",
+  "text/html",
+  "text/css",
+  "text/javascript",
+  "application/javascript",
+  "application/typescript",
+  "text/x-typescript",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "application/rtf",
+  "text/rtf",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+]);
+const CLIPROXY_FILE_EXTENSIONS = new Set([
+  "pdf", "txt", "md", "markdown", "json", "html", "htm", "xml", "csv", "tsv",
+  "doc", "docx", "rtf", "odt", "ppt", "pptx", "xls", "xlsx",
+  "js", "jsx", "ts", "tsx", "py", "java", "cs", "cpp", "c", "css", "sql",
+  "log", "yml", "yaml", "toml", "ini", "sh", "bat", "ps1", "dart", "go", "rs",
+]);
+const GEMINI_ATTACHMENT_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/html",
+  "text/xml",
+  "application/xml",
+  "application/json",
+  "text/csv",
+  "application/csv",
+]);
+const GEMINI_ATTACHMENT_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "webp", "heic", "heif", "pdf", "txt", "md", "markdown",
+  "html", "htm", "xml", "json", "csv", "tsv", "js", "jsx", "ts", "tsx", "py",
+  "java", "cs", "cpp", "c", "css", "sql", "log", "yml", "yaml", "toml", "ini",
+  "sh", "bat", "ps1", "dart", "go", "rs",
+]);
+const GEMINI_ATTACHMENT_ACCEPT =
+  "image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv,.json,.ts,.tsx,.js,.jsx,.py,.java,.cs,.cpp,.c,.html,.css";
+const CLIPROXY_ATTACHMENT_ACCEPT =
+  ".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.markdown,.json,.html,.htm,.xml,.csv,.tsv,.doc,.docx,.rtf,.odt,.ppt,.pptx,.xls,.xlsx,.js,.jsx,.ts,.tsx,.py,.java,.cs,.cpp,.c,.css,.sql,.log,.yml,.yaml,.toml,.ini,.sh,.bat,.ps1,.dart,.go,.rs";
+
+interface UiSettings {
+  selectedModel: string;
+  isThinkingEnabled: boolean;
+  isWebSearchEnabled: boolean;
+  isDarkMode: boolean;
+}
+
+const defaultUiSettings: UiSettings = {
+  selectedModel: DEFAULT_MODEL_ID,
+  isThinkingEnabled: false,
+  isWebSearchEnabled: false,
+  isDarkMode: false,
+};
+
+const loadUiSettings = (): UiSettings => {
+  try {
+    const rawSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!rawSettings) return defaultUiSettings;
+
+    const parsedSettings = JSON.parse(rawSettings) as Partial<UiSettings>;
+    const selectedModel = modelOptions.some(option => option.id === parsedSettings.selectedModel)
+      ? parsedSettings.selectedModel!
+      : DEFAULT_MODEL_ID;
+
+    return {
+      selectedModel,
+      isThinkingEnabled: Boolean(parsedSettings.isThinkingEnabled),
+      isWebSearchEnabled: Boolean(parsedSettings.isWebSearchEnabled),
+      isDarkMode: Boolean(parsedSettings.isDarkMode),
+    };
+  } catch {
+    return defaultUiSettings;
+  }
+};
+
+const saveUiSettings = (settings: UiSettings) => {
+  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+};
 
 const SYSTEM_INSTRUCTION = `You are Privora, an incredibly engaging, empathetic, and human-like conversational partner. 
 Crucial Rules:
@@ -41,27 +137,32 @@ Crucial Rules:
 6. Don't constantly ask follow-up questions at the end of every single message unless it makes natural conversational sense.
 7. Treat this like texting a good, articulate friend.
 8. Smartly and naturally use emojis in your responses to convey emotion and tone, just like a real person would.
-9. Vision & File Capabilities: You fully support multi-modal inputs. You can seamlessly process multiple images, PDFs, and text files simultaneously in a single prompt. Analyze attached images to identify objects, read text, describe scenes, or interpret data contextually. Speak naturally about what you "see" or "read" in the files provided by the user.`;
+9. Vision & File Capabilities: You fully support multi-modal inputs. You can seamlessly process multiple images, PDFs, and text files simultaneously in a single prompt. Analyze attached images to identify objects, read text, describe scenes, or interpret data contextually. Speak naturally about what you "see" or "read" in the files provided by the user.
+10. Markdown & Math Formatting: Use clean GitHub-flavored Markdown. For math, use valid LaTeX only: inline math as \\(...\\) and display math as \\[...\\]. Do not mix raw $ delimiters into normal sentences. Keep equations on their own lines when they are long. For cases/piecewise expressions, use \\begin{cases} ... \\end{cases} inside display math. For code, always use fenced code blocks with a language name.`;
 
 export default function App() {
+  const initialUiSettingsRef = useRef(loadUiSettings());
   const [messages, setMessages] = useState<Message[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("gemini-3.1-flash-lite-preview");
-  const [isThinkingEnabled, setIsThinkingEnabled] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(initialUiSettingsRef.current.isDarkMode);
+  const [selectedModel, setSelectedModel] = useState(initialUiSettingsRef.current.selectedModel);
+  const [isThinkingEnabled, setIsThinkingEnabled] = useState(initialUiSettingsRef.current.isThinkingEnabled);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(initialUiSettingsRef.current.isWebSearchEnabled);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [isStorageReady, setIsStorageReady] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const selectedModelLabel = getModelLabel(selectedModel, isThinkingEnabled);
+  const selectedModelOption = getModelOption(selectedModel);
+  const selectedModelLabel = getModelLabel(selectedModel);
+  const selectedReasoningModeLabel = getReasoningModeLabel(selectedModelOption?.provider, isThinkingEnabled ? "thinking" : "instant");
   const selectedModelIsGemini = isGeminiModel(selectedModel);
   const selectedModelIsCliproxy = isCliproxyModel(selectedModel);
   const chatScrollRef = useRef<HTMLElement>(null);
@@ -70,42 +171,174 @@ export default function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const chatsRef = useRef<Chat[]>([]);
+  const messagesRef = useRef<Message[]>([]);
+  const currentChatIdRef = useRef<string | null>(null);
+  const isTypingRef = useRef(false);
+  const selectedModelRef = useRef(selectedModel);
+  const isThinkingEnabledRef = useRef(isThinkingEnabled);
+  const isWebSearchEnabledRef = useRef(isWebSearchEnabled);
+
+  useEffect(() => {
+    chatsRef.current = chats;
+  }, [chats]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    currentChatIdRef.current = currentChatId;
+  }, [currentChatId]);
+
+  useEffect(() => {
+    isTypingRef.current = isTyping;
+  }, [isTyping]);
+
+  useEffect(() => {
+    selectedModelRef.current = selectedModel;
+  }, [selectedModel]);
+
+  useEffect(() => {
+    isThinkingEnabledRef.current = isThinkingEnabled;
+  }, [isThinkingEnabled]);
+
+  useEffect(() => {
+    isWebSearchEnabledRef.current = isWebSearchEnabled;
+  }, [isWebSearchEnabled]);
+
+  useEffect(() => {
+    saveUiSettings({
+      selectedModel,
+      isThinkingEnabled,
+      isWebSearchEnabled,
+      isDarkMode,
+    });
+  }, [selectedModel, isThinkingEnabled, isWebSearchEnabled, isDarkMode]);
+
+  const getAttachmentSize = (attachment: Attachment) => {
+    if (typeof attachment.size === "number") return attachment.size;
+    return Math.ceil((attachment.base64.length * 3) / 4);
+  };
+
+  const getAttachmentTotalSize = (items: Attachment[]) =>
+    items.reduce((total, attachment) => total + getAttachmentSize(attachment), 0);
+
+  const getAttachmentExtension = (name: string) => name.split(".").pop()?.toLowerCase() || "";
+
+  const isCliproxySupportedAttachment = (attachment: Pick<Attachment, "mimeType" | "name">) =>
+    CLIPROXY_VISION_MIME_TYPES.has(attachment.mimeType) ||
+    CLIPROXY_FILE_MIME_TYPES.has(attachment.mimeType) ||
+    CLIPROXY_FILE_EXTENSIONS.has(getAttachmentExtension(attachment.name));
+
+  const isGeminiSupportedAttachment = (attachment: Pick<Attachment, "mimeType" | "name">) =>
+    attachment.mimeType.startsWith("image/") ||
+    GEMINI_ATTACHMENT_MIME_TYPES.has(attachment.mimeType) ||
+    GEMINI_ATTACHMENT_EXTENSIONS.has(getAttachmentExtension(attachment.name));
+
+  const validateCliproxyAttachments = (items: Attachment[]) => {
+    const unsupported = items.find(attachment => !isCliproxySupportedAttachment(attachment));
+    if (unsupported) {
+      return `GPT-5.5 through CLIProxy supports images and common document/text/code files. Remove "${unsupported.name}" or switch to Gemini for this file type.`;
+    }
+
+    if (getAttachmentTotalSize(items) > CLIPROXY_MAX_ATTACHMENT_PAYLOAD_BYTES) {
+      return "GPT file input is limited to 50 MB total per request in this app. Remove or compress one file.";
+    }
+
+    return null;
+  };
+
+  const validateGeminiAttachments = (items: Attachment[]) => {
+    const unsupported = items.find(attachment => !isGeminiSupportedAttachment(attachment));
+    if (unsupported) {
+      return `Gemini supports images, PDFs, and common text/code files here. Remove "${unsupported.name}" or convert it to PDF/text first.`;
+    }
+
+    if (getAttachmentTotalSize(items) > GEMINI_MAX_INLINE_PAYLOAD_BYTES) {
+      return "Gemini inline uploads are kept under 20 MB in this app. Use smaller files for now.";
+    }
+
+    return null;
+  };
+
+  const readFileAsAttachment = (file: File) =>
+    new Promise<Attachment>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+      reader.onload = (event) => {
+        const result = event.target?.result;
+        if (typeof result !== "string") {
+          reject(new Error(`Could not read ${file.name}.`));
+          return;
+        }
+
+        resolve({
+          url: URL.createObjectURL(file),
+          base64: result.split(",")[1] || "",
+          mimeType: file.type || "application/octet-stream",
+          name: file.name,
+          size: file.size,
+        });
+      };
+      reader.readAsDataURL(file);
+    });
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (attachments.length + files.length > 15) {
-      alert("You can attach up to 15 files at once.");
+    if (attachments.length + files.length > MAX_ATTACHMENTS) {
+      alert(`You can attach up to ${MAX_ATTACHMENTS} files at once.`);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
+    const selectedProvider = getModelOption(selectedModelRef.current)?.provider;
     const newAttachments: Attachment[] = [];
     for (let i = 0; i < files.length; i++) {
        const file = files[i];
-       if (file.size > 20 * 1024 * 1024) { // 20MB max
-          alert(`File ${file.name} is too large. Max size is 20MB.`);
+
+       if (selectedProvider === "cliproxy" && !isCliproxySupportedAttachment({ mimeType: file.type, name: file.name })) {
+          alert(`GPT-5.5 supports images plus common PDF/text/code/Office files here. "${file.name}" is not supported.`);
           continue;
        }
-       
-       const reader = new FileReader();
-       const base64Promise = new Promise<string>((resolve) => {
-          reader.onload = (e) => {
-             const result = e.target?.result as string;
-             const base64String = result.split(',')[1];
-             resolve(base64String);
-          }
-       });
-       reader.readAsDataURL(file);
-       const base64 = await base64Promise;
 
-       newAttachments.push({
-          url: URL.createObjectURL(file),
-          base64,
-          mimeType: file.type,
-          name: file.name
-       });
+       if (selectedProvider === "gemini" && !isGeminiSupportedAttachment({ mimeType: file.type, name: file.name })) {
+          alert(`Gemini supports images, PDFs, and common text/code files here. "${file.name}" is not supported.`);
+          continue;
+       }
+
+       if (selectedProvider === "gemini" && getAttachmentTotalSize([...attachments, ...newAttachments]) + file.size > GEMINI_MAX_INLINE_PAYLOAD_BYTES) {
+          alert(`Gemini inline uploads are kept under 20 MB in this app. "${file.name}" would go over the limit.`);
+          continue;
+       }
+
+       try {
+          newAttachments.push(await readFileAsAttachment(file));
+       } catch (error) {
+          alert(error instanceof Error ? error.message : `Could not read ${file.name}.`);
+       }
+    }
+
+    if (selectedProvider === "cliproxy") {
+      const validationError = validateCliproxyAttachments([...attachments, ...newAttachments]);
+      if (validationError) {
+        newAttachments.forEach(attachment => URL.revokeObjectURL(attachment.url));
+        alert(validationError);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+    }
+
+    if (selectedProvider === "gemini") {
+      const validationError = validateGeminiAttachments([...attachments, ...newAttachments]);
+      if (validationError) {
+        newAttachments.forEach(attachment => URL.revokeObjectURL(attachment.url));
+        alert(validationError);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
     }
 
     setAttachments(prev => [...prev, ...newAttachments]);
@@ -123,28 +356,37 @@ export default function App() {
     });
   };
 
-  // Persistence
+  // Local persistence is handled by IndexedDB. localStorage is only read once for legacy migration.
   useEffect(() => {
-    const savedChats = localStorage.getItem("privora-chats");
-    if (savedChats) {
-      try {
-        const parsed = JSON.parse(savedChats);
-        setChats(parsed);
-        if (parsed.length > 0) {
-          setCurrentChatId(parsed[0].id);
-          setMessages(parsed[0].messages);
-        }
-      } catch (e) {
-        console.error("Failed to parse saved chats", e);
-      }
-    }
-  }, []);
+    let isMounted = true;
 
-  useEffect(() => {
-    if (chats.length > 0) {
-      localStorage.setItem("privora-chats", JSON.stringify(chats));
-    }
-  }, [chats]);
+    const initializeStorage = async () => {
+      try {
+        await migrateLocalStorageChats();
+        const storedChats = await loadChats();
+
+        if (!isMounted) return;
+
+        setChats(storedChats);
+        if (storedChats.length > 0) {
+          setCurrentChatId(storedChats[0].id);
+          setMessages(storedChats[0].messages);
+        }
+      } catch (error) {
+        console.error("Failed to load local chat database", error);
+      } finally {
+        if (isMounted) {
+          setIsStorageReady(true);
+        }
+      }
+    };
+
+    initializeStorage();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -164,15 +406,33 @@ export default function App() {
   // We keep a reference to the chat session to maintain history automatically through the SDK.
   const chatSessionRef = useRef<any>(null);
 
+  const selectModelForNextMessage = (modelId: string) => {
+    selectedModelRef.current = modelId;
+    setSelectedModel(modelId);
+    setIsModelDropdownOpen(false);
+  };
+
+  const toggleThinkingForNextMessage = () => {
+    const nextValue = !isThinkingEnabledRef.current;
+    isThinkingEnabledRef.current = nextValue;
+    setIsThinkingEnabled(nextValue);
+  };
+
+  const toggleWebSearchForNextMessage = () => {
+    const nextValue = !isWebSearchEnabledRef.current;
+    isWebSearchEnabledRef.current = nextValue;
+    setIsWebSearchEnabled(nextValue);
+  };
+
   useEffect(() => {
     // Initialize chat session on mount
-    if (selectedModelIsGemini) {
+    if (getModelOption(selectedModelRef.current)?.provider === "gemini") {
       chatSessionRef.current = ai.chats.create({
-        model: selectedModel,
+        model: selectedModelRef.current,
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabledRef.current ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
           temperature: 0.85, // Slightly higher for more creative/human-like tangents
-          ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+          ...(isWebSearchEnabledRef.current ? { tools: [{ googleSearch: {} }] } : {}),
         },
       });
     }
@@ -205,23 +465,28 @@ export default function App() {
     }
   }, [messages, isTyping]);
 
-  const handleNewChat = () => {
-    const newChatId = Date.now().toString();
+  const handleNewChat = async () => {
+    const now = Date.now();
+    const newChatId = createId("chat");
     const newChat: Chat = {
       id: newChatId,
       title: "New Conversation",
       messages: [],
+      createdAt: now,
+      updatedAt: now,
+      model: selectedModelRef.current,
     };
-    setChats([newChat, ...chats]);
+    setChats(prev => [newChat, ...prev]);
     setCurrentChatId(newChatId);
     setMessages([]);
-    if (selectedModelIsGemini) {
+    await createChat(newChat);
+    if (getModelOption(selectedModelRef.current)?.provider === "gemini") {
       chatSessionRef.current = ai.chats.create({
-        model: selectedModel,
+        model: selectedModelRef.current,
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+          systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabledRef.current ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
           temperature: 0.85,
-          ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+          ...(isWebSearchEnabledRef.current ? { tools: [{ googleSearch: {} }] } : {}),
         },
       });
     } else {
@@ -235,9 +500,9 @@ export default function App() {
       setCurrentChatId(id);
       setMessages(chat.messages);
       // Re-initialize session with history
-      if (selectedModelIsGemini) {
+      if (getModelOption(selectedModelRef.current)?.provider === "gemini") {
         chatSessionRef.current = ai.chats.create({
-          model: selectedModel,
+          model: selectedModelRef.current,
           history: chat.messages.map(m => {
             const parts: any[] = [{ text: m.content }];
             if (m.attachments && m.attachments.length > 0) {
@@ -256,9 +521,9 @@ export default function App() {
             };
           }),
           config: {
-            systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+            systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabledRef.current ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
             temperature: 0.85,
-            ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+            ...(isWebSearchEnabledRef.current ? { tools: [{ googleSearch: {} }] } : {}),
           },
         });
       } else {
@@ -268,42 +533,48 @@ export default function App() {
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
-  const renameChat = (e: React.MouseEvent, id: string) => {
+  const renameChat = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     const chat = chats.find(c => c.id === id);
     if (!chat) return;
     const newTitle = prompt("Rename chat:", chat.title);
     if (newTitle && newTitle.trim()) {
-      setChats(chats.map(c => c.id === id ? { ...c, title: newTitle.trim() } : c));
+      const title = newTitle.trim();
+      setChats(prev => prev.map(c => c.id === id ? { ...c, title, updatedAt: Date.now() } : c));
+      await updateChatMeta(id, { title });
     }
     setActiveMenuId(null);
   };
 
-  const toggleStarChat = (e: React.MouseEvent, id: string) => {
+  const toggleStarChat = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    setChats(chats.map(c => c.id === id ? { ...c, isStarred: !c.isStarred } : c));
+    const chat = chatsRef.current.find(c => c.id === id);
+    const isStarred = !chat?.isStarred;
+    setChats(prev => prev.map(c => c.id === id ? { ...c, isStarred, updatedAt: Date.now() } : c));
+    await updateChatMeta(id, { isStarred });
     setActiveMenuId(null);
   };
 
-  const deleteChat = (e: React.MouseEvent, id: string) => {
+  const deleteChat = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    const updatedChats = chats.filter(c => c.id !== id);
+    const updatedChats = chatsRef.current.filter(c => c.id !== id);
     setChats(updatedChats);
+    await deleteChatFromDb(id);
     if (currentChatId === id) {
       if (updatedChats.length > 0) {
         selectChat(updatedChats[0].id);
       } else {
-        handleNewChat();
+        await handleNewChat();
       }
     }
     setActiveMenuId(null);
   };
 
   useEffect(() => {
-    if (!currentChatId) {
+    if (isStorageReady && !currentChatId) {
       handleNewChat();
     }
-  }, [selectedModel]);
+  }, [selectedModel, isStorageReady, currentChatId]);
 
   const stopGeneration = () => {
     if (abortControllerRef.current) {
@@ -313,9 +584,74 @@ export default function App() {
     }
   };
 
+  const syncChatMessages = async (
+    chatId: string,
+    nextMessages: Message[],
+    metaPatch: Partial<Pick<Chat, "title" | "updatedAt" | "model">> = {}
+  ) => {
+    setChats(prevChats =>
+      prevChats.map(chat =>
+        chat.id === chatId
+          ? {
+              ...chat,
+              ...metaPatch,
+              messages: nextMessages,
+              updatedAt: metaPatch.updatedAt || Date.now(),
+            }
+          : chat
+      )
+    );
+    await replaceChatMessages(chatId, nextMessages, { ...metaPatch, updatedAt: metaPatch.updatedAt || Date.now() });
+  };
+
+  const syncCurrentChatMessages = async (
+    nextMessages: Message[],
+    metaPatch: Partial<Pick<Chat, "title" | "updatedAt" | "model">> = {}
+  ) => {
+    const chatId = currentChatIdRef.current;
+    if (!chatId) return;
+    await syncChatMessages(chatId, nextMessages, metaPatch);
+  };
+
+  const updateLastModelMessage = (patch: Partial<Message>) => {
+    setMessages((prev) => {
+      const newMessages = [...prev];
+      const lastMsg = { ...newMessages[newMessages.length - 1] };
+      if (lastMsg.role === "model") {
+        newMessages[newMessages.length - 1] = { ...lastMsg, ...patch };
+      }
+      return newMessages;
+    });
+  };
+
   const sendMessage = async (text: string, currentHistory: Message[], customAttachments?: Attachment[]) => {
+    const chatId = currentChatIdRef.current;
+    if (!chatId) return;
+
     const currentAttachments = customAttachments || attachments;
     if (!text && currentAttachments.length === 0) return;
+    const requestModel = selectedModelRef.current;
+    const requestProvider = getModelOption(requestModel)?.provider;
+    const requestIsCliproxy = requestProvider === "cliproxy";
+    const requestThinkingEnabled = isThinkingEnabledRef.current;
+    const requestWebSearchEnabled = isWebSearchEnabledRef.current;
+
+    if (requestIsCliproxy) {
+      const validationError = validateCliproxyAttachments(currentAttachments);
+      if (validationError) {
+        alert(validationError);
+        return;
+      }
+    }
+
+    if (requestProvider === "gemini") {
+      const validationError = validateGeminiAttachments(currentAttachments);
+      if (validationError) {
+        alert(validationError);
+        return;
+      }
+    }
+
     setInput("");
     setAttachments([]);
     setIsTyping(true);
@@ -324,82 +660,70 @@ export default function App() {
     abortControllerRef.current = new AbortController();
 
     // Add user message to UI immediately
-    const userMessage: Message = { role: "user", content: text, attachments: currentAttachments.length > 0 ? currentAttachments : undefined };
+    const userMessage = normalizeMessage(
+      { role: "user", content: text, attachments: currentAttachments.length > 0 ? currentAttachments : undefined },
+      chatId
+    );
     const newHistory = [...currentHistory, userMessage];
-    setMessages(newHistory);
-    
-    // Create an empty model message to stream into
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "model",
-        content: "",
-      },
-    ]);
+    const pendingModelMessage = normalizeMessage(
+      { role: "model", content: "", isThinking: requestThinkingEnabled },
+      chatId,
+      Date.now() + 1
+    );
+    const pendingMessages: Message[] = [...newHistory, pendingModelMessage];
+    setMessages(pendingMessages);
+    await syncChatMessages(chatId, pendingMessages);
 
-    if (selectedModelIsCliproxy) {
+    if (requestIsCliproxy) {
       let currentText = "";
       let currentThought = "";
 
       try {
         await streamCliproxyResponse({
-          model: selectedModel,
+          model: requestModel,
           instructions:
             SYSTEM_INSTRUCTION +
-            (isWebSearchEnabled
+            (requestWebSearchEnabled
               ? "\n\n10. Web Search is ENABLED through the OpenAI Responses web search tool when the proxy/provider supports it. Use it for recent or verifiable facts, and say when search is unavailable instead of guessing."
               : ""),
           history: newHistory,
-          reasoningEffort: isThinkingEnabled ? "medium" : "none",
-          webSearchEnabled: isWebSearchEnabled,
+          reasoningEffort: requestThinkingEnabled ? "medium" : "none",
+          webSearchEnabled: requestWebSearchEnabled,
           signal: abortControllerRef.current.signal,
           onTextDelta: (delta) => {
             currentText += delta;
-            setMessages((prev) => {
-              const newMessages = [...prev];
-              const lastMsg = { ...newMessages[newMessages.length - 1] };
-              if (lastMsg.role === "model") {
-                lastMsg.content = currentText;
-                newMessages[newMessages.length - 1] = lastMsg;
-              }
-              return newMessages;
-            });
+            updateLastModelMessage({ content: currentText });
           },
           onThoughtDelta: (delta) => {
             currentThought += delta;
-            setMessages((prev) => {
-              const newMessages = [...prev];
-              const lastMsg = { ...newMessages[newMessages.length - 1] };
-              if (lastMsg.role === "model") {
-                lastMsg.thought = currentThought;
-                lastMsg.isThinking = true;
-                newMessages[newMessages.length - 1] = lastMsg;
-              }
-              return newMessages;
-            });
+            updateLastModelMessage({ thought: currentThought, isThinking: true });
+          },
+          onWebSearch: ({ status, queries }) => {
+            const existingQueries = messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries;
+            updateLastModelMessage({ webSearchStatus: status, webSearchQueries: queries || existingQueries });
           },
         });
 
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          const lastMsg = { ...newMessages[newMessages.length - 1] };
-          if (lastMsg.role === "model") {
-            lastMsg.isThinking = false;
-            newMessages[newMessages.length - 1] = lastMsg;
-          }
-          return newMessages;
-        });
+        updateLastModelMessage({ isThinking: false });
 
-        setChats(prevChats => {
-          return prevChats.map(c => {
-            if (c.id === currentChatId) {
-              const updatedMessages: Message[] = [...newHistory, { role: "model" as const, content: currentText, thought: currentThought }];
-              const title = c.title === "New Conversation" ? text.slice(0, 30) + (text.length > 30 ? "..." : "") : c.title;
-              return { ...c, messages: updatedMessages, title };
-            }
-            return c;
-          });
-        });
+        const currentChat = chatsRef.current.find(c => c.id === chatId);
+        const title =
+          currentChat?.title === "New Conversation"
+            ? text.slice(0, 30) + (text.length > 30 ? "..." : "")
+            : currentChat?.title;
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            content: currentText,
+            thought: currentThought,
+            isThinking: false,
+            webSearchStatus: messagesRef.current[messagesRef.current.length - 1]?.webSearchStatus,
+            webSearchQueries: messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries,
+          },
+        ];
+        setMessages(finalMessages);
+        await syncChatMessages(chatId, finalMessages, title ? { title } : {});
       } catch (error: any) {
         if (error?.name === 'AbortError' || abortControllerRef.current?.signal.aborted) {
           console.log("Generation stopped by user");
@@ -407,9 +731,11 @@ export default function App() {
           console.error("Error generating CLIProxy response:", error);
           setMessages((prev) => {
             const newMessages = [...prev];
-            const lastMsg = newMessages[newMessages.length - 1];
+            const lastMsg = { ...newMessages[newMessages.length - 1] };
             if (lastMsg.role === "model" && !lastMsg.content) {
                  lastMsg.content = "I could not reach CLIProxy at the moment. Make sure `cliproxy` is running on http://127.0.0.1:8317.";
+                 lastMsg.isThinking = false;
+                 newMessages[newMessages.length - 1] = lastMsg;
             }
             return newMessages;
           });
@@ -424,7 +750,7 @@ export default function App() {
 
     // Always recreate session to ensure latest model, history, and thinking config
     chatSessionRef.current = ai.chats.create({
-      model: selectedModel,
+      model: requestModel,
       history: currentHistory.map(m => {
         const parts: any[] = [{ text: m.content }];
         if (m.attachments && m.attachments.length > 0) {
@@ -443,34 +769,58 @@ export default function App() {
         };
       }),
       config: {
-        systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+        systemInstruction: SYSTEM_INSTRUCTION + (requestWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
         temperature: 0.85,
-        ...(isThinkingEnabled ? {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW, includeThoughts: true }
+        ...(requestThinkingEnabled ? {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM, includeThoughts: true }
         } : {}),
-        ...(isWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+        ...(requestWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
       },
     });
 
     try {
-      const parts: any[] = [];
-      if (text) {
-         parts.push(text);
-      }
-      if (currentAttachments && currentAttachments.length > 0) {
-         currentAttachments.forEach((att) => {
-            parts.push({
-               inlineData: {
-                  data: att.base64,
-                  mimeType: att.mimeType
-               }
-            });
-         });
-      }
-      
-      const responseStream = await chatSessionRef.current.sendMessageStream({ message: parts });
+      const geminiContents = newHistory.map((message) => {
+        const contentParts: any[] = [];
+
+        if (message.content) {
+          contentParts.push({ text: message.content });
+        }
+
+        message.attachments?.forEach((att) => {
+          contentParts.push({
+            inlineData: {
+              data: att.base64,
+              mimeType: att.mimeType,
+            },
+          });
+        });
+
+        return {
+          role: message.role === "user" ? "user" : "model",
+          parts: contentParts.length > 0 ? contentParts : [{ text: "" }],
+        };
+      });
+
+      const responseStream = await ai.models.generateContentStream({
+        model: requestModel,
+        contents: geminiContents,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION + (requestWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
+          temperature: 0.85,
+          ...(requestThinkingEnabled ? {
+            thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM, includeThoughts: true }
+          } : {}),
+          ...(requestWebSearchEnabled ? { tools: [{ googleSearch: {} }] } : {}),
+        },
+      });
       let currentText = "";
       let currentThought = "";
+      let currentWebSearchStatus: Message["webSearchStatus"] = requestWebSearchEnabled ? "searching" : undefined;
+      let currentWebSearchQueries: string[] | undefined;
+
+      if (currentWebSearchStatus) {
+        updateLastModelMessage({ webSearchStatus: currentWebSearchStatus });
+      }
       
       for await (const chunk of responseStream) {
         if (abortControllerRef.current?.signal.aborted) {
@@ -488,6 +838,17 @@ export default function App() {
         // Fallback if parts iteration missed it
         if (parts.length === 0 && chunk.text) {
           currentText += chunk.text;
+        }
+
+        const groundingMetadata = chunk.candidates?.[0]?.groundingMetadata;
+        if (groundingMetadata) {
+          const queries = [
+            ...(groundingMetadata.webSearchQueries || []),
+            ...(groundingMetadata.imageSearchQueries || []),
+            ...(groundingMetadata.retrievalQueries || []),
+          ];
+          currentWebSearchStatus = "searched";
+          currentWebSearchQueries = queries.length > 0 ? queries : currentWebSearchQueries;
         }
 
         let displayText = currentText;
@@ -509,10 +870,10 @@ export default function App() {
             const lastMsg = {...newMessages[newMessages.length - 1]};
             if (lastMsg.role === "model") {
               lastMsg.content = displayText;
-              if (displayThought) {
-                lastMsg.thought = displayThought;
-                lastMsg.isThinking = true;
-              }
+              lastMsg.thought = displayThought || lastMsg.thought;
+              lastMsg.isThinking = Boolean(displayThought);
+              lastMsg.webSearchStatus = currentWebSearchStatus;
+              lastMsg.webSearchQueries = currentWebSearchQueries;
               newMessages[newMessages.length - 1] = lastMsg;
             }
             return newMessages;
@@ -521,18 +882,35 @@ export default function App() {
       }
       
       // End of stream, finalize thinking state
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const lastMsg = {...newMessages[newMessages.length - 1]};
-        if (lastMsg.role === "model") {
-           lastMsg.isThinking = false;
-           newMessages[newMessages.length - 1] = lastMsg;
-        }
-        return newMessages;
+      const finalWebSearchStatus = currentWebSearchStatus === "searched" ? "searched" : undefined;
+      updateLastModelMessage({
+        isThinking: false,
+        webSearchStatus: finalWebSearchStatus,
+        webSearchQueries: finalWebSearchStatus ? currentWebSearchQueries : undefined,
       });
 
+      const currentChat = chatsRef.current.find(c => c.id === chatId);
+      const finalMessages: Message[] = [
+        ...newHistory,
+        {
+          ...pendingModelMessage,
+          content: currentText,
+          thought: currentThought,
+          isThinking: false,
+          webSearchStatus: finalWebSearchStatus,
+          webSearchQueries: finalWebSearchStatus ? currentWebSearchQueries : undefined,
+        },
+      ];
+      const fallbackTitle =
+        currentChat?.title === "New Conversation"
+          ? text.slice(0, 30) + (text.length > 30 ? "..." : "")
+          : currentChat?.title;
+
+      setMessages(finalMessages);
+      await syncChatMessages(chatId, finalMessages, fallbackTitle ? { title: fallbackTitle } : {});
+
       // Fetch AI auto-title for new conversation in the background
-      const isFirstMessage = chats.find(c => c.id === currentChatId)?.title === "New Conversation";
+      const isFirstMessage = currentChat?.title === "New Conversation";
       if (isFirstMessage) {
         // Auto-generate title
         ai.models.generateContent({
@@ -541,24 +919,13 @@ export default function App() {
         }).then(resp => {
            const generatedTitle = resp.text?.replace(/["']/g, "").trim();
            if (generatedTitle) {
-              setChats(prevChats => prevChats.map(c => 
-                 c.id === currentChatId ? { ...c, title: generatedTitle } : c
+              setChats(prevChats => prevChats.map(c =>
+                 c.id === chatId ? { ...c, title: generatedTitle, updatedAt: Date.now() } : c
               ));
+              updateChatMeta(chatId, { title: generatedTitle }).catch(err => console.error("Failed to save generated title:", err));
            }
         }).catch(err => console.error("Failed to generate title:", err));
       }
-
-      // Update chat list with history and title if it's the first message
-      setChats(prevChats => {
-        return prevChats.map(c => {
-          if (c.id === currentChatId) {
-            const updatedMessages: Message[] = [...newHistory, { role: "model" as const, content: currentText, thought: currentThought }];
-            const title = isFirstMessage ? text.slice(0, 30) + (text.length > 30 ? "..." : "") : c.title; // Fallback temporary title until AI resolves
-            return { ...c, messages: updatedMessages, title };
-          }
-          return c;
-        });
-      });
 
     } catch (error: any) {
       if (error?.name === 'AbortError' || abortControllerRef.current?.signal.aborted) {
@@ -567,9 +934,11 @@ export default function App() {
         console.error("Error generating response:", error);
         setMessages((prev) => {
           const newMessages = [...prev];
-          const lastMsg = newMessages[newMessages.length - 1];
+          const lastMsg = { ...newMessages[newMessages.length - 1] };
           if (lastMsg.role === "model" && !lastMsg.content) {
                lastMsg.content = "Whoops, lost my train of thought for a second there. (Error connecting)";
+               lastMsg.isThinking = false;
+               newMessages[newMessages.length - 1] = lastMsg;
           }
           return newMessages;
         });
@@ -580,26 +949,41 @@ export default function App() {
     }
   };
 
-  const handleEditMessage = (idx: number) => {
-    if (isTyping) return;
-    const msg = messages[idx];
+  const handleEditMessage = async (messageId: string) => {
+    if (isTypingRef.current) return;
+    const currentMessages = messagesRef.current;
+    const idx = currentMessages.findIndex(message => message.id === messageId);
+    if (idx < 0) return;
+    const msg = currentMessages[idx];
     if (msg.role !== "user") return;
+    const trimmedMessages = currentMessages.slice(0, idx);
     
     setInput(msg.content);
     setAttachments(msg.attachments || []);
-    setMessages(messages.slice(0, idx));
-    textareaRef.current?.focus();
+    setMessages(trimmedMessages);
+    await syncCurrentChatMessages(trimmedMessages);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(msg.content.length, msg.content.length);
+    }, 0);
   };
 
-  const handleRetryMessage = (idx: number) => {
-    if (isTyping) return;
-    const msg = messages[idx];
+  const handleRetryMessage = async (messageId: string) => {
+    if (isTypingRef.current) return;
+    const currentMessages = messagesRef.current;
+    const idx = currentMessages.findIndex(message => message.id === messageId);
+    if (idx < 0) return;
+    const msg = currentMessages[idx];
     if (msg.role === "user") {
-      sendMessage(msg.content, messages.slice(0, idx), msg.attachments);
+      const previousMessages = currentMessages.slice(0, idx);
+      await syncCurrentChatMessages(previousMessages);
+      await sendMessage(msg.content, previousMessages, msg.attachments);
     } else if (msg.role === "model") {
-      const prevMsg = messages[idx - 1];
+      const prevMsg = currentMessages[idx - 1];
       if (prevMsg && prevMsg.role === "user") {
-        sendMessage(prevMsg.content, messages.slice(0, idx - 1), prevMsg.attachments);
+        const previousMessages = currentMessages.slice(0, idx - 1);
+        await syncCurrentChatMessages(previousMessages);
+        await sendMessage(prevMsg.content, previousMessages, prevMsg.attachments);
       }
     }
   };
@@ -639,13 +1023,68 @@ export default function App() {
       <motion.aside
         initial={false}
         animate={{ 
-          width: isSidebarOpen ? 280 : 0,
-          x: isSidebarOpen ? 0 : -20
+          width: isSidebarOpen ? 280 : 48,
+          x: 0
         }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="fixed md:relative h-full z-50 bg-[var(--privora-surface)] border-r border-[var(--privora-border)] flex flex-col overflow-hidden shadow-2xl md:shadow-none"
+        className="fixed md:relative h-full z-50 bg-[var(--privora-surface)] border-r border-[var(--privora-border)] flex flex-col overflow-visible shadow-2xl md:shadow-none transition-colors duration-500"
       >
-        <div className="w-[280px] h-full flex flex-col">
+        {!isSidebarOpen ? (
+          <div className="w-12 h-full flex flex-col items-center py-2 bg-[var(--privora-surface)]">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="w-8 h-8 rounded-md flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
+              title="Open sidebar"
+            >
+              <PanelLeft className="w-[18px] h-[18px]" />
+            </button>
+
+            <div className="mt-4 flex flex-col items-center gap-2">
+              <button
+                onClick={() => !isTyping && handleNewChat()}
+                disabled={isTyping}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="New chat"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setIsSearchModalOpen(true)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
+                title="Search chats"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
+                title="Chats"
+              >
+                <MessageCircle className="w-4 h-4" />
+              </button>
+              {chats.some(chat => chat.isStarred) && (
+                <button
+                  onClick={() => setIsSidebarOpen(true)}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
+                  title="Starred chats"
+                >
+                  <Star className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="mt-auto flex flex-col items-center gap-2">
+              <button
+                onClick={() => setIsDarkMode(!isDarkMode)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
+                title={isDarkMode ? "Light mode" : "Dark mode"}
+              >
+                {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        ) : (
+        <div className="w-[280px] h-full flex flex-col overflow-hidden">
           <div className="p-4 pl-5">
              <div className="flex items-center justify-between mb-4">
                 <span className="font-display font-semibold text-[19px] tracking-tight text-[var(--privora-text)]">Privora</span>
@@ -839,39 +1278,16 @@ export default function App() {
                onClick={() => setIsDarkMode(!isDarkMode)}
                className="flex items-center gap-3 w-full p-3 rounded-xl hover:bg-[var(--privora-text)]/5 transition-colors text-sm text-[var(--privora-muted)] hover:text-[var(--privora-text)]"
              >
-               {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+             {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                {isDarkMode ? "Light Mode" : "Dark Mode"}
              </button>
           </div>
         </div>
+        )}
       </motion.aside>
 
       {/* Main Content Area */}
       <div className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden">
-        {/* Header */}
-        <header className="absolute top-0 w-full z-10 p-4 md:p-6 shrink-0 flex items-center pointer-events-none transition-colors duration-500">
-           <div className="flex items-center gap-4 pointer-events-auto">
-             {!isSidebarOpen && (
-               <button
-                 onClick={() => setIsSidebarOpen(true)}
-                 className="w-10 h-10 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
-                 title="Open Sidebar"
-               >
-                 <PanelLeft className="w-5 h-5" />
-               </button>
-             )}
-             
-             {!isSidebarOpen && (
-               <button
-                onClick={handleNewChat}
-                className="md:hidden w-10 h-10 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
-               >
-                 <Plus className="w-5 h-5" />
-               </button>
-             )}
-           </div>
-        </header>
-
         {/* Chat Area */}
         <main ref={chatScrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto">
           <div className="max-w-[46rem] mx-auto flex flex-col justify-end min-h-full pb-6 pt-20">
@@ -891,14 +1307,18 @@ export default function App() {
               <div className="flex flex-col w-full">
                 {messages.map((msg, idx) => (
                   <ChatMessage 
-                    key={idx} 
+                    key={msg.id}
                     role={msg.role} 
                     content={msg.content} 
                     thought={msg.thought}
                     isThinking={msg.isThinking}
+                    webSearchStatus={msg.webSearchStatus}
+                    webSearchQueries={msg.webSearchQueries}
                     isTyping={isTyping && idx === messages.length - 1}
-                    onEdit={() => handleEditMessage(idx)}
-                    onRetry={() => handleRetryMessage(idx)}
+                    messageIndex={idx}
+                    messageCount={messages.length}
+                    onEdit={() => handleEditMessage(msg.id)}
+                    onRetry={() => handleRetryMessage(msg.id)}
                     attachments={msg.attachments}
                     onPreviewAttachment={setPreviewAttachment}
                   />
@@ -1031,7 +1451,7 @@ export default function App() {
                         <div className="my-1.5 border-t border-[var(--privora-border)]/50" />
                         <button 
                           type="button"
-                          onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
+                          onClick={toggleWebSearchForNextMessage}
                           className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isWebSearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
                         >
                           <div className="flex items-center gap-3">
@@ -1060,7 +1480,7 @@ export default function App() {
               <input 
                 type="file" 
                 multiple 
-                accept="image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv,.json,.ts,.tsx,.js,.jsx,.py,.java,.cs,.cpp,.c,.html,.css"
+                accept={selectedModelIsCliproxy ? CLIPROXY_ATTACHMENT_ACCEPT : GEMINI_ATTACHMENT_ACCEPT}
                 ref={fileInputRef} 
                 onChange={handleFileSelect} 
                 className="hidden" 
@@ -1068,16 +1488,22 @@ export default function App() {
               <div className="flex items-center gap-1.5 relative">
                  <button
                    type="button"
-                   onClick={() => setIsThinkingEnabled(!isThinkingEnabled)}
+                   onClick={toggleThinkingForNextMessage}
                    className={`px-2 py-1.5 flex items-center gap-1.5 text-[13px] font-sans rounded-md transition-colors ${
                      isThinkingEnabled
                        ? "bg-[var(--privora-text)] text-[var(--privora-bg)]"
                        : "text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
                    }`}
-                   title={isThinkingEnabled ? "Medium reasoning enabled" : "No reasoning / instant mode"}
+                   title={
+                     isThinkingEnabled
+                       ? selectedModelIsGemini
+                         ? "Gemini medium thinking enabled"
+                         : "GPT-5.5 medium reasoning enabled"
+                       : "Instant mode"
+                   }
                  >
                    <Brain className="w-3.5 h-3.5" />
-                   {isThinkingEnabled ? "Medium" : "Instant"}
+                   {selectedReasoningModeLabel}
                  </button>
                  
                  <button
@@ -1105,21 +1531,14 @@ export default function App() {
                          className="absolute bottom-full left-0 mb-2 w-64 flex flex-col bg-[var(--privora-bg)] rounded-xl border border-[var(--privora-border)] shadow-xl z-50 overflow-hidden"
                        >
                          {modelOptions.map((option) => {
-                           const isActive =
-                             option.provider === "cliproxy"
-                               ? selectedModel === option.id && selectedModelLabel === option.label
-                               : selectedModel === option.id;
+                           const isActive = selectedModel === option.id;
 
                            return (
                              <button
                                key={`${option.provider}-${option.label}`}
                                type="button"
                                onClick={() => {
-                                 setSelectedModel(option.id);
-                                 if (option.provider === "cliproxy") {
-                                   setIsThinkingEnabled(option.label.includes("Thinking"));
-                                 }
-                                 setIsModelDropdownOpen(false);
+                                 selectModelForNextMessage(option.id);
                                }}
                                className={`text-left px-4 py-3 font-sans hover:bg-[var(--privora-surface)] transition-colors ${
                                  isActive ? "text-[var(--privora-accent)] font-medium bg-[var(--privora-text)]/5" : "text-[var(--privora-text)]"

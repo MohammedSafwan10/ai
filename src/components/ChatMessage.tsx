@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { memo, useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import { motion, AnimatePresence } from "motion/react";
-import { TypingIndicator } from "./TypingIndicator";
-import { Copy, ThumbsUp, ThumbsDown, RotateCcw, Brain, ChevronDown, Check, Pencil } from "lucide-react";
+import { Copy, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { TypingIndicator } from "./TypingIndicator";
 
 interface Attachment {
   url: string;
@@ -17,14 +17,18 @@ interface ChatMessageProps {
   content: string;
   thought?: string;
   isThinking?: boolean;
+  webSearchStatus?: "searching" | "searched";
+  webSearchQueries?: string[];
   isTyping?: boolean;
+  messageIndex?: number;
+  messageCount?: number;
   onEdit?: () => void;
   onRetry?: () => void;
   attachments?: Attachment[];
   onPreviewAttachment?: (att: Attachment) => void;
 }
 
-export function ChatMessage({ role, content, thought, isThinking, isTyping, onEdit, onRetry, attachments, onPreviewAttachment }: ChatMessageProps) {
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, isTyping, onEdit, onRetry, attachments, onPreviewAttachment }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -55,16 +59,11 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className={cn(
-        "w-full flex mb-6 max-w-[46rem] mx-auto px-4 md:px-6 group",
+        "w-full flex mb-6 px-4 md:px-6 group",
         isUser ? "justify-end" : "justify-start"
       )}
     >
-      {!isUser && (
-        <div className="mr-4 mt-0.5 shrink-0 transition-opacity duration-500">
-          <TypingIndicator size={26} className="text-[var(--privora-text)] opacity-90" isAnimating={isTyping} />
-        </div>
-      )}
-      <div className={cn("relative flex flex-col w-full items-start", isUser ? "max-w-full" : "max-w-[calc(100%-3rem)]")}>
+      <div className="relative flex w-full max-w-full flex-col items-start">
         {attachments && attachments.length > 0 && (
           <div className={cn(
             "flex flex-wrap gap-2.5 mb-2 w-full",
@@ -94,30 +93,64 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
                 : "items-start w-full text-[var(--privora-text)] transition-colors duration-500"
             )}
           >
+          {!isUser && webSearchStatus && (
+            <div className="mb-1.5 flex max-w-full items-center gap-2 text-[13px] font-medium text-[var(--privora-muted)]">
+              <Globe
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0 opacity-75",
+                  webSearchStatus === "searching" && "animate-pulse text-[var(--privora-accent)] opacity-100"
+                )}
+              />
+              <span className="shrink-0">{webSearchStatus === "searching" ? "Searching web" : "Searched web"}</span>
+              {webSearchQueries && webSearchQueries.length > 0 && (
+                <span className="h-1 w-1 shrink-0 rounded-full bg-current opacity-35" />
+              )}
+              {webSearchQueries && webSearchQueries.length > 0 && (
+                <span className="min-w-0 truncate font-normal opacity-65">
+                  {webSearchQueries[0]}
+                </span>
+              )}
+            </div>
+          )}
+
           {!isUser && (thought || isThinking) && (
             <div className="w-full flex flex-col items-start max-w-[100%] mb-1.5">
-               <button 
+               <button
                   onClick={() => setIsThoughtOpen(!isThoughtOpen)}
+                  disabled={!thought}
                   className={cn(
-                    "flex items-center gap-2 text-[14px] font-medium transition-colors py-1.5 rounded hover:opacity-70",
-                    isThinking ? "text-[var(--privora-accent)]" : "text-[var(--privora-muted)]"
+                    "flex items-center gap-2 text-[14px] font-medium transition-colors py-1.5 rounded",
+                    thought ? "hover:opacity-70" : "cursor-default",
+                    isThinking && thought ? "text-[var(--privora-accent)]" : "text-[var(--privora-muted)]"
                   )}
                >
-                  <span className={cn(isThinking ? "animate-text-shimmer" : "text-[var(--privora-muted)]")}>{isThinking ? "Thinking" : "Thought process"}</span>
-                  <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-300", !isThoughtOpen ? "-rotate-90" : "rotate-0")} />
+                  <TypingIndicator
+                    size={thought ? 22 : 20}
+                    className={cn(
+                      "shrink-0 text-[var(--privora-text)]",
+                      thought ? "opacity-90" : "opacity-55"
+                    )}
+                    isAnimating={Boolean(isThinking)}
+                  />
+                  {thought && (
+                    <>
+                      <span className={cn(isThinking ? "animate-text-shimmer" : "text-[var(--privora-muted)]")}>{isThinking ? "Thinking" : "Thought process"}</span>
+                      <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-300", !isThoughtOpen ? "-rotate-90" : "rotate-0")} />
+                    </>
+                  )}
                </button>
                
                <AnimatePresence initial={false}>
-                 {isThoughtOpen && (
+                 {isThoughtOpen && thought && (
                    <motion.div
                       initial={{ opacity: 0, height: 0, marginTop: 0 }}
                       animate={{ opacity: 1, height: "auto", marginTop: 8 }}
                       exit={{ opacity: 0, height: 0, marginTop: 0 }}
                       className="overflow-hidden w-full flex"
                    >
-                      <div className="border border-[var(--privora-border)]/60 bg-[var(--privora-text)]/[0.04] backdrop-blur-md px-5 py-4 rounded-[20px] max-w-[95%]">
-                        <div className="max-w-none text-[var(--privora-muted)] opacity-90 transition-colors duration-500 font-sans">
-                            {thought ? <MarkdownRenderer compact isStreaming={isThinking}>{thought}</MarkdownRenderer> : <span className="animate-text-shimmer">Thinking...</span>}
+                      <div className="privora-thought-panel max-w-[95%]">
+                        <div className="privora-thought-content max-w-none transition-colors duration-500 font-sans">
+                            <MarkdownRenderer compact isStreaming={isThinking}>{thought}</MarkdownRenderer>
                         </div>
                       </div>
                    </motion.div>
@@ -138,13 +171,13 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
                )}
                {!isUser && !isTyping && content && (
                  <div className="flex items-center gap-3 mt-4 text-[var(--privora-muted)] transition-colors duration-500">
-                     <button onClick={handleCopy} className="hover:text-[var(--privora-text)] transition-colors">
+                     <button type="button" onClick={handleCopy} className="hover:text-[var(--privora-text)] transition-colors">
                        {isCopied ? <Check className="w-[14px] h-[14px]" /> : <Copy className="w-[14px] h-[14px]" />}
                      </button>
-                     <button className="hover:text-[var(--privora-text)] transition-colors"><ThumbsUp className="w-[14px] h-[14px]" /></button>
-                     <button className="hover:text-[var(--privora-text)] transition-colors"><ThumbsDown className="w-[14px] h-[14px]" /></button>
+                     <button type="button" className="hover:text-[var(--privora-text)] transition-colors"><ThumbsUp className="w-[14px] h-[14px]" /></button>
+                     <button type="button" className="hover:text-[var(--privora-text)] transition-colors"><ThumbsDown className="w-[14px] h-[14px]" /></button>
                      {onRetry && (
-                       <button onClick={onRetry} className="hover:text-[var(--privora-text)] transition-colors"><RotateCcw className="w-[14px] h-[14px]" /></button>
+                       <button type="button" onClick={onRetry} className="hover:text-[var(--privora-text)] transition-colors"><RotateCcw className="w-[14px] h-[14px]" /></button>
                      )}
                    </div>
                  )}
@@ -155,15 +188,15 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
 
         {/* User message hover actions */}
         {isUser && (
-          <div className="flex items-center gap-2 mt-1.5 text-[var(--privora-muted)] transition-colors duration-500 opacity-0 group-hover:opacity-100 self-end mr-2">
+          <div className="flex items-center gap-2 mt-1.5 text-[var(--privora-muted)] transition-colors duration-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 self-end mr-2">
              {onEdit && (
-               <button onClick={onEdit} className="hover:text-[var(--privora-text)] transition-colors" title="Edit text"><Pencil className="w-3.5 h-3.5" /></button>
+               <button type="button" onClick={onEdit} className="hover:text-[var(--privora-text)] transition-colors" title="Edit text"><Pencil className="w-3.5 h-3.5" /></button>
              )}
-             <button onClick={handleCopy} className="hover:text-[var(--privora-text)] transition-colors" title="Copy text">
+             <button type="button" onClick={handleCopy} className="hover:text-[var(--privora-text)] transition-colors" title="Copy text">
                {isCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
              </button>
              {onRetry && (
-               <button onClick={onRetry} className="hover:text-[var(--privora-text)] transition-colors" title="Retry message"><RotateCcw className="w-3.5 h-3.5" /></button>
+               <button type="button" onClick={onRetry} className="hover:text-[var(--privora-text)] transition-colors" title="Retry message"><RotateCcw className="w-3.5 h-3.5" /></button>
              )}
           </div>
         )}
@@ -171,3 +204,18 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
     </motion.div>
   );
 }
+
+export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
+  return (
+    prev.role === next.role &&
+    prev.content === next.content &&
+    prev.thought === next.thought &&
+    prev.isThinking === next.isThinking &&
+    prev.webSearchStatus === next.webSearchStatus &&
+    prev.webSearchQueries === next.webSearchQueries &&
+    prev.isTyping === next.isTyping &&
+    prev.messageIndex === next.messageIndex &&
+    prev.messageCount === next.messageCount &&
+    prev.attachments === next.attachments
+  );
+});

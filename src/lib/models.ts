@@ -7,6 +7,8 @@ export interface ModelOption {
   description: string;
 }
 
+export type ReasoningMode = "instant" | "thinking";
+
 export const modelOptions: ModelOption[] = [
   {
     id: "gemini-3.1-flash-lite-preview",
@@ -28,35 +30,25 @@ export const modelOptions: ModelOption[] = [
   },
   {
     id: "gpt-5.5",
-    label: "GPT-5.5 Instant",
+    label: "GPT-5.5",
     provider: "cliproxy",
-    description: "GPT-5.5 through CLIProxy with reasoning effort set to none.",
-  },
-  {
-    id: "gpt-5.5",
-    label: "GPT-5.5 Thinking",
-    provider: "cliproxy",
-    description: "GPT-5.5 through CLIProxy with reasoning effort set to medium.",
+    description: "GPT-5.5 through CLIProxy.",
   },
 ];
 
-export const getModelOption = (modelId: string, thinkingEnabled: boolean) => {
-  if (modelId === "gpt-5.5") {
-    return modelOptions.find(
-      (option) =>
-        option.provider === "cliproxy" &&
-        option.label === (thinkingEnabled ? "GPT-5.5 Thinking" : "GPT-5.5 Instant"),
-    );
-  }
+export const getModelOption = (modelId: string) =>
+  modelOptions.find((option) => option.id === modelId);
 
-  return modelOptions.find((option) => option.id === modelId);
-};
-
-export const getModelLabel = (modelId: string, thinkingEnabled: boolean) =>
-  getModelOption(modelId, thinkingEnabled)?.label ?? modelId;
+export const getModelLabel = (modelId: string) =>
+  getModelOption(modelId)?.label ?? modelId;
 
 export const isGeminiModel = (modelId: string) =>
-  getModelOption(modelId, false)?.provider === "gemini";
+  getModelOption(modelId)?.provider === "gemini";
 
 export const isCliproxyModel = (modelId: string) =>
-  getModelOption(modelId, false)?.provider === "cliproxy";
+  getModelOption(modelId)?.provider === "cliproxy";
+
+export const getReasoningModeLabel = (provider: ProviderId | undefined, mode: ReasoningMode) => {
+  if (mode === "instant") return "Instant";
+  return "Medium";
+};

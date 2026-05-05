@@ -86,6 +86,35 @@ body {
   display: inline-block;
 }
 
+.privora-thought-panel {
+  position: relative;
+  border-left: 2px solid color-mix(in srgb, var(--privora-muted) 26%, transparent);
+  background: color-mix(in srgb, var(--privora-surface) 38%, transparent);
+  border-radius: 0 18px 18px 0;
+  padding: 0.85rem 1rem 0.85rem 1.15rem;
+}
+
+.privora-thought-content {
+  color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
+  font-size: 0.98rem;
+  font-style: italic;
+  line-height: 1.65;
+}
+
+.privora-thought-content strong,
+.privora-thought-content h1,
+.privora-thought-content h2,
+.privora-thought-content h3,
+.privora-thought-content h4 {
+  color: color-mix(in srgb, var(--privora-muted) 62%, var(--privora-text));
+  font-style: normal;
+  font-weight: 600;
+}
+
+.privora-thought-content .markdown-body p {
+  margin: 0.35rem 0;
+}
+
 .markdown-body {
   overflow-wrap: anywhere;
 }
@@ -151,6 +180,13 @@ body {
 .markdown-body .katex-display > .katex {
   display: inline-block;
   min-width: min-content;
+}
+
+.markdown-body .katex-error {
+  color: var(--privora-text) !important;
+  font-family: var(--font-sans);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body pre {
