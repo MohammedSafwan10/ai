@@ -405,12 +405,29 @@ export default function App() {
         return newMessages;
       });
 
+      // Fetch AI auto-title for new conversation in the background
+      const isFirstMessage = chats.find(c => c.id === currentChatId)?.title === "New Conversation";
+      if (isFirstMessage) {
+        // Auto-generate title
+        ai.models.generateContent({
+          model: "gemini-3.1-flash-lite-preview",
+          contents: `Summarize this conversation into a short, punchy title (max 5 words). Return ONLY the title text, no quotes, no extra formatting.\n\nConversation:\n${newHistory.map(m => m.role + ": " + m.content).join("\n")}\nmodel: ${currentText}`
+        }).then(resp => {
+           const generatedTitle = resp.text?.replace(/["']/g, "").trim();
+           if (generatedTitle) {
+              setChats(prevChats => prevChats.map(c => 
+                 c.id === currentChatId ? { ...c, title: generatedTitle } : c
+              ));
+           }
+        }).catch(err => console.error("Failed to generate title:", err));
+      }
+
       // Update chat list with history and title if it's the first message
       setChats(prevChats => {
         return prevChats.map(c => {
           if (c.id === currentChatId) {
             const updatedMessages: Message[] = [...newHistory, { role: "model" as const, content: currentText, thought: currentThought }];
-            const title = c.title === "New Conversation" ? text.slice(0, 30) + (text.length > 30 ? "..." : "") : c.title;
+            const title = isFirstMessage ? text.slice(0, 30) + (text.length > 30 ? "..." : "") : c.title; // Fallback temporary title until AI resolves
             return { ...c, messages: updatedMessages, title };
           }
           return c;
