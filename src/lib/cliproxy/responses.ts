@@ -78,12 +78,30 @@ const extractTextDelta = (event: string | undefined, data: any) => {
 };
 
 const extractThoughtDelta = (event: string | undefined, data: any) => {
+  if (
+    typeof data?.delta === "string" &&
+    (event?.includes("reasoning_summary") || data?.type === "response.reasoning_summary_text.delta")
+  ) {
+    return data.delta;
+  }
+
   if (typeof data?.delta === "string" && event?.includes("reasoning")) {
     return data.delta;
   }
 
-  if (typeof data?.summary?.[0]?.text === "string") {
-    return data.summary[0].text;
+  if (typeof data?.text === "string" && data?.type === "summary_text") {
+    return data.text;
+  }
+
+  if (typeof data?.part?.text === "string" && data?.part?.type === "summary_text") {
+    return data.part.text;
+  }
+
+  if (Array.isArray(data?.summary)) {
+    return data.summary
+      .map((item: any) => item?.text)
+      .filter(Boolean)
+      .join("");
   }
 
   return "";

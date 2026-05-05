@@ -45,6 +45,8 @@ Whether a specific file type works depends on the upstream model and whether CLI
 
 Previous assistant messages are sent back with `output_text`, while user messages use `input_text`. This matters for multi-turn Responses API calls.
 
+GPT-5.5 does not expose raw private chain-of-thought. The UI displays the streamed `response.reasoning_summary_text.delta` events as the collapsible thinking panel when CLIProxy forwards them.
+
 ## CLIProxy caveat
 
 CLIProxyAPI advertises OpenAI-compatible Chat Completions and Responses support. This app uses the Responses-compatible route because that is the official OpenAI-native shape for reasoning, image input, file input, and built-in tools. If a CLIProxy config/provider does not support `/v1/responses`, use a CLIProxy provider that does or add a chat-completions fallback later.
