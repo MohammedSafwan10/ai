@@ -314,9 +314,6 @@ export default function App() {
       {
         role: "model",
         content: "",
-        ...(selectedModelIsCliproxy && isThinkingEnabled
-          ? { isThinking: true }
-          : {}),
       },
     ]);
 
