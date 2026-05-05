@@ -166,3 +166,56 @@ body {
   background: #2a2a2a !important;
 }
 
+.dark .markdown-body .group\/code {
+  background: #2b2b2b;
+  border-color: #4a4a4a;
+}
+
+.dark .markdown-body .group\/code > div:first-child {
+  background: #303030;
+  border-color: #4a4a4a;
+}
+
+.dark .markdown-body pre,
+.dark .markdown-body pre code,
+.dark .markdown-body pre span {
+  color: #f2f2f2 !important;
+  text-shadow: none !important;
+}
+
+.dark .markdown-body pre .token.comment,
+.dark .markdown-body pre .token.prolog,
+.dark .markdown-body pre .token.doctype,
+.dark .markdown-body pre .token.cdata {
+  color: #9ca3af !important;
+}
+
+.dark .markdown-body pre .token.keyword,
+.dark .markdown-body pre .token.boolean,
+.dark .markdown-body pre .token.constant {
+  color: #93c5fd !important;
+}
+
+.dark .markdown-body pre .token.string,
+.dark .markdown-body pre .token.char,
+.dark .markdown-body pre .token.attr-value {
+  color: #86efac !important;
+}
+
+.dark .markdown-body pre .token.function,
+.dark .markdown-body pre .token.class-name {
+  color: #fde68a !important;
+}
+
+.dark .markdown-body pre .token.number,
+.dark .markdown-body pre .token.operator,
+.dark .markdown-body pre .token.punctuation {
+  color: #e5e7eb !important;
+}
+
+.dark .markdown-body pre .token.property,
+.dark .markdown-body pre .token.tag,
+.dark .markdown-body pre .token.selector {
+  color: #fca5a5 !important;
+}
+
