@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { motion, AnimatePresence } from "motion/react";
 import { TypingIndicator } from "./TypingIndicator";
 import { Copy, ThumbsUp, ThumbsDown, RotateCcw, Brain, ChevronDown, Check, Pencil } from "lucide-react";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface Attachment {
   url: string;
@@ -117,8 +116,8 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
                       className="overflow-hidden w-full flex"
                    >
                       <div className="border border-[var(--privora-border)]/60 bg-[var(--privora-text)]/[0.04] backdrop-blur-md px-5 py-4 rounded-[20px] max-w-[95%]">
-                        <div className="prose prose-sm max-w-none text-[var(--privora-muted)] prose-p:leading-relaxed prose-p:my-1 opacity-90 transition-colors duration-500 font-sans">
-                            {thought ? <Markdown>{thought}</Markdown> : <span className="animate-text-shimmer">Thinking...</span>}
+                        <div className="max-w-none text-[var(--privora-muted)] opacity-90 transition-colors duration-500 font-sans">
+                            {thought ? <MarkdownRenderer compact>{thought}</MarkdownRenderer> : <span className="animate-text-shimmer">Thinking...</span>}
                         </div>
                       </div>
                    </motion.div>
@@ -129,15 +128,13 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
 
           <div
             className={cn(
-              "prose max-w-none text-inherit transition-colors duration-500",
-              isUser ? "prose-p:my-0 leading-relaxed" : "prose-p:leading-[1.75] prose-p:font-sans prose-p:text-[1.05rem] prose-pre:bg-[var(--privora-surface)] prose-pre:border prose-pre:border-[var(--privora-border)] prose-pre:text-[var(--privora-text)] prose-code:bg-[var(--privora-text)]/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:before:content-none prose-code:after:content-none prose-headings:font-display prose-headings:font-medium prose-headings:text-[var(--privora-text)] prose-strong:text-[var(--privora-text)] prose-a:text-[var(--privora-accent)]"
+              "markdown-body max-w-none text-inherit transition-colors duration-500",
+              isUser ? "leading-relaxed" : "font-sans text-[1.05rem]"
             )}
           >
              <>
                {(content || (!isUser && isTyping && !isThinking)) && (
-                 <Markdown remarkPlugins={[remarkGfm]}>
-                   {content}
-                 </Markdown>
+                 <MarkdownRenderer compact={isUser}>{content}</MarkdownRenderer>
                )}
                {!isUser && !isTyping && content && (
                  <div className="flex items-center gap-3 mt-4 text-[var(--privora-muted)] transition-colors duration-500">

@@ -8,6 +8,7 @@ A premium, highly-polished conversational AI interface powered by Google's Gemin
 * **Intelligent "Thinking" Process:** View the model's internal reasoning process in a collapsible, beautifully animated "Thought Process" block complete with a shimmering loading state and markdown support.
 * **Typing & Generating Indicators:** Custom animated 4-angle lotus wireframe typing indicator that seamlessly transitions into the model's response.
 * **Image & Attachment Support:** Upload images to include in your prompt. The app handles base64 encoding and displays attachments beautifully before sending.
+* **Rich Markdown Rendering:** Math through KaTeX, GitHub-flavored markdown, tables, task lists, and broad syntax highlighting for code blocks.
 * **Instant Model Switching:** Seamlessly swap between Google's Gemini models and GPT-5.5 modes routed through CLIProxyAPI.
 * **GPT-5.5 via CLIProxy:** Use `GPT-5.5 Instant` with `reasoning.effort: "none"` or `GPT-5.5 Thinking` with `reasoning.effort: "medium"` through an OpenAI Responses-compatible local proxy.
 * **Real-time Streaming & Abort:** Watch responses generate in real-time. Change your mind? Hit the custom stop button to instantly sever the stream using an `AbortController`.
