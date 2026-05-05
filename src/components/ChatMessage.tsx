@@ -117,7 +117,7 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
                    >
                       <div className="border border-[var(--privora-border)]/60 bg-[var(--privora-text)]/[0.04] backdrop-blur-md px-5 py-4 rounded-[20px] max-w-[95%]">
                         <div className="max-w-none text-[var(--privora-muted)] opacity-90 transition-colors duration-500 font-sans">
-                            {thought ? <MarkdownRenderer compact>{thought}</MarkdownRenderer> : <span className="animate-text-shimmer">Thinking...</span>}
+                            {thought ? <MarkdownRenderer compact isStreaming={isThinking}>{thought}</MarkdownRenderer> : <span className="animate-text-shimmer">Thinking...</span>}
                         </div>
                       </div>
                    </motion.div>
@@ -134,7 +134,7 @@ export function ChatMessage({ role, content, thought, isThinking, isTyping, onEd
           >
              <>
                {(content || (!isUser && isTyping && !isThinking)) && (
-                 <MarkdownRenderer compact={isUser}>{content}</MarkdownRenderer>
+                 <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)}>{content}</MarkdownRenderer>
                )}
                {!isUser && !isTyping && content && (
                  <div className="flex items-center gap-3 mt-4 text-[var(--privora-muted)] transition-colors duration-500">

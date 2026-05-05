@@ -3,22 +3,32 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { coldarkCold, vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import ShikiHighlighter, { createJavaScriptRegexEngine, isInlineCode } from "react-shiki";
 import { Check, Copy } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface MarkdownRendererProps {
   children: string;
   compact?: boolean;
+  isStreaming?: boolean;
 }
+
+const shikiEngine = createJavaScriptRegexEngine({ forgiving: true });
 
 const getLanguage = (className?: string) => {
   const match = /language-(\w+)/.exec(className || "");
   return match?.[1] || "";
 };
 
-function CodeBlock({ code, language }: { code: string; language: string }) {
+function CodeBlock({
+  code,
+  language,
+  isStreaming = false,
+}: {
+  code: string;
+  language: string;
+  isStreaming?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains("dark"));
 
@@ -60,33 +70,39 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <SyntaxHighlighter
-        language={language || "text"}
-        style={isDarkMode ? vscDarkPlus : coldarkCold}
-        customStyle={{
-          margin: 0,
-          padding: "1rem",
-          background: "transparent",
-          fontSize: "0.9rem",
-          lineHeight: 1.7,
-          textShadow: "none",
-        }}
-        codeTagProps={{
-          style: {
+      {isStreaming ? (
+        <pre className="m-0 overflow-x-auto bg-transparent p-4 text-[0.9rem] leading-7 text-[var(--privora-text)]">
+          <code
+            style={{
+              fontFamily:
+                'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            }}
+          >
+            {code}
+          </code>
+        </pre>
+      ) : (
+        <ShikiHighlighter
+          key={`${isDarkMode ? "dark" : "light"}-${language || "text"}`}
+          language={language || "text"}
+          theme={isDarkMode ? "github-dark" : "github-light"}
+          engine={shikiEngine}
+          showLanguage={false}
+          addDefaultStyles={false}
+          className="m-0 overflow-x-auto bg-transparent p-4 text-[0.9rem] leading-7"
+          style={{
             fontFamily:
               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-            textShadow: "none",
-          },
-        }}
-        wrapLongLines
-      >
-        {code}
-      </SyntaxHighlighter>
+          }}
+        >
+          {code}
+        </ShikiHighlighter>
+      )}
     </div>
   );
 }
 
-export function MarkdownRenderer({ children, compact = false }: MarkdownRendererProps) {
+export function MarkdownRenderer({ children, compact = false, isStreaming = false }: MarkdownRendererProps) {
   return (
     <Markdown
       remarkPlugins={[remarkGfm, remarkMath]}
@@ -120,11 +136,11 @@ export function MarkdownRenderer({ children, compact = false }: MarkdownRenderer
         td: ({ children }) => (
           <td className="border-b border-[var(--privora-border)]/70 px-4 py-2.5 align-top">{children}</td>
         ),
-        code: ({ inline, className, children, ...props }: any) => {
+        code: ({ inline, className, children, node, ...props }: any) => {
           const code = String(children).replace(/\n$/, "");
           const language = getLanguage(className);
 
-          if (inline) {
+          if (inline || isInlineCode(node)) {
             return (
               <code
                 className="rounded-md bg-[var(--privora-text)]/[0.08] px-1.5 py-0.5 font-mono text-[0.9em]"
@@ -135,7 +151,7 @@ export function MarkdownRenderer({ children, compact = false }: MarkdownRenderer
             );
           }
 
-          return <CodeBlock code={code} language={language} />;
+          return <CodeBlock code={code} language={language} isStreaming={isStreaming} />;
         },
       }}
     >
