@@ -43,6 +43,8 @@ The UI accepts images, PDFs, plain text, Markdown, CSV, JSON, and common code fi
 
 Whether a specific file type works depends on the upstream model and whether CLIProxy forwards the Responses `input_file` shape unchanged.
 
+Previous assistant messages are sent back with `output_text`, while user messages use `input_text`. This matters for multi-turn Responses API calls.
+
 ## CLIProxy caveat
 
 CLIProxyAPI advertises OpenAI-compatible Chat Completions and Responses support. This app uses the Responses-compatible route because that is the official OpenAI-native shape for reasoning, image input, file input, and built-in tools. If a CLIProxy config/provider does not support `/v1/responses`, use a CLIProxy provider that does or add a chat-completions fallback later.

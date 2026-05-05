@@ -25,10 +25,11 @@ const toDataUrl = (attachment: Attachment) =>
 
 const toInputContent = (message: CliproxyMessage) => {
   const content: Array<Record<string, unknown>> = [];
+  const textType = message.role === "model" ? "output_text" : "input_text";
 
   if (message.content) {
     content.push({
-      type: "input_text",
+      type: textType,
       text: message.content,
     });
   }
