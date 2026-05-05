@@ -8,7 +8,7 @@ A premium, highly-polished conversational AI interface powered by Google's Gemin
 * **Intelligent "Thinking" Process:** View the model's internal reasoning process in a collapsible, beautifully animated "Thought Process" block complete with a shimmering loading state and markdown support.
 * **Typing & Generating Indicators:** Custom animated 4-angle lotus wireframe typing indicator that seamlessly transitions into the model's response.
 * **Image & Attachment Support:** Upload images to include in your prompt. The app handles base64 encoding and displays attachments beautifully before sending.
-* **Instant Model Switching:** Seamlessly swap between Google's bleeding-edge models (`gemini-2.5-pro` and `gemini-2.5-flash`) using a completely custom animated dropdown.
+* **Instant Model Switching:** Seamlessly swap between Google's bleeding-edge models (`gemini-3.1-pro-preview`, `gemini-3-flash-preview` and `gemini-3.1-flash-lite-preview`) using a completely custom animated dropdown.
 * **Real-time Streaming & Abort:** Watch responses generate in real-time. Change your mind? Hit the custom stop button to instantly sever the stream using an `AbortController`.
 * **Smart Auto-expanding Input:** The message box grows naturally as you type or paste code, matching standard native messaging app behaviors.
 * **Premium Theming:** Includes a beautiful ChatGPT-style High-Contrast Minimalist Dark Mode and a Calm Beige Light Mode, complete with adaptive monochrome icons.

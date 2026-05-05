@@ -160,7 +160,7 @@ export default function App() {
   useEffect(() => {
     // Initialize chat session on mount
     chatSessionRef.current = ai.chats.create({
-      model: "gemini-3.1-flash-lite-preview",
+      model: selectedModel,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION + (isWebSearchEnabled ? "\n\n10. Web Search is ENABLED. You have access to real-time information via the googleSearch tool. When you are confused, lack recent info, or need to verify facts, USE THE WEB SEARCH feature transparently to provide accurate and up-to-date answers. Do not guess. Do not give wrong information." : ""),
         temperature: 0.85, // Slightly higher for more creative/human-like tangents
