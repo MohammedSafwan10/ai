@@ -1,6 +1,6 @@
 {
-  "name": "Human-like Chatbot",
-  "description": "A beautiful, responsive chatbot with highly human-like conversation behavior, powered by Gemini.",
+  "name": "Privora",
+  "description": "A beautiful, responsive chatbot with highly human-like conversation behavior with Claude-like sidebar styling.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

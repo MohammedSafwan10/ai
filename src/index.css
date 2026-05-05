@@ -9,39 +9,39 @@
 
 :root {
   /* High-end Calm Beige Light Mode */
-  --nexus-bg: #F4F0EA;
-  --nexus-surface: #FFFFFF;
-  --nexus-user-bubble: #EBE5D9;
-  --nexus-border: #E2DCD0;
-  --nexus-text: #292524;
-  --nexus-muted: #78716C;
-  --nexus-accent: #171717;
-  --nexus-accent-hover: #262626;
-  --nexus-accent-fg: #FFFFFF;
-  --nexus-shadow: 0 4px 32px rgba(168, 159, 145, 0.25);
-  --nexus-scrollbar: rgba(0, 0, 0, 0.1);
-  --nexus-scrollbar-hover: rgba(0, 0, 0, 0.2);
+  --privora-bg: #F4F0EA;
+  --privora-surface: #FFFFFF;
+  --privora-user-bubble: #EBE5D9;
+  --privora-border: #E2DCD0;
+  --privora-text: #292524;
+  --privora-muted: #78716C;
+  --privora-accent: #171717;
+  --privora-accent-hover: #262626;
+  --privora-accent-fg: #FFFFFF;
+  --privora-shadow: 0 4px 32px rgba(168, 159, 145, 0.25);
+  --privora-scrollbar: rgba(0, 0, 0, 0.1);
+  --privora-scrollbar-hover: rgba(0, 0, 0, 0.2);
 }
 
 .dark {
   /* ChatGPT-style Grey Dark Mode */
-  --nexus-bg: #212121;
-  --nexus-surface: #2F2F2F;
-  --nexus-user-bubble: #3A3A3A;
-  --nexus-border: #424242;
-  --nexus-text: #ECECEC;
-  --nexus-muted: #A1A1A1;
-  --nexus-accent: #ECECEC;
-  --nexus-accent-hover: #FFFFFF;
-  --nexus-accent-fg: #171717;
-  --nexus-shadow: 0 4px 32px rgba(0, 0, 0, 0.3);
-  --nexus-scrollbar: rgba(255, 255, 255, 0.05);
-  --nexus-scrollbar-hover: rgba(255, 255, 255, 0.15);
+  --privora-bg: #212121;
+  --privora-surface: #2F2F2F;
+  --privora-user-bubble: #3A3A3A;
+  --privora-border: #424242;
+  --privora-text: #ECECEC;
+  --privora-muted: #A1A1A1;
+  --privora-accent: #ECECEC;
+  --privora-accent-hover: #FFFFFF;
+  --privora-accent-fg: #171717;
+  --privora-shadow: 0 4px 32px rgba(0, 0, 0, 0.3);
+  --privora-scrollbar: rgba(255, 255, 255, 0.05);
+  --privora-scrollbar-hover: rgba(255, 255, 255, 0.15);
 }
 
 body {
-  background-color: var(--nexus-bg);
-  color: var(--nexus-text);
+  background-color: var(--privora-bg);
+  color: var(--privora-text);
   font-family: var(--font-sans);
   overscroll-behavior: none;
   transition: background-color 0.4s ease, color 0.4s ease;
@@ -58,11 +58,31 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--nexus-scrollbar);
+  background: var(--privora-scrollbar);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--nexus-scrollbar-hover);
+  background: var(--privora-scrollbar-hover);
+}
+
+@keyframes text-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.animate-text-shimmer {
+  background: linear-gradient(
+    to right,
+    var(--privora-muted) 20%,
+    var(--privora-text) 50%,
+    var(--privora-muted) 80%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: text-shimmer 2.5s linear infinite;
+  display: inline-block;
 }
 
