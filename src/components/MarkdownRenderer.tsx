@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { coldarkCold, vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Check, Copy } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -42,7 +42,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   };
 
   return (
-    <div className="group/code my-4 overflow-hidden rounded-2xl border border-[var(--privora-border)] bg-[#fbfaf8] shadow-sm">
+    <div className="group/code my-4 overflow-hidden rounded-2xl border border-[var(--privora-border)] bg-[#fffdf9] shadow-sm dark:bg-[#1f1f1f]">
       <div className="flex min-h-10 items-center justify-between border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.035] px-4 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--privora-muted)]">
           {language || "code"}
@@ -59,18 +59,20 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
       </div>
       <SyntaxHighlighter
         language={language || "text"}
-        style={isDarkMode ? oneDark : oneLight}
+        style={isDarkMode ? vscDarkPlus : coldarkCold}
         customStyle={{
           margin: 0,
           padding: "1rem",
           background: "transparent",
           fontSize: "0.9rem",
           lineHeight: 1.7,
+          textShadow: "none",
         }}
         codeTagProps={{
           style: {
             fontFamily:
               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            textShadow: "none",
           },
         }}
         wrapLongLines
