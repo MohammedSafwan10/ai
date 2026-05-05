@@ -1,9 +1,11 @@
+import { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Check, Copy } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface MarkdownRendererProps {
@@ -15,6 +17,55 @@ const getLanguage = (className?: string) => {
   const match = /language-(\w+)/.exec(className || "");
   return match?.[1] || "";
 };
+
+function CodeBlock({ code, language }: { code: string; language: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+
+  return (
+    <div className="group/code my-4 overflow-hidden rounded-2xl border border-[var(--privora-border)] bg-[#fbfaf8] shadow-sm">
+      <div className="flex min-h-10 items-center justify-between border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.035] px-4 py-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--privora-muted)]">
+          {language || "code"}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--privora-muted)] opacity-80 transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] group-hover/code:opacity-100"
+          title="Copy code"
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <SyntaxHighlighter
+        language={language || "text"}
+        style={oneLight}
+        customStyle={{
+          margin: 0,
+          padding: "1rem",
+          background: "transparent",
+          fontSize: "0.9rem",
+          lineHeight: 1.7,
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily:
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+          },
+        }}
+        wrapLongLines
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
 
 export function MarkdownRenderer({ children, compact = false }: MarkdownRendererProps) {
   return (
@@ -65,36 +116,7 @@ export function MarkdownRenderer({ children, compact = false }: MarkdownRenderer
             );
           }
 
-          return (
-            <div className="my-4 overflow-hidden rounded-2xl border border-[var(--privora-border)] bg-[#fbfaf8] shadow-sm">
-              {language && (
-                <div className="border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.035] px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--privora-muted)]">
-                  {language}
-                </div>
-              )}
-              <SyntaxHighlighter
-                language={language || "text"}
-                style={oneLight}
-                customStyle={{
-                  margin: 0,
-                  padding: "1rem",
-                  background: "transparent",
-                  fontSize: "0.9rem",
-                  lineHeight: 1.7,
-                }}
-                codeTagProps={{
-                  style: {
-                    fontFamily:
-                      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                  },
-                }}
-                wrapLongLines
-                {...props}
-              >
-                {code}
-              </SyntaxHighlighter>
-            </div>
-          );
+          return <CodeBlock code={code} language={language} />;
         },
       }}
     >

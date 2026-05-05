@@ -64,10 +64,12 @@ export default function App() {
   const selectedModelLabel = getModelLabel(selectedModel, isThinkingEnabled);
   const selectedModelIsGemini = isGeminiModel(selectedModel);
   const selectedModelIsCliproxy = isCliproxyModel(selectedModel);
+  const chatScrollRef = useRef<HTMLElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -176,14 +178,31 @@ export default function App() {
     }
   }, []);
 
-  const scrollToBottom = () => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+  const isNearChatBottom = () => {
+    const scroller = chatScrollRef.current;
+    if (!scroller) return true;
+
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96;
+  };
+
+  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+    const scroller = chatScrollRef.current;
+    if (!scroller) return;
+
+    scroller.scrollTo({
+      top: scroller.scrollHeight,
+      behavior,
+    });
+  };
+
+  const handleChatScroll = () => {
+    shouldAutoScrollRef.current = isNearChatBottom();
   };
 
   useEffect(() => {
-    scrollToBottom();
+    if (shouldAutoScrollRef.current) {
+      scrollToBottom(isTyping ? "auto" : "smooth");
+    }
   }, [messages, isTyping]);
 
   const handleNewChat = () => {
@@ -300,6 +319,7 @@ export default function App() {
     setInput("");
     setAttachments([]);
     setIsTyping(true);
+    shouldAutoScrollRef.current = isNearChatBottom();
     
     abortControllerRef.current = new AbortController();
 
@@ -853,7 +873,7 @@ export default function App() {
         </header>
 
         {/* Chat Area */}
-        <main className="flex-1 overflow-y-auto">
+        <main ref={chatScrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto">
           <div className="max-w-[46rem] mx-auto flex flex-col justify-end min-h-full pb-6 pt-20">
             {messages.length === 0 ? (
               <motion.div 
