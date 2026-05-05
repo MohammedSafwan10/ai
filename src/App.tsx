@@ -1099,8 +1099,7 @@ export default function App() {
                                  isActive ? "text-[var(--privora-accent)] font-medium bg-[var(--privora-text)]/5" : "text-[var(--privora-text)]"
                                }`}
                              >
-                               <span className="block text-[13px] leading-none">{option.label}</span>
-                               <span className="block text-[11px] mt-1.5 text-[var(--privora-muted)] leading-snug">{option.description}</span>
+                               {option.label}
                              </button>
                            );
                          })}
