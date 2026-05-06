@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { cn } from "../lib/utils";
+import { cn } from "../../../lib/utils";
 
 export function TypingIndicator({ size = 28, className, isAnimating = true }: { size?: number, className?: string, isAnimating?: boolean }) {
   // 4 intersecting angles to create a beautifully complex wireframe lotus/atomic shape

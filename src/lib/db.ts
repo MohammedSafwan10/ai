@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import { appLogger } from "./logger";
 
 export interface AttachmentRecord {
   url: string;
@@ -6,6 +7,54 @@ export interface AttachmentRecord {
   mimeType: string;
   name: string;
   size?: number;
+}
+
+export type ResearchStatus = "queued" | "searching" | "reading" | "synthesizing" | "completed" | "stopped" | "failed";
+
+export interface ResearchSourceRecord {
+  title?: string;
+  url: string;
+  provider?: string;
+}
+
+export type ResearchPlanStatus = "draft" | "editing" | "running" | "completed" | "cancelled";
+export type ResearchPlanStepStatus = "pending" | "active" | "completed" | "skipped";
+
+export interface ResearchPlanStepRecord {
+  text: string;
+  status: ResearchPlanStepStatus;
+}
+
+export interface ResearchActivityRecord {
+  phase: string;
+  title: string;
+  detail?: string;
+  source?: ResearchSourceRecord;
+  timestamp: number;
+}
+
+export interface ResearchPlanRecord {
+  title: string;
+  steps: ResearchPlanStepRecord[];
+  refinedPrompt: string;
+  status: ResearchPlanStatus;
+  progress?: number;
+  currentActivity?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ResearchIntentStatus = "awaiting_clarification" | "ready" | "cancelled";
+
+export interface PendingResearchIntentRecord {
+  status: ResearchIntentStatus;
+  originalGoal: string;
+  clarificationQuestions?: string[];
+  userAnswers?: string[];
+  researchPlan?: string;
+  refinedPrompt?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ChatMessageRecord {
@@ -17,6 +66,15 @@ export interface ChatMessageRecord {
   isThinking?: boolean;
   webSearchStatus?: "searching" | "searched";
   webSearchQueries?: string[];
+  researchStatus?: ResearchStatus;
+  researchSources?: ResearchSourceRecord[];
+  researchPreflight?: "clarifying";
+  researchPlan?: ResearchPlanRecord;
+  researchActivity?: ResearchActivityRecord[];
+  researchJobId?: string;
+  researchStartedAt?: number;
+  researchCompletedAt?: number;
+  researchTimeBudgetMs?: number;
   attachments?: AttachmentRecord[];
   createdAt: number;
 }
@@ -26,6 +84,7 @@ export interface ChatRecord {
   title: string;
   messages: ChatMessageRecord[];
   isStarred?: boolean;
+  pendingResearchIntent?: PendingResearchIntentRecord;
   createdAt: number;
   updatedAt: number;
   model?: string;
@@ -69,6 +128,15 @@ export const normalizeMessage = (
   isThinking: message.isThinking,
   webSearchStatus: message.webSearchStatus,
   webSearchQueries: message.webSearchQueries,
+  researchStatus: message.researchStatus,
+  researchSources: message.researchSources,
+  researchPreflight: message.researchPreflight,
+  researchPlan: message.researchPlan,
+  researchActivity: message.researchActivity,
+  researchJobId: message.researchJobId,
+  researchStartedAt: message.researchStartedAt,
+  researchCompletedAt: message.researchCompletedAt,
+  researchTimeBudgetMs: message.researchTimeBudgetMs,
   attachments: message.attachments,
   createdAt: message.createdAt || fallbackCreatedAt,
 });
@@ -82,6 +150,7 @@ export const loadChats = async (): Promise<ChatRecord[]> => {
     })
   );
 
+  appLogger.debug("IndexedDB chats loaded", { chatCount: chats.length });
   return chats;
 };
 
@@ -93,22 +162,27 @@ export const createChat = async (chat: ChatRecord) => {
       await db.messages.bulkPut(messages);
     }
   });
+  appLogger.debug("IndexedDB chat created", { chatId: chat.id, messageCount: messages.length });
 };
 
 export const updateChatMeta = async (
   chatId: string,
-  patch: Partial<Pick<ChatRecord, "title" | "isStarred" | "updatedAt" | "model">>
+  patch: Partial<Pick<ChatRecord, "title" | "isStarred" | "pendingResearchIntent" | "updatedAt" | "model">>
 ) => {
   await db.chats.update(chatId, {
     ...patch,
     updatedAt: patch.updatedAt || Date.now(),
+  });
+  appLogger.debug("IndexedDB chat metadata updated", {
+    chatId,
+    fields: Object.keys(patch),
   });
 };
 
 export const replaceChatMessages = async (
   chatId: string,
   messages: ChatMessageRecord[],
-  metaPatch: Partial<Pick<ChatRecord, "title" | "updatedAt" | "model">> = {}
+  metaPatch: Partial<Pick<ChatRecord, "title" | "pendingResearchIntent" | "updatedAt" | "model">> = {}
 ) => {
   await db.transaction("rw", db.chats, db.messages, async () => {
     await db.messages.where("chatId").equals(chatId).delete();
@@ -120,6 +194,11 @@ export const replaceChatMessages = async (
       updatedAt: metaPatch.updatedAt || Date.now(),
     });
   });
+  appLogger.debug("IndexedDB chat messages replaced", {
+    chatId,
+    messageCount: messages.length,
+    metaFields: Object.keys(metaPatch),
+  });
 };
 
 export const deleteChatFromDb = async (chatId: string) => {
@@ -127,15 +206,20 @@ export const deleteChatFromDb = async (chatId: string) => {
     await db.messages.where("chatId").equals(chatId).delete();
     await db.chats.delete(chatId);
   });
+  appLogger.info("IndexedDB chat deleted", { chatId });
 };
 
 export const migrateLocalStorageChats = async () => {
   const migrated = localStorage.getItem("privora-indexeddb-migrated");
-  if (migrated) return;
+  if (migrated) {
+    appLogger.debug("Legacy localStorage migration skipped");
+    return;
+  }
 
   const rawChats = localStorage.getItem("privora-chats");
   if (!rawChats) {
     localStorage.setItem("privora-indexeddb-migrated", "true");
+    appLogger.debug("Legacy localStorage migration skipped without source chats");
     return;
   }
 
@@ -143,6 +227,9 @@ export const migrateLocalStorageChats = async () => {
     const existing = await db.chats.count();
     if (existing > 0) {
       localStorage.setItem("privora-indexeddb-migrated", "true");
+      appLogger.debug("Legacy localStorage migration skipped with existing IndexedDB chats", {
+        chatCount: existing,
+      });
       return;
     }
 
@@ -175,8 +262,9 @@ export const migrateLocalStorageChats = async () => {
         }
       }
     });
+    appLogger.info("Legacy localStorage chats migrated", { chatCount: parsedChats.length });
   } catch (error) {
-    console.error("Failed to migrate localStorage chats", error);
+    appLogger.error("Failed to migrate localStorage chats", { err: error });
   } finally {
     localStorage.setItem("privora-indexeddb-migrated", "true");
   }

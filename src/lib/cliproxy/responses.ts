@@ -1,4 +1,4 @@
-import type { Attachment } from "../../App";
+import type { Attachment } from "../attachments";
 
 export interface CliproxyMessage {
   role: "user" | "model";

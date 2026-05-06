@@ -5,7 +5,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import ShikiHighlighter, { createJavaScriptRegexEngine, isInlineCode } from "react-shiki";
 import { Check, ChevronDown, Copy } from "lucide-react";
-import { cn } from "../lib/utils";
+import { cn } from "../../../lib/utils";
 
 interface MarkdownRendererProps {
   children: string;
@@ -186,16 +186,16 @@ function MarkdownRendererComponent({ children, compact = false, isStreaming = fa
         ),
         table: ({ children }) => (
           <div className="my-4 w-full overflow-x-auto rounded-2xl border border-[var(--privora-border)] bg-[var(--privora-surface)]">
-            <table className="w-full border-collapse text-sm">{children}</table>
+            <table className="w-full min-w-[42rem] border-collapse text-sm">{children}</table>
           </div>
         ),
         th: ({ children }) => (
-          <th className="border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.04] px-4 py-2.5 text-left font-semibold">
+          <th className="break-normal border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.04] px-4 py-2.5 text-left font-semibold whitespace-nowrap first:min-w-[7rem]">
             {children}
           </th>
         ),
         td: ({ children }) => (
-          <td className="border-b border-[var(--privora-border)]/70 px-4 py-2.5 align-top">{children}</td>
+          <td className="break-words border-b border-[var(--privora-border)]/70 px-4 py-2.5 align-top first:min-w-[7rem]">{children}</td>
         ),
         code: ({ inline, className, children, node, ...props }: any) => {
           const code = String(children).replace(/\n$/, "");
