@@ -38,6 +38,10 @@ const toInputContent = (message: CliproxyMessage) => {
     });
   }
 
+  if (message.role === "model") {
+    return content.length > 0 ? content : [{ type: "output_text", text: "" }];
+  }
+
   message.attachments?.forEach((attachment) => {
     if (isSupportedVisionImage(attachment)) {
       content.push({

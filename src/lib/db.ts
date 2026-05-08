@@ -11,6 +11,43 @@ export interface AttachmentRecord {
 
 export type ResearchStatus = "queued" | "searching" | "reading" | "synthesizing" | "completed" | "stopped" | "failed";
 
+export type ImageGenerationStatus = "queued" | "generating" | "completed" | "stopped" | "failed";
+export type ImageGenerationItemStatus = "queued" | "generating" | "completed" | "stopped" | "failed";
+
+export interface ImageGenerationOptionsRecord {
+  sizePreset?: "square" | "square_2k" | "landscape" | "widescreen" | "widescreen_4k" | "portrait" | "story_4k" | "auto";
+  aspectRatio?: "square" | "landscape" | "portrait";
+  size: string;
+  quality: "low" | "medium" | "high";
+  count: 1 | 2 | 3 | 4;
+  partialImages: 0 | 1;
+  outputFormat: "png";
+}
+
+export interface ImageGenerationItemRecord {
+  id: string;
+  status: ImageGenerationItemStatus;
+  partialImageBase64?: string;
+  outputFormat?: string;
+  attachmentName?: string;
+  error?: string;
+  completedAt?: number;
+}
+
+export interface ImageGenerationRecord {
+  status: ImageGenerationStatus;
+  mode: "generate" | "edit";
+  prompt: string;
+  model: string;
+  options?: ImageGenerationOptionsRecord;
+  items?: ImageGenerationItemRecord[];
+  startedAt: number;
+  completedAt?: number;
+  error?: string;
+  partialImageBase64?: string;
+  outputFormat?: string;
+}
+
 export interface ResearchSourceRecord {
   title?: string;
   url: string;
@@ -79,6 +116,7 @@ export interface ChatMessageRecord {
   researchStartedAt?: number;
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
+  imageGeneration?: ImageGenerationRecord;
   attachments?: AttachmentRecord[];
   createdAt: number;
 }
@@ -142,6 +180,7 @@ export const normalizeMessage = (
   researchStartedAt: message.researchStartedAt,
   researchCompletedAt: message.researchCompletedAt,
   researchTimeBudgetMs: message.researchTimeBudgetMs,
+  imageGeneration: message.imageGeneration,
   attachments: message.attachments,
   createdAt: message.createdAt || fallbackCreatedAt,
 });

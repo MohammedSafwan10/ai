@@ -20,6 +20,13 @@ export const toGeminiContents = (messages: ChatMessageRecord[]) =>
       parts.push({ text: message.content });
     }
 
+    if (message.role === "model") {
+      return {
+        role: "model",
+        parts: parts.length > 0 ? parts : [{ text: "" }],
+      };
+    }
+
     message.attachments?.forEach((attachment) => {
       parts.push({
         inlineData: {

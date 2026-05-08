@@ -12,6 +12,28 @@ export interface UiSettings {
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
   isDarkMode: boolean;
+  composerMode: "chat" | "image";
+  imageSettings: ImageSettings;
+}
+
+export type ImageSizePreset =
+  | "square"
+  | "square_2k"
+  | "landscape"
+  | "widescreen"
+  | "widescreen_4k"
+  | "portrait"
+  | "story_4k"
+  | "auto";
+export type ImageQuality = "low" | "medium" | "high";
+export type ImageCount = 1 | 2 | 3 | 4;
+
+export interface ImageSettings {
+  sizePreset: ImageSizePreset;
+  quality: ImageQuality;
+  count: ImageCount;
+  partialImages: 0;
+  outputFormat: "png";
 }
 
 export const defaultUiSettings: UiSettings = {
@@ -21,6 +43,49 @@ export const defaultUiSettings: UiSettings = {
   isWebSearchEnabled: false,
   isDeepResearchEnabled: false,
   isDarkMode: false,
+  composerMode: "chat",
+  imageSettings: {
+    sizePreset: "square",
+    quality: "medium",
+    count: 1,
+    partialImages: 0,
+    outputFormat: "png",
+  },
+};
+
+const imageSizePresets: ImageSizePreset[] = [
+  "square",
+  "square_2k",
+  "landscape",
+  "widescreen",
+  "widescreen_4k",
+  "portrait",
+  "story_4k",
+  "auto",
+];
+
+const normalizeImageSettings = (settings?: Partial<ImageSettings> & { aspectRatio?: "square" | "landscape" | "portrait" }): ImageSettings => {
+  const legacyAspectRatio = settings?.aspectRatio;
+  const sizePreset: ImageSizePreset = settings?.sizePreset && imageSizePresets.includes(settings.sizePreset)
+    ? settings.sizePreset
+    : legacyAspectRatio === "landscape" || legacyAspectRatio === "portrait" || legacyAspectRatio === "square"
+      ? legacyAspectRatio
+      : "square";
+  const quality: ImageQuality =
+    settings?.quality === "low" || settings?.quality === "high" || settings?.quality === "medium"
+      ? settings.quality
+      : "medium";
+  const count: ImageCount = [1, 2, 3, 4].includes(Number(settings?.count))
+    ? (Number(settings?.count) as ImageCount)
+    : 1;
+
+  return {
+    sizePreset,
+    quality,
+    count,
+    partialImages: 0,
+    outputFormat: "png",
+  };
 };
 
 export const loadUiSettings = (): UiSettings => {
@@ -43,6 +108,8 @@ export const loadUiSettings = (): UiSettings => {
       isWebSearchEnabled: Boolean(parsedSettings.isWebSearchEnabled) || isDeepResearchEnabled,
       isDeepResearchEnabled,
       isDarkMode: Boolean(parsedSettings.isDarkMode),
+      composerMode: parsedSettings.composerMode === "image" ? "image" : "chat",
+      imageSettings: normalizeImageSettings(parsedSettings.imageSettings),
     };
   } catch {
     return defaultUiSettings;
