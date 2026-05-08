@@ -689,6 +689,11 @@ export function useChatGeneration({
     const userMessage = currentMessages[planIndex - 1];
     if (!planMessage?.researchPlan || !userMessage || userMessage.role !== "user") return;
 
+    if (editingResearchPlanMessageIdRef.current === messageId) {
+      editingResearchPlanMessageIdRef.current = null;
+      setInput("");
+    }
+
     const requestModel = selectedModelRef.current;
     const requestProvider = getModelOption(requestModel)?.provider;
     const requestStyle = selectedStyleRef.current;
@@ -714,10 +719,22 @@ export function useChatGeneration({
     };
     const getPlanProgress = (plan: ResearchPlanRecord) => {
       const completed = plan.steps.filter(step => step.status === "completed").length;
-      const activeBonus = plan.steps.some(step => step.status === "active") ? 0.45 : 0;
+      const activeBonus = plan.steps.some(step => step.status === "active") ? 0.18 : 0;
       return Math.min(96, Math.round(((completed + activeBonus) / Math.max(1, plan.steps.length)) * 100));
     };
     const appendResearchActivity = (activity: ResearchActivityRecord) => {
+      if (activity.phase === "heartbeat") {
+        let previousHeartbeatIndex = -1;
+        for (let index = currentActivity.length - 1; index >= 0; index -= 1) {
+          if (currentActivity[index].phase === "heartbeat") {
+            previousHeartbeatIndex = index;
+            break;
+          }
+        }
+        if (previousHeartbeatIndex >= 0) {
+          return currentActivity.map((item, index) => index === previousHeartbeatIndex ? activity : item);
+        }
+      }
       const last = currentActivity[currentActivity.length - 1];
       const isDuplicate = last &&
         last.phase === activity.phase &&
@@ -736,7 +753,6 @@ export function useChatGeneration({
       const boundedIndex = Math.max(0, Math.min(plan.steps.length - 1, targetIndex));
       const steps = plan.steps.map((step, index) => {
         if (status === "active") {
-          if (index < boundedIndex && step.status !== "skipped") return { ...step, status: "completed" as const };
           if (index === boundedIndex) return { ...step, status: "active" as const };
           if (step.status === "active") return { ...step, status: "pending" as const };
           return step;
@@ -764,7 +780,6 @@ export function useChatGeneration({
     isTypingRef.current = true;
     setIsTyping(true);
     abortControllerRef.current = new AbortController();
-    let fallbackProgressTimer: number | undefined;
     updateResearchMessage({
       researchPlan: currentPlan,
       researchActivity: currentActivity,
@@ -802,15 +817,6 @@ export function useChatGeneration({
         ),
         { pendingResearchIntent: undefined }
       );
-      fallbackProgressTimer = window.setInterval(() => {
-        if (currentResearchStatus === "completed" || currentResearchStatus === "stopped" || currentResearchStatus === "failed") return;
-        const activeIndex = currentPlan.steps.findIndex(step => step.status === "active");
-        const nextIndex = activeIndex < 0 ? 0 : Math.min(currentPlan.steps.length - 1, activeIndex + 1);
-        if (activeIndex >= currentPlan.steps.length - 2) return;
-        currentPlan = applyPlanStep(currentPlan, nextIndex, "active", currentPlan.steps[nextIndex]?.text || currentPlan.currentActivity);
-        updateResearchMessage({ researchPlan: currentPlan });
-      }, 9000);
-
       await streamResearchJob({
         jobId,
         signal: abortControllerRef.current.signal,
@@ -818,8 +824,8 @@ export function useChatGeneration({
           if (event.type === "status") {
             currentResearchStatus = event.status;
             const statusStepIndex =
-              event.status === "searching" ? Math.min(1, currentPlan.steps.length - 1) :
-              event.status === "reading" ? Math.min(2, currentPlan.steps.length - 1) :
+              event.status === "searching" ? 0 :
+              event.status === "reading" ? Math.min(1, currentPlan.steps.length - 1) :
               event.status === "synthesizing" ? currentPlan.steps.length - 1 :
               event.status === "queued" ? 0 :
               -1;
@@ -831,13 +837,24 @@ export function useChatGeneration({
 
           if (event.type === "activity") {
             currentActivity = appendResearchActivity(event.activity);
-            currentPlan = { ...currentPlan, currentActivity: event.activity.title, updatedAt: Date.now() };
+            currentPlan = event.activity.phase === "heartbeat" || event.activity.phase === "debug"
+              ? currentPlan
+              : { ...currentPlan, currentActivity: event.activity.title, updatedAt: Date.now() };
             updateResearchMessage({ researchActivity: currentActivity, researchPlan: currentPlan });
           }
 
           if (event.type === "planStep") {
             currentPlan = applyPlanStep(currentPlan, event.index, event.status, event.message);
-            updateResearchMessage({ researchPlan: currentPlan });
+            const stepText = currentPlan.steps[event.index]?.text || event.message;
+            if (stepText && (event.status === "active" || event.status === "completed")) {
+              currentActivity = appendResearchActivity({
+                phase: event.status === "completed" ? "completed-step" : "step",
+                title: event.status === "completed" ? "Finished research step" : "Working on research step",
+                detail: stepText,
+                timestamp: Date.now(),
+              });
+            }
+            updateResearchMessage({ researchPlan: currentPlan, researchActivity: currentActivity });
           }
 
           if (event.type === "sources") {
@@ -899,9 +916,6 @@ export function useChatGeneration({
       currentPlan = { ...currentPlan, status: isStopped ? "cancelled" : "running", currentActivity: isStopped ? "Research stopped" : "Research failed", updatedAt: Date.now() };
       if (!isStopped) appLogger.error("Deep Research plan run failed", { err: error, chatId, model: requestModel });
     } finally {
-      if (fallbackProgressTimer !== undefined) {
-        window.clearInterval(fallbackProgressTimer);
-      }
       const latestMessages = messagesRef.current.map(message => {
         if (message.id !== messageId) return message;
         const finalContent = currentResearchStatus === "stopped" && (!currentText || isBareSourceText(currentText))
@@ -964,7 +978,7 @@ export function useChatGeneration({
 
     const getPlanProgress = (plan: ResearchPlanRecord) => {
       const completed = plan.steps.filter(step => step.status === "completed").length;
-      const activeBonus = plan.steps.some(step => step.status === "active") ? 0.45 : 0;
+      const activeBonus = plan.steps.some(step => step.status === "active") ? 0.18 : 0;
       return Math.min(96, Math.round(((completed + activeBonus) / Math.max(1, plan.steps.length)) * 100));
     };
     const applyPlanStep = (
@@ -976,7 +990,6 @@ export function useChatGeneration({
       const boundedIndex = Math.max(0, Math.min(plan.steps.length - 1, targetIndex));
       const steps = plan.steps.map((step, index) => {
         if (status === "active") {
-          if (index < boundedIndex && step.status !== "skipped") return { ...step, status: "completed" as const };
           if (index === boundedIndex) return { ...step, status: "active" as const };
           if (step.status === "active") return { ...step, status: "pending" as const };
           return step;
@@ -988,6 +1001,18 @@ export function useChatGeneration({
       return { ...nextPlan, progress: getPlanProgress(nextPlan) };
     };
     const appendResearchActivity = (activity: ResearchActivityRecord) => {
+      if (activity.phase === "heartbeat") {
+        let previousHeartbeatIndex = -1;
+        for (let index = currentActivity.length - 1; index >= 0; index -= 1) {
+          if (currentActivity[index].phase === "heartbeat") {
+            previousHeartbeatIndex = index;
+            break;
+          }
+        }
+        if (previousHeartbeatIndex >= 0) {
+          return currentActivity.map((item, index) => index === previousHeartbeatIndex ? activity : item);
+        }
+      }
       const exists = currentActivity.some(item =>
         item.phase === activity.phase &&
         item.title === activity.title &&
@@ -1004,8 +1029,8 @@ export function useChatGeneration({
       if (event.type === "status") {
         currentResearchStatus = event.status;
         const statusStepIndex =
-          event.status === "searching" ? Math.min(1, currentPlan.steps.length - 1) :
-          event.status === "reading" ? Math.min(2, currentPlan.steps.length - 1) :
+          event.status === "searching" ? 0 :
+          event.status === "reading" ? Math.min(1, currentPlan.steps.length - 1) :
           event.status === "synthesizing" ? currentPlan.steps.length - 1 :
           event.status === "queued" ? 0 :
           -1;
@@ -1017,13 +1042,24 @@ export function useChatGeneration({
 
       if (event.type === "activity") {
         currentActivity = appendResearchActivity(event.activity);
-        currentPlan = { ...currentPlan, currentActivity: event.activity.title, updatedAt: Date.now() };
+        currentPlan = event.activity.phase === "heartbeat" || event.activity.phase === "debug"
+          ? currentPlan
+          : { ...currentPlan, currentActivity: event.activity.title, updatedAt: Date.now() };
         updateResearchMessage({ researchActivity: currentActivity, researchPlan: currentPlan });
       }
 
       if (event.type === "planStep") {
         currentPlan = applyPlanStep(currentPlan, event.index, event.status, event.message);
-        updateResearchMessage({ researchPlan: currentPlan });
+        const stepText = currentPlan.steps[event.index]?.text || event.message;
+        if (stepText && (event.status === "active" || event.status === "completed")) {
+          currentActivity = appendResearchActivity({
+            phase: event.status === "completed" ? "completed-step" : "step",
+            title: event.status === "completed" ? "Finished research step" : "Working on research step",
+            detail: stepText,
+            timestamp: Date.now(),
+          });
+        }
+        updateResearchMessage({ researchPlan: currentPlan, researchActivity: currentActivity });
       }
 
       if (event.type === "sources") {
@@ -1134,13 +1170,35 @@ export function useChatGeneration({
       researchPlan: message.researchPlan ? { ...message.researchPlan, status: "editing", updatedAt: Date.now() } : message.researchPlan,
     }));
     setInput("");
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.scrollIntoView({ block: "nearest" });
+    }, 0);
+  };
+
+  const clearResearchPlanEdit = (messageId?: string) => {
+    const activeMessageId = editingResearchPlanMessageIdRef.current;
+    if (messageId && activeMessageId && messageId !== activeMessageId) return;
+    const targetMessageId = messageId || activeMessageId;
+    editingResearchPlanMessageIdRef.current = null;
+    setInput("");
+    if (!targetMessageId) return;
+    updateMessageById(targetMessageId, message => ({
+      ...message,
+      researchPlan: message.researchPlan?.status === "editing"
+        ? { ...message.researchPlan, status: "draft", updatedAt: Date.now() }
+        : message.researchPlan,
+    }));
   };
 
   const cancelResearchPlan = async (messageId: string) => {
     if (isTypingRef.current) return;
     const chatId = currentChatIdRef.current;
     if (!chatId) return;
+    if (editingResearchPlanMessageIdRef.current === messageId) {
+      editingResearchPlanMessageIdRef.current = null;
+      setInput("");
+    }
     const nextMessages = messagesRef.current.map(message =>
       message.id === messageId && message.researchPlan
         ? { ...message, researchPlan: { ...message.researchPlan, status: "cancelled" as const, updatedAt: Date.now() } }
@@ -1166,6 +1224,39 @@ export function useChatGeneration({
     setInput("");
     abortControllerRef.current = new AbortController();
 
+    const now = Date.now();
+    const visibleAdjustmentMessage = normalizeMessage({
+      role: "user",
+      content: text,
+      researchPlanReference: {
+        title: planMessage.researchPlan.title,
+        messageId,
+      },
+    }, chatId, now);
+    const pendingUpdatedPlanMessage = normalizeMessage({
+      role: "model",
+      content: "I am updating the research plan.",
+      isThinking: true,
+      researchActivity: [
+        { phase: "planning", title: "Updating research plan", detail: text, timestamp: now },
+      ],
+    }, chatId, now + 1);
+    const supersededMessages = currentMessages.map(message =>
+      message.id === messageId && message.researchPlan
+        ? {
+            ...message,
+            researchPlan: {
+              ...message.researchPlan,
+              status: "superseded" as const,
+              currentActivity: "Plan edited",
+              updatedAt: now,
+            },
+          }
+        : message
+    );
+    const pendingMessages = [...supersededMessages, visibleAdjustmentMessage, pendingUpdatedPlanMessage];
+    await persistMessagesSnapshot(chatId, pendingMessages, { pendingResearchIntent: undefined });
+
     try {
       const adjustmentMessage = normalizeMessage({ role: "user", content: `Update this research plan: ${text}` }, chatId);
       const preflight = await runResearchPreflight({
@@ -1185,19 +1276,34 @@ export function useChatGeneration({
         instruction: DEEP_RESEARCH_PREFLIGHT_INSTRUCTION,
       });
       const nextPlan = buildResearchPlan(preflight, planMessage.researchPlan.title);
-      const nextMessages = currentMessages.map(message =>
-        message.id === messageId
+      const completedAt = Date.now();
+      const nextMessages = messagesRef.current.map(message =>
+        message.id === pendingUpdatedPlanMessage.id
           ? {
               ...message,
+              content: preflight.assistantMessage || "",
+              isThinking: false,
               researchPlan: { ...nextPlan, status: "draft" as const },
               researchActivity: [
-                ...(message.researchActivity || []),
-                { phase: "planning", title: "Updated research plan", detail: text, timestamp: Date.now() },
+                ...(planMessage.researchActivity || []),
+                { phase: "planning", title: "Updated research plan", detail: text, timestamp: completedAt },
               ],
             }
           : message
       );
       await persistMessagesSnapshot(chatId, nextMessages, { pendingResearchIntent: undefined });
+    } catch (error) {
+      appLogger.error("Deep Research plan update failed", { err: error, chatId, model: requestModel });
+      const failedMessages = messagesRef.current.map(message =>
+        message.id === pendingUpdatedPlanMessage.id
+          ? {
+              ...message,
+              content: "I couldn't update that research plan. Try a shorter adjustment.",
+              isThinking: false,
+            }
+          : message
+      );
+      await persistMessagesSnapshot(chatId, failedMessages, { pendingResearchIntent: undefined });
     } finally {
       editingResearchPlanMessageIdRef.current = null;
       isTypingRef.current = false;
@@ -1257,6 +1363,7 @@ export function useChatGeneration({
     startResearchPlan,
     resumeResearchJob,
     editResearchPlan,
+    clearResearchPlanEdit,
     cancelResearchPlan,
     handleSubmit,
     stopGeneration,

@@ -12,12 +12,14 @@ interface ResearchActivityPanelProps {
 }
 
 const phaseIcon = (phase: string) => {
-  if (phase === "searching" || phase === "source") return Search;
+  if (phase === "searching" || phase === "source" || phase === "heartbeat") return Search;
   if (phase === "reading" || phase === "comparing") return BookOpen;
   return Sparkles;
 };
 
 export function ResearchActivityPanel({ isOpen, title, plan, activity = [], onClose }: ResearchActivityPanelProps) {
+  const visibleActivity = activity.filter(item => item.phase !== "debug");
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -53,11 +55,11 @@ export function ResearchActivityPanel({ isOpen, title, plan, activity = [], onCl
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               <div className="mb-4 text-[13px] font-semibold text-[var(--privora-muted)]">Research activity</div>
-              {activity.length === 0 ? (
+              {visibleActivity.length === 0 ? (
                 <p className="text-[13px] text-[var(--privora-muted)]">Nothing to show here yet</p>
               ) : (
                 <div className="flex flex-col gap-5">
-                  {activity.map((item, index) => {
+                  {visibleActivity.map((item, index) => {
                     const Icon = phaseIcon(item.phase);
                     return (
                       <div key={`${item.timestamp}-${index}`} className="grid grid-cols-[1rem_1fr] gap-3">

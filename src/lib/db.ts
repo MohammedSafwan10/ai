@@ -17,7 +17,7 @@ export interface ResearchSourceRecord {
   provider?: string;
 }
 
-export type ResearchPlanStatus = "draft" | "editing" | "running" | "completed" | "cancelled";
+export type ResearchPlanStatus = "draft" | "editing" | "superseded" | "running" | "completed" | "cancelled";
 export type ResearchPlanStepStatus = "pending" | "active" | "completed" | "skipped";
 
 export interface ResearchPlanStepRecord {
@@ -70,6 +70,10 @@ export interface ChatMessageRecord {
   researchSources?: ResearchSourceRecord[];
   researchPreflight?: "clarifying";
   researchPlan?: ResearchPlanRecord;
+  researchPlanReference?: {
+    title: string;
+    messageId?: string;
+  };
   researchActivity?: ResearchActivityRecord[];
   researchJobId?: string;
   researchStartedAt?: number;
@@ -132,6 +136,7 @@ export const normalizeMessage = (
   researchSources: message.researchSources,
   researchPreflight: message.researchPreflight,
   researchPlan: message.researchPlan,
+  researchPlanReference: message.researchPlanReference,
   researchActivity: message.researchActivity,
   researchJobId: message.researchJobId,
   researchStartedAt: message.researchStartedAt,

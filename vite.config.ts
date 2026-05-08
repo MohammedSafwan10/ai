@@ -29,6 +29,14 @@ interface ResearchSource {
   provider?: string;
 }
 
+interface ResearchEvidenceNote {
+  source: ResearchSource;
+  title?: string;
+  description?: string;
+  excerpt: string;
+  wordCount: number;
+}
+
 type ResearchPlanStepStatus = 'pending' | 'active' | 'completed' | 'skipped';
 
 interface ResearchActivity {
@@ -139,15 +147,51 @@ const parseCliproxySseEvent = (rawEvent: string) => {
   return {event, dataLines};
 };
 
-const formatResearchPrompt = (body: any) => {
+const formatResearchPrompt = (body: any, gatheredSources: ResearchSource[] = [], evidenceNotes: ResearchEvidenceNote[] = []) => {
+  const prompt = body.plan?.refinedPrompt || body.history?.at?.(-1)?.content || '';
+  const steps = Array.isArray(body.plan?.steps)
+    ? body.plan.steps.map((step: any, index: number) => `${index + 1}. ${typeof step === 'string' ? step : step?.text || ''}`).join('\n')
+    : '';
+  const sourceList = uniqueSources(gatheredSources)
+    .slice(0, 20)
+    .map((source, index) => {
+      const label = source.title?.trim() || getSourceLabel(source);
+      const provider = source.provider ? ` (${source.provider})` : '';
+      return `${index + 1}. ${label}${provider}\n   ${source.url}`;
+    })
+    .join('\n');
+  const evidenceList = evidenceNotes
+    .slice(0, 10)
+    .map((note, index) => {
+      const label = note.title?.trim() || note.source.title?.trim() || getSourceLabel(note.source);
+      const description = note.description ? `\n   Summary: ${note.description}` : '';
+      return `${index + 1}. ${label}\n   URL: ${note.source.url}${description}\n   Extracted evidence:\n   ${note.excerpt}`;
+    })
+    .join('\n\n');
+  return [
+    prompt,
+    steps ? `\nResearch plan:\n${steps}` : '',
+    evidenceList
+      ? `\nPre-read source evidence:\n${evidenceList}\n\nUse this pre-read evidence as the first factual grounding. Still verify uncertain/current claims with provider-native web search when needed.`
+      : '',
+    sourceList
+      ? `\nAlready gathered source candidates:\n${sourceList}\n\nUse these candidates first. Verify important claims with provider-native web search/grounding and add stronger sources only when needed.`
+      : '',
+    '\nReturn a final answer with compact citations and a short source list when source URLs are available.',
+  ].join('\n').trim();
+};
+
+const formatSourceScoutPrompt = (body: any) => {
   const prompt = body.plan?.refinedPrompt || body.history?.at?.(-1)?.content || '';
   const steps = Array.isArray(body.plan?.steps)
     ? body.plan.steps.map((step: any, index: number) => `${index + 1}. ${typeof step === 'string' ? step : step?.text || ''}`).join('\n')
     : '';
   return [
-    prompt,
+    'Find authoritative, relevant web sources before writing the final answer.',
+    'Prefer official product/company pages, primary documentation, reputable reviews, benchmark/testing outlets, and current market/pricing sources when relevant.',
+    'Return a concise list of source titles and full URLs only. Do not write the final answer yet.',
+    prompt ? `\nResearch goal:\n${prompt}` : '',
     steps ? `\nResearch plan:\n${steps}` : '',
-    '\nReturn a final answer with compact citations and a short source list when source URLs are available.',
   ].join('\n').trim();
 };
 
@@ -238,6 +282,209 @@ const collectUrls = (value: unknown, urls = new Set<string>()) => {
 const extractUrlsFromText = (text: string) =>
   Array.from(text.matchAll(/https?:\/\/[^\s)\]}>"']+/g), match => match[0].replace(/[.,;:!?]+$/, ''));
 
+const getSourceLabel = (source: ResearchSource) => {
+  if (source.title?.trim()) return source.title.trim();
+  try {
+    return new URL(source.url).hostname.replace(/^www\./, '');
+  } catch {
+    return source.url;
+  }
+};
+
+const decodeHtmlEntities = (value: string) =>
+  value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
+const stripHtml = (value: string) => decodeHtmlEntities(value.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim());
+
+const extractHtmlTagContent = (html: string, tagName: string) => {
+  const match = html.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+  return match ? stripHtml(match[1]) : undefined;
+};
+
+const extractMetaContent = (html: string, name: string) => {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(`<meta[^>]+(?:name|property)=["']${escapedName}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']${escapedName}["'][^>]*>`, 'i'),
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeHtmlEntities(match[1]).replace(/\s+/g, ' ').trim();
+  }
+  return undefined;
+};
+
+const extractReadableText = (html: string) => {
+  const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] || html;
+  const cleaned = body
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+    .replace(/<header[\s\S]*?<\/header>/gi, ' ')
+    .replace(/<(h[1-3]|p|li|td|th)[^>]*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n');
+  return stripHtml(cleaned)
+    .split(/\n+|(?<=\.)\s{2,}/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(line => line.length >= 35)
+    .filter((line, index, lines) => lines.indexOf(line) === index)
+    .slice(0, 35)
+    .join('\n');
+};
+
+const compactEvidenceExcerpt = (text: string, maxChars = 2_200) => {
+  if (text.length <= maxChars) return text;
+  const clipped = text.slice(0, maxChars);
+  const lastBreak = Math.max(clipped.lastIndexOf('\n'), clipped.lastIndexOf('. '));
+  return `${clipped.slice(0, lastBreak > 900 ? lastBreak + 1 : maxChars).trim()}...`;
+};
+
+const fetchReadableSource = async (source: ResearchSource, parentSignal: AbortSignal): Promise<ResearchEvidenceNote | null> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7_000);
+  const abort = () => controller.abort();
+  parentSignal.addEventListener('abort', abort, {once: true});
+  try {
+    const response = await fetch(source.url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 PrivoraResearch/1.0',
+        Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || '';
+    if (!/(text\/html|application\/xhtml\+xml|text\/plain)/i.test(contentType)) return null;
+    const rawText = await response.text();
+    const title = contentType.includes('text/plain') ? source.title : extractHtmlTagContent(rawText, 'title') || source.title;
+    const description = contentType.includes('text/plain')
+      ? undefined
+      : extractMetaContent(rawText, 'description') || extractMetaContent(rawText, 'og:description');
+    const readableText = contentType.includes('text/plain') ? rawText.replace(/\s+/g, ' ').trim() : extractReadableText(rawText);
+    const excerpt = compactEvidenceExcerpt(readableText);
+    if (excerpt.length < 160) return null;
+    return {
+      source: {...source, title: title || source.title},
+      title,
+      description,
+      excerpt,
+      wordCount: readableText.split(/\s+/).filter(Boolean).length,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal.removeEventListener('abort', abort);
+  }
+};
+
+const resolveDuckDuckGoUrl = (href: string) => {
+  const decodedHref = decodeHtmlEntities(href);
+  try {
+    const parsed = new URL(decodedHref, 'https://duckduckgo.com');
+    const redirected = parsed.searchParams.get('uddg');
+    return redirected ? decodeURIComponent(redirected) : parsed.href;
+  } catch {
+    return decodedHref;
+  }
+};
+
+const extractDuckDuckGoResults = (html: string): ResearchSource[] => {
+  const results: ResearchSource[] = [];
+  const resultPattern = /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(resultPattern)) {
+    const url = resolveDuckDuckGoUrl(match[1]);
+    if (!/^https?:\/\//.test(url) || url.includes('duckduckgo.com')) continue;
+    results.push({
+      title: stripHtml(match[2]),
+      url,
+      provider: 'Direct web scout',
+    });
+    if (results.length >= 6) break;
+  }
+  return results;
+};
+
+const extractBingResults = (html: string): ResearchSource[] => {
+  const results: ResearchSource[] = [];
+  const resultPattern = /<li[^>]+class="[^"]*b_algo[^"]*"[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(resultPattern)) {
+    const url = decodeHtmlEntities(match[1]);
+    if (!/^https?:\/\//.test(url) || url.includes('bing.com')) continue;
+    results.push({
+      title: stripHtml(match[2]),
+      url,
+      provider: 'Direct web scout',
+    });
+    if (results.length >= 6) break;
+  }
+  return results;
+};
+
+const buildDirectSearchQueries = (body: any) => {
+  const title = typeof body.plan?.title === 'string' ? body.plan.title : '';
+  const prompt = typeof body.plan?.refinedPrompt === 'string'
+    ? body.plan.refinedPrompt
+    : typeof body.history?.at?.(-1)?.content === 'string'
+      ? body.history.at(-1).content
+      : '';
+  const stepQueries = Array.isArray(body.plan?.steps)
+    ? body.plan.steps
+        .map((step: any) => typeof step === 'string' ? step : step?.text)
+        .filter((step: unknown): step is string => typeof step === 'string' && step.trim().length > 0)
+        .slice(0, 3)
+    : [];
+  return uniqueSources([
+    {url: `query:${[title, 'official sources'].filter(Boolean).join(' ')}`},
+    {url: `query:${[title, 'current pricing availability'].filter(Boolean).join(' ')}`},
+    ...stepQueries.map(step => ({url: `query:${[title, step].filter(Boolean).join(' ')}`})),
+    {url: `query:${prompt.slice(0, 140)}`},
+  ])
+    .map(item => item.url.replace(/^query:/, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 5);
+};
+
+const fetchDirectSearchResults = async (query: string, engine: 'duckduckgo' | 'bing', signal: AbortSignal): Promise<ResearchSource[]> => {
+  const endpoint = engine === 'duckduckgo'
+    ? `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`
+    : `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  const response = await fetch(endpoint, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 PrivoraResearch/1.0',
+      Accept: 'text/html,application/xhtml+xml',
+    },
+    signal,
+  });
+  if (!response.ok) return [];
+  const html = await response.text();
+  const provider = engine === 'duckduckgo' ? 'DuckDuckGo scout' : 'Bing scout';
+  const results = engine === 'duckduckgo' ? extractDuckDuckGoResults(html) : extractBingResults(html);
+  return results.map(source => ({...source, provider}));
+};
+
+const withTimeoutSignal = async <T>(timeoutMs: number, run: (signal: AbortSignal) => Promise<T>, fallback: T): Promise<T> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await run(controller.signal);
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const MIN_DIRECT_SOURCES_TO_SKIP_PROVIDER_SCOUT = 5;
+
 const getPlanStepText = (plan: any, index: number) => {
   const step = Array.isArray(plan?.steps) ? plan.steps[index] : undefined;
   if (typeof step === 'string') return step;
@@ -257,9 +504,9 @@ const buildTimeLimitedResearchText = (text: string, sources: ResearchSource[]) =
   }
 
   const sourceNote = sources.length > 0
-    ? ` I gathered ${sources.length} source${sources.length === 1 ? '' : 's'}, but the provider did not return a final synthesis before the limit.`
+    ? ` I gathered ${sources.length} source${sources.length === 1 ? '' : 's'}, but the final report was not ready before the limit.`
     : ' No usable sources were returned before the limit.';
-  return `Deep Research reached its time limit before the final synthesis.${sourceNote} Try again with a narrower scope or a longer research window.`;
+  return `Deep Research reached its time limit before the final report was ready.${sourceNote} Try again with a narrower scope or a longer research window.`;
 };
 
 const createProviderResearchRuntime = ({
@@ -280,6 +527,50 @@ const createProviderResearchRuntime = ({
     }, hardTimeoutMs);
     const emitActivity = (phase: string, title: string, detail?: string, source?: ResearchSource) =>
       emit({type: 'activity', activity: {phase, title, detail, source, timestamp: Date.now()}});
+    let activePhase = 'searching';
+    let liveSourceCount = 0;
+    let liveTextLength = 0;
+    let heartbeatCount = 0;
+    const startedAt = Date.now();
+    const emitStatus = (status: ResearchStatus, message: string) => {
+      activePhase =
+        status === 'searching' ? 'searching' :
+        status === 'reading' ? 'reading' :
+        status === 'synthesizing' ? 'synthesizing' :
+        activePhase;
+      emit({type: 'status', status, message});
+    };
+    const emitSourceActivities = (sources: ResearchSource[]) => {
+      sources.slice(0, 20).forEach(source => emitActivity('source', getSourceLabel(source), undefined, source));
+    };
+    const heartbeat = setInterval(() => {
+      if (job.completed || job.cancelled || job.controller.signal.aborted) return;
+      heartbeatCount += 1;
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      if (activePhase === 'searching') {
+        emitActivity(
+          'heartbeat',
+          'Finding sources',
+          liveSourceCount > 0
+            ? `${elapsedSeconds}s elapsed. ${liveSourceCount} source${liveSourceCount === 1 ? '' : 's'} found so far.`
+            : `${elapsedSeconds}s elapsed. Checking fast web results first.`,
+        );
+        return;
+      }
+      if (activePhase === 'reading') {
+        emitActivity(
+          'heartbeat',
+          liveSourceCount > 0 ? `Checking evidence from ${liveSourceCount} sources` : 'Checking web evidence',
+          `${elapsedSeconds}s elapsed. More source links can appear in batches while the report is being prepared.`,
+        );
+        return;
+      }
+      emitActivity(
+        'heartbeat',
+        liveTextLength > 0 ? 'Writing and checking the final report' : 'Preparing the final report',
+        `${elapsedSeconds}s elapsed. ${liveSourceCount} source${liveSourceCount === 1 ? '' : 's'} available.`,
+      );
+    }, 12_000);
     const addTextSources = (
       textDelta: string,
       sources: ResearchSource[],
@@ -291,8 +582,23 @@ const createProviderResearchRuntime = ({
       urls.forEach(url => seenSourceUrls.add(url));
       const nextSources: ResearchSource[] = urls.map(url => ({url, provider}));
       const mergedSources = uniqueSources([...sources, ...nextSources]);
+      liveSourceCount = mergedSources.length;
       emit({type: 'sources', sources: mergedSources});
-      nextSources.slice(0, 6).forEach(source => emitActivity('source', source.title || source.url, undefined, source));
+      emitSourceActivities(nextSources);
+      return mergedSources;
+    };
+    const mergeLiveSources = (
+      sources: ResearchSource[],
+      seenSourceUrls: Set<string>,
+      nextSources: ResearchSource[],
+    ) => {
+      const freshSources = nextSources.filter(source => source.url && !seenSourceUrls.has(source.url));
+      if (freshSources.length === 0) return sources;
+      freshSources.forEach(source => seenSourceUrls.add(source.url));
+      const mergedSources = uniqueSources([...sources, ...freshSources]);
+      liveSourceCount = mergedSources.length;
+      emit({type: 'sources', sources: mergedSources});
+      emitSourceActivities(freshSources);
       return mergedSources;
     };
     const throwIfStopped = () => {
@@ -302,29 +608,135 @@ const createProviderResearchRuntime = ({
     };
 
     try {
+      let didFindSources = false;
+      let sources: ResearchSource[] = [];
+      let evidenceNotes: ResearchEvidenceNote[] = [];
+      const seenSourceUrls = new Set<string>();
+      const enterReadingStage = () => {
+        if (didFindSources) return;
+        didFindSources = true;
+        emit({type: 'planStep', index: 0, status: 'completed'});
+        emit({type: 'planStep', index: 1, status: 'active', message: getPlanStepText(body.plan, 1)});
+        emitStatus('reading', 'Reading and comparing sources');
+        emitActivity('reading', 'Reading and comparing sources');
+      };
+      const readSourceEvidence = async () => {
+        if (evidenceNotes.length > 0 || sources.length === 0) return evidenceNotes;
+        const readableCandidates = uniqueSources(sources)
+          .filter(source => /^https?:\/\//.test(source.url))
+          .slice(0, 8);
+        if (readableCandidates.length === 0) return evidenceNotes;
+
+        const startedReadingAt = Date.now();
+        emitActivity('reading', 'Reading source pages', `Reading ${readableCandidates.length} page${readableCandidates.length === 1 ? '' : 's'} in parallel before writing.`);
+        const settledNotes = await Promise.allSettled(
+          readableCandidates.map(source => fetchReadableSource(source, job.controller.signal))
+        );
+        throwIfStopped();
+        evidenceNotes = settledNotes
+          .filter((result): result is PromiseFulfilledResult<ResearchEvidenceNote | null> => result.status === 'fulfilled')
+          .map(result => result.value)
+          .filter((note): note is ResearchEvidenceNote => Boolean(note))
+          .slice(0, 8);
+
+        const readingSeconds = Math.max(1, Math.round((Date.now() - startedReadingAt) / 1000));
+        if (evidenceNotes.length > 0) {
+          sources = uniqueSources([
+            ...evidenceNotes.map(note => note.source),
+            ...sources,
+          ]);
+          liveSourceCount = sources.length;
+          emit({type: 'sources', sources});
+          emitActivity(
+            'reading',
+            'Source evidence prepared',
+            `${evidenceNotes.length}/${readableCandidates.length} pages read in ${readingSeconds}s.`,
+          );
+          evidenceNotes.slice(0, 5).forEach(note => {
+            emitActivity('source', `Read ${getSourceLabel(note.source)}`, `${note.wordCount} words extracted.`, note.source);
+          });
+        } else {
+          emitActivity('reading', 'Source page reading skipped', `No readable pages returned within ${readingSeconds}s; continuing with web evidence from the research model.`);
+        }
+        return evidenceNotes;
+      };
       emitActivity('planning', 'Research plan accepted', body.plan?.title);
       emit({type: 'planStep', index: 0, status: 'active', message: getPlanStepText(body.plan, 0)});
-      emit({type: 'status', status: 'searching', message: 'Searching the web'});
+      emitStatus('searching', 'Searching the web');
       emitActivity('searching', 'Searching for relevant sources');
       await new Promise(resolve => setTimeout(resolve, 250));
       throwIfStopped();
 
-      emit({type: 'planStep', index: 0, status: 'completed'});
-      emit({type: 'planStep', index: 1, status: 'active', message: getPlanStepText(body.plan, 1)});
-      emit({type: 'status', status: 'reading', message: 'Reading and comparing sources'});
-      emitActivity('reading', 'Reading and comparing sources');
+      emitActivity('searching', 'Scanning the web');
+      const directScoutStartedAt = Date.now();
+      const directQueries = buildDirectSearchQueries(body);
+      const directResults = await Promise.all(
+        directQueries.flatMap(query =>
+          (['duckduckgo', 'bing'] as const).map(engine =>
+            withTimeoutSignal(4_500, signal => fetchDirectSearchResults(query, engine, signal), [])
+          )
+        )
+      );
+      throwIfStopped();
+      const directScoutMs = Date.now() - directScoutStartedAt;
+      const sourceCountBeforeDirectScout = sources.length;
+      sources = mergeLiveSources(sources, seenSourceUrls, directResults.flat().slice(0, 14));
+      if (sources.length > 0) {
+        const freshDirectSources = sources.length - sourceCountBeforeDirectScout;
+        emitActivity(
+          'searching',
+          'Source candidates ready',
+          `${freshDirectSources} candidate${freshDirectSources === 1 ? '' : 's'} from DuckDuckGo/Bing in ${Math.max(1, Math.round(directScoutMs / 1000))}s.`,
+        );
+        enterReadingStage();
+      } else {
+        emitActivity('debug', 'Direct source scout unavailable', 'Continuing with provider-native web search.');
+      }
 
       if (provider === 'gemini') {
         if (!ai) throw new Error('GEMINI_API_KEY is not configured.');
         let text = '';
         let didEnterSynthesis = false;
-        let sources: ResearchSource[] = [];
-        const seenSourceUrls = new Set<string>();
+        if (sources.length < MIN_DIRECT_SOURCES_TO_SKIP_PROVIDER_SCOUT) {
+          emitActivity('debug', 'Provider source scout started');
+          const scoutStream = await ai.models.generateContentStream({
+            model: body.model,
+            contents: [{role: 'user', parts: [{text: formatSourceScoutPrompt(body)}]}],
+            config: {
+              systemInstruction: 'You are a source discovery agent. Use web search grounding and return only source titles and full URLs for the research task.',
+              temperature: 0.1,
+              tools: [{googleSearch: {}}],
+            },
+          });
+
+          for await (const chunk of scoutStream) {
+            throwIfStopped();
+            const groundingSources: ResearchSource[] = (chunk.candidates?.[0]?.groundingMetadata?.groundingChunks || [])
+              .map((chunkItem: any) => chunkItem?.web)
+              .filter(Boolean)
+              .map((web: any) => ({title: web.title, url: web.uri, provider: 'Google Search scout'}))
+              .filter((source: ResearchSource) => Boolean(source.url));
+            const scoutText = (chunk.candidates?.[0]?.content?.parts || [])
+              .filter((part: any) => typeof part.text === 'string')
+              .map((part: any) => part.text)
+              .join('') || chunk.text || '';
+            const textSources: ResearchSource[] = extractUrlsFromText(scoutText).map(url => ({url, provider: 'Google Search scout'}));
+            sources = mergeLiveSources(sources, seenSourceUrls, [...groundingSources, ...textSources]);
+            if (sources.length > 0) enterReadingStage();
+            if (sources.length >= 10) break;
+          }
+        } else {
+          emitActivity('reading', 'Using gathered sources', `${sources.length} source candidate${sources.length === 1 ? '' : 's'} are ready, so Privora skipped an extra source-finding pass.`);
+        }
+
+        await readSourceEvidence();
+        const providerResearchStartedAt = Date.now();
+        emitActivity('synthesizing', 'Writing final answer', `Using ${sources.length} source candidate${sources.length === 1 ? '' : 's'} and ${evidenceNotes.length} page note${evidenceNotes.length === 1 ? '' : 's'}.`);
         const responseStream = await ai.models.generateContentStream({
           model: body.model,
           contents: [
             ...toGeminiResearchContents(body.history || []),
-            {role: 'user', parts: [{text: formatResearchPrompt(body)}]},
+            {role: 'user', parts: [{text: formatResearchPrompt(body, sources, evidenceNotes)}]},
           ],
           config: {
             systemInstruction: body.systemInstruction,
@@ -336,6 +748,8 @@ const createProviderResearchRuntime = ({
             tools: [{googleSearch: {}}],
           },
         });
+        emitStatus('synthesizing', 'Writing final answer');
+        emitActivity('synthesizing', 'Answer stream ready', `Connected in ${Math.max(1, Math.round((Date.now() - providerResearchStartedAt) / 1000))}s. The report will appear after evidence checks finish.`);
 
         for await (const chunk of responseStream) {
           throwIfStopped();
@@ -347,10 +761,8 @@ const createProviderResearchRuntime = ({
             .map((web: any) => ({title: web.title, url: web.uri, provider: 'Google Search'}))
             .filter((source: ResearchSource) => source.url && !seenSourceUrls.has(source.url));
           if (nextSources.length > 0) {
-            nextSources.forEach((source: ResearchSource) => seenSourceUrls.add(source.url));
-            sources = uniqueSources([...sources, ...nextSources]);
-            emit({type: 'sources', sources});
-            nextSources.slice(0, 6).forEach((source: ResearchSource) => emitActivity('source', source.title || source.url, undefined, source));
+            sources = mergeLiveSources(sources, seenSourceUrls, nextSources);
+            enterReadingStage();
           }
 
           const parts = chunk.candidates?.[0]?.content?.parts || [];
@@ -360,26 +772,30 @@ const createProviderResearchRuntime = ({
             .join('') || chunk.text || '';
           if (textDelta) {
             if (!didEnterSynthesis) {
+              if (!didFindSources) {
+                enterReadingStage();
+              }
               emit({type: 'planStep', index: 1, status: 'completed'});
               emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
               emitActivity('comparing', 'Checking source agreement and contradictions');
-              emit({type: 'planStep', index: 2, status: 'completed'});
-              emit({type: 'planStep', index: 3, status: 'active', message: getPlanStepText(body.plan, 3)});
-              emit({type: 'status', status: 'synthesizing', message: 'Synthesizing answer'});
+              emitStatus('synthesizing', 'Synthesizing answer');
               emitActivity('synthesizing', 'Synthesizing cited answer');
               didEnterSynthesis = true;
             }
             sources = addTextSources(textDelta, sources, seenSourceUrls, 'Generated citation');
             text += textDelta;
+            liveTextLength = text.length;
             emit({type: 'text', text});
           }
         }
 
         if (!didEnterSynthesis) {
+              if (!didFindSources) {
+            enterReadingStage();
+          }
           emit({type: 'planStep', index: 1, status: 'completed'});
-          emit({type: 'planStep', index: 2, status: 'completed'});
-          emit({type: 'planStep', index: 3, status: 'active', message: getPlanStepText(body.plan, 3)});
-          emit({type: 'status', status: 'synthesizing', message: 'Synthesizing answer'});
+          emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
+          emitStatus('synthesizing', 'Synthesizing answer');
           emitActivity('synthesizing', 'Synthesizing cited answer');
         }
         (body.plan?.steps || []).forEach((_step: string, index: number) => {
@@ -389,6 +805,92 @@ const createProviderResearchRuntime = ({
         return;
       }
 
+      let text = '';
+      let didEnterSynthesis = false;
+
+      if (sources.length < MIN_DIRECT_SOURCES_TO_SKIP_PROVIDER_SCOUT) {
+      try {
+        emitActivity('debug', 'Provider source scout started');
+        const scoutController = new AbortController();
+        const scoutTimeout = setTimeout(() => scoutController.abort(), 25_000);
+        const abortScout = () => scoutController.abort();
+        job.controller.signal.addEventListener('abort', abortScout, {once: true});
+        const scoutResponse = await fetch(`${cliproxyBaseUrl.replace(/\/$/, '')}/v1/responses`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer dummy-key',
+          },
+          body: JSON.stringify({
+            model: body.model,
+            instructions: [
+              'You are a source discovery agent.',
+              'Use web search. Return only a concise source list with titles and full URLs.',
+              'Prioritize official, primary, reputable, current sources. Do not write the final report.',
+            ].join('\n'),
+            input: [{role: 'user', content: [{type: 'input_text', text: formatSourceScoutPrompt(body)}]}],
+            tools: [{type: 'web_search_preview'}],
+            reasoning: {effort: 'low', summary: 'auto'},
+            stream: true,
+            temperature: 0.1,
+          }),
+          signal: scoutController.signal,
+        });
+
+        if (scoutResponse.ok && scoutResponse.body) {
+          const scoutReader = scoutResponse.body.getReader();
+          const scoutDecoder = new TextDecoder();
+          let scoutBuffer = '';
+          const flushScoutEvent = (rawEvent: string) => {
+            const {event, dataLines} = parseCliproxySseEvent(rawEvent);
+            for (const dataLine of dataLines) {
+              if (!dataLine || dataLine === '[DONE]') continue;
+              try {
+                const data = JSON.parse(dataLine);
+                const structuredUrls = Array.from(collectUrls(data)).map(url => ({url, provider: 'Web search scout'}));
+                const scoutText = [
+                  extractCliproxyStreamTextDelta(event, data),
+                  extractCliproxyStreamFinalText(event, data),
+                  extractCliproxyText(data),
+                ].filter(Boolean).join('\n');
+                const textUrls = extractUrlsFromText(scoutText).map(url => ({url, provider: 'Web search scout'}));
+                sources = mergeLiveSources(sources, seenSourceUrls, [...structuredUrls, ...textUrls]);
+                if (sources.length > 0) enterReadingStage();
+              } catch {
+                const textUrls = extractUrlsFromText(dataLine).map(url => ({url, provider: 'Web search scout'}));
+                sources = mergeLiveSources(sources, seenSourceUrls, textUrls);
+                if (sources.length > 0) enterReadingStage();
+              }
+            }
+          };
+
+          while (sources.length < 12) {
+            throwIfStopped();
+            const {done, value} = await scoutReader.read();
+            if (done) break;
+            scoutBuffer += scoutDecoder.decode(value, {stream: true});
+            const scoutEvents = scoutBuffer.split('\n\n');
+            scoutBuffer = scoutEvents.pop() ?? '';
+            scoutEvents.forEach(flushScoutEvent);
+          }
+          if (scoutBuffer.trim()) flushScoutEvent(scoutBuffer);
+          await scoutReader.cancel().catch(() => undefined);
+        } else {
+          emitActivity('debug', 'Source scout fell back to main research', `Scout returned ${scoutResponse.status}; continuing with provider search.`);
+        }
+        clearTimeout(scoutTimeout);
+        job.controller.signal.removeEventListener('abort', abortScout);
+      } catch (error) {
+        if (job.cancelled || job.controller.signal.aborted) throw error;
+        emitActivity('debug', 'Source scout fell back to main research', 'Continuing with provider search.');
+      }
+      } else {
+        emitActivity('reading', 'Using gathered sources', `${sources.length} source candidate${sources.length === 1 ? '' : 's'} are ready, so Privora skipped an extra source-finding pass.`);
+      }
+
+      await readSourceEvidence();
+      const providerResearchStartedAt = Date.now();
+      emitActivity('synthesizing', 'Writing final answer', `Using ${sources.length} source candidate${sources.length === 1 ? '' : 's'} and ${evidenceNotes.length} page note${evidenceNotes.length === 1 ? '' : 's'}.`);
       const response = await fetch(`${cliproxyBaseUrl.replace(/\/$/, '')}/v1/responses`, {
         method: 'POST',
         headers: {
@@ -400,7 +902,7 @@ const createProviderResearchRuntime = ({
           instructions: body.systemInstruction,
           input: [
             ...toCliproxyResearchInput(body.history || []),
-            {role: 'user', content: [{type: 'input_text', text: formatResearchPrompt(body)}]},
+            {role: 'user', content: [{type: 'input_text', text: formatResearchPrompt(body, sources, evidenceNotes)}]},
           ],
           tools: [{type: 'web_search_preview'}],
           reasoning: {effort: 'medium', summary: 'auto'},
@@ -409,22 +911,20 @@ const createProviderResearchRuntime = ({
         }),
         signal: job.controller.signal,
       });
+      emitStatus('synthesizing', 'Writing final answer');
+      emitActivity('synthesizing', 'Answer stream ready', `Connected in ${Math.max(1, Math.round((Date.now() - providerResearchStartedAt) / 1000))}s. The report will appear after evidence checks finish.`);
 
       if (!response.ok) {
-        throw new Error((await response.text().catch(() => '')) || `CLIProxy research failed with ${response.status}`);
+        throw new Error((await response.text().catch(() => '')) || `Research service failed with ${response.status}`);
       }
 
       if (!response.body) {
-        throw new Error('CLIProxy research response did not include a stream.');
+        throw new Error('Research service did not return a live stream.');
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let text = '';
-      let didEnterSynthesis = false;
-      let sources: ResearchSource[] = [];
-      const seenSourceUrls = new Set<string>();
       const flushCliproxyEvent = (rawEvent: string) => {
         const {event, dataLines} = parseCliproxySseEvent(rawEvent);
         for (const dataLine of dataLines) {
@@ -433,53 +933,60 @@ const createProviderResearchRuntime = ({
             const data = JSON.parse(dataLine);
             const urls = Array.from(collectUrls(data)).filter(url => !seenSourceUrls.has(url));
             if (urls.length > 0) {
-              urls.forEach(url => seenSourceUrls.add(url));
               const nextSources: ResearchSource[] = urls.map(url => ({url, provider: 'Web search'}));
-              sources = uniqueSources([...sources, ...nextSources]);
-              emit({type: 'sources', sources});
-              nextSources.slice(0, 6).forEach(source => emitActivity('source', source.title || source.url, undefined, source));
+              sources = mergeLiveSources(sources, seenSourceUrls, nextSources);
+              enterReadingStage();
             }
 
             const textDelta = extractCliproxyStreamTextDelta(event, data);
             if (textDelta) {
               if (!didEnterSynthesis) {
+                if (!didFindSources) {
+                  enterReadingStage();
+                }
                 emit({type: 'planStep', index: 1, status: 'completed'});
                 emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
                 emitActivity('comparing', 'Checking source agreement and contradictions');
-                emit({type: 'planStep', index: 2, status: 'completed'});
-                emit({type: 'planStep', index: 3, status: 'active', message: getPlanStepText(body.plan, 3)});
-                emit({type: 'status', status: 'synthesizing', message: 'Synthesizing answer'});
+                emitStatus('synthesizing', 'Synthesizing answer');
                 emitActivity('synthesizing', 'Synthesizing cited answer');
                 didEnterSynthesis = true;
               }
               sources = addTextSources(textDelta, sources, seenSourceUrls, 'Generated citation');
               text += textDelta;
+              liveTextLength = text.length;
               emit({type: 'text', text});
             }
 
             const finalText = extractCliproxyStreamFinalText(event, data);
             if (finalText && finalText.length > text.length) {
               if (!didEnterSynthesis) {
+                if (!didFindSources) {
+                  enterReadingStage();
+                }
                 emit({type: 'planStep', index: 1, status: 'completed'});
-                emit({type: 'planStep', index: 2, status: 'completed'});
-                emit({type: 'planStep', index: 3, status: 'active', message: getPlanStepText(body.plan, 3)});
-                emit({type: 'status', status: 'synthesizing', message: 'Synthesizing answer'});
+                emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
+                emitStatus('synthesizing', 'Synthesizing answer');
                 emitActivity('synthesizing', 'Synthesizing cited answer');
                 didEnterSynthesis = true;
               }
               sources = addTextSources(finalText, sources, seenSourceUrls, 'Generated citation');
               text = finalText;
+              liveTextLength = text.length;
               emit({type: 'text', text});
             }
           } catch {
             if (dataLine.startsWith('{')) return;
             if (!didEnterSynthesis) {
-              emit({type: 'status', status: 'synthesizing', message: 'Synthesizing answer'});
+              if (!didFindSources) {
+                enterReadingStage();
+              }
+              emitStatus('synthesizing', 'Synthesizing answer');
               emitActivity('synthesizing', 'Synthesizing cited answer');
               didEnterSynthesis = true;
             }
             text += dataLine;
             sources = addTextSources(dataLine, sources, seenSourceUrls, 'Generated citation');
+            liveTextLength = text.length;
             emit({type: 'text', text});
           }
         }
@@ -499,11 +1006,14 @@ const createProviderResearchRuntime = ({
         try {
           const data = JSON.parse(buffer);
           const urls = Array.from(collectUrls(data)).filter(url => !seenSourceUrls.has(url));
-          urls.forEach(url => seenSourceUrls.add(url));
-          sources = uniqueSources([...sources, ...urls.map(url => ({url, provider: 'Web search'}))]);
+          sources = mergeLiveSources(sources, seenSourceUrls, urls.map(url => ({url, provider: 'Web search'})));
+          if (urls.length > 0) enterReadingStage();
           text ||= extractCliproxyText(data);
           if (text) sources = addTextSources(text, sources, seenSourceUrls, 'Generated citation');
-          if (text) emit({type: 'text', text});
+          if (text) {
+            liveTextLength = text.length;
+            emit({type: 'text', text});
+          }
           if (sources.length > 0) emit({type: 'sources', sources});
         } catch {
           flushCliproxyEvent(buffer);
@@ -511,10 +1021,12 @@ const createProviderResearchRuntime = ({
       }
 
       if (!didEnterSynthesis) {
+        if (!didFindSources) {
+          enterReadingStage();
+        }
         emit({type: 'planStep', index: 1, status: 'completed'});
-        emit({type: 'planStep', index: 2, status: 'completed'});
-        emit({type: 'planStep', index: 3, status: 'active', message: getPlanStepText(body.plan, 3)});
-        emit({type: 'status', status: 'synthesizing', message: 'Synthesizing answer'});
+        emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
+        emitStatus('synthesizing', 'Synthesizing answer');
         emitActivity('synthesizing', 'Synthesizing cited answer');
       }
       (body.plan?.steps || []).forEach((_step: string, index: number) => {
@@ -534,6 +1046,7 @@ const createProviderResearchRuntime = ({
       const message = error instanceof Error ? error.message : 'Research failed.';
       emit({type: 'error', error: message});
     } finally {
+      clearInterval(heartbeat);
       clearTimeout(timeout);
     }
   },
@@ -631,7 +1144,7 @@ const createResearchApiPlugin = ({
           });
 
           if (!response.ok) {
-            throw new Error((await response.text().catch(() => '')) || `CLIProxy preflight failed with ${response.status}`);
+            throw new Error((await response.text().catch(() => '')) || `Research planning failed with ${response.status}`);
           }
 
           text = extractCliproxyText(await response.json());

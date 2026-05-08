@@ -50,6 +50,7 @@ export function ResearchPlanCard({
   const progress = plan.progress ?? Math.min(100, ((completed + activeBonus) / Math.max(1, plan.steps.length)) * 100);
   const isDraft = plan.status === "draft" || plan.status === "editing";
   const isRunning = plan.status === "running";
+  const isSuperseded = plan.status === "superseded";
   const elapsedMs = researchStartedAt
     ? (researchCompletedAt || (isRunning ? now : Date.now())) - researchStartedAt
     : undefined;
@@ -61,10 +62,13 @@ export function ResearchPlanCard({
   }, [isRunning]);
 
   return (
-    <div className="w-full max-w-[38rem] rounded-2xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-4 shadow-sm sm:p-5">
+    <div className={cn(
+      "w-full max-w-[38rem] rounded-2xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-4 shadow-sm sm:p-5",
+      isSuperseded && "relative max-h-64 overflow-hidden opacity-55"
+    )}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <h3 className="min-w-0 text-[17px] font-semibold leading-snug text-[var(--privora-text)] sm:text-[18px]">
-          {plan.title}
+          {isSuperseded ? "Plan edited..." : plan.title}
         </h3>
         <div className="flex shrink-0 items-center gap-2">
           {plan.status === "editing" && (
@@ -72,7 +76,7 @@ export function ResearchPlanCard({
               Editing
             </span>
           )}
-          {onOpenActivity && (
+          {onOpenActivity && !isSuperseded && (
             <button
               type="button"
               onClick={onOpenActivity}
