@@ -1,5 +1,6 @@
 import { useRef, type Dispatch, type FormEvent, type KeyboardEvent, type MutableRefObject, type SetStateAction } from "react";
 import { getModelOption } from "../../../lib/models";
+import { CLIPROXY_IMAGE_MODEL, streamCliproxyImage, type CliproxyImageResult } from "../../../lib/cliproxy/images";
 import { streamCliproxyResponse } from "../../../lib/cliproxy/responses";
 import { generateGeminiTitle, streamGeminiResponse, toGeminiContents } from "../../../lib/gemini/client";
 import { appLogger } from "../../../lib/logger";
@@ -19,11 +20,14 @@ import {
   updateChatMeta,
   type ChatMessageRecord,
   type ChatRecord,
+  type ImageGenerationItemRecord,
+  type ImageGenerationOptionsRecord,
   type PendingResearchIntentRecord,
   type ResearchActivityRecord,
   type ResearchPlanRecord,
   type ResearchPlanStepStatus,
 } from "../../../lib/db";
+import type { ImageSettings } from "../../../lib/settings";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
@@ -33,8 +37,10 @@ interface UseChatGenerationOptions {
   input: string;
   messages: Message[];
   attachments: Attachment[];
+  composerMode: "chat" | "image";
   setInput: Dispatch<SetStateAction<string>>;
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
+  setComposerMode: Dispatch<SetStateAction<"chat" | "image">>;
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setChats: Dispatch<SetStateAction<Chat[]>>;
   setIsTyping: Dispatch<SetStateAction<boolean>>;
@@ -45,6 +51,7 @@ interface UseChatGenerationOptions {
   isThinkingEnabledRef: CurrentRef<boolean>;
   isWebSearchEnabledRef: CurrentRef<boolean>;
   isDeepResearchEnabledRef: CurrentRef<boolean>;
+  imageSettingsRef: CurrentRef<ImageSettings>;
   messagesRef: CurrentRef<Message[]>;
   chatsRef: CurrentRef<Chat[]>;
   abortControllerRef: CurrentRef<AbortController | null>;
@@ -57,8 +64,10 @@ export function useChatGeneration({
   input,
   messages,
   attachments,
+  composerMode,
   setInput,
   setAttachments,
+  setComposerMode,
   setMessages,
   setChats,
   setIsTyping,
@@ -69,6 +78,7 @@ export function useChatGeneration({
   isThinkingEnabledRef,
   isWebSearchEnabledRef,
   isDeepResearchEnabledRef,
+  imageSettingsRef,
   messagesRef,
   chatsRef,
   abortControllerRef,
@@ -78,6 +88,8 @@ export function useChatGeneration({
 }: UseChatGenerationOptions) {
   const researchJobIdRef = useRef<string | null>(null);
   const editingResearchPlanMessageIdRef = useRef<string | null>(null);
+  const composerModeRef = useRef(composerMode);
+  composerModeRef.current = composerMode;
 
   const stopGeneration = () => {
     if (abortControllerRef.current) {
@@ -160,6 +172,88 @@ export function useChatGeneration({
       : currentChat?.title;
   };
 
+  const imageResultToAttachment = (
+    image: CliproxyImageResult,
+    mode: "generate" | "edit",
+    prompt: string,
+    completedAt = Date.now()
+  ): Attachment => {
+    const safePrompt = prompt
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "image";
+    const name = `privora-${mode}-${safePrompt}-${completedAt}.${image.outputFormat || "png"}`;
+    return {
+      base64: image.base64,
+      mimeType: image.mimeType || "image/png",
+      name,
+      size: Math.ceil((image.base64.length * 3) / 4),
+      url: `data:${image.mimeType || "image/png"};base64,${image.base64}`,
+    };
+  };
+
+  const getImageSizeForPreset = (sizePreset: ImageSettings["sizePreset"]) => {
+    if (sizePreset === "square_2k") return "2048x2048";
+    if (sizePreset === "landscape") return "1536x1024";
+    if (sizePreset === "widescreen") return "2048x1152";
+    if (sizePreset === "widescreen_4k") return "3840x2160";
+    if (sizePreset === "portrait") return "1024x1536";
+    if (sizePreset === "story_4k") return "2160x3840";
+    if (sizePreset === "auto") return "auto";
+    return "1024x1024";
+  };
+
+  const isLargeImageSizePreset = (sizePreset: ImageSettings["sizePreset"]) =>
+    sizePreset === "square_2k" ||
+    sizePreset === "widescreen_4k" ||
+    sizePreset === "story_4k" ||
+    sizePreset === "auto";
+
+  const getImageGenerationOptions = (): ImageGenerationOptionsRecord => {
+    const settings = imageSettingsRef.current;
+    const count = isLargeImageSizePreset(settings.sizePreset) ? 1 : settings.count;
+    return {
+      sizePreset: settings.sizePreset,
+      size: getImageSizeForPreset(settings.sizePreset),
+      quality: settings.quality,
+      count,
+      partialImages: settings.partialImages,
+      outputFormat: settings.outputFormat,
+    };
+  };
+
+  const shouldRunImageRequestsIndividually = (options: ImageGenerationOptionsRecord) =>
+    options.count > 1 && isLargeImageSizePreset(options.sizePreset);
+
+  const getCliproxyFailureMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/auth_unavailable|no auth available/i.test(message)) {
+      return "The local AI connection is signed out for this model. Open CLIProxy, refresh/sign in, then retry.";
+    }
+    if (/disable-image-generation|image generation is disabled/i.test(message)) {
+      return "Image generation is disabled in the local AI connection. Enable image generation there, then retry.";
+    }
+    return "I could not reach the local AI connection at the moment. Make sure CLIProxy is running on http://127.0.0.1:8317.";
+  };
+
+  const getImageGenerationFailureMessage = (error: unknown, options: ImageGenerationOptionsRecord) => {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/stream error|INTERNAL_ERROR|received from peer/i.test(message)) {
+      return isLargeImageSizePreset(options.sizePreset)
+        ? "The image stream dropped while creating a large image. Try the 1536x1024 or 1024x1536 size for a faster, steadier run."
+        : "The image stream dropped before an image was returned. Try again in a moment.";
+    }
+    if (/auth_unavailable|no auth available/i.test(message)) {
+      return "The local AI connection is signed out. Open CLIProxy, refresh/sign in, then retry.";
+    }
+    if (/disable-image-generation|image generation is disabled/i.test(message)) {
+      return "Image generation is disabled in the local AI connection. Enable it there, then retry.";
+    }
+    return message || "Image generation failed. Try again in a moment.";
+  };
+
   const getReadyResearchHistory = (history: Message[], displayedUserMessage: Message, refinedPrompt?: string) => {
     const prompt = refinedPrompt?.trim();
     if (!prompt) return history;
@@ -213,6 +307,8 @@ export function useChatGeneration({
 
     const currentAttachments = normalizeAttachmentUrls(customAttachments || attachments);
     if (!text && currentAttachments.length === 0) return;
+    const requestComposerMode = composerModeRef.current;
+    const requestIsImageMode = requestComposerMode === "image";
     const requestModel = selectedModelRef.current;
     const requestProvider = getModelOption(requestModel)?.provider;
     const requestIsCliproxy = requestProvider === "cliproxy";
@@ -224,8 +320,289 @@ export function useChatGeneration({
       styleId: requestStyle,
       provider: requestProvider,
       webSearchEnabled: requestWebSearchEnabled,
-      deepResearchEnabled: requestDeepResearchEnabled,
+      deepResearchEnabled: requestIsImageMode ? false : requestDeepResearchEnabled,
     });
+
+    if (requestIsImageMode) {
+      if (!text.trim()) {
+        alert("Describe the image you want Privora to create or edit.");
+        return;
+      }
+
+      const imageAttachments = currentAttachments.filter(attachment => attachment.mimeType.startsWith("image/"));
+      if (currentAttachments.length !== imageAttachments.length) {
+        alert("Image mode only supports image attachments for editing. Remove other files first.");
+        return;
+      }
+
+      const imageMode: "generate" | "edit" = imageAttachments.length > 0 ? "edit" : "generate";
+      const startedAt = Date.now();
+      const imageOptions = getImageGenerationOptions();
+      const imageItems: ImageGenerationItemRecord[] = Array.from({ length: imageOptions.count }, (_, index) => ({
+        id: `${startedAt}-${index}`,
+        status: "queued",
+        outputFormat: imageOptions.outputFormat,
+      }));
+      appLogger.info("Image generation started", {
+        chatId,
+        mode: imageMode,
+        model: CLIPROXY_IMAGE_MODEL,
+        sourceImageCount: imageAttachments.length,
+        imageCount: imageOptions.count,
+        size: imageOptions.size,
+        quality: imageOptions.quality,
+        promptLength: text.length,
+      });
+
+      isTypingRef.current = true;
+      setInput("");
+      setAttachments([]);
+      setIsTyping(true);
+      shouldAutoScrollRef.current = isNearChatBottom();
+      abortControllerRef.current = new AbortController();
+
+      const userMessage = normalizeMessage(
+        { role: "user", content: text, attachments: currentAttachments.length > 0 ? currentAttachments : undefined },
+        chatId
+      );
+      const newHistory = [...currentHistory, userMessage];
+      const pendingModelMessage = normalizeMessage(
+        {
+          role: "model",
+          content: "",
+          isThinking: false,
+          imageGeneration: {
+            status: "queued",
+            mode: imageMode,
+            prompt: text,
+            model: CLIPROXY_IMAGE_MODEL,
+            options: imageOptions,
+            items: imageItems,
+            startedAt,
+            outputFormat: imageOptions.outputFormat,
+          },
+        },
+        chatId,
+        Date.now() + 1
+      );
+      const pendingMessages: Message[] = [...newHistory, pendingModelMessage];
+      setMessages(pendingMessages);
+      void syncChatMessages(chatId, pendingMessages).catch((error) => {
+        appLogger.error("Pending image generation save failed", { err: error, chatId });
+      });
+
+      const completedAttachments: Array<Attachment | undefined> = Array.from({ length: imageOptions.count });
+      let latestImageItems = imageItems;
+
+      const updateImageGenerationMessage = (updater: (items: ImageGenerationItemRecord[]) => ImageGenerationItemRecord[], patch: Partial<Message["imageGeneration"]> = {}) => {
+        updateMessageById(pendingModelMessage.id, message => {
+          const previousGeneration = message.imageGeneration || pendingModelMessage.imageGeneration!;
+          const previousItems = previousGeneration.items?.length ? previousGeneration.items : imageItems;
+          const nextItems = updater(previousItems);
+          latestImageItems = nextItems;
+          return {
+            ...message,
+            imageGeneration: {
+              ...previousGeneration,
+              ...patch,
+              items: nextItems,
+            },
+          };
+        });
+      };
+
+      const updateImageItem = (index: number, patch: Partial<ImageGenerationItemRecord>, generationPatch: Partial<Message["imageGeneration"]> = {}) => {
+        const safeIndex = Math.max(0, Math.min(imageOptions.count - 1, index));
+        updateImageGenerationMessage(items =>
+          items.map((item, itemIndex) => itemIndex === safeIndex ? { ...item, ...patch } : item),
+          generationPatch
+        );
+      };
+
+      const markQueuedItemsGenerating = () => {
+        updateImageGenerationMessage(items =>
+          items.map(item => item.status === "queued" ? { ...item, status: "generating" as const } : item),
+          { status: "generating" }
+        );
+      };
+
+      const runImageStream = async (count: 1 | 2 | 3 | 4, itemOffset = 0) => {
+        const requestOptions = { ...imageOptions, count };
+        await streamCliproxyImage({
+          mode: imageMode,
+          prompt: text,
+          images: imageAttachments,
+          options: requestOptions,
+          signal: abortControllerRef.current!.signal,
+          onPartialImage: (image, imageIndex) => {
+            updateImageItem(itemOffset + imageIndex, {
+              status: "generating",
+              partialImageBase64: image.base64,
+              outputFormat: image.outputFormat,
+            }, { status: "generating", partialImageBase64: image.base64, outputFormat: image.outputFormat });
+          },
+          onCompletedImage: (image, imageIndex) => {
+            const itemIndex = itemOffset + imageIndex;
+            const completedAttachment = imageResultToAttachment(image, imageMode, text, Date.now() + itemIndex);
+            completedAttachments[itemIndex] = completedAttachment;
+            updateImageItem(itemIndex, {
+              status: "completed",
+              outputFormat: image.outputFormat,
+              attachmentName: completedAttachment.name,
+              completedAt: Date.now(),
+            }, { status: "generating", outputFormat: image.outputFormat });
+            updateMessageById(pendingModelMessage.id, message => ({
+              ...message,
+              attachments: completedAttachments.filter((attachment): attachment is Attachment => Boolean(attachment)),
+            }));
+          },
+        });
+      };
+
+      const runParallelSingleImageStreams = async () => {
+        await Promise.allSettled(
+          Array.from({ length: imageOptions.count }, async (_, index) => {
+            await runImageStream(1, index);
+          })
+        );
+      };
+
+      const runSequentialSingleImageStreams = async () => {
+        for (let index = 0; index < imageOptions.count; index += 1) {
+          if (abortControllerRef.current?.signal.aborted) break;
+          await runImageStream(1, index);
+        }
+      };
+
+      try {
+        markQueuedItemsGenerating();
+        if (imageMode === "edit" && imageOptions.count > 1) {
+          await runParallelSingleImageStreams();
+        } else if (shouldRunImageRequestsIndividually(imageOptions)) {
+          await runSequentialSingleImageStreams();
+        } else {
+          try {
+            await runImageStream(imageOptions.count);
+          } catch (error: any) {
+            const canFallbackToParallel =
+              imageOptions.count > 1 &&
+              completedAttachments.filter(Boolean).length === 0 &&
+              !abortControllerRef.current?.signal.aborted &&
+              /(\bn\b|multiple|unsupported|invalid|unknown parameter|unrecognized|not supported)/i.test(error?.message || "");
+            if (!canFallbackToParallel) throw error;
+
+            appLogger.warn("Image batch request failed, falling back to parallel single-image requests", {
+              err: error,
+              chatId,
+              imageCount: imageOptions.count,
+            });
+            await runParallelSingleImageStreams();
+          }
+        }
+
+        if (completedAttachments.filter(Boolean).length === 0 && imageOptions.count > 1 && !abortControllerRef.current?.signal.aborted) {
+          appLogger.warn("Image batch returned no images, retrying as single-image requests", {
+            chatId,
+            imageCount: imageOptions.count,
+            size: imageOptions.size,
+          });
+          await runSequentialSingleImageStreams();
+        }
+
+        if (completedAttachments.filter(Boolean).length === 0) {
+          throw new Error("The local image generator finished without returning an image. Try a smaller size or try again.");
+        }
+
+        const completedAt = Date.now();
+        const completedOutputFormat = completedAttachments.find(Boolean)?.mimeType === "image/webp"
+          ? "webp"
+          : completedAttachments.find(Boolean)?.mimeType === "image/jpeg"
+            ? "jpeg"
+            : "png";
+        const finalImageGeneration = {
+          ...pendingModelMessage.imageGeneration!,
+          status: "completed" as const,
+          completedAt,
+          outputFormat: completedOutputFormat,
+          items: latestImageItems.map((item, index) => ({
+            ...item,
+            status: completedAttachments[index] ? "completed" as const : "failed" as const,
+            attachmentName: completedAttachments[index]?.name,
+            completedAt: completedAttachments[index] ? completedAt : undefined,
+            error: completedAttachments[index] ? undefined : "No image was returned for this slot.",
+          })),
+        };
+        const currentChat = chatsRef.current.find(c => c.id === chatId);
+        const title =
+          currentChat?.title === "New Conversation"
+            ? text.slice(0, 30) + (text.length > 30 ? "..." : "")
+            : currentChat?.title;
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            attachments: completedAttachments.filter((attachment): attachment is Attachment => Boolean(attachment)),
+            imageGeneration: finalImageGeneration,
+          },
+        ];
+        await persistFinalGeneration(chatId, finalMessages, title ? { title } : {});
+        appLogger.info("Image generation completed", {
+          chatId,
+          mode: imageMode,
+          model: CLIPROXY_IMAGE_MODEL,
+          durationMs: completedAt - startedAt,
+          imageCount: completedAttachments.filter(Boolean).length,
+        });
+      } catch (error: any) {
+        const isStopped = error?.name === "AbortError" || abortControllerRef.current?.signal.aborted;
+        const completedAt = Date.now();
+        const finishedAttachments = completedAttachments.filter((attachment): attachment is Attachment => Boolean(attachment));
+        const friendlyImageError = isStopped ? undefined : getImageGenerationFailureMessage(error, imageOptions);
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            attachments: finishedAttachments.length > 0 ? finishedAttachments : undefined,
+            imageGeneration: {
+              ...pendingModelMessage.imageGeneration!,
+              status: isStopped ? "stopped" : "failed",
+              items: latestImageItems.map((item, index) => ({
+                ...item,
+                status: completedAttachments[index] ? "completed" as const : isStopped ? "stopped" as const : "failed" as const,
+                attachmentName: completedAttachments[index]?.name,
+                completedAt: completedAttachments[index] ? completedAt : undefined,
+                error: completedAttachments[index] || isStopped ? undefined : friendlyImageError,
+              })),
+              completedAt,
+              error: friendlyImageError,
+            },
+          },
+        ];
+        if (isStopped) {
+          appLogger.info("Image generation stopped", {
+            chatId,
+            mode: imageMode,
+            model: CLIPROXY_IMAGE_MODEL,
+            durationMs: completedAt - startedAt,
+          });
+        } else {
+          appLogger.error("Image generation failed", {
+            err: error,
+            chatId,
+            mode: imageMode,
+            model: CLIPROXY_IMAGE_MODEL,
+            durationMs: completedAt - startedAt,
+          });
+        }
+        await persistFinalGeneration(chatId, finalMessages);
+      } finally {
+        isTypingRef.current = false;
+        setIsTyping(false);
+        abortControllerRef.current = null;
+      }
+
+      return;
+    }
 
     if (requestIsCliproxy) {
       const validationError = validateCliproxyAttachments(currentAttachments);
@@ -467,7 +844,7 @@ export function useChatGeneration({
         });
       } catch (error: any) {
         const stoppedMessage = currentText || currentThought ? "" : "Generation stopped.";
-        const errorMessage = "I could not reach CLIProxy at the moment. Make sure `cliproxy` is running on http://127.0.0.1:8317.";
+        const errorMessage = getCliproxyFailureMessage(error);
         const finalMessages: Message[] = [
           ...newHistory,
           {
@@ -676,6 +1053,21 @@ export function useChatGeneration({
     window.setTimeout(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(msg.content.length, msg.content.length);
+    }, 0);
+  };
+
+  const handleEditGeneratedImage = (attachment: Attachment, prompt?: string) => {
+    if (isTypingRef.current) return;
+    composerModeRef.current = "image";
+    setComposerMode("image");
+    setAttachments([attachment]);
+    setInput(prompt ? `Edit this image: ${prompt}` : "");
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      if (prompt) {
+        const valueLength = textareaRef.current?.value.length || 0;
+        textareaRef.current?.setSelectionRange(valueLength, valueLength);
+      }
     }, 0);
   };
 
@@ -1328,6 +1720,10 @@ export function useChatGeneration({
       const prevMsg = currentMessages[idx - 1];
       if (prevMsg && prevMsg.role === "user") {
         const previousMessages = currentMessages.slice(0, idx - 1);
+        if (msg.imageGeneration) {
+          composerModeRef.current = "image";
+          setComposerMode("image");
+        }
         await syncCurrentChatMessages(previousMessages);
         await sendMessage(prevMsg.content, previousMessages, prevMsg.attachments);
       }
@@ -1358,6 +1754,7 @@ export function useChatGeneration({
 
   return {
     handleEditMessage,
+    handleEditGeneratedImage,
     handleKeyDown,
     handleRetryMessage,
     startResearchPlan,

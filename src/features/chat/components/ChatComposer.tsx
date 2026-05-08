@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject } from "react";
-import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, Globe, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
+import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, Globe, ImagePlus, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   CLIPROXY_ATTACHMENT_ACCEPT,
@@ -15,6 +15,7 @@ import {
   modelOptions,
 } from "../../../lib/models";
 import { getResponseStyle, responseStyleOptions, type ResponseStyleId } from "../../../lib/prompt";
+import type { ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
 
 
 
@@ -27,6 +28,8 @@ interface ChatComposerProps {
   isThinkingEnabled: boolean;
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
+  composerMode: "chat" | "image";
+  imageSettings: ImageSettings;
   researchEditContext?: {
     title: string;
   };
@@ -41,6 +44,8 @@ interface ChatComposerProps {
   onToggleThinking: () => void;
   onToggleWebSearch: () => void;
   onToggleDeepResearch: () => void;
+  onSelectComposerMode: (mode: "chat" | "image") => void;
+  onImageSettingsChange: (settings: ImageSettings) => void;
   onSelectModel: (modelId: string) => void;
   onSelectStyle: (styleId: ResponseStyleId) => void;
   onStopGeneration: () => void;
@@ -57,6 +62,8 @@ export function ChatComposer({
   isThinkingEnabled,
   isWebSearchEnabled,
   isDeepResearchEnabled,
+  composerMode,
+  imageSettings,
   researchEditContext,
   textareaRef,
   fileInputRef,
@@ -69,6 +76,8 @@ export function ChatComposer({
   onToggleThinking,
   onToggleWebSearch,
   onToggleDeepResearch,
+  onSelectComposerMode,
+  onImageSettingsChange,
   onSelectModel,
   onSelectStyle,
   onStopGeneration,
@@ -78,6 +87,7 @@ export function ChatComposer({
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [isStyleDropdownOpen, setIsStyleDropdownOpen] = useState(false);
+  const [isImageOptionsOpen, setIsImageOptionsOpen] = useState(false);
   const selectedModelOption = getModelOption(selectedModel);
   const selectedModelLabel = getModelLabel(selectedModel);
   const selectedStyleOption = getResponseStyle(selectedStyle);
@@ -88,12 +98,15 @@ export function ChatComposer({
   const selectedModelIsGemini = isGeminiModel(selectedModel);
   const selectedModelIsCliproxy = isCliproxyModel(selectedModel);
   const settingsDisabled = isTyping;
+  const isImageMode = composerMode === "image";
+  const hasImageAttachment = attachments.some(attachment => attachment.mimeType.startsWith("image/"));
 
   useEffect(() => {
     if (!settingsDisabled) return;
     setIsAddMenuOpen(false);
     setIsModelDropdownOpen(false);
     setIsStyleDropdownOpen(false);
+    setIsImageOptionsOpen(false);
   }, [settingsDisabled]);
 
   const handleSelectModel = (modelId: string) => {
@@ -114,6 +127,31 @@ export function ChatComposer({
   const styleMenuPositionClass = isLanding
     ? "absolute top-0 left-[calc(100%+0.5rem)] max-[639px]:left-0 max-[639px]:top-[calc(100%+0.5rem)]"
     : "absolute top-0 left-[calc(100%+0.5rem)] max-[560px]:bottom-[calc(100%+0.5rem)] max-[560px]:left-0 max-[560px]:top-auto";
+  const imageSizeOptions: Array<{ id: ImageSizePreset; label: string; detail: string }> = [
+    { id: "square", label: "1:1", detail: "1024" },
+    { id: "square_2k", label: "1:1 2K", detail: "2048" },
+    { id: "landscape", label: "3:2", detail: "1536x1024" },
+    { id: "widescreen", label: "16:9", detail: "2048x1152" },
+    { id: "widescreen_4k", label: "16:9 4K", detail: "3840x2160" },
+    { id: "portrait", label: "2:3", detail: "1024x1536" },
+    { id: "story_4k", label: "9:16", detail: "2160x3840" },
+    { id: "auto", label: "Auto", detail: "Best fit" },
+  ];
+  const largeImageSizePresets: ImageSizePreset[] = ["square_2k", "widescreen_4k", "story_4k", "auto"];
+  const isLargeImageSizePreset = (sizePreset: ImageSizePreset) => largeImageSizePresets.includes(sizePreset);
+  const imageSizeLabel = imageSizeOptions.find(option => option.id === imageSettings.sizePreset)?.label || "1:1";
+  const qualityLabel = imageSettings.quality[0].toUpperCase() + imageSettings.quality.slice(1);
+  const updateImageSettings = (patch: Partial<ImageSettings>) => {
+    const nextSizePreset = patch.sizePreset || imageSettings.sizePreset;
+    const nextCount = patch.count || imageSettings.count;
+    onImageSettingsChange({
+      ...imageSettings,
+      ...patch,
+      count: isLargeImageSizePreset(nextSizePreset) && nextCount > 1 ? 1 : nextCount,
+      partialImages: 0,
+      outputFormat: "png",
+    });
+  };
 
   return (
     <motion.footer
@@ -192,7 +230,15 @@ export function ChatComposer({
                 textareaRef.current?.scrollIntoView({ block: "nearest" });
               }, 250);
             }}
-            placeholder={researchEditContext ? "Follow up with questions or adjustments" : "How can I help you today?"}
+            placeholder={
+              isImageMode
+                ? hasImageAttachment
+                  ? "Describe how to edit this image"
+                  : "Describe the image to create"
+                : researchEditContext
+                  ? "Follow up with questions or adjustments"
+                  : "How can I help you today?"
+            }
             className="w-full max-h-48 min-h-[52px] sm:min-h-[56px] text-[15px] bg-transparent text-[var(--privora-text)] placeholder-[var(--privora-muted)] px-4 pt-4 outline-none resize-none leading-relaxed transition-colors duration-500 overflow-y-auto"
             rows={1}
           />
@@ -235,6 +281,20 @@ export function ChatComposer({
                       </button>
                       <button
                         type="button"
+                        onClick={() => {
+                          onSelectComposerMode(isImageMode ? "chat" : "image");
+                          setIsAddMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isImageMode ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <ImagePlus className={`w-4 h-4 ${isImageMode ? "opacity-100" : "opacity-70"}`} />
+                          <span className="font-medium leading-none">Create image</span>
+                        </div>
+                        {isImageMode && <Check className="h-3.5 w-3.5 opacity-70" />}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setIsAddMenuOpen(false)}
                         className="w-full text-left px-3 py-2 flex items-center gap-3 text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors text-[var(--privora-text)]"
                       >
@@ -272,29 +332,34 @@ export function ChatComposer({
                         <Workflow className="w-4 h-4 opacity-70" />
                         <span className="font-medium leading-none">Add connectors</span>
                       </button>
-                      <div className="my-1.5 border-t border-[var(--privora-border)]/50" />
-                      <button
-                        type="button"
-                        onClick={onToggleWebSearch}
-                        className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isWebSearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Globe className={`w-4 h-4 ${isWebSearchEnabled ? "opacity-100" : "opacity-70"}`} />
-                          <span className="font-medium leading-none">Web search</span>
-                        </div>
-                        {isWebSearchEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onToggleDeepResearch}
-                        className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isDeepResearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Microscope className={`w-4 h-4 ${isDeepResearchEnabled ? "opacity-100" : "opacity-70"}`} />
-                          <span className="font-medium leading-none">Deep research</span>
-                        </div>
-                        {isDeepResearchEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
-                      </button>
+                      {!isImageMode && (
+                      <>
+                        <div className="my-1.5 border-t border-[var(--privora-border)]/50" />
+                        <button
+                          type="button"
+                          onClick={onToggleWebSearch}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isWebSearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Globe className={`w-4 h-4 ${isWebSearchEnabled ? "opacity-100" : "opacity-70"}`} />
+                            <span className="font-medium leading-none">Web search</span>
+                          </div>
+                          {isWebSearchEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onToggleDeepResearch}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isDeepResearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Microscope className={`w-4 h-4 ${isDeepResearchEnabled ? "opacity-100" : "opacity-70"}`} />
+                            <span className="font-medium leading-none">Deep research</span>
+                          </div>
+                          {isDeepResearchEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                        </button>
+                      </>
+                      )}
+                      {!isImageMode && (
                       <div>
                         <button
                           type="button"
@@ -354,6 +419,7 @@ export function ChatComposer({
                           )}
                         </AnimatePresence>
                       </div>
+                      )}
                     </motion.div>
                   </>
                 )}
@@ -363,22 +429,125 @@ export function ChatComposer({
             <input
               type="file"
               multiple
-              accept={selectedModelIsCliproxy ? CLIPROXY_ATTACHMENT_ACCEPT : GEMINI_ATTACHMENT_ACCEPT}
+              accept={isImageMode ? "image/*" : selectedModelIsCliproxy ? CLIPROXY_ATTACHMENT_ACCEPT : GEMINI_ATTACHMENT_ACCEPT}
               ref={fileInputRef}
               onChange={onFileSelect}
               className="hidden"
             />
 
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-1.5 relative">
-              {isDeepResearchEnabled && (
+              {isDeepResearchEnabled && !isImageMode && (
                 <span className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-user-bubble)] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-text)]">
                   <Microscope className="h-3.5 w-3.5" />
                   Deep Research
                 </span>
               )}
+              {isImageMode && (
+                <button
+                  type="button"
+                  disabled={settingsDisabled}
+                  onClick={() => onSelectComposerMode("chat")}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-user-bubble)] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/10 disabled:opacity-45"
+                  title="Image mode uses gpt-image-2"
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  Create image
+                </button>
+              )}
+              {isImageMode && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    disabled={settingsDisabled}
+                    onClick={() => setIsImageOptionsOpen(!isImageOptionsOpen)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-text)]/[0.04] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-muted)] transition-colors hover:bg-[var(--privora-text)]/10 hover:text-[var(--privora-text)] disabled:opacity-45"
+                    title="Image options"
+                  >
+                    <span>{imageSizeLabel}</span>
+                    <span className="text-[var(--privora-border)]">·</span>
+                    <span>{qualityLabel}</span>
+                    <span className="text-[var(--privora-border)]">·</span>
+                    <span>{imageSettings.count}</span>
+                  </button>
+
+                  <AnimatePresence>
+                    {isImageOptionsOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-40"
+                          onClick={() => setIsImageOptionsOpen(false)}
+                        />
+                        <motion.div
+                          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                          transition={{ duration: 0.14 }}
+                          className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-2 shadow-[var(--privora-shadow)]"
+                        >
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                              {imageSizeOptions.map((option) => (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => updateImageSettings({ sizePreset: option.id })}
+                                  className={`min-h-[3.25rem] rounded-lg px-2 py-2 text-center transition-colors ${
+                                    imageSettings.sizePreset === option.id
+                                      ? "bg-[var(--privora-user-bubble)] text-[var(--privora-text)]"
+                                      : "text-[var(--privora-muted)] hover:bg-[var(--privora-user-bubble)] hover:text-[var(--privora-text)]"
+                                  }`}
+                                >
+                                  <span className="block text-[12px] font-semibold leading-none">{option.label}</span>
+                                  <span className="mt-1 block truncate text-[10px] font-medium opacity-70">{option.detail}</span>
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-1">
+                              {(["low", "medium", "high"] as const).map((quality) => (
+                                <button
+                                  key={quality}
+                                  type="button"
+                                  onClick={() => updateImageSettings({ quality })}
+                                  className={`rounded-lg px-2 py-2 text-[12px] font-medium capitalize transition-colors ${
+                                    imageSettings.quality === quality
+                                      ? "bg-[var(--privora-user-bubble)] text-[var(--privora-text)]"
+                                      : "text-[var(--privora-muted)] hover:bg-[var(--privora-user-bubble)] hover:text-[var(--privora-text)]"
+                                  }`}
+                                >
+                                  {quality}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="grid grid-cols-4 gap-1">
+                              {([1, 2, 3, 4] as ImageCount[]).map((count) => (
+                                <button
+                                  key={count}
+                                  type="button"
+                                  disabled={count > 1 && isLargeImageSizePreset(imageSettings.sizePreset)}
+                                  onClick={() => updateImageSettings({ count })}
+                                  className={`rounded-lg px-2 py-2 text-[12px] font-medium transition-colors ${
+                                    imageSettings.count === count
+                                      ? "bg-[var(--privora-user-bubble)] text-[var(--privora-text)]"
+                                      : "text-[var(--privora-muted)] hover:bg-[var(--privora-user-bubble)] hover:text-[var(--privora-text)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[var(--privora-muted)]"
+                                  }`}
+                                  title={count > 1 && isLargeImageSizePreset(imageSettings.sizePreset) ? "Large image sizes generate one image at a time." : undefined}
+                                >
+                                  {count}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
               <button
                 type="button"
-                disabled={settingsDisabled}
+                disabled={settingsDisabled || isImageMode}
                 onClick={onToggleThinking}
                 className={`shrink-0 px-2 py-1.5 flex items-center gap-1.5 text-[12px] sm:text-[13px] font-sans rounded-md transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
                   isThinkingEnabled
@@ -398,6 +567,12 @@ export function ChatComposer({
               </button>
 
               <div className="relative min-w-0">
+                {isImageMode ? (
+                  <span className="min-w-0 max-w-[9.5rem] sm:max-w-none text-[12px] sm:text-[13px] px-2 py-1.5 flex items-center gap-1.5 font-sans rounded-md text-[var(--privora-muted)] bg-[var(--privora-text)]/[0.04]">
+                    <span className="min-w-0 truncate">gpt-image-2</span>
+                  </span>
+                ) : (
+                <>
                 <button
                   type="button"
                   disabled={settingsDisabled}
@@ -449,6 +624,8 @@ export function ChatComposer({
                     </>
                   )}
                 </AnimatePresence>
+                </>
+                )}
               </div>
 
               <AnimatePresence mode="popLayout">

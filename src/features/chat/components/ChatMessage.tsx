@@ -3,10 +3,11 @@ import { cn } from "../../../lib/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { Copy, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3, CornerDownRight } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { ImageGenerationCard } from "./ImageGenerationCard";
 import { ResearchPlanCard } from "./ResearchPlanCard";
 import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
-import type { ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
+import type { ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 
 interface Attachment {
   url: string;
@@ -33,6 +34,7 @@ interface ChatMessageProps {
   researchStartedAt?: number;
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
+  imageGeneration?: ImageGenerationRecord;
   isTyping?: boolean;
   messageIndex?: number;
   messageCount?: number;
@@ -43,6 +45,7 @@ interface ChatMessageProps {
   onCancelResearchPlan?: () => void;
   onStopResearchPlan?: () => void;
   onOpenResearchActivity?: () => void;
+  onEditGeneratedImage?: (attachment: Attachment) => void;
   attachments?: Attachment[];
   onPreviewAttachment?: (att: Attachment) => void;
 }
@@ -56,7 +59,7 @@ const formatElapsed = (milliseconds: number) => {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, attachments, onPreviewAttachment }: ChatMessageProps) {
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onEditGeneratedImage, attachments, onPreviewAttachment }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -65,8 +68,9 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
   const contentRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const isResearchRunning = !isUser && researchPlan?.status === "running";
+  const isImageGenerationMessage = !isUser && Boolean(imageGeneration);
   const isCompletedResearchReport = !isUser && Boolean(content) && researchStatus === "completed" && Boolean(researchPlan);
-  const shouldRenderContent = !isResearchRunning && (content || (!isUser && isTyping && !isThinking));
+  const shouldRenderContent = !isResearchRunning && !isImageGenerationMessage && (content || (!isUser && isTyping && !isThinking));
   const researchElapsedMs = researchStartedAt && researchCompletedAt ? researchCompletedAt - researchStartedAt : undefined;
 
   const copyText = async (text: string) => {
@@ -243,7 +247,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
           </div>
         )}
 
-        {attachments && attachments.length > 0 && (
+        {attachments && attachments.length > 0 && !isImageGenerationMessage && (
           <div className={cn(
             "flex flex-wrap gap-2.5 mb-2 w-full",
             isUser ? "justify-end self-end max-w-[85%] sm:max-w-xl" : "justify-start"
@@ -272,6 +276,16 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
                 : "items-start w-full text-[var(--privora-text)] transition-colors duration-500"
             )}
           >
+          {!isUser && imageGeneration && (
+            <ImageGenerationCard
+              imageGeneration={imageGeneration}
+              attachments={attachments?.filter(attachment => attachment.mimeType.startsWith("image/"))}
+              onPreview={onPreviewAttachment}
+              onRetry={onRetry}
+              onEditImage={onEditGeneratedImage}
+            />
+          )}
+
           {!isUser && researchPlan && !isCompletedResearchReport && (
             <ResearchPlanCard
               plan={researchPlan}
@@ -387,7 +401,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
                    <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)}>{content}</MarkdownRenderer>
                  </div>
                )}
-               {!isUser && !isTyping && content && !isCompletedResearchReport && (
+              {!isUser && !isTyping && content && !isCompletedResearchReport && !isImageGenerationMessage && (
                  <>
                    {researchSources && researchSources.length > 0 && (
                      <div className="mt-4 w-full max-w-full rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/75 p-3">
@@ -474,10 +488,12 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.researchStartedAt === next.researchStartedAt &&
     prev.researchCompletedAt === next.researchCompletedAt &&
     prev.researchTimeBudgetMs === next.researchTimeBudgetMs &&
+    prev.imageGeneration === next.imageGeneration &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
     prev.isTyping === next.isTyping &&
     prev.messageIndex === next.messageIndex &&
     prev.messageCount === next.messageCount &&
+    prev.onEditGeneratedImage === next.onEditGeneratedImage &&
     prev.attachments === next.attachments
   );
 });

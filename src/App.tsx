@@ -30,7 +30,7 @@ import {
   validateGeminiAttachments,
   type Attachment,
 } from "./lib/attachments";
-import { loadUiSettings, saveUiSettings } from "./lib/settings";
+import { loadUiSettings, saveUiSettings, type ImageSettings } from "./lib/settings";
 import type { ResponseStyleId } from "./lib/prompt";
 import {
   createChat,
@@ -61,6 +61,8 @@ export default function App() {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(initialUiSettingsRef.current.isWebSearchEnabled);
   const [isDeepResearchEnabled, setIsDeepResearchEnabled] = useState(initialUiSettingsRef.current.isDeepResearchEnabled);
+  const [composerMode, setComposerMode] = useState<"chat" | "image">(initialUiSettingsRef.current.composerMode);
+  const [imageSettings, setImageSettings] = useState<ImageSettings>(initialUiSettingsRef.current.imageSettings);
   const [isResearchActivityOpen, setIsResearchActivityOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isStorageReady, setIsStorageReady] = useState(false);
@@ -87,6 +89,7 @@ export default function App() {
   const isThinkingEnabledRef = useLatestRef(isThinkingEnabled);
   const isWebSearchEnabledRef = useLatestRef(isWebSearchEnabled);
   const isDeepResearchEnabledRef = useLatestRef(isDeepResearchEnabled);
+  const imageSettingsRef = useLatestRef(imageSettings);
 
   useEffect(() => {
     if (!renameChatId) return;
@@ -105,8 +108,10 @@ export default function App() {
       isWebSearchEnabled,
       isDeepResearchEnabled,
       isDarkMode,
+      composerMode,
+      imageSettings,
     });
-  }, [selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode]);
+  }, [selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode, composerMode, imageSettings]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -252,6 +257,7 @@ export default function App() {
 
   const toggleWebSearchForNextMessage = () => {
     const nextValue = !isWebSearchEnabledRef.current;
+    setComposerMode("chat");
     isWebSearchEnabledRef.current = nextValue;
     setIsWebSearchEnabled(nextValue);
     if (!nextValue) {
@@ -263,12 +269,24 @@ export default function App() {
 
   const toggleDeepResearchForNextMessage = () => {
     const nextValue = !isDeepResearchEnabledRef.current;
+    setComposerMode("chat");
     isDeepResearchEnabledRef.current = nextValue;
     setIsDeepResearchEnabled(nextValue);
     if (nextValue) {
       isWebSearchEnabledRef.current = true;
       setIsWebSearchEnabled(true);
     } else {
+      clearCurrentPendingResearchIntent();
+    }
+  };
+
+  const selectComposerMode = (mode: "chat" | "image") => {
+    setComposerMode(mode);
+    if (mode === "image") {
+      isWebSearchEnabledRef.current = false;
+      isDeepResearchEnabledRef.current = false;
+      setIsWebSearchEnabled(false);
+      setIsDeepResearchEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -423,6 +441,7 @@ export default function App() {
 
   const {
     handleEditMessage,
+    handleEditGeneratedImage,
     handleKeyDown,
     handleRetryMessage,
     startResearchPlan,
@@ -436,8 +455,10 @@ export default function App() {
     input,
     messages,
     attachments,
+    composerMode,
     setInput,
     setAttachments,
+    setComposerMode,
     setMessages,
     setChats,
     setIsTyping,
@@ -448,6 +469,7 @@ export default function App() {
     isThinkingEnabledRef,
     isWebSearchEnabledRef,
     isDeepResearchEnabledRef,
+    imageSettingsRef,
     messagesRef,
     chatsRef,
     abortControllerRef,
@@ -489,6 +511,8 @@ export default function App() {
       isThinkingEnabled={isThinkingEnabled}
       isWebSearchEnabled={isWebSearchEnabled}
       isDeepResearchEnabled={isDeepResearchEnabled}
+      composerMode={composerMode}
+      imageSettings={imageSettings}
       researchEditContext={editingResearchPlanMessage?.researchPlan ? {
         title: editingResearchPlanMessage.researchPlan.title,
       } : undefined}
@@ -503,6 +527,8 @@ export default function App() {
       onToggleThinking={toggleThinkingForNextMessage}
       onToggleWebSearch={toggleWebSearchForNextMessage}
       onToggleDeepResearch={toggleDeepResearchForNextMessage}
+      onSelectComposerMode={selectComposerMode}
+      onImageSettingsChange={setImageSettings}
       onSelectModel={selectModelForNextMessage}
       onSelectStyle={selectStyleForNextMessage}
       onStopGeneration={stopGeneration}
@@ -600,6 +626,7 @@ export default function App() {
                   onEditResearchPlan={editResearchPlan}
                   onCancelResearchPlan={cancelResearchPlan}
                   onStopResearchPlan={stopGeneration}
+                  onEditGeneratedImage={handleEditGeneratedImage}
                   onOpenResearchActivity={() => setIsResearchActivityOpen(true)}
                   onPreviewAttachment={setPreviewAttachment}
                 />
