@@ -44,6 +44,8 @@ import {
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
 
+const CHAT_BOTTOM_THRESHOLD_PX = 128;
+
 export default function App() {
   const initialUiSettingsRef = useRef(loadUiSettings());
   const [messages, setMessages] = useState<Message[]>([]);
@@ -67,6 +69,7 @@ export default function App() {
   const [renameTitle, setRenameTitle] = useState("");
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
   const chatScrollRef = useRef<HTMLElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -74,6 +77,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const isScrollingToLatestRef = useRef(false);
   const chatsRef = useLatestRef(chats);
   const messagesRef = useLatestRef(messages);
   const currentChatIdRef = useLatestRef(currentChatId);
@@ -273,27 +277,50 @@ export default function App() {
     const scroller = chatScrollRef.current;
     if (!scroller) return true;
 
-    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < CHAT_BOTTOM_THRESHOLD_PX;
   };
 
   const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
     const scroller = chatScrollRef.current;
     if (!scroller) return;
 
+    shouldAutoScrollRef.current = true;
+    isScrollingToLatestRef.current = true;
+    setShowScrollToLatest(false);
     scroller.scrollTo({
       top: scroller.scrollHeight,
       behavior,
     });
+
+    window.setTimeout(() => {
+      isScrollingToLatestRef.current = false;
+      const isNearBottom = isNearChatBottom();
+      shouldAutoScrollRef.current = isNearBottom;
+      setShowScrollToLatest(messagesRef.current.length > 0 && !isNearBottom);
+    }, behavior === "smooth" ? 420 : 0);
   };
 
   const handleChatScroll = () => {
-    shouldAutoScrollRef.current = isNearChatBottom();
+    const isNearBottom = isNearChatBottom();
+    if (isScrollingToLatestRef.current && !isNearBottom) return;
+
+    shouldAutoScrollRef.current = isNearBottom;
+    setShowScrollToLatest(messagesRef.current.length > 0 && !isNearBottom);
   };
 
   useEffect(() => {
+    if (messages.length === 0) {
+      shouldAutoScrollRef.current = true;
+      setShowScrollToLatest(false);
+      return;
+    }
+
     if (shouldAutoScrollRef.current) {
       scrollToBottom(isTyping ? "auto" : "smooth");
+      return;
     }
+
+    setShowScrollToLatest(true);
   }, [messages, isTyping]);
 
   const handleNewChat = async () => {
@@ -310,6 +337,8 @@ export default function App() {
     setChats(prev => [newChat, ...prev]);
     setCurrentChatId(newChatId);
     setMessages([]);
+    shouldAutoScrollRef.current = true;
+    setShowScrollToLatest(false);
     await createChat(newChat);
   };
 
@@ -317,6 +346,8 @@ export default function App() {
     const chat = chats.find(c => c.id === id);
     if (chat) {
       setCurrentChatId(id);
+      shouldAutoScrollRef.current = true;
+      setShowScrollToLatest(false);
       setMessages(chat.messages);
     }
     if (window.innerWidth < 768) setIsSidebarOpen(false);
@@ -397,6 +428,7 @@ export default function App() {
     startResearchPlan,
     resumeResearchJob,
     editResearchPlan,
+    clearResearchPlanEdit,
     cancelResearchPlan,
     handleSubmit,
     stopGeneration,
@@ -426,6 +458,7 @@ export default function App() {
 
   const isLandingChat = messages.length === 0;
   const activeResearchMessage = [...messages].reverse().find(message => message.researchPlan || message.researchActivity?.length);
+  const editingResearchPlanMessage = [...messages].reverse().find(message => message.researchPlan?.status === "editing");
 
   useEffect(() => {
     if (activeResearchMessage?.researchPlan && activeResearchMessage.researchPlan.status !== "completed" && activeResearchMessage.researchPlan.status !== "cancelled") {
@@ -456,6 +489,9 @@ export default function App() {
       isThinkingEnabled={isThinkingEnabled}
       isWebSearchEnabled={isWebSearchEnabled}
       isDeepResearchEnabled={isDeepResearchEnabled}
+      researchEditContext={editingResearchPlanMessage?.researchPlan ? {
+        title: editingResearchPlanMessage.researchPlan.title,
+      } : undefined}
       textareaRef={textareaRef}
       fileInputRef={fileInputRef}
       onInputChange={setInput}
@@ -470,6 +506,7 @@ export default function App() {
       onSelectModel={selectModelForNextMessage}
       onSelectStyle={selectStyleForNextMessage}
       onStopGeneration={stopGeneration}
+      onClearResearchEdit={() => editingResearchPlanMessage && clearResearchPlanEdit(editingResearchPlanMessage.id)}
       placement={placement}
     />
   );
@@ -555,6 +592,8 @@ export default function App() {
                   chatScrollRef={chatScrollRef}
                   messagesEndRef={messagesEndRef}
                   onScroll={handleChatScroll}
+                  showScrollToLatest={showScrollToLatest}
+                  onScrollToLatest={() => scrollToBottom("smooth")}
                   onEditMessage={handleEditMessage}
                   onRetryMessage={handleRetryMessage}
                   onStartResearchPlan={startResearchPlan}

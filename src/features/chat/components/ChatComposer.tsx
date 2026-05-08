@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject } from "react";
-import { Blocks, Brain, Camera, Check, ChevronDown, Feather, FolderPlus, Globe, Microscope, Paperclip, Plus, Square, Trash2, Workflow } from "lucide-react";
+import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, Globe, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   CLIPROXY_ATTACHMENT_ACCEPT,
@@ -27,6 +27,9 @@ interface ChatComposerProps {
   isThinkingEnabled: boolean;
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
+  researchEditContext?: {
+    title: string;
+  };
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onInputChange: (value: string) => void;
@@ -41,6 +44,7 @@ interface ChatComposerProps {
   onSelectModel: (modelId: string) => void;
   onSelectStyle: (styleId: ResponseStyleId) => void;
   onStopGeneration: () => void;
+  onClearResearchEdit?: () => void;
   placement?: "footer" | "landing";
 }
 
@@ -53,6 +57,7 @@ export function ChatComposer({
   isThinkingEnabled,
   isWebSearchEnabled,
   isDeepResearchEnabled,
+  researchEditContext,
   textareaRef,
   fileInputRef,
   onInputChange,
@@ -67,6 +72,7 @@ export function ChatComposer({
   onSelectModel,
   onSelectStyle,
   onStopGeneration,
+  onClearResearchEdit,
   placement = "footer",
 }: ChatComposerProps) {
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
@@ -125,6 +131,23 @@ export function ChatComposer({
           onSubmit={onSubmit}
           className="flex flex-col bg-[var(--privora-surface)] rounded-[22px] sm:rounded-[24px] border border-[var(--privora-border)] shadow-[var(--privora-shadow)] focus-within:border-[var(--privora-muted)] focus-within:shadow-xl transition-all"
         >
+          {researchEditContext && (
+            <div className="mx-1.5 mt-1.5 flex items-center gap-2 rounded-2xl bg-[var(--privora-text)]/[0.08] px-3 py-2 text-[13px] text-[var(--privora-text)] sm:mx-2 sm:mt-2">
+              <CornerDownRight className="h-4 w-4 shrink-0 text-[var(--privora-muted)]" />
+              <span className="min-w-0 flex-1 truncate font-medium">
+                &ldquo;{researchEditContext.title}&rdquo;
+              </span>
+              <button
+                type="button"
+                onClick={onClearResearchEdit}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--privora-muted)] transition-colors hover:bg-[var(--privora-text)]/10 hover:text-[var(--privora-text)]"
+                title="Remove research plan context"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {attachments.length > 0 && (
             <div className="flex gap-2 px-4 pt-4 pb-2 w-full overflow-x-auto overflow-y-hidden" style={{ scrollbarWidth: "none" }}>
               {attachments.map((attachment, index) => (
@@ -169,7 +192,7 @@ export function ChatComposer({
                 textareaRef.current?.scrollIntoView({ block: "nearest" });
               }, 250);
             }}
-            placeholder="How can I help you today?"
+            placeholder={researchEditContext ? "Follow up with questions or adjustments" : "How can I help you today?"}
             className="w-full max-h-48 min-h-[52px] sm:min-h-[56px] text-[15px] bg-transparent text-[var(--privora-text)] placeholder-[var(--privora-muted)] px-4 pt-4 outline-none resize-none leading-relaxed transition-colors duration-500 overflow-y-auto"
             rows={1}
           />
