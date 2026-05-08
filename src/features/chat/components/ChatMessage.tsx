@@ -1,9 +1,10 @@
 import { memo, useState, useEffect, useRef } from "react";
 import { cn } from "../../../lib/utils";
 import { motion, AnimatePresence } from "motion/react";
-import { Copy, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3 } from "lucide-react";
+import { Copy, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3, CornerDownRight } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ResearchPlanCard } from "./ResearchPlanCard";
+import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
 import type { ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 
@@ -25,6 +26,10 @@ interface ChatMessageProps {
   researchSources?: ResearchSourceRecord[];
   researchPreflight?: "clarifying";
   researchPlan?: ResearchPlanRecord;
+  researchPlanReference?: {
+    title: string;
+    messageId?: string;
+  };
   researchStartedAt?: number;
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
@@ -51,7 +56,7 @@ const formatElapsed = (milliseconds: number) => {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, attachments, onPreviewAttachment }: ChatMessageProps) {
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, attachments, onPreviewAttachment }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -60,6 +65,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
   const contentRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const isResearchRunning = !isUser && researchPlan?.status === "running";
+  const isCompletedResearchReport = !isUser && Boolean(content) && researchStatus === "completed" && Boolean(researchPlan);
   const shouldRenderContent = !isResearchRunning && (content || (!isUser && isTyping && !isThinking));
   const researchElapsedMs = researchStartedAt && researchCompletedAt ? researchCompletedAt - researchStartedAt : undefined;
 
@@ -230,6 +236,13 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
         )}
       </AnimatePresence>
       <div className="relative flex w-full max-w-full flex-col items-start">
+        {isUser && researchPlanReference && (
+          <div className="mb-2 flex max-w-[85%] items-center gap-1.5 self-end pr-2 text-[12px] font-medium text-[var(--privora-muted)] sm:max-w-xl">
+            <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{researchPlanReference.title}</span>
+          </div>
+        )}
+
         {attachments && attachments.length > 0 && (
           <div className={cn(
             "flex flex-wrap gap-2.5 mb-2 w-full",
@@ -259,7 +272,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
                 : "items-start w-full text-[var(--privora-text)] transition-colors duration-500"
             )}
           >
-          {!isUser && researchPlan && (
+          {!isUser && researchPlan && !isCompletedResearchReport && (
             <ResearchPlanCard
               plan={researchPlan}
               disabled={Boolean(isTyping && researchPlan.status !== "running")}
@@ -271,6 +284,21 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
               researchStartedAt={researchStartedAt}
               researchCompletedAt={researchCompletedAt}
               researchSourceCount={researchSources?.length}
+            />
+          )}
+
+          {isCompletedResearchReport && (
+            <ResearchReportCard
+              report={{
+                title: researchPlan?.title || "Deep Research Report",
+                content,
+                sources: researchSources,
+                plan: researchPlan,
+                startedAt: researchStartedAt,
+                completedAt: researchCompletedAt,
+                timeBudgetMs: researchTimeBudgetMs,
+              }}
+              onOpenActivity={onOpenResearchActivity}
             />
           )}
 
@@ -354,12 +382,12 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
             )}
           >
              <>
-               {shouldRenderContent && (
+               {shouldRenderContent && !isCompletedResearchReport && (
                  <div ref={contentRef}>
                    <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)}>{content}</MarkdownRenderer>
                  </div>
                )}
-               {!isUser && !isTyping && content && (
+               {!isUser && !isTyping && content && !isCompletedResearchReport && (
                  <>
                    {researchSources && researchSources.length > 0 && (
                      <div className="mt-4 w-full max-w-full rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/75 p-3">
@@ -442,6 +470,10 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.researchSources === next.researchSources &&
     prev.researchPreflight === next.researchPreflight &&
     prev.researchPlan === next.researchPlan &&
+    prev.researchPlanReference === next.researchPlanReference &&
+    prev.researchStartedAt === next.researchStartedAt &&
+    prev.researchCompletedAt === next.researchCompletedAt &&
+    prev.researchTimeBudgetMs === next.researchTimeBudgetMs &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
     prev.isTyping === next.isTyping &&
     prev.messageIndex === next.messageIndex &&

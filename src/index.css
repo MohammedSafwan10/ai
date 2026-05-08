@@ -205,6 +205,159 @@ body,
   margin-right: 0.45rem;
 }
 
+.privora-md-table {
+  position: relative;
+  margin: 1.15rem 0;
+  width: 100%;
+  overflow: visible;
+  border: 1px solid var(--privora-border);
+  border-radius: 1rem;
+  background: var(--privora-surface);
+}
+
+.privora-md-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scroll-behavior: smooth;
+}
+
+.privora-md-table-element {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.9rem;
+}
+
+.privora-md-table-element th,
+.privora-md-table-element td {
+  min-width: 8.5rem;
+  max-width: 14rem;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.privora-md-table-element th:first-child,
+.privora-md-table-element td:first-child {
+  min-width: 7.25rem;
+  max-width: 9rem;
+}
+
+.privora-md-table--chat .privora-md-table-element {
+  font-size: 0.86rem;
+}
+
+.privora-md-table--chat .privora-md-table-element th,
+.privora-md-table--chat .privora-md-table-element td {
+  min-width: 7.75rem;
+  max-width: 12rem;
+}
+
+.privora-md-table--preview .privora-md-table-element {
+  min-width: 42rem;
+  font-size: 0.84rem;
+}
+
+.privora-md-table--compact .privora-md-table-element {
+  width: 100%;
+  min-width: 100%;
+}
+
+.privora-md-table--compact .privora-md-table-element th,
+.privora-md-table--compact .privora-md-table-element td {
+  min-width: 0;
+  max-width: none;
+}
+
+.privora-md-table--compact .privora-md-table-element th:first-child,
+.privora-md-table--compact .privora-md-table-element td:first-child {
+  min-width: 7rem;
+  max-width: 14rem;
+  width: 28%;
+}
+
+.research-report-body .privora-md-table--report.privora-md-table--wide {
+  left: 50%;
+  width: min(92vw, 70rem);
+  transform: translateX(-50%);
+}
+
+.privora-md-table--report .privora-md-table-element th,
+.privora-md-table--report .privora-md-table-element td {
+  min-width: 10rem;
+  max-width: 15.5rem;
+}
+
+.privora-md-table--report .privora-md-table-element th:first-child,
+.privora-md-table--report .privora-md-table-element td:first-child {
+  min-width: 8rem;
+  max-width: 10rem;
+}
+
+.privora-md-table.is-overflowing::before,
+.privora-md-table.is-overflowing::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  bottom: 0;
+  top: 0;
+  z-index: 2;
+  width: 2.6rem;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.privora-md-table.is-overflowing::before {
+  left: 0;
+  background: linear-gradient(to right, var(--privora-surface), transparent);
+}
+
+.privora-md-table.is-overflowing::after {
+  right: 0;
+  background: linear-gradient(to left, var(--privora-surface), transparent);
+}
+
+.privora-md-table.can-scroll-left::before,
+.privora-md-table.can-scroll-right::after {
+  opacity: 1;
+}
+
+.privora-md-table-hint {
+  pointer-events: none;
+  position: absolute;
+  bottom: 0.45rem;
+  right: 0.65rem;
+  z-index: 3;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 86%, var(--privora-text));
+  box-shadow: var(--privora-shadow);
+  color: var(--privora-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.25rem 0.5rem;
+}
+
+@media (max-width: 760px) {
+  .research-report-body .privora-md-table--report.privora-md-table--wide {
+    left: auto;
+    width: 100%;
+    transform: none;
+  }
+
+  .privora-md-table-element th,
+  .privora-md-table-element td,
+  .privora-md-table--report .privora-md-table-element th,
+  .privora-md-table--report .privora-md-table-element td {
+    min-width: 8.5rem;
+    max-width: 12rem;
+  }
+}
+
 .dark .markdown-body div:has(> pre) {
   background: #2a2a2a !important;
 }
@@ -219,4 +372,18 @@ body,
   border-color: #4a4a4a;
 }
 
+.research-report-body {
+  font-size: 1rem;
+  line-height: 1.75;
+}
 
+.research-report-body h1 {
+  font-size: 2rem;
+  margin-top: 0;
+  scroll-margin-top: 5rem;
+}
+
+.research-report-body h2,
+.research-report-body h3 {
+  scroll-margin-top: 5rem;
+}

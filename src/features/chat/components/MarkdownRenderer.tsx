@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -6,11 +6,15 @@ import rehypeKatex from "rehype-katex";
 import ShikiHighlighter, { createJavaScriptRegexEngine, isInlineCode } from "react-shiki";
 import { Check, ChevronDown, Copy } from "lucide-react";
 import { cn } from "../../../lib/utils";
+import { slugifyHeading } from "../../../lib/research/report";
 
 interface MarkdownRendererProps {
   children: string;
   compact?: boolean;
   isStreaming?: boolean;
+  withHeadingIds?: boolean;
+  headingIds?: string[];
+  tableMode?: "chat" | "report" | "preview";
 }
 
 const shikiEngine = createJavaScriptRegexEngine({ forgiving: true });
@@ -36,6 +40,28 @@ function normalizeMathDelimiters(markdown: string) {
 const getLanguage = (className?: string) => {
   const match = /language-(\w+)/.exec(className || "");
   return match?.[1] || "";
+};
+
+const nodeToText = (node: ReactNode): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeToText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return nodeToText(node.props.children);
+  return "";
+};
+
+const countTableColumns = (node: ReactNode): number => {
+  if (!node) return 0;
+  if (Array.isArray(node)) return Math.max(0, ...node.map(countTableColumns));
+  if (!isValidElement<{ children?: ReactNode }>(node)) return 0;
+
+  const elementType = typeof node.type === "string" ? node.type : "";
+  const children = node.props.children;
+  if (elementType === "tr") {
+    const cells = Array.isArray(children) ? children : [children];
+    return cells.filter(cell => isValidElement(cell) && (cell.type === "th" || cell.type === "td")).length;
+  }
+
+  return countTableColumns(children);
 };
 
 function CodeBlock({
@@ -161,14 +187,95 @@ function CodeBlock({
   );
 }
 
-function MarkdownRendererComponent({ children, compact = false, isStreaming = false }: MarkdownRendererProps) {
+function MarkdownTable({
+  children,
+  mode,
+}: {
+  children: ReactNode;
+  mode: NonNullable<MarkdownRendererProps["tableMode"]>;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const columnCount = countTableColumns(children);
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const overflow = element.scrollWidth - element.clientWidth > 2;
+    setHasOverflow(overflow);
+    setCanScrollLeft(overflow && element.scrollLeft > 2);
+    setCanScrollRight(overflow && element.scrollLeft + element.clientWidth < element.scrollWidth - 2);
+  };
+
+  useEffect(() => {
+    updateScrollState();
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(element);
+    window.addEventListener("resize", updateScrollState);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateScrollState);
+    };
+  }, [children]);
+
+  return (
+    <div
+      className={cn(
+        "privora-md-table",
+        `privora-md-table--${mode}`,
+        columnCount <= 3 && "privora-md-table--compact",
+        columnCount >= 5 && "privora-md-table--wide",
+        hasOverflow && "is-overflowing",
+        canScrollLeft && "can-scroll-left",
+        canScrollRight && "can-scroll-right"
+      )}
+    >
+      <div ref={scrollRef} onScroll={updateScrollState} className="privora-md-table-scroll">
+        <table className="privora-md-table-element">{children}</table>
+      </div>
+      {hasOverflow && (
+        <div className="privora-md-table-hint" aria-hidden="true">
+          Scroll table
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarkdownRendererComponent({
+  children,
+  compact = false,
+  isStreaming = false,
+  withHeadingIds = false,
+  headingIds: providedHeadingIds,
+  tableMode = "chat",
+}: MarkdownRendererProps) {
   const normalizedMarkdown = normalizeMathDelimiters(children);
+  const generatedHeadingIds = new Map<string, number>();
+  let headingIndex = 0;
+  const getHeadingProps = (node: ReactNode) => {
+    if (!withHeadingIds) return {};
+
+    const id = providedHeadingIds?.[headingIndex] || slugifyHeading(nodeToText(node), generatedHeadingIds);
+    headingIndex += 1;
+    return { id, "data-report-heading-id": id };
+  };
 
   return (
     <Markdown
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[[rehypeKatex, { errorColor: "var(--privora-text)", strict: "ignore", throwOnError: false }]]}
       components={{
+        h1: ({ children }) => <h1 {...getHeadingProps(children)}>{children}</h1>,
+        h2: ({ children }) => <h2 {...getHeadingProps(children)}>{children}</h2>,
+        h3: ({ children }) => <h3 {...getHeadingProps(children)}>{children}</h3>,
         p: ({ children }) => (
           <p className={cn(compact ? "my-1 leading-6" : "my-3 leading-8")}>{children}</p>
         ),
@@ -184,18 +291,14 @@ function MarkdownRendererComponent({ children, compact = false, isStreaming = fa
             {children}
           </blockquote>
         ),
-        table: ({ children }) => (
-          <div className="my-4 w-full overflow-x-auto rounded-2xl border border-[var(--privora-border)] bg-[var(--privora-surface)]">
-            <table className="w-full min-w-[42rem] border-collapse text-sm">{children}</table>
-          </div>
-        ),
+        table: ({ children }) => <MarkdownTable mode={tableMode}>{children}</MarkdownTable>,
         th: ({ children }) => (
-          <th className="break-normal border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.04] px-4 py-2.5 text-left font-semibold whitespace-nowrap first:min-w-[7rem]">
+          <th className="border-b border-[var(--privora-border)] bg-[var(--privora-text)]/[0.04] px-3 py-2.5 text-left font-semibold leading-snug first:font-bold sm:px-4">
             {children}
           </th>
         ),
         td: ({ children }) => (
-          <td className="break-words border-b border-[var(--privora-border)]/70 px-4 py-2.5 align-top first:min-w-[7rem]">{children}</td>
+          <td className="border-b border-[var(--privora-border)]/70 px-3 py-2.5 align-top leading-relaxed first:font-medium sm:px-4">{children}</td>
         ),
         code: ({ inline, className, children, node, ...props }: any) => {
           const code = String(children).replace(/\n$/, "");
