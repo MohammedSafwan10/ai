@@ -7,6 +7,7 @@ export type ChatWithAttachments = ChatRecord;
 export const MAX_ATTACHMENTS = 15;
 export const CLIPROXY_MAX_ATTACHMENT_PAYLOAD_BYTES = 50 * 1024 * 1024;
 export const GEMINI_MAX_INLINE_PAYLOAD_BYTES = 20 * 1024 * 1024;
+export const OPENROUTER_ATTACHMENT_ACCEPT = "";
 
 const CLIPROXY_VISION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const CLIPROXY_FILE_MIME_TYPES = new Set([
@@ -135,6 +136,14 @@ export const validateGeminiAttachments = (items: Attachment[]) => {
 
   if (getAttachmentTotalSize(items) > GEMINI_MAX_INLINE_PAYLOAD_BYTES) {
     return "Gemini inline uploads are kept under 20 MB in this app. Use smaller files for now.";
+  }
+
+  return null;
+};
+
+export const validateOpenRouterAttachments = (items: Attachment[]) => {
+  if (items.length > 0) {
+    return "These OpenRouter free models are text-only in Privora right now. Remove attachments or switch to Gemini/GPT for files and vision.";
   }
 
   return null;

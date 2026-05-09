@@ -4,15 +4,17 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   CLIPROXY_ATTACHMENT_ACCEPT,
   GEMINI_ATTACHMENT_ACCEPT,
+  OPENROUTER_ATTACHMENT_ACCEPT,
   type Attachment,
 } from "../../../lib/attachments";
 import {
   getModelLabel,
   getModelOption,
+  getModelProviderGroups,
   getReasoningModeLabel,
   isCliproxyModel,
   isGeminiModel,
-  modelOptions,
+  isOpenRouterModel,
 } from "../../../lib/models";
 import { getResponseStyle, responseStyleOptions, type ResponseStyleId } from "../../../lib/prompt";
 import type { ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
@@ -92,6 +94,7 @@ export function ChatComposer({
   const [isImageOptionsOpen, setIsImageOptionsOpen] = useState(false);
   const selectedModelOption = getModelOption(selectedModel);
   const selectedModelLabel = getModelLabel(selectedModel);
+  const modelProviderGroups = getModelProviderGroups();
   const selectedStyleOption = getResponseStyle(selectedStyle);
   const selectedReasoningModeLabel = getReasoningModeLabel(
     selectedModelOption?.provider,
@@ -99,6 +102,7 @@ export function ChatComposer({
   );
   const selectedModelIsGemini = isGeminiModel(selectedModel);
   const selectedModelIsCliproxy = isCliproxyModel(selectedModel);
+  const selectedModelIsOpenRouter = isOpenRouterModel(selectedModel);
   const settingsDisabled = isTyping;
   const isImageMode = composerMode === "image";
   const hasImageAttachment = attachments.some(attachment => attachment.mimeType.startsWith("image/"));
@@ -341,6 +345,7 @@ export function ChatComposer({
                         <button
                           type="button"
                           onClick={onToggleWebSearch}
+                          title={isWebSearchEnabled ? "Web search is required for the next response." : "Web search is automatic when current information is needed."}
                           className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isWebSearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
                         >
                           <div className="flex items-center gap-3">
@@ -432,7 +437,7 @@ export function ChatComposer({
             <input
               type="file"
               multiple
-              accept={isImageMode ? "image/*" : selectedModelIsCliproxy ? CLIPROXY_ATTACHMENT_ACCEPT : GEMINI_ATTACHMENT_ACCEPT}
+              accept={isImageMode ? "image/*" : selectedModelIsCliproxy ? CLIPROXY_ATTACHMENT_ACCEPT : selectedModelIsOpenRouter ? OPENROUTER_ATTACHMENT_ACCEPT : GEMINI_ATTACHMENT_ACCEPT}
               ref={fileInputRef}
               onChange={onFileSelect}
               className="hidden"
@@ -561,7 +566,9 @@ export function ChatComposer({
                   isThinkingEnabled
                     ? selectedModelIsGemini
                       ? "Gemini medium thinking enabled"
-                      : "GPT-5.5 medium reasoning enabled"
+                      : selectedModelIsOpenRouter
+                        ? "OpenRouter medium reasoning enabled when the selected model supports it"
+                        : "GPT-5.5 medium reasoning enabled"
                     : "Instant mode"
                 }
               >
@@ -603,26 +610,35 @@ export function ChatComposer({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 6, scale: 0.98 }}
                         transition={{ duration: 0.14 }}
-                        className="absolute bottom-[calc(100%+0.5rem)] right-0 w-[min(16rem,calc(100vw-2rem))] flex flex-col bg-[var(--privora-surface)] rounded-xl border border-[var(--privora-border)] shadow-[var(--privora-shadow)] z-50 overflow-hidden p-1"
+                        className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 flex max-h-[min(28rem,calc(100vh-8rem))] w-[min(17rem,calc(100vw-2rem))] flex-col overflow-y-auto rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-1 shadow-[var(--privora-shadow)]"
                       >
-                        {modelOptions.map((option) => {
-                          const isActive = selectedModel === option.id;
+                        {modelProviderGroups.map((group, groupIndex) => (
+                          <div key={group.id} className={groupIndex === 0 ? "" : "mt-1 border-t border-[var(--privora-border)]/60 pt-1"}>
+                            <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--privora-muted)]">
+                              {group.label}
+                            </div>
+                            {group.models.map((option) => {
+                              const isActive = selectedModel === option.id;
 
-                          return (
-                            <button
-                              key={`${option.provider}-${option.label}`}
-                              type="button"
-                              onClick={() => handleSelectModel(option.id)}
-                              className={`text-left px-3 py-2.5 rounded-lg text-[14px] font-sans transition-colors ${
-                                isActive
-                                  ? "text-[var(--privora-text)] font-medium bg-[var(--privora-user-bubble)]"
-                                  : "text-[var(--privora-text)] hover:bg-[var(--privora-user-bubble)]"
-                              }`}
-                            >
-                              {option.label}
-                            </button>
-                          );
-                        })}
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => handleSelectModel(option.id)}
+                                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] font-sans transition-colors ${
+                                    isActive
+                                      ? "bg-[var(--privora-user-bubble)] font-medium text-[var(--privora-text)]"
+                                      : "text-[var(--privora-text)] hover:bg-[var(--privora-user-bubble)]"
+                                  }`}
+                                  title={option.description}
+                                >
+                                  <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                                  {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--privora-text)]" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
                       </motion.div>
                     </>
                   )}

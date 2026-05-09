@@ -1,4 +1,6 @@
-export type ProviderId = "gemini" | "cliproxy";
+import { openRouterModelCapabilities } from "./openrouter/models";
+
+export type ProviderId = "gemini" | "cliproxy" | "openrouter";
 
 export interface ModelOption {
   id: string;
@@ -7,7 +9,32 @@ export interface ModelOption {
   description: string;
 }
 
+export interface ModelProviderGroup {
+  id: ProviderId;
+  label: string;
+  description: string;
+  models: ModelOption[];
+}
+
 export type ReasoningMode = "instant" | "thinking";
+
+export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
+  {
+    id: "gemini",
+    label: "Gemini",
+    description: "Native Google models with search, files, and thinking.",
+  },
+  {
+    id: "cliproxy",
+    label: "GPT / CLIProxy",
+    description: "Local OpenAI-compatible routing through CLIProxy.",
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter Free",
+    description: "Community text models with per-model tools and reasoning.",
+  },
+];
 
 export const modelOptions: ModelOption[] = [
   {
@@ -34,6 +61,12 @@ export const modelOptions: ModelOption[] = [
     provider: "cliproxy",
     description: "GPT-5.5 through CLIProxy.",
   },
+  ...openRouterModelCapabilities.map((model): ModelOption => ({
+    id: model.id,
+    label: model.label,
+    provider: "openrouter",
+    description: model.description,
+  })),
 ];
 
 export const getModelOption = (modelId: string) =>
@@ -42,11 +75,22 @@ export const getModelOption = (modelId: string) =>
 export const getModelLabel = (modelId: string) =>
   getModelOption(modelId)?.label ?? modelId;
 
+export const getModelProviderGroups = (): ModelProviderGroup[] =>
+  modelProviderOrder
+    .map((provider) => ({
+      ...provider,
+      models: modelOptions.filter((option) => option.provider === provider.id),
+    }))
+    .filter((group) => group.models.length > 0);
+
 export const isGeminiModel = (modelId: string) =>
   getModelOption(modelId)?.provider === "gemini";
 
 export const isCliproxyModel = (modelId: string) =>
   getModelOption(modelId)?.provider === "cliproxy";
+
+export const isOpenRouterModel = (modelId: string) =>
+  getModelOption(modelId)?.provider === "openrouter";
 
 export const getReasoningModeLabel = (provider: ProviderId | undefined, mode: ReasoningMode) => {
   if (mode === "instant") return "Instant";

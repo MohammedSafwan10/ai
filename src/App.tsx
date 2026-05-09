@@ -29,9 +29,10 @@ import {
   revokeAttachmentUrl,
   validateCliproxyAttachments,
   validateGeminiAttachments,
+  validateOpenRouterAttachments,
   type Attachment,
 } from "./lib/attachments";
-import { loadUiSettings, saveUiSettings, type ImageSettings } from "./lib/settings";
+import { DEFAULT_MODEL_ID, loadUiSettings, saveUiSettings, type ImageSettings } from "./lib/settings";
 import type { ResponseStyleId } from "./lib/prompt";
 import {
   createChat,
@@ -108,6 +109,12 @@ export default function App() {
   }, [renameChatId]);
 
   useEffect(() => {
+    if (getModelOption(selectedModel)) return;
+    selectedModelRef.current = DEFAULT_MODEL_ID;
+    setSelectedModel(DEFAULT_MODEL_ID);
+  }, [selectedModel, selectedModelRef]);
+
+  useEffect(() => {
     saveUiSettings({
       selectedModel,
       selectedStyle,
@@ -138,6 +145,15 @@ export default function App() {
     const selectedProvider = getModelOption(selectedModelRef.current)?.provider;
     const newAttachments: Attachment[] = [];
     for (const file of files) {
+       if (selectedProvider === "openrouter") {
+          appLogger.warn("OpenRouter attachment rejected", {
+            mimeType: file.type || "unknown",
+            extension: getAttachmentExtension(file.name),
+            size: file.size,
+          });
+          alert(`These OpenRouter free models are text-only here. Remove "${file.name}" or switch to Gemini/GPT for files and vision.`);
+          continue;
+       }
 
        if (selectedProvider === "cliproxy" && !isCliproxySupportedAttachment({ mimeType: file.type, name: file.name })) {
           appLogger.warn("Unsupported CLIProxy attachment rejected", {
@@ -202,6 +218,19 @@ export default function App() {
         appLogger.warn("Gemini attachment validation failed", {
           attachmentCount: attachments.length + newAttachments.length,
           totalSize: getAttachmentTotalSize([...attachments, ...newAttachments]),
+        });
+        alert(validationError);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+    }
+
+    if (selectedProvider === "openrouter") {
+      const validationError = validateOpenRouterAttachments([...attachments, ...newAttachments]);
+      if (validationError) {
+        newAttachments.forEach(revokeAttachmentUrl);
+        appLogger.warn("OpenRouter attachment validation failed", {
+          attachmentCount: attachments.length + newAttachments.length,
         });
         alert(validationError);
         if (fileInputRef.current) fileInputRef.current.value = "";
