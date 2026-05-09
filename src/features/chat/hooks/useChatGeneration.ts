@@ -3,6 +3,8 @@ import { getModelOption } from "../../../lib/models";
 import { CLIPROXY_IMAGE_MODEL, streamCliproxyImage, type CliproxyImageResult } from "../../../lib/cliproxy/images";
 import { generateCliproxyArtifactSummary, streamCliproxyResponse } from "../../../lib/cliproxy/responses";
 import { generateGeminiTitle, streamGeminiResponse, toGeminiContents } from "../../../lib/gemini/client";
+import { getOpenRouterModelCapabilities } from "../../../lib/openrouter/models";
+import { generateOpenRouterArtifactSummary, streamOpenRouterResponse } from "../../../lib/openrouter/responses";
 import { appLogger } from "../../../lib/logger";
 import {
   ARTIFACT_SYSTEM_INSTRUCTION,
@@ -18,9 +20,10 @@ import {
   normalizeAttachmentUrls,
   validateCliproxyAttachments,
   validateGeminiAttachments,
+  validateOpenRouterAttachments,
   type Attachment,
 } from "../../../lib/attachments";
-import { DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, getSystemInstruction, type ResponseStyleId } from "../../../lib/prompt";
+import { DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, getSystemInstruction, type ResponseStyleId, type WebSearchMode } from "../../../lib/prompt";
 import { DEEP_RESEARCH_TIME_BUDGET_MS } from "../../../lib/prompt";
 import { cancelResearchJob, getResearchJobSnapshot, runResearchPreflight, startResearchJob, streamResearchJob, type ResearchStreamEvent } from "../../../lib/research/client";
 import {
@@ -291,6 +294,20 @@ export function useChatGeneration({
     return "I could not reach the local AI connection at the moment. Make sure CLIProxy is running on http://127.0.0.1:8317.";
   };
 
+  const getOpenRouterFailureMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/OPENROUTER_API_KEY|api key|unauthorized|401/i.test(message)) {
+      return "OpenRouter is not configured yet. Add OPENROUTER_API_KEY to your local env, restart the dev server, then retry.";
+    }
+    if (/rate limit|429/i.test(message)) {
+      return "OpenRouter rate-limited this free model. Try again in a moment or choose another OpenRouter model.";
+    }
+    if (/payment|required|credits|402/i.test(message)) {
+      return "OpenRouter says this request needs credits. Free models can still add search or provider costs depending on tools.";
+    }
+    return message || "OpenRouter could not complete this request. Try another free model or retry in a moment.";
+  };
+
   const getImageGenerationFailureMessage = (error: unknown, options: ImageGenerationOptionsRecord) => {
     const message = error instanceof Error ? error.message : String(error || "");
     if (/stream error|INTERNAL_ERROR|received from peer/i.test(message)) {
@@ -365,29 +382,36 @@ export function useChatGeneration({
     const requestModel = selectedModelRef.current;
     const requestProvider = getModelOption(requestModel)?.provider;
     const requestIsCliproxy = requestProvider === "cliproxy";
+    const requestIsOpenRouter = requestProvider === "openrouter";
+    const openRouterCapabilities = requestIsOpenRouter ? getOpenRouterModelCapabilities(requestModel) : undefined;
     const requestStyle = selectedStyleRef.current;
     const requestThinkingEnabled = isThinkingEnabledRef.current;
     const requestDeepResearchEnabled = isDeepResearchEnabledRef.current;
-    const requestWebSearchEnabled = isWebSearchEnabledRef.current || requestDeepResearchEnabled;
+    const requestForcedWebSearch = !requestIsImageMode && (isWebSearchEnabledRef.current || requestDeepResearchEnabled);
+    const requestWebSearchMode: WebSearchMode = requestIsImageMode ? "off" : requestForcedWebSearch ? "forced" : "auto";
+    const requestWebSearchEnabled = requestWebSearchMode !== "off";
     const userDeclinedArtifacts = /\b(?:no|dont|don't|do not|skip|without|no need)\b.{0,32}\b(?:artifact|artifacts|canvas|file|files)\b/i.test(text) ||
       /\b(?:artifact|artifacts|canvas|file|files)\b.{0,32}\b(?:no|not|dont|don't|skip|unneeded)\b/i.test(text);
     const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !userDeclinedArtifacts;
-    const useGeminiOutputRouter = requestProvider === "gemini" && artifactRuntimeEnabled;
+    const useArtifactOutputRouter =
+      artifactRuntimeEnabled && (requestProvider === "gemini" || requestProvider === "openrouter");
+    const artifactToolsEnabled =
+      artifactRuntimeEnabled && !useArtifactOutputRouter && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsTools));
     const baseSystemInstruction = getSystemInstruction({
       styleId: requestStyle,
       provider: requestProvider,
-      webSearchEnabled: requestWebSearchEnabled,
+      webSearchMode: requestWebSearchMode,
       deepResearchEnabled: requestIsImageMode ? false : requestDeepResearchEnabled,
     });
-    const geminiArtifactMarker = ":::privora-artifact";
-    const geminiArtifactStreamInstruction = `
-Gemini artifact routing:
+    const artifactStreamMarker = ":::privora-artifact";
+    const artifactStreamInstruction = `
+Canvas artifact streaming:
 - For normal answers, respond normally and do not use the private marker.
 - When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, stream a Canvas artifact instead of pasting it in chat.
 - Never use the private marker for ordinary informational answers, summaries, explanations, Q&A, schedules, recommendations, or answers that merely contain headings, bullets, or Markdown formatting.
 - Only use the private marker when the output should be a reusable standalone asset, file, document, diagram, code artifact, or Canvas item.
 - To stream a Canvas artifact, the first output must be exactly one private header line:
-${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title","language":"svg"}
+${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title","language":"svg"}
 - After that header line, stream only the complete artifact content. Do not include explanations, markdown fences, JSON wrappers, XML wrapper metadata, or tool-call text around the content.
 - Use operation "update" when revising the most relevant existing artifact; otherwise use "create".
 - Kind must be one of markdown, code, html, svg, mermaid, json, yaml, sql, text, table, prompt.
@@ -397,10 +421,12 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
 `.trim();
     const systemInstruction = requestIsImageMode
       ? baseSystemInstruction
-      : useGeminiOutputRouter
-        ? `${baseSystemInstruction}\n\n${geminiArtifactStreamInstruction}`
-      : artifactRuntimeEnabled
+      : useArtifactOutputRouter
+        ? `${baseSystemInstruction}\n\n${artifactStreamInstruction}`
+      : artifactToolsEnabled
         ? `${baseSystemInstruction}\n\n${ARTIFACT_SYSTEM_INSTRUCTION}`
+        : artifactRuntimeEnabled && requestIsOpenRouter
+          ? `${baseSystemInstruction}\n\nCanvas artifact guidance: the selected OpenRouter model does not advertise native function calling. If the user asks for a substantial artifact, return the artifact content directly in one fenced block or as raw SVG/HTML, without fake tool-call JSON or custom wrapper tags.`
         : `${baseSystemInstruction}\n\nThe user does not want a Canvas artifact for this turn. Answer normally and do not create or update artifacts.`;
 
     if (requestIsImageMode) {
@@ -692,6 +718,14 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       }
     }
 
+    if (requestIsOpenRouter) {
+      const validationError = validateOpenRouterAttachments(currentAttachments);
+      if (validationError) {
+        alert(validationError);
+        return;
+      }
+    }
+
     if (requestProvider === "gemini") {
       const validationError = validateGeminiAttachments(currentAttachments);
       if (validationError) {
@@ -709,6 +743,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       attachmentTotalSize: getAttachmentTotalSize(currentAttachments),
       thinkingEnabled: requestThinkingEnabled,
       webSearchEnabled: requestWebSearchEnabled,
+      webSearchMode: requestWebSearchMode,
       deepResearchEnabled: requestDeepResearchEnabled,
       responseStyle: requestStyle,
       historyLength: currentHistory.length,
@@ -732,6 +767,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         role: "model",
         content: "",
         isThinking: requestDeepResearchEnabled ? true : requestThinkingEnabled,
+        webSearchStatus: requestForcedWebSearch && !requestDeepResearchEnabled ? "searching" : undefined,
       },
       chatId,
       Date.now() + 1
@@ -752,8 +788,10 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
     const upsertStreamingArtifactFromDraft = (draftPayload: ArtifactDraftPayload) => {
       if (!draftPayload.content.trim()) return;
       const now = Date.now();
+      const newlyStreamedContent = draftPayload.content.slice(lastStreamingArtifactLength);
       const shouldUpdate =
         !streamingArtifactRef ||
+        newlyStreamedContent.includes("\n") ||
         draftPayload.content.length - lastStreamingArtifactLength >= 80 ||
         now - lastStreamingArtifactAt >= 250;
       if (!shouldUpdate) return;
@@ -800,6 +838,28 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       };
     };
 
+    const userAskedForDurableArtifact =
+      /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/i.test(text) ||
+      /\b(?:write|draft|create|make|build|generate|draw|design|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,100}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt|svg|html|page|app|component|code|function|script|program|class|json|yaml|sql|diagram|mermaid)\b/i.test(text) ||
+      /\b(?:svg|html|mermaid|json|yaml|sql)\b[\s\S]{0,80}\b(?:for|of|with|that|which|about)\b/i.test(text);
+
+    const shouldPromoteContentToArtifact = (
+      kind: ArtifactDraftPayload["kind"],
+      content: string,
+      operation: "create" | "update" = "create"
+    ) => {
+      if (operation === "update") return true;
+      if (["svg", "html", "mermaid"].includes(kind)) return true;
+      if (/^\s*(?:<svg\b|<!doctype html\b|<html\b)/i.test(content)) return true;
+      return userAskedForDurableArtifact;
+    };
+
+    const detectFallbackArtifactFromMessage = (value: string) => {
+      const detected = detectArtifactFromMessage(value);
+      if (!detected) return null;
+      return shouldPromoteContentToArtifact(detected.kind, detected.content) ? detected : null;
+    };
+
     const detectStreamingArtifactFromText = (value: string) => {
       const openFence = value.match(/```([a-zA-Z0-9_-]*)\n([\s\S]*)$/);
       if (!openFence) return;
@@ -809,6 +869,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       const content = (closingFenceIndex >= 0 ? rawContent.slice(0, closingFenceIndex) : rawContent).trim();
       if (content.length < 40) return;
       const kind = deriveArtifactKind(language, content);
+      if (!shouldPromoteContentToArtifact(kind, content)) return;
       upsertStreamingArtifactFromDraft({
         operation: "create",
         kind,
@@ -818,7 +879,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       });
     };
 
-    const getGeminiArtifactStreamDraft = (
+    const getStreamedArtifactDraft = (
       value: string,
       metadata?: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "title" | "language" | "targetArtifactId">>
     ): ArtifactDraftPayload | null => {
@@ -843,6 +904,42 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         language: language || (kind === "svg" ? "svg" : kind === "html" ? "html" : undefined),
         content: trimmed,
       };
+    };
+
+    const parseStreamedArtifactHeader = (value: string) => {
+      const trimmed = value.trimStart();
+      if (!trimmed.toLowerCase().startsWith(artifactStreamMarker)) return null;
+      const lineEnd = trimmed.indexOf("\n");
+      if (lineEnd < 0) return undefined;
+      const headerLine = trimmed.slice(0, lineEnd).trim();
+      const rest = trimmed.slice(lineEnd + 1);
+      const rawJson = headerLine.slice(artifactStreamMarker.length).trim();
+      const metadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "title" | "language" | "targetArtifactId">> = {
+        operation: "create",
+      };
+
+      if (rawJson) {
+        try {
+          const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+          metadata.operation = parsed.operation === "update" ? "update" : "create";
+          metadata.kind = typeof parsed.kind === "string" ? normalizeArtifactKind(parsed.kind, parsed.language as string | undefined) : undefined;
+          metadata.title = typeof parsed.title === "string" ? parsed.title : undefined;
+          metadata.language = typeof parsed.language === "string" ? parsed.language : undefined;
+          metadata.targetArtifactId = typeof parsed.targetArtifactId === "string" ? parsed.targetArtifactId : undefined;
+        } catch {
+          // A private marker is already a strong signal; recover with inferred metadata instead of leaking it into chat.
+        }
+      }
+
+      return { metadata, rest };
+    };
+
+    const shouldAcceptStreamedArtifactRoute = (
+      metadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "language">>,
+      firstContent: string
+    ) => {
+      const kind = metadata.kind || deriveArtifactKind(metadata.language, firstContent);
+      return shouldPromoteContentToArtifact(kind, firstContent, metadata.operation || "create");
     };
 
     const removeArtifactBlocksFromChatText = (value: string) => {
@@ -1027,6 +1124,9 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
     if (requestIsCliproxy) {
       let currentText = "";
       let currentThought = "";
+      let currentWebSearchStatus: Message["webSearchStatus"] = requestForcedWebSearch ? "searching" : undefined;
+      let currentWebSearchQueries: string[] | undefined;
+      let didCompleteWebSearch = false;
       let currentArtifact: ArtifactReferenceRecord | undefined;
       let currentArtifactOperation: "create" | "update" = "create";
       const artifactTasks: Promise<void>[] = [];
@@ -1038,7 +1138,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
           history: newHistory,
           reasoningEffort: requestThinkingEnabled ? "medium" : "none",
           webSearchEnabled: requestWebSearchEnabled,
-          artifactToolsEnabled: artifactRuntimeEnabled,
+          artifactToolsEnabled,
           signal: abortControllerRef.current.signal,
           onTextDelta: (delta) => {
             currentText += delta;
@@ -1051,17 +1151,19 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
             updateLastModelMessage({ thought: currentThought, isThinking: true });
           },
           onWebSearch: ({ status, queries }) => {
-            const existingQueries = messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries;
-            updateLastModelMessage({ webSearchStatus: status, webSearchQueries: queries || existingQueries });
+            currentWebSearchStatus = status;
+            if (status === "searched") didCompleteWebSearch = true;
+            currentWebSearchQueries = queries || currentWebSearchQueries;
+            updateLastModelMessage({ webSearchStatus: currentWebSearchStatus, webSearchQueries: currentWebSearchQueries });
           },
           onArtifactToolDelta: (payload) => {
-            if (!artifactRuntimeEnabled) return;
+            if (!artifactToolsEnabled) return;
             if (payload.operation === "update") currentArtifactOperation = "update";
             upsertStreamingArtifactFromDraft(payload);
             updateLastModelMessage({ content: "" });
           },
           onArtifactToolCall: (payload) => {
-            if (!artifactRuntimeEnabled) return;
+            if (!artifactToolsEnabled) return;
             currentArtifactOperation = payload.operation;
             const task = persistArtifactFromPayload(chatId, pendingModelMessage.id, promoteStreamingArtifactPayload(payload)).then((artifactRef) => {
               if (!artifactRef) return;
@@ -1074,7 +1176,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         await Promise.all(artifactTasks);
 
         if (!currentArtifact) {
-          const detected = artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
+          const detected = artifactRuntimeEnabled ? detectFallbackArtifactFromMessage(currentText) : null;
           if (detected) {
             currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
               ...detected,
@@ -1103,8 +1205,8 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
             thought: currentThought,
             isThinking: false,
             artifact: currentArtifact,
-            webSearchStatus: messagesRef.current[messagesRef.current.length - 1]?.webSearchStatus,
-            webSearchQueries: messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries,
+            webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
           },
         ];
         await persistFinalGeneration(chatId, finalMessages, title ? { title } : {});
@@ -1125,8 +1227,8 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
             content: error?.name === "AbortError" || abortControllerRef.current?.signal.aborted ? currentText || stoppedMessage : currentText || errorMessage,
             thought: currentThought,
             isThinking: false,
-            webSearchStatus: messagesRef.current[messagesRef.current.length - 1]?.webSearchStatus,
-            webSearchQueries: messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries,
+            webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
           },
         ];
         if (error?.name === "AbortError" || abortControllerRef.current?.signal.aborted) {
@@ -1158,16 +1260,281 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       return;
     }
 
+    if (requestIsOpenRouter) {
+      let currentText = "";
+      let currentThought = "";
+      let currentWebSearchStatus: Message["webSearchStatus"] = requestForcedWebSearch ? "searching" : undefined;
+      let currentWebSearchQueries: string[] | undefined;
+      let didCompleteWebSearch = false;
+      let currentArtifact: ArtifactReferenceRecord | undefined;
+      let currentArtifactOperation: "create" | "update" = "create";
+      const artifactTasks: Promise<void>[] = [];
+      let openRouterArtifactStreamText = "";
+      let openRouterRoute: "undecided" | "chat" | "artifact" = useArtifactOutputRouter ? "undecided" : "chat";
+      let openRouterRoutingBuffer = "";
+      let openRouterArtifactMetadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "title" | "language" | "targetArtifactId">> | undefined;
+
+      try {
+        const appendOpenRouterChatText = (delta: string) => {
+          currentText += delta;
+          if (artifactRuntimeEnabled && !useArtifactOutputRouter) detectStreamingArtifactFromText(currentText);
+          if (!streamingArtifactRef && !currentArtifact) {
+            updateLastModelMessage({ content: currentText });
+          }
+        };
+
+        const appendOpenRouterArtifactText = (delta: string) => {
+          openRouterArtifactStreamText += delta;
+          const draft = getStreamedArtifactDraft(openRouterArtifactStreamText, openRouterArtifactMetadata);
+          if (draft) {
+            upsertStreamingArtifactFromDraft(draft);
+            updateLastModelMessage({ content: "" });
+          }
+        };
+
+        const routeOpenRouterTextDelta = (delta: string) => {
+          if (!useArtifactOutputRouter) {
+            appendOpenRouterChatText(delta);
+            return;
+          }
+
+          if (openRouterRoute === "chat") {
+            appendOpenRouterChatText(delta);
+            return;
+          }
+
+          if (openRouterRoute === "artifact") {
+            appendOpenRouterArtifactText(delta);
+            return;
+          }
+
+          openRouterRoutingBuffer += delta;
+          const trimmed = openRouterRoutingBuffer.trimStart();
+          const lowerTrimmed = trimmed.toLowerCase();
+          const header = parseStreamedArtifactHeader(openRouterRoutingBuffer);
+          if (header) {
+            if (!shouldAcceptStreamedArtifactRoute(header.metadata, header.rest)) {
+              openRouterRoute = "chat";
+              const fallbackText = header.rest || openRouterRoutingBuffer.replace(/^:::privora-artifact[^\n]*(?:\n|$)/i, "");
+              openRouterRoutingBuffer = "";
+              appendOpenRouterChatText(fallbackText);
+              return;
+            }
+
+            openRouterRoute = "artifact";
+            openRouterArtifactMetadata = header.metadata;
+            currentArtifactOperation = header.metadata.operation || "create";
+            openRouterRoutingBuffer = "";
+            appendOpenRouterArtifactText(header.rest);
+            return;
+          }
+
+          if (header === undefined && lowerTrimmed.length <= 240) return;
+
+          const markerPrefix = artifactStreamMarker.slice(0, Math.max(0, lowerTrimmed.length));
+          if (artifactStreamMarker.startsWith(lowerTrimmed) && lowerTrimmed.length < artifactStreamMarker.length) return;
+
+          if (/^(?:<svg\b|<!doctype html\b|<html\b)/i.test(trimmed)) {
+            openRouterRoute = "artifact";
+            openRouterRoutingBuffer = "";
+            appendOpenRouterArtifactText(trimmed);
+            return;
+          }
+
+          if (/^```(?:[a-zA-Z0-9_-]+)?\s*\n/i.test(trimmed) && shouldAcceptStreamedArtifactRoute({}, trimmed)) {
+            openRouterRoute = "artifact";
+            openRouterRoutingBuffer = "";
+            appendOpenRouterArtifactText(trimmed);
+            return;
+          }
+
+          if (lowerTrimmed.length >= 240 || !markerPrefix.startsWith(lowerTrimmed[0] || "")) {
+            openRouterRoute = "chat";
+            const buffered = openRouterRoutingBuffer;
+            openRouterRoutingBuffer = "";
+            appendOpenRouterChatText(buffered);
+          }
+        };
+
+        await streamOpenRouterResponse({
+          model: requestModel,
+          instructions: systemInstruction,
+          history: newHistory,
+          reasoningEnabled: requestThinkingEnabled && Boolean(openRouterCapabilities?.supportsReasoning),
+          webSearchEnabled: requestWebSearchEnabled && Boolean(openRouterCapabilities?.supportsTools),
+          webSearchRequired: requestForcedWebSearch && Boolean(openRouterCapabilities?.supportsToolChoice),
+          artifactToolsEnabled: artifactToolsEnabled && Boolean(openRouterCapabilities?.supportsTools),
+          signal: abortControllerRef.current.signal,
+          onTextDelta: (delta) => {
+            routeOpenRouterTextDelta(delta);
+          },
+          onThoughtDelta: (delta) => {
+            currentThought += delta;
+            updateLastModelMessage({ thought: currentThought, isThinking: true });
+          },
+          onWebSearch: ({ status, queries }) => {
+            currentWebSearchStatus = status;
+            if (status === "searched") didCompleteWebSearch = true;
+            currentWebSearchQueries = queries || currentWebSearchQueries;
+            updateLastModelMessage({ webSearchStatus: currentWebSearchStatus, webSearchQueries: currentWebSearchQueries });
+          },
+          onArtifactToolDelta: (payload) => {
+            if (!artifactToolsEnabled) return;
+            if (payload.operation === "update") currentArtifactOperation = "update";
+            upsertStreamingArtifactFromDraft(payload);
+            updateLastModelMessage({ content: "" });
+          },
+          onArtifactToolCall: (payload) => {
+            if (!artifactToolsEnabled) return;
+            currentArtifactOperation = payload.operation;
+            const task = persistArtifactFromPayload(chatId, pendingModelMessage.id, promoteStreamingArtifactPayload(payload)).then((artifactRef) => {
+              if (!artifactRef) return;
+              currentArtifact = artifactRef;
+              updateLastModelMessage({ artifact: artifactRef, content: "" });
+            });
+            artifactTasks.push(task);
+          },
+        });
+        await Promise.all(artifactTasks);
+
+        if (useArtifactOutputRouter && openRouterRoute === "undecided" && openRouterRoutingBuffer) {
+          const buffered = openRouterRoutingBuffer;
+          openRouterRoutingBuffer = "";
+          if (/^(?:<svg\b|<!doctype html\b|<html\b)/i.test(buffered.trimStart()) || shouldAcceptStreamedArtifactRoute({}, buffered)) {
+            openRouterRoute = "artifact";
+            appendOpenRouterArtifactText(buffered.trimStart());
+          } else {
+            openRouterRoute = "chat";
+            appendOpenRouterChatText(buffered);
+          }
+        }
+
+        const streamedArtifactDraft = openRouterRoute === "artifact"
+          ? getStreamedArtifactDraft(openRouterArtifactStreamText, openRouterArtifactMetadata)
+          : null;
+        if (streamedArtifactDraft) {
+          currentArtifactOperation = streamedArtifactDraft.operation || "create";
+          currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
+            operation: streamedArtifactDraft.operation || "create",
+            targetArtifactId: streamedArtifactDraft.targetArtifactId || streamingArtifactRef?.artifactId,
+            kind: streamedArtifactDraft.kind,
+            title: streamedArtifactDraft.title,
+            language: streamedArtifactDraft.language,
+            content: streamedArtifactDraft.content,
+          });
+          if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
+        } else if (openRouterRoute === "artifact" && openRouterArtifactStreamText.trim()) {
+          currentText = openRouterArtifactStreamText;
+          updateLastModelMessage({ content: removeArtifactBlocksFromChatText(currentText) || currentText });
+        }
+
+        if (!currentArtifact) {
+          const detected = artifactRuntimeEnabled ? detectFallbackArtifactFromMessage(currentText) : null;
+          if (detected) {
+            currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
+              ...detected,
+              operation: "create",
+              targetArtifactId: streamingArtifactRef?.artifactId,
+            });
+            if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
+          }
+        }
+
+        const finalArtifactText = currentArtifact
+          ? await generateOpenRouterArtifactSummary({
+              model: requestModel,
+              userRequest: text,
+              artifact: currentArtifact,
+              operation: currentArtifactOperation,
+              signal: abortControllerRef.current!.signal,
+            }).then(summary => normalizeArtifactSummary(summary, currentArtifactOperation))
+              .catch((error) => {
+                appLogger.warn("OpenRouter artifact summary finalizer failed", { err: error, chatId, artifactId: currentArtifact?.artifactId });
+                return getFallbackArtifactSummary(currentArtifactOperation);
+              })
+          : getArtifactCompletionText(currentText);
+        updateLastModelMessage({ isThinking: false });
+
+        const currentChat = chatsRef.current.find(c => c.id === chatId);
+        const title =
+          currentChat?.title === "New Conversation"
+            ? text.slice(0, 30) + (text.length > 30 ? "..." : "")
+            : currentChat?.title;
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            content: finalArtifactText,
+            thought: currentThought,
+            isThinking: false,
+            artifact: currentArtifact,
+            webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+          },
+        ];
+        await persistFinalGeneration(chatId, finalMessages, title ? { title } : {});
+        appLogger.info("OpenRouter generation completed", {
+          chatId,
+          model: requestModel,
+          durationMs: Date.now() - startedAt,
+          outputLength: currentText.length,
+          artifactStreamLength: openRouterArtifactStreamText.length,
+          thoughtLength: currentThought.length,
+          artifactOperation: currentArtifact ? currentArtifactOperation : undefined,
+        });
+      } catch (error: any) {
+        const stoppedMessage = currentText || currentThought ? "" : "Generation stopped.";
+        const errorMessage = getOpenRouterFailureMessage(error);
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            content: error?.name === "AbortError" || abortControllerRef.current?.signal.aborted ? currentText || stoppedMessage : currentText || errorMessage,
+            thought: currentThought,
+            isThinking: false,
+            webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+          },
+        ];
+        if (error?.name === "AbortError" || abortControllerRef.current?.signal.aborted) {
+          appLogger.info("OpenRouter generation stopped", {
+            chatId,
+            model: requestModel,
+            durationMs: Date.now() - startedAt,
+            outputLength: currentText.length,
+            thoughtLength: currentThought.length,
+          });
+          await persistFinalGeneration(chatId, finalMessages);
+        } else {
+          appLogger.error("OpenRouter generation failed", {
+            err: error,
+            chatId,
+            model: requestModel,
+            durationMs: Date.now() - startedAt,
+            outputLength: currentText.length,
+            thoughtLength: currentThought.length,
+          });
+          await persistFinalGeneration(chatId, finalMessages);
+        }
+      } finally {
+        isTypingRef.current = false;
+        setIsTyping(false);
+        abortControllerRef.current = null;
+      }
+
+      return;
+    }
+
     let currentText = "";
     let currentThought = "";
-    let currentWebSearchStatus: Message["webSearchStatus"];
+    let currentWebSearchStatus: Message["webSearchStatus"] = requestForcedWebSearch ? "searching" : undefined;
     let currentWebSearchQueries: string[] | undefined;
     let didCompleteWebSearch = false;
     let currentArtifact: ArtifactReferenceRecord | undefined;
     let currentArtifactOperation: "create" | "update" = "create";
     const artifactTasks: Promise<void>[] = [];
     let geminiArtifactStreamText = "";
-    let geminiRoute: "undecided" | "chat" | "artifact" = useGeminiOutputRouter ? "undecided" : "chat";
+    let geminiRoute: "undecided" | "chat" | "artifact" = useArtifactOutputRouter ? "undecided" : "chat";
     let geminiRoutingBuffer = "";
     let geminiArtifactMetadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "title" | "language" | "targetArtifactId">> | undefined;
 
@@ -1206,64 +1573,21 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
 
       const appendGeminiChatText = (delta: string) => {
         currentText += delta;
-        if (artifactRuntimeEnabled && !useGeminiOutputRouter) detectStreamingArtifactFromText(currentText);
+        if (artifactRuntimeEnabled && !useArtifactOutputRouter) detectStreamingArtifactFromText(currentText);
         updateDisplayedGeminiMessage();
       };
 
       const appendGeminiArtifactText = (delta: string) => {
         geminiArtifactStreamText += delta;
-        const draft = getGeminiArtifactStreamDraft(geminiArtifactStreamText, geminiArtifactMetadata);
+        const draft = getStreamedArtifactDraft(geminiArtifactStreamText, geminiArtifactMetadata);
         if (draft) {
           upsertStreamingArtifactFromDraft(draft);
           updateLastModelMessage({ content: "" });
         }
       };
 
-      const parseGeminiArtifactHeader = (value: string) => {
-        const trimmed = value.trimStart();
-        if (!trimmed.toLowerCase().startsWith(geminiArtifactMarker)) return null;
-        const lineEnd = trimmed.indexOf("\n");
-        if (lineEnd < 0) return undefined;
-        const headerLine = trimmed.slice(0, lineEnd).trim();
-        const rest = trimmed.slice(lineEnd + 1);
-        const rawJson = headerLine.slice(geminiArtifactMarker.length).trim();
-        try {
-          const parsed = JSON.parse(rawJson) as Record<string, unknown>;
-          return {
-            metadata: {
-              operation: parsed.operation === "update" ? "update" as const : "create" as const,
-              kind: typeof parsed.kind === "string" ? normalizeArtifactKind(parsed.kind, parsed.language as string | undefined) : undefined,
-              title: typeof parsed.title === "string" ? parsed.title : undefined,
-              language: typeof parsed.language === "string" ? parsed.language : undefined,
-              targetArtifactId: typeof parsed.targetArtifactId === "string" ? parsed.targetArtifactId : undefined,
-            },
-            rest,
-          };
-        } catch {
-          return null;
-        }
-      };
-
-      const shouldAcceptGeminiArtifactRoute = (
-        metadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "language">>,
-        firstContent: string
-      ) => {
-        if (metadata.operation === "update") return true;
-
-        const kind = metadata.kind || deriveArtifactKind(metadata.language, firstContent);
-        if (["svg", "html", "mermaid", "code", "json", "yaml", "sql"].includes(kind)) return true;
-        if (/^\s*(?:<svg\b|<!doctype html\b|<html\b)/i.test(firstContent)) return true;
-
-        const userText = text.toLowerCase();
-        const wantsDurableArtifact =
-          /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/.test(userText) ||
-          /\b(?:write|draft|create|make|build|generate|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,80}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt)\b/.test(userText);
-
-        return wantsDurableArtifact;
-      };
-
       const routeGeminiTextDelta = (delta: string) => {
-        if (!useGeminiOutputRouter) {
+        if (!useArtifactOutputRouter) {
           appendGeminiChatText(delta);
           return;
         }
@@ -1281,9 +1605,9 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         geminiRoutingBuffer += delta;
         const trimmed = geminiRoutingBuffer.trimStart();
         const lowerTrimmed = trimmed.toLowerCase();
-        const header = parseGeminiArtifactHeader(geminiRoutingBuffer);
+        const header = parseStreamedArtifactHeader(geminiRoutingBuffer);
         if (header) {
-          if (!shouldAcceptGeminiArtifactRoute(header.metadata, header.rest)) {
+          if (!shouldAcceptStreamedArtifactRoute(header.metadata, header.rest)) {
             geminiRoute = "chat";
             const fallbackText = header.rest || geminiRoutingBuffer.replace(/^:::privora-artifact[^\n]*(?:\n|$)/i, "");
             geminiRoutingBuffer = "";
@@ -1301,10 +1625,17 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
 
         if (header === undefined && lowerTrimmed.length <= 240) return;
 
-        const markerPrefix = geminiArtifactMarker.slice(0, Math.max(0, lowerTrimmed.length));
-        if (geminiArtifactMarker.startsWith(lowerTrimmed) && lowerTrimmed.length < geminiArtifactMarker.length) return;
+        const markerPrefix = artifactStreamMarker.slice(0, Math.max(0, lowerTrimmed.length));
+        if (artifactStreamMarker.startsWith(lowerTrimmed) && lowerTrimmed.length < artifactStreamMarker.length) return;
 
         if (/^(?:<svg\b|<!doctype html\b|<html\b)/i.test(trimmed)) {
+          geminiRoute = "artifact";
+          geminiRoutingBuffer = "";
+          appendGeminiArtifactText(trimmed);
+          return;
+        }
+
+        if (/^```(?:[a-zA-Z0-9_-]+)?\s*\n/i.test(trimmed) && shouldAcceptStreamedArtifactRoute({}, trimmed)) {
           geminiRoute = "artifact";
           geminiRoutingBuffer = "";
           appendGeminiArtifactText(trimmed);
@@ -1325,7 +1656,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         systemInstruction,
         thinkingEnabled: requestThinkingEnabled,
         webSearchEnabled: requestWebSearchEnabled,
-        artifactToolsEnabled: artifactRuntimeEnabled && !useGeminiOutputRouter,
+        artifactToolsEnabled: artifactRuntimeEnabled && !useArtifactOutputRouter,
         signal: abortControllerRef.current.signal,
         onTextDelta: (delta) => {
           routeGeminiTextDelta(delta);
@@ -1353,7 +1684,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       });
       await Promise.all(artifactTasks);
 
-      if (useGeminiOutputRouter && geminiRoute === "undecided" && geminiRoutingBuffer) {
+      if (useArtifactOutputRouter && geminiRoute === "undecided" && geminiRoutingBuffer) {
         const buffered = geminiRoutingBuffer;
         geminiRoutingBuffer = "";
         if (/^(?:<svg\b|<!doctype html\b|<html\b)/i.test(buffered.trimStart())) {
@@ -1366,7 +1697,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
       }
 
       const finalWebSearchStatus = didCompleteWebSearch ? "searched" : undefined;
-      const streamedArtifactDraft = geminiRoute === "artifact" ? getGeminiArtifactStreamDraft(geminiArtifactStreamText, geminiArtifactMetadata) : null;
+      const streamedArtifactDraft = geminiRoute === "artifact" ? getStreamedArtifactDraft(geminiArtifactStreamText, geminiArtifactMetadata) : null;
       if (streamedArtifactDraft) {
         currentArtifactOperation = streamedArtifactDraft.operation || "create";
         currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
@@ -1382,7 +1713,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         currentText = geminiArtifactStreamText;
         updateLastModelMessage({ content: removeArtifactBlocksFromChatText(currentText) || currentText });
       }
-      const detectedArtifact = !currentArtifact && artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
+      const detectedArtifact = !currentArtifact && artifactRuntimeEnabled ? detectFallbackArtifactFromMessage(currentText) : null;
       if (detectedArtifact) {
         currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
           ...detectedArtifact,
@@ -1543,7 +1874,7 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
     const systemInstruction = getSystemInstruction({
       styleId: requestStyle,
       provider: requestProvider,
-      webSearchEnabled: true,
+      webSearchMode: "forced",
       deepResearchEnabled: true,
     });
     const startedAt = Date.now();

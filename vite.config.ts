@@ -7,6 +7,7 @@ import pino, {type Logger} from 'pino';
 import {randomUUID} from 'node:crypto';
 import {defineConfig, loadEnv, type Plugin} from 'vite';
 import {geminiArtifactFunctionDeclaration} from './src/lib/artifacts';
+import {getOpenRouterModelCapabilities, modelSupportsOpenRouterParameter} from './src/lib/openrouter/models';
 
 const readJsonBody = async (req: IncomingMessage) => {
   const chunks: Buffer[] = [];
@@ -138,6 +139,31 @@ const extractCliproxyStreamFinalText = (event: string | undefined, data: any): s
   if (event?.includes('output_text.done') && typeof data?.text === 'string') return data.text;
   if (typeof data?.text === 'string' && (data?.type === 'response.output_text.done' || data?.type === 'output_text.done')) return data.text;
   if (event?.includes('response.completed') || data?.type === 'response.completed') return extractCliproxyText(data);
+  return '';
+};
+
+const extractOpenRouterText = (data: any): string => {
+  if (typeof data?.output_text === 'string') return data.output_text;
+  if (typeof data?.text === 'string') return data.text;
+  if (typeof data?.message?.content === 'string') return data.message.content;
+  if (Array.isArray(data?.choices)) {
+    return data.choices
+      .map((choice: any) => choice?.message?.content || choice?.text || '')
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+};
+
+const extractOpenRouterStreamTextDelta = (data: any): string => {
+  const delta = data?.choices?.[0]?.delta;
+  if (typeof delta?.content === 'string') return delta.content;
+  if (typeof data?.delta === 'string') return data.delta;
+  return '';
+};
+
+const extractOpenRouterStreamFinalText = (data: any): string => {
+  if (data?.choices?.[0]?.finish_reason === 'stop') return extractOpenRouterText(data);
   return '';
 };
 
@@ -513,9 +539,11 @@ const buildTimeLimitedResearchText = (text: string, sources: ResearchSource[]) =
 const createProviderResearchRuntime = ({
   ai,
   cliproxyBaseUrl,
+  openrouterApiKey,
 }: {
   ai: GoogleGenAI | null;
   cliproxyBaseUrl: string;
+  openrouterApiKey?: string;
 }): ResearchRuntime => ({
   async run(job, emit) {
     const body = job.body;
@@ -806,6 +834,218 @@ const createProviderResearchRuntime = ({
         return;
       }
 
+      if (provider === 'openrouter') {
+        if (!openrouterApiKey) throw new Error('OPENROUTER_API_KEY is not configured.');
+        const capabilities = getOpenRouterModelCapabilities(body.model);
+        const canUseTools = Boolean(capabilities?.supportsTools);
+        const openRouterMessages = (prompt: string, systemInstruction: string) => [
+          {role: 'system', content: systemInstruction},
+          ...(body.history || []).map((message: any) => ({
+            role: message.role === 'model' ? 'assistant' : 'user',
+            content: message.content || '',
+          })),
+          {role: 'user', content: prompt},
+        ];
+        const openRouterTools = canUseTools
+          ? [{type: 'openrouter:web_search', parameters: {max_results: 5, max_total_results: 12}}]
+          : undefined;
+        const openRouterReasoning = capabilities?.supportsReasoning
+          ? {reasoning: {effort: 'medium', exclude: false}, include_reasoning: true}
+          : {};
+        let text = '';
+        let didEnterSynthesis = false;
+
+        if (sources.length < MIN_DIRECT_SOURCES_TO_SKIP_PROVIDER_SCOUT && canUseTools) {
+          try {
+            emitActivity('debug', 'Provider source scout started');
+            const scoutController = new AbortController();
+            const scoutTimeout = setTimeout(() => scoutController.abort(), 25_000);
+            const abortScout = () => scoutController.abort();
+            job.controller.signal.addEventListener('abort', abortScout, {once: true});
+            const scoutResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${openrouterApiKey}`,
+                'X-Title': 'Privora',
+              },
+              body: JSON.stringify({
+                model: body.model,
+                messages: [
+                  {
+                    role: 'system',
+                    content: 'You are a source discovery agent. Use web search when available. Return only source titles and full URLs for the research task.',
+                  },
+                  {role: 'user', content: formatSourceScoutPrompt(body)},
+                ],
+                tools: openRouterTools,
+                stream: true,
+                ...(modelSupportsOpenRouterParameter(body.model, 'temperature') ? {temperature: 0.1} : {}),
+              }),
+              signal: scoutController.signal,
+            });
+
+            if (scoutResponse.ok && scoutResponse.body) {
+              const scoutReader = scoutResponse.body.getReader();
+              const scoutDecoder = new TextDecoder();
+              let scoutBuffer = '';
+              const flushScoutEvent = (rawEvent: string) => {
+                const dataLines = rawEvent.split('\n').map(line => line.trim()).filter(line => line.startsWith('data:')).map(line => line.slice('data:'.length).trim());
+                for (const dataLine of dataLines) {
+                  if (!dataLine || dataLine === '[DONE]') continue;
+                  try {
+                    const data = JSON.parse(dataLine);
+                    const structuredUrls = Array.from(collectUrls(data)).map(url => ({url, provider: 'OpenRouter web search scout'}));
+                    const scoutText = [extractOpenRouterStreamTextDelta(data), extractOpenRouterStreamFinalText(data), extractOpenRouterText(data)].filter(Boolean).join('\n');
+                    const textUrls = extractUrlsFromText(scoutText).map(url => ({url, provider: 'OpenRouter web search scout'}));
+                    sources = mergeLiveSources(sources, seenSourceUrls, [...structuredUrls, ...textUrls]);
+                    if (sources.length > 0) enterReadingStage();
+                  } catch {
+                    const textUrls = extractUrlsFromText(dataLine).map(url => ({url, provider: 'OpenRouter web search scout'}));
+                    sources = mergeLiveSources(sources, seenSourceUrls, textUrls);
+                    if (sources.length > 0) enterReadingStage();
+                  }
+                }
+              };
+
+              while (sources.length < 12) {
+                throwIfStopped();
+                const {done, value} = await scoutReader.read();
+                if (done) break;
+                scoutBuffer += scoutDecoder.decode(value, {stream: true});
+                const scoutEvents = scoutBuffer.split('\n\n');
+                scoutBuffer = scoutEvents.pop() ?? '';
+                scoutEvents.forEach(event => {
+                  if (event.trim().startsWith(':')) return;
+                  flushScoutEvent(event);
+                });
+              }
+              if (scoutBuffer.trim() && !scoutBuffer.trim().startsWith(':')) flushScoutEvent(scoutBuffer);
+              await scoutReader.cancel().catch(() => undefined);
+            } else {
+              emitActivity('debug', 'Source scout fell back to direct sources', `Scout returned ${scoutResponse.status}; continuing with gathered evidence.`);
+            }
+            clearTimeout(scoutTimeout);
+            job.controller.signal.removeEventListener('abort', abortScout);
+          } catch (error) {
+            if (job.cancelled || job.controller.signal.aborted) throw error;
+            emitActivity('debug', 'Source scout fell back to direct sources', 'Continuing with gathered evidence.');
+          }
+        } else {
+          emitActivity(
+            sources.length > 0 ? 'reading' : 'debug',
+            sources.length > 0 ? 'Using gathered sources' : 'Provider source scout skipped',
+            canUseTools
+              ? `${sources.length} source candidate${sources.length === 1 ? '' : 's'} are ready.`
+              : 'This OpenRouter model does not advertise tool support, so Deep Research is using direct source gathering.',
+          );
+        }
+
+        await readSourceEvidence();
+        const providerResearchStartedAt = Date.now();
+        emitActivity('synthesizing', 'Writing final answer', `Using ${sources.length} source candidate${sources.length === 1 ? '' : 's'} and ${evidenceNotes.length} page note${evidenceNotes.length === 1 ? '' : 's'}.`);
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${openrouterApiKey}`,
+            'X-Title': 'Privora',
+          },
+          body: JSON.stringify({
+            model: body.model,
+            messages: openRouterMessages(formatResearchPrompt(body, sources, evidenceNotes), body.systemInstruction),
+            ...(openRouterTools ? {tools: openRouterTools} : {}),
+            ...openRouterReasoning,
+            stream: true,
+            ...(modelSupportsOpenRouterParameter(body.model, 'temperature') ? {temperature: 0.35} : {}),
+          }),
+          signal: job.controller.signal,
+        });
+        emitStatus('synthesizing', 'Writing final answer');
+        emitActivity('synthesizing', 'Answer stream ready', `Connected in ${Math.max(1, Math.round((Date.now() - providerResearchStartedAt) / 1000))}s. The report will appear after evidence checks finish.`);
+
+        if (!response.ok) {
+          throw new Error((await response.text().catch(() => '')) || `OpenRouter research failed with ${response.status}`);
+        }
+        if (!response.body) {
+          throw new Error('OpenRouter research did not return a live stream.');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const flushOpenRouterEvent = (rawEvent: string) => {
+          const dataLines = rawEvent.split('\n').map(line => line.trim()).filter(line => line.startsWith('data:')).map(line => line.slice('data:'.length).trim());
+          for (const dataLine of dataLines) {
+            if (!dataLine || dataLine === '[DONE]') continue;
+            try {
+              const data = JSON.parse(dataLine);
+              const urls = Array.from(collectUrls(data)).filter(url => !seenSourceUrls.has(url));
+              if (urls.length > 0) {
+                sources = mergeLiveSources(sources, seenSourceUrls, urls.map(url => ({url, provider: 'OpenRouter web search'})));
+                enterReadingStage();
+              }
+
+              const textDelta = extractOpenRouterStreamTextDelta(data);
+              if (textDelta) {
+                if (!didEnterSynthesis) {
+                  if (!didFindSources) enterReadingStage();
+                  emit({type: 'planStep', index: 1, status: 'completed'});
+                  emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
+                  emitActivity('comparing', 'Checking source agreement and contradictions');
+                  emitStatus('synthesizing', 'Synthesizing answer');
+                  emitActivity('synthesizing', 'Synthesizing cited answer');
+                  didEnterSynthesis = true;
+                }
+                sources = addTextSources(textDelta, sources, seenSourceUrls, 'Generated citation');
+                text += textDelta;
+                liveTextLength = text.length;
+                emit({type: 'text', text});
+              }
+            } catch {
+              if (dataLine.startsWith('{')) return;
+              if (!didEnterSynthesis) {
+                if (!didFindSources) enterReadingStage();
+                emitStatus('synthesizing', 'Synthesizing answer');
+                emitActivity('synthesizing', 'Synthesizing cited answer');
+                didEnterSynthesis = true;
+              }
+              text += dataLine;
+              sources = addTextSources(dataLine, sources, seenSourceUrls, 'Generated citation');
+              liveTextLength = text.length;
+              emit({type: 'text', text});
+            }
+          }
+        };
+
+        while (true) {
+          throwIfStopped();
+          const {done, value} = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, {stream: true});
+          const events = buffer.split('\n\n');
+          buffer = events.pop() ?? '';
+          events.forEach(event => {
+            if (event.trim().startsWith(':')) return;
+            flushOpenRouterEvent(event);
+          });
+        }
+        if (buffer.trim() && !buffer.trim().startsWith(':')) flushOpenRouterEvent(buffer);
+
+        if (!didEnterSynthesis) {
+          if (!didFindSources) enterReadingStage();
+          emit({type: 'planStep', index: 1, status: 'completed'});
+          emit({type: 'planStep', index: 2, status: 'active', message: getPlanStepText(body.plan, 2)});
+          emitStatus('synthesizing', 'Synthesizing answer');
+          emitActivity('synthesizing', 'Synthesizing cited answer');
+        }
+        (body.plan?.steps || []).forEach((_step: string, index: number) => {
+          if (index >= 3) emit({type: 'planStep', index, status: 'completed'});
+        });
+        emit({type: 'completed', text, sources});
+        return;
+      }
+
       let text = '';
       let didEnterSynthesis = false;
 
@@ -1056,14 +1296,16 @@ const createProviderResearchRuntime = ({
 const createResearchApiPlugin = ({
   ai,
   cliproxyBaseUrl,
+  openrouterApiKey,
   logger,
 }: {
   ai: GoogleGenAI | null;
   cliproxyBaseUrl: string;
+  openrouterApiKey?: string;
   logger: Logger;
 }): Plugin => {
   const jobs = new Map<string, ResearchJob>();
-  const runtime = createProviderResearchRuntime({ai, cliproxyBaseUrl});
+  const runtime = createProviderResearchRuntime({ai, cliproxyBaseUrl, openrouterApiKey});
 
   const writeEvent = (res: ServerResponse, event: ResearchEvent) => {
     res.write(`${JSON.stringify(event)}\n`);
@@ -1129,6 +1371,30 @@ const createResearchApiPlugin = ({
             },
           });
           text = response.text || '';
+        } else if (body.provider === 'openrouter') {
+          if (!openrouterApiKey) throw new Error('OPENROUTER_API_KEY is not configured.');
+          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${openrouterApiKey}`,
+              'X-Title': 'Privora',
+            },
+            body: JSON.stringify({
+              model: body.model,
+              messages: [
+                {role: 'system', content: body.instruction},
+                {role: 'user', content: input},
+              ],
+              ...(modelSupportsOpenRouterParameter(body.model, 'temperature') ? {temperature: 0.2} : {}),
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error((await response.text().catch(() => '')) || `Research planning failed with ${response.status}`);
+          }
+
+          text = extractOpenRouterText(await response.json());
         } else {
           const response = await fetch(`${cliproxyBaseUrl.replace(/\/$/, '')}/v1/responses`, {
             method: 'POST',
@@ -1416,6 +1682,105 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
   };
 };
 
+const createOpenRouterApiPlugin = (apiKey: string | undefined, appUrl: string | undefined, logger: Logger): Plugin => {
+  const handleOpenRouterRequest = async (req: IncomingMessage, res: ServerResponse) => {
+    const startedAt = Date.now();
+    const requestPath = req.url?.split('?')[0] || 'unknown';
+    const requestLogger = logger.child({
+      requestId: randomUUID(),
+      method: req.method,
+      path: requestPath,
+      service: 'openrouter',
+    });
+
+    if (req.method !== 'POST' || (requestPath !== '/chat' && requestPath !== '/api/openrouter/chat')) {
+      sendJson(res, 404, {error: 'Not found'});
+      return;
+    }
+
+    if (!apiKey) {
+      requestLogger.error('OpenRouter API key is not configured');
+      sendJson(res, 500, {error: 'OPENROUTER_API_KEY is not configured.'});
+      return;
+    }
+
+    try {
+      const body = await readJsonBody(req);
+      requestLogger.debug(
+        {
+          model: body.model,
+          stream: Boolean(body.stream),
+          toolCount: Array.isArray(body.tools) ? body.tools.length : 0,
+          bodyBytes: Buffer.byteLength(JSON.stringify(body), 'utf8'),
+        },
+        'OpenRouter request received',
+      );
+
+      const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(appUrl ? {'HTTP-Referer': appUrl} : {}),
+          'X-Title': 'Privora',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!upstream.ok) {
+        const errorText = await upstream.text().catch(() => '');
+        requestLogger.error({statusCode: upstream.status, errorText, durationMs: Date.now() - startedAt}, 'OpenRouter upstream failed');
+        sendJson(res, upstream.status, {error: errorText || `OpenRouter request failed with ${upstream.status}`});
+        return;
+      }
+
+      if (body.stream && upstream.body) {
+        res.writeHead(200, {
+          'Content-Type': upstream.headers.get('content-type') || 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'X-Accel-Buffering': 'no',
+          Connection: 'keep-alive',
+        });
+        res.flushHeaders?.();
+        res.socket?.setNoDelay(true);
+
+        const reader = upstream.body.getReader();
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done || res.destroyed) break;
+          res.write(Buffer.from(value));
+        }
+        res.end();
+        requestLogger.info({durationMs: Date.now() - startedAt, clientClosed: res.destroyed && !res.writableEnded}, 'OpenRouter stream completed');
+        return;
+      }
+
+      const data = await upstream.json();
+      requestLogger.info({durationMs: Date.now() - startedAt}, 'OpenRouter request completed');
+      sendJson(res, 200, data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'OpenRouter request failed.';
+      requestLogger.error({err: error, durationMs: Date.now() - startedAt}, 'OpenRouter request failed');
+      if (!res.headersSent) {
+        sendJson(res, 500, {error: message});
+      } else {
+        res.write(`data: ${JSON.stringify({error: {message}})}\n\n`);
+        res.end();
+      }
+    }
+  };
+
+  return {
+    name: 'privora-openrouter-api',
+    configureServer(server) {
+      server.middlewares.use('/api/openrouter', handleOpenRouterRequest);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use('/api/openrouter', handleOpenRouterRequest);
+    },
+  };
+};
+
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   const logger = createLogger(mode);
@@ -1425,7 +1790,8 @@ export default defineConfig(({mode}) => {
   return {
     plugins: [
       createGeminiApiPlugin(env.GEMINI_API_KEY, logger),
-      createResearchApiPlugin({ai: geminiAi, cliproxyBaseUrl, logger}),
+      createOpenRouterApiPlugin(env.OPENROUTER_API_KEY, env.APP_URL, logger),
+      createResearchApiPlugin({ai: geminiAi, cliproxyBaseUrl, openrouterApiKey: env.OPENROUTER_API_KEY, logger}),
       react(),
       tailwindcss(),
     ],
