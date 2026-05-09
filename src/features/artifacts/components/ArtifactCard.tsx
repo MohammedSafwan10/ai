@@ -22,12 +22,12 @@ export function ArtifactCard({ artifact, onOpen }: ArtifactCardProps) {
       type="button"
       onClick={onOpen}
       className={cn(
-        "group relative mt-3 flex w-full items-center gap-3 overflow-hidden rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/78 px-3 py-3 text-left shadow-sm transition hover:border-[var(--privora-text)]/20 hover:bg-[var(--privora-surface)]",
-        isStreaming && "border-[var(--privora-accent)]/25 bg-[var(--privora-user-bubble)]/70"
+        "privora-artifact-card group relative mt-3 flex w-full items-center gap-3 overflow-hidden rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/78 px-3 py-3 text-left shadow-sm transition hover:border-[var(--privora-text)]/20 hover:bg-[var(--privora-surface)]",
+        isStreaming && "is-streaming border-[var(--privora-accent)]/25"
       )}
     >
       {isStreaming && (
-        <span className="pointer-events-none absolute inset-0 -translate-x-full animate-[privora-artifact-card-shimmer_1.8s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-white/45 to-transparent dark:via-white/10" />
+        <span className="privora-artifact-card-shimmer pointer-events-none absolute" />
       )}
       <span className={cn(
         "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--privora-user-bubble)] text-[var(--privora-text)]",
