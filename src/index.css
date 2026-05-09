@@ -515,3 +515,47 @@ body,
   0%, 100% { opacity: 0.68; }
   50% { opacity: 1; }
 }
+
+.privora-artifact-prose {
+  color: var(--privora-text);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.privora-artifact-prose h1 {
+  margin: 0 0 1.25rem;
+  font-size: clamp(1.75rem, 3vw, 2.4rem);
+  line-height: 1.12;
+}
+
+.privora-artifact-prose h2 {
+  margin: 2rem 0 0.75rem;
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  line-height: 1.2;
+}
+
+.privora-artifact-prose h3 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.privora-artifact-prose p {
+  max-width: 72ch;
+}
+
+.privora-artifact-mermaid {
+  display: flex;
+  justify-content: flex-start;
+  overflow: auto;
+  border: 1px solid var(--privora-border);
+  border-radius: 0.75rem;
+  background: var(--privora-surface);
+  padding: 1rem;
+}
+
+.privora-artifact-mermaid svg {
+  display: block;
+  max-width: none !important;
+  min-width: max-content;
+  flex: 0 0 auto;
+}

@@ -7,7 +7,8 @@ import { ImageGenerationCard } from "./ImageGenerationCard";
 import { ResearchPlanCard } from "./ResearchPlanCard";
 import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
-import type { ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
+import { ArtifactCard } from "../../artifacts/components/ArtifactCard";
+import type { ArtifactReferenceRecord, ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 
 interface Attachment {
   url: string;
@@ -35,6 +36,7 @@ interface ChatMessageProps {
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
   imageGeneration?: ImageGenerationRecord;
+  artifact?: ArtifactReferenceRecord;
   isTyping?: boolean;
   messageIndex?: number;
   messageCount?: number;
@@ -45,6 +47,7 @@ interface ChatMessageProps {
   onCancelResearchPlan?: () => void;
   onStopResearchPlan?: () => void;
   onOpenResearchActivity?: () => void;
+  onOpenArtifact?: () => void;
   onEditGeneratedImage?: (attachment: Attachment) => void;
   attachments?: Attachment[];
   onPreviewAttachment?: (att: Attachment) => void;
@@ -59,7 +62,7 @@ const formatElapsed = (milliseconds: number) => {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onEditGeneratedImage, attachments, onPreviewAttachment }: ChatMessageProps) {
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onEditGeneratedImage, attachments, onPreviewAttachment }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -401,6 +404,9 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
                    <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)}>{content}</MarkdownRenderer>
                  </div>
                )}
+                 {!isUser && artifact && (
+                   <ArtifactCard artifact={artifact} onOpen={onOpenArtifact || (() => undefined)} />
+                 )}
               {!isUser && !isTyping && content && !isCompletedResearchReport && !isImageGenerationMessage && (
                  <>
                    {researchSources && researchSources.length > 0 && (
@@ -489,7 +495,9 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.researchCompletedAt === next.researchCompletedAt &&
     prev.researchTimeBudgetMs === next.researchTimeBudgetMs &&
     prev.imageGeneration === next.imageGeneration &&
+    prev.artifact === next.artifact &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
+    prev.onOpenArtifact === next.onOpenArtifact &&
     prev.isTyping === next.isTyping &&
     prev.messageIndex === next.messageIndex &&
     prev.messageCount === next.messageCount &&

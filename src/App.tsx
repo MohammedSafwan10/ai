@@ -1,10 +1,11 @@
 // @refresh reset
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type CSSProperties } from "react";
 import { PanelLeft } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { AttachmentPreviewModal } from "./features/attachments/components/AttachmentPreviewModal";
 import { ChatComposer } from "./features/chat/components/ChatComposer";
 import { ResearchActivityPanel } from "./features/chat/components/ResearchActivityPanel";
+import { CanvasPanel } from "./features/artifacts/components/CanvasPanel";
 import { ChatSidebar } from "./features/chat/components/ChatSidebar";
 import { ChatViewport } from "./features/chat/components/ChatViewport";
 import { RenameChatModal } from "./features/chat/components/RenameChatModal";
@@ -36,10 +37,13 @@ import {
   createChat,
   createId,
   deleteChatFromDb,
+  loadArtifactsForChat,
   updateChatMeta,
+  type ArtifactRecord,
   type ChatMessageRecord,
   type ChatRecord,
 } from "./lib/db";
+import { copyArtifactContent, downloadArtifactContent } from "./lib/artifacts";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
@@ -51,6 +55,9 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
+  const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
+  const [canvasWidth, setCanvasWidth] = useState(600);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -327,6 +334,30 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!currentChatId) {
+      setArtifacts([]);
+      setActiveArtifactId(null);
+      return;
+    }
+
+    void loadArtifactsForChat(currentChatId)
+      .then(setArtifacts)
+      .catch(err => appLogger.error("Failed to load artifacts", { err, chatId: currentChatId }));
+  }, [currentChatId]);
+
+  const activeArtifact = activeArtifactId
+    ? artifacts.find(artifact => artifact.id === activeArtifactId)
+    : undefined;
+
+  const upsertArtifactInState = (artifact: ArtifactRecord) => {
+    setArtifacts(prev => {
+      const exists = prev.some(item => item.id === artifact.id);
+      const next = exists ? prev.map(item => item.id === artifact.id ? artifact : item) : [artifact, ...prev];
+      return next.sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+  };
+
+  useEffect(() => {
     if (messages.length === 0) {
       shouldAutoScrollRef.current = true;
       setShowScrollToLatest(false);
@@ -355,6 +386,7 @@ export default function App() {
     setChats(prev => [newChat, ...prev]);
     setCurrentChatId(newChatId);
     setMessages([]);
+    setActiveArtifactId(null);
     shouldAutoScrollRef.current = true;
     setShowScrollToLatest(false);
     await createChat(newChat);
@@ -364,6 +396,7 @@ export default function App() {
     const chat = chats.find(c => c.id === id);
     if (chat) {
       setCurrentChatId(id);
+      setActiveArtifactId(null);
       shouldAutoScrollRef.current = true;
       setShowScrollToLatest(false);
       setMessages(chat.messages);
@@ -476,6 +509,8 @@ export default function App() {
     shouldAutoScrollRef,
     textareaRef,
     isNearChatBottom,
+    onArtifactUpsert: upsertArtifactInState,
+    onArtifactOpen: setActiveArtifactId,
   });
 
   const isLandingChat = messages.length === 0;
@@ -572,7 +607,10 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden">
+      <div
+        className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden transition-[margin] duration-200 ease-out md:mr-[var(--privora-canvas-offset)]"
+        style={{ "--privora-canvas-offset": activeArtifact ? `${canvasWidth}px` : "0px" } as CSSProperties}
+      >
         {!isSidebarOpen && (
           <button
             type="button"
@@ -628,6 +666,7 @@ export default function App() {
                   onStopResearchPlan={stopGeneration}
                   onEditGeneratedImage={handleEditGeneratedImage}
                   onOpenResearchActivity={() => setIsResearchActivityOpen(true)}
+                  onOpenArtifact={setActiveArtifactId}
                   onPreviewAttachment={setPreviewAttachment}
                 />
                 {renderComposer("footer")}
@@ -668,6 +707,17 @@ export default function App() {
         plan={activeResearchMessage?.researchPlan}
         activity={activeResearchMessage?.researchActivity}
         onClose={() => setIsResearchActivityOpen(false)}
+      />
+
+      <CanvasPanel
+        isOpen={Boolean(activeArtifact)}
+        artifact={activeArtifact}
+        isDarkMode={isDarkMode}
+        width={canvasWidth}
+        onWidthChange={setCanvasWidth}
+        onClose={() => setActiveArtifactId(null)}
+        onCopy={() => activeArtifact && void copyArtifactContent(activeArtifact.content)}
+        onDownload={() => activeArtifact && downloadArtifactContent(activeArtifact.title, activeArtifact.kind, activeArtifact.content, activeArtifact.language)}
       />
 
     </div>

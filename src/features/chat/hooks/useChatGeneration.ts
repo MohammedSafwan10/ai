@@ -1,9 +1,17 @@
 import { useRef, type Dispatch, type FormEvent, type KeyboardEvent, type MutableRefObject, type SetStateAction } from "react";
 import { getModelOption } from "../../../lib/models";
 import { CLIPROXY_IMAGE_MODEL, streamCliproxyImage, type CliproxyImageResult } from "../../../lib/cliproxy/images";
-import { streamCliproxyResponse } from "../../../lib/cliproxy/responses";
+import { generateCliproxyArtifactSummary, streamCliproxyResponse } from "../../../lib/cliproxy/responses";
 import { generateGeminiTitle, streamGeminiResponse, toGeminiContents } from "../../../lib/gemini/client";
 import { appLogger } from "../../../lib/logger";
+import {
+  ARTIFACT_SYSTEM_INSTRUCTION,
+  detectArtifactFromMessage,
+  deriveArtifactKind,
+  getTitleFromContent,
+  type ArtifactDraftPayload,
+  type ArtifactPayload,
+} from "../../../lib/artifacts";
 import {
   getAttachmentTotalSize,
   normalizeAttachmentUrls,
@@ -16,8 +24,12 @@ import { DEEP_RESEARCH_TIME_BUDGET_MS } from "../../../lib/prompt";
 import { cancelResearchJob, getResearchJobSnapshot, runResearchPreflight, startResearchJob, streamResearchJob, type ResearchStreamEvent } from "../../../lib/research/client";
 import {
   normalizeMessage,
+  createId,
   replaceChatMessages,
   updateChatMeta,
+  upsertArtifact,
+  type ArtifactRecord,
+  type ArtifactReferenceRecord,
   type ChatMessageRecord,
   type ChatRecord,
   type ImageGenerationItemRecord,
@@ -58,6 +70,8 @@ interface UseChatGenerationOptions {
   shouldAutoScrollRef: CurrentRef<boolean>;
   textareaRef: CurrentRef<HTMLTextAreaElement | null>;
   isNearChatBottom: () => boolean;
+  onArtifactUpsert?: (artifact: ArtifactRecord) => void;
+  onArtifactOpen?: (artifactId: string) => void;
 }
 
 export function useChatGeneration({
@@ -85,6 +99,8 @@ export function useChatGeneration({
   shouldAutoScrollRef,
   textareaRef,
   isNearChatBottom,
+  onArtifactUpsert,
+  onArtifactOpen,
 }: UseChatGenerationOptions) {
   const researchJobIdRef = useRef<string | null>(null);
   const editingResearchPlanMessageIdRef = useRef<string | null>(null);
@@ -136,12 +152,16 @@ export function useChatGeneration({
 
   const updateLastModelMessage = (patch: Partial<Message>) => {
     setMessages((prev) => {
+      if (prev.length === 0) return prev;
       const newMessages = [...prev];
       const lastMsg = { ...newMessages[newMessages.length - 1] };
       if (lastMsg.role === "model") {
+        const hasChanges = Object.entries(patch).some(([key, value]) => lastMsg[key as keyof Message] !== value);
+        if (!hasChanges) return prev;
         newMessages[newMessages.length - 1] = { ...lastMsg, ...patch };
+        return newMessages;
       }
-      return newMessages;
+      return prev;
     });
   };
 
@@ -152,6 +172,38 @@ export function useChatGeneration({
   ) => {
     setMessages(finalMessages);
     await syncChatMessages(chatId, finalMessages, metaPatch);
+  };
+
+  const persistArtifactFromPayload = async (
+    chatId: string,
+    messageId: string,
+    payload: ArtifactPayload
+  ): Promise<ArtifactReferenceRecord | null> => {
+    const now = Date.now();
+    const artifactId = payload.operation === "create" && payload.targetArtifactId
+      ? payload.targetArtifactId
+      : createId("artifact");
+    const artifact: ArtifactRecord = {
+      id: artifactId,
+      chatId,
+      messageId,
+      kind: payload.kind,
+      title: payload.title,
+      language: payload.language,
+      content: payload.content,
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await upsertArtifact(artifact);
+    onArtifactUpsert?.(artifact);
+    window.setTimeout(() => onArtifactOpen?.(artifactId), 0);
+    return {
+      artifactId,
+      title: artifact.title,
+      kind: artifact.kind,
+      status: artifact.status,
+    };
   };
 
   const formatPreflightClarification = (assistantMessage: string | undefined, questions: string[] | undefined) => {
@@ -316,12 +368,20 @@ export function useChatGeneration({
     const requestThinkingEnabled = isThinkingEnabledRef.current;
     const requestDeepResearchEnabled = isDeepResearchEnabledRef.current;
     const requestWebSearchEnabled = isWebSearchEnabledRef.current || requestDeepResearchEnabled;
-    const systemInstruction = getSystemInstruction({
+    const userDeclinedArtifacts = /\b(?:no|dont|don't|do not|skip|without|no need)\b.{0,32}\b(?:artifact|artifacts|canvas|file|files)\b/i.test(text) ||
+      /\b(?:artifact|artifacts|canvas|file|files)\b.{0,32}\b(?:no|not|dont|don't|skip|unneeded)\b/i.test(text);
+    const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !userDeclinedArtifacts;
+    const baseSystemInstruction = getSystemInstruction({
       styleId: requestStyle,
       provider: requestProvider,
       webSearchEnabled: requestWebSearchEnabled,
       deepResearchEnabled: requestIsImageMode ? false : requestDeepResearchEnabled,
     });
+    const systemInstruction = requestIsImageMode
+      ? baseSystemInstruction
+      : artifactRuntimeEnabled
+        ? `${baseSystemInstruction}\n\n${ARTIFACT_SYSTEM_INSTRUCTION}`
+        : `${baseSystemInstruction}\n\nThe user does not want a Canvas artifact for this turn. Answer normally and do not create or update artifacts.`;
 
     if (requestIsImageMode) {
       if (!text.trim()) {
@@ -664,6 +724,132 @@ export function useChatGeneration({
       });
     }
 
+    let streamingArtifactRef: ArtifactReferenceRecord | undefined;
+    let didOpenStreamingArtifact = false;
+    let lastStreamingArtifactLength = 0;
+    let lastStreamingArtifactAt = 0;
+
+    const upsertStreamingArtifactFromDraft = (draftPayload: ArtifactDraftPayload) => {
+      if (!draftPayload.content.trim()) return;
+      const now = Date.now();
+      const shouldUpdate =
+        !streamingArtifactRef ||
+        draftPayload.content.length - lastStreamingArtifactLength >= 80 ||
+        now - lastStreamingArtifactAt >= 250;
+      if (!shouldUpdate) return;
+
+      const artifactId = streamingArtifactRef?.artifactId || createId("artifact");
+      const artifact: ArtifactRecord = {
+        id: artifactId,
+        chatId,
+        messageId: pendingModelMessage.id,
+        kind: draftPayload.kind,
+        title: draftPayload.title,
+        language: draftPayload.language,
+        content: draftPayload.content,
+        status: "streaming",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const artifactRef: ArtifactReferenceRecord = {
+        artifactId,
+        title: artifact.title,
+        kind: artifact.kind,
+        status: "streaming",
+      };
+      streamingArtifactRef = artifactRef;
+      lastStreamingArtifactLength = draftPayload.content.length;
+      lastStreamingArtifactAt = now;
+      onArtifactUpsert?.(artifact);
+      updateLastModelMessage({ artifact: artifactRef });
+      void upsertArtifact(artifact).catch((error) => {
+        appLogger.warn("Streaming artifact draft save failed", { err: error, chatId, artifactId });
+      });
+      if (!didOpenStreamingArtifact) {
+        didOpenStreamingArtifact = true;
+        window.setTimeout(() => onArtifactOpen?.(artifactId), 0);
+      }
+    };
+
+    const promoteStreamingArtifactPayload = (payload: ArtifactPayload): ArtifactPayload => {
+      if (!streamingArtifactRef) return payload;
+      return {
+        ...payload,
+        operation: "create",
+        targetArtifactId: streamingArtifactRef.artifactId,
+      };
+    };
+
+    const detectStreamingArtifactFromText = (value: string) => {
+      const openFence = value.match(/```([a-zA-Z0-9_-]*)\n([\s\S]*)$/);
+      if (!openFence) return;
+      const language = openFence[1] || undefined;
+      const rawContent = openFence[2] || "";
+      const closingFenceIndex = rawContent.indexOf("```");
+      const content = (closingFenceIndex >= 0 ? rawContent.slice(0, closingFenceIndex) : rawContent).trim();
+      if (content.length < 40) return;
+      const kind = deriveArtifactKind(language, content);
+      upsertStreamingArtifactFromDraft({
+        operation: "create",
+        kind,
+        title: getTitleFromContent(content, kind),
+        language,
+        content,
+      });
+    };
+
+    const removeArtifactBlocksFromChatText = (value: string) => {
+      let cleaned = value.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, _language, blockContent) =>
+        typeof blockContent === "string" && blockContent.trim().length >= 120 ? "" : match
+      );
+      if (/```([a-zA-Z0-9_-]*)\n[\s\S]*$/m.test(cleaned)) {
+        cleaned = cleaned.replace(/\n?```([a-zA-Z0-9_-]*)\n[\s\S]*$/m, "");
+      }
+      return cleaned.replace(/\n{3,}/g, "\n\n").trim();
+    };
+
+    const getFallbackArtifactSummary = (operation: "create" | "update") =>
+      operation === "update" ? "Done, updated in Canvas." : "Done, opened in Canvas.";
+
+    const normalizeArtifactSummary = (value: string, operation: "create" | "update") => {
+      const trimmed = value
+        .replace(/\s+/g, " ")
+        .replace(/^["'`]+|["'`]+$/g, "")
+        .trim();
+      if (!trimmed) return getFallbackArtifactSummary(operation);
+      const sentenceEnd = trimmed.search(/[.!?](?:\s|$)/);
+      const firstSentence = sentenceEnd >= 0 && sentenceEnd <= 180
+        ? trimmed.slice(0, sentenceEnd + 1).trim()
+        : trimmed.slice(0, 180).trim();
+      return firstSentence || getFallbackArtifactSummary(operation);
+    };
+
+    const getArtifactCompletionText = (value: string, artifact?: ArtifactReferenceRecord) => {
+      const cleaned = removeArtifactBlocksFromChatText(value);
+      if (cleaned) return cleaned;
+      if (artifact) return getFallbackArtifactSummary("create");
+      return value;
+    };
+
+    const generateArtifactFinalText = async (
+      artifact: ArtifactReferenceRecord,
+      operation: "create" | "update"
+    ) => {
+      try {
+        const summary = await generateCliproxyArtifactSummary({
+          model: requestModel,
+          userRequest: text,
+          artifact,
+          operation,
+          signal: abortControllerRef.current!.signal,
+        });
+        return normalizeArtifactSummary(summary, operation);
+      } catch (error) {
+        appLogger.warn("Artifact summary finalizer failed", { err: error, chatId, artifactId: artifact.artifactId });
+        return getFallbackArtifactSummary(operation);
+      }
+    };
+
     if (requestDeepResearchEnabled) {
       let currentText = "";
       let currentSources: Message["researchSources"] = [];
@@ -793,6 +979,9 @@ export function useChatGeneration({
     if (requestIsCliproxy) {
       let currentText = "";
       let currentThought = "";
+      let currentArtifact: ArtifactReferenceRecord | undefined;
+      let currentArtifactOperation: "create" | "update" = "create";
+      const artifactTasks: Promise<void>[] = [];
 
       try {
         await streamCliproxyResponse({
@@ -801,10 +990,13 @@ export function useChatGeneration({
           history: newHistory,
           reasoningEffort: requestThinkingEnabled ? "medium" : "none",
           webSearchEnabled: requestWebSearchEnabled,
+          artifactToolsEnabled: artifactRuntimeEnabled,
           signal: abortControllerRef.current.signal,
           onTextDelta: (delta) => {
             currentText += delta;
-            updateLastModelMessage({ content: currentText });
+            if (!streamingArtifactRef && !currentArtifact) {
+              updateLastModelMessage({ content: currentText });
+            }
           },
           onThoughtDelta: (delta) => {
             currentThought += delta;
@@ -814,8 +1006,40 @@ export function useChatGeneration({
             const existingQueries = messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries;
             updateLastModelMessage({ webSearchStatus: status, webSearchQueries: queries || existingQueries });
           },
+          onArtifactToolDelta: (payload) => {
+            if (!artifactRuntimeEnabled) return;
+            if (payload.operation === "update") currentArtifactOperation = "update";
+            upsertStreamingArtifactFromDraft(payload);
+            updateLastModelMessage({ content: "" });
+          },
+          onArtifactToolCall: (payload) => {
+            if (!artifactRuntimeEnabled) return;
+            currentArtifactOperation = payload.operation;
+            const task = persistArtifactFromPayload(chatId, pendingModelMessage.id, promoteStreamingArtifactPayload(payload)).then((artifactRef) => {
+              if (!artifactRef) return;
+              currentArtifact = artifactRef;
+              updateLastModelMessage({ artifact: artifactRef, content: "" });
+            });
+            artifactTasks.push(task);
+          },
         });
+        await Promise.all(artifactTasks);
 
+        if (!currentArtifact) {
+          const detected = artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
+          if (detected) {
+            currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
+              ...detected,
+              operation: "create",
+              targetArtifactId: streamingArtifactRef?.artifactId,
+            });
+            if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
+          }
+        }
+
+        const finalArtifactText = currentArtifact
+          ? await generateArtifactFinalText(currentArtifact, currentArtifactOperation)
+          : getArtifactCompletionText(currentText);
         updateLastModelMessage({ isThinking: false });
 
         const currentChat = chatsRef.current.find(c => c.id === chatId);
@@ -827,9 +1051,10 @@ export function useChatGeneration({
           ...newHistory,
           {
             ...pendingModelMessage,
-            content: currentText,
+            content: finalArtifactText,
             thought: currentThought,
             isThinking: false,
+            artifact: currentArtifact,
             webSearchStatus: messagesRef.current[messagesRef.current.length - 1]?.webSearchStatus,
             webSearchQueries: messagesRef.current[messagesRef.current.length - 1]?.webSearchQueries,
           },
@@ -890,6 +1115,7 @@ export function useChatGeneration({
     let currentWebSearchStatus: Message["webSearchStatus"];
     let currentWebSearchQueries: string[] | undefined;
     let didCompleteWebSearch = false;
+    let currentArtifact: ArtifactReferenceRecord | undefined;
 
     try {
       const updateDisplayedGeminiMessage = () => {
@@ -903,6 +1129,7 @@ export function useChatGeneration({
         }
 
         displayText = displayText.replace(/<thought>([\s\S]*?)(?:<\/thought>|$)/g, "").trim();
+        displayText = removeArtifactBlocksFromChatText(displayText);
 
         if (displayText || displayThought) {
           setMessages((prev) => {
@@ -930,6 +1157,7 @@ export function useChatGeneration({
         signal: abortControllerRef.current.signal,
         onTextDelta: (delta) => {
           currentText += delta;
+          if (artifactRuntimeEnabled) detectStreamingArtifactFromText(currentText);
           updateDisplayedGeminiMessage();
         },
         onThoughtDelta: (delta) => {
@@ -945,8 +1173,17 @@ export function useChatGeneration({
       });
 
       const finalWebSearchStatus = didCompleteWebSearch ? "searched" : undefined;
+      const detectedArtifact = artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
+      if (detectedArtifact) {
+        currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
+          ...detectedArtifact,
+          operation: "create",
+          targetArtifactId: streamingArtifactRef?.artifactId,
+        });
+      }
       updateLastModelMessage({
         isThinking: false,
+        artifact: currentArtifact,
         webSearchStatus: finalWebSearchStatus,
         webSearchQueries: finalWebSearchStatus ? currentWebSearchQueries : undefined,
       });
@@ -956,9 +1193,10 @@ export function useChatGeneration({
         ...newHistory,
         {
           ...pendingModelMessage,
-          content: currentText,
+          content: getArtifactCompletionText(currentText, currentArtifact),
           thought: currentThought,
           isThinking: false,
+          artifact: currentArtifact,
           webSearchStatus: finalWebSearchStatus,
           webSearchQueries: finalWebSearchStatus ? currentWebSearchQueries : undefined,
         },

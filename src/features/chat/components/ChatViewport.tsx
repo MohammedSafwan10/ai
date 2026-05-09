@@ -20,6 +20,7 @@ interface ChatViewportProps {
   onCancelResearchPlan: (messageId: string) => void;
   onStopResearchPlan: () => void;
   onOpenResearchActivity: () => void;
+  onOpenArtifact: (artifactId: string) => void;
   onEditGeneratedImage: (attachment: Attachment) => void;
   onPreviewAttachment: (attachment: Attachment) => void;
 }
@@ -39,6 +40,7 @@ export function ChatViewport({
   onCancelResearchPlan,
   onStopResearchPlan,
   onOpenResearchActivity,
+  onOpenArtifact,
   onEditGeneratedImage,
   onPreviewAttachment,
 }: ChatViewportProps) {
@@ -66,6 +68,7 @@ export function ChatViewport({
                   researchCompletedAt={message.researchCompletedAt}
                   researchTimeBudgetMs={message.researchTimeBudgetMs}
                   imageGeneration={message.imageGeneration}
+                  artifact={message.artifact}
                   isTyping={isTyping && index === messages.length - 1}
                   messageIndex={index}
                   messageCount={messages.length}
@@ -76,6 +79,7 @@ export function ChatViewport({
                   onCancelResearchPlan={() => onCancelResearchPlan(message.id)}
                   onStopResearchPlan={onStopResearchPlan}
                   onOpenResearchActivity={onOpenResearchActivity}
+                  onOpenArtifact={() => message.artifact && onOpenArtifact(message.artifact.artifactId)}
                   onEditGeneratedImage={onEditGeneratedImage}
                   attachments={message.attachments}
                   onPreviewAttachment={onPreviewAttachment}
