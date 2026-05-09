@@ -48,6 +48,29 @@ export interface ImageGenerationRecord {
   outputFormat?: string;
 }
 
+export type ArtifactKind = "markdown" | "code" | "html" | "svg" | "mermaid" | "json" | "yaml" | "sql" | "text" | "table" | "prompt";
+export type ArtifactStatus = "streaming" | "ready" | "failed";
+
+export interface ArtifactReferenceRecord {
+  artifactId: string;
+  title: string;
+  kind: ArtifactKind;
+  status?: ArtifactStatus;
+}
+
+export interface ArtifactRecord {
+  id: string;
+  chatId: string;
+  messageId?: string;
+  kind: ArtifactKind;
+  title: string;
+  language?: string;
+  content: string;
+  status: ArtifactStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ResearchSourceRecord {
   title?: string;
   url: string;
@@ -117,6 +140,7 @@ export interface ChatMessageRecord {
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
   imageGeneration?: ImageGenerationRecord;
+  artifact?: ArtifactReferenceRecord;
   attachments?: AttachmentRecord[];
   createdAt: number;
 }
@@ -137,12 +161,25 @@ type ChatRow = Omit<ChatRecord, "messages">;
 class PrivoraDatabase extends Dexie {
   chats!: Table<ChatRow, string>;
   messages!: Table<ChatMessageRecord, string>;
+  artifacts!: Table<ArtifactRecord, string>;
 
   constructor() {
     super("privora-local-db");
     this.version(1).stores({
       chats: "&id, updatedAt, isStarred",
       messages: "&id, chatId, createdAt",
+    });
+    this.version(2).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      artifactVersions: "&id, artifactId, version, createdAt",
+    });
+    this.version(3).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      artifactVersions: null,
     });
   }
 }
@@ -181,6 +218,7 @@ export const normalizeMessage = (
   researchCompletedAt: message.researchCompletedAt,
   researchTimeBudgetMs: message.researchTimeBudgetMs,
   imageGeneration: message.imageGeneration,
+  artifact: message.artifact,
   attachments: message.attachments,
   createdAt: message.createdAt || fallbackCreatedAt,
 });
@@ -246,11 +284,20 @@ export const replaceChatMessages = async (
 };
 
 export const deleteChatFromDb = async (chatId: string) => {
-  await db.transaction("rw", db.chats, db.messages, async () => {
+  await db.transaction("rw", db.chats, db.messages, db.artifacts, async () => {
     await db.messages.where("chatId").equals(chatId).delete();
+    await db.artifacts.where("chatId").equals(chatId).delete();
     await db.chats.delete(chatId);
   });
   appLogger.info("IndexedDB chat deleted", { chatId });
+};
+
+export const loadArtifactsForChat = async (chatId: string) =>
+  db.artifacts.where("chatId").equals(chatId).sortBy("updatedAt").then(items => items.reverse());
+
+export const upsertArtifact = async (artifact: ArtifactRecord) => {
+  await db.artifacts.put(artifact);
+  appLogger.debug("IndexedDB artifact upserted", { artifactId: artifact.id, chatId: artifact.chatId });
 };
 
 export const migrateLocalStorageChats = async () => {

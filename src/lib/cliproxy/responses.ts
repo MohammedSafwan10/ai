@@ -1,4 +1,5 @@
 import type { Attachment } from "../attachments";
+import { artifactToolDefinition, parseArtifactToolArguments, parsePartialArtifactToolArguments, type ArtifactDraftPayload, type ArtifactPayload } from "../artifacts";
 
 export interface CliproxyMessage {
   role: "user" | "model";
@@ -12,10 +13,25 @@ interface StreamCliproxyResponseOptions {
   history: CliproxyMessage[];
   reasoningEffort: "none" | "medium";
   webSearchEnabled: boolean;
+  artifactToolsEnabled?: boolean;
   signal: AbortSignal;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
   onWebSearch?: (event: { status: "searching" | "searched"; queries?: string[] }) => void;
+  onArtifactToolDelta?: (payload: ArtifactDraftPayload) => void;
+  onArtifactToolCall?: (payload: ArtifactPayload) => void;
+}
+
+interface GenerateCliproxyArtifactSummaryOptions {
+  model: string;
+  userRequest: string;
+  artifact: {
+    title: string;
+    kind: string;
+    status?: string;
+  };
+  operation: "create" | "update";
+  signal: AbortSignal;
 }
 
 const getCliproxyApiKey = () =>
@@ -135,16 +151,71 @@ const extractWebSearchEvent = (event: string | undefined, data: any) => {
   return { status, queries: queries.length > 0 ? queries : undefined };
 };
 
+const extractResponseText = (data: any): string => {
+  if (data?.response && data.response !== data) return extractResponseText(data.response);
+  if (data?.result && data.result !== data) return extractResponseText(data.result);
+  if (typeof data?.output_text === "string") return data.output_text;
+  if (typeof data?.text === "string") return data.text;
+  if (typeof data?.message?.content === "string") return data.message.content;
+  if (Array.isArray(data?.output)) {
+    return data.output
+      .flatMap((item: any) => item?.content || [])
+      .map((content: any) => content?.text || content?.content || "")
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (Array.isArray(data?.choices)) {
+    return data.choices
+      .map((choice: any) => choice?.message?.content || choice?.text || "")
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+};
+
+const extractFunctionCallDelta = (event: string | undefined, data: any) => {
+  const type = `${event || ""} ${data?.type || ""}`;
+  if (!type.includes("function_call_arguments.delta")) return null;
+  return typeof data?.delta === "string" ? data.delta : null;
+};
+
+const extractCompletedFunctionCall = (event: string | undefined, data: any) => {
+  const type = `${event || ""} ${data?.type || ""}`;
+  const candidates = [
+    data?.item,
+    data?.output_item,
+    data,
+    ...(Array.isArray(data?.response?.output) ? data.response.output : []),
+  ];
+
+  const item = candidates.find(candidate =>
+    candidate &&
+    (candidate?.name === "create_or_update_artifact" || candidate?.type === "function_call") &&
+    typeof candidate?.arguments === "string"
+  );
+  const name = item?.name || data?.name;
+  const argumentsText = item?.arguments || data?.arguments;
+
+  if (!type.includes("function_call") && item?.type !== "function_call") return null;
+  if (name !== "create_or_update_artifact") return null;
+  if (typeof argumentsText !== "string") return null;
+
+  return parseArtifactToolArguments(argumentsText);
+};
+
 export async function streamCliproxyResponse({
   model,
   instructions,
   history,
   reasoningEffort,
   webSearchEnabled,
+  artifactToolsEnabled = false,
   signal,
   onTextDelta,
   onThoughtDelta,
   onWebSearch,
+  onArtifactToolDelta,
+  onArtifactToolCall,
 }: StreamCliproxyResponseOptions) {
   const body: Record<string, unknown> = {
     model,
@@ -161,8 +232,15 @@ export async function streamCliproxyResponse({
     };
   }
 
+  const tools: unknown[] = [];
   if (webSearchEnabled) {
-    body.tools = [{ type: "web_search_preview" }];
+    tools.push({ type: "web_search_preview" });
+  }
+  if (artifactToolsEnabled) {
+    tools.push(artifactToolDefinition);
+  }
+  if (tools.length > 0) {
+    body.tools = tools;
   }
 
   const response = await fetch("/cliproxy/v1/responses", {
@@ -183,6 +261,7 @@ export async function streamCliproxyResponse({
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let functionArgumentBuffer = "";
 
   const flushEvent = (rawEvent: string) => {
     const lines = rawEvent.split("\n");
@@ -202,8 +281,23 @@ export async function streamCliproxyResponse({
         const thoughtDelta = extractThoughtDelta(event, data);
         const textDelta = extractTextDelta(event, data);
         const webSearchEvent = extractWebSearchEvent(event, data);
+        const functionDelta = extractFunctionCallDelta(event, data);
+        const completedFunctionCall = extractCompletedFunctionCall(event, data);
 
         if (webSearchEvent) onWebSearch?.(webSearchEvent);
+        if (functionDelta) {
+          functionArgumentBuffer += functionDelta;
+          const partialArtifact = parsePartialArtifactToolArguments(functionArgumentBuffer);
+          if (partialArtifact) onArtifactToolDelta?.(partialArtifact);
+        }
+        if (completedFunctionCall) {
+          onArtifactToolCall?.(completedFunctionCall);
+          functionArgumentBuffer = "";
+        } else if (functionArgumentBuffer && `${event || ""} ${data?.type || ""}`.includes("function_call_arguments.done")) {
+          const parsed = parseArtifactToolArguments(functionArgumentBuffer);
+          if (parsed) onArtifactToolCall?.(parsed);
+          functionArgumentBuffer = "";
+        }
         if (thoughtDelta) onThoughtDelta(thoughtDelta);
         if (textDelta) onTextDelta(textDelta);
       } catch {
@@ -227,4 +321,54 @@ export async function streamCliproxyResponse({
   if (buffer.trim()) {
     flushEvent(buffer);
   }
+}
+
+export async function generateCliproxyArtifactSummary({
+  model,
+  userRequest,
+  artifact,
+  operation,
+  signal,
+}: GenerateCliproxyArtifactSummaryOptions) {
+  const response = await fetch("/cliproxy/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getCliproxyApiKey()}`,
+    },
+    body: JSON.stringify({
+      model,
+      instructions: [
+        "You are finishing a Canvas artifact turn in Privora.",
+        "The artifact has already been created or updated and opened in Canvas.",
+        "Reply with exactly one short, natural sentence.",
+        "Do not mention tool calls, implementation details, filenames, or code.",
+        "Do not list features. Do not use markdown.",
+      ].join("\n"),
+      input: [{
+        role: "user",
+        content: [{
+          type: "input_text",
+          text: [
+            `User request: ${userRequest}`,
+            `Artifact operation: ${operation}`,
+            `Artifact title: ${artifact.title}`,
+            `Artifact kind: ${artifact.kind}`,
+            artifact.status ? `Artifact status: ${artifact.status}` : "",
+          ].filter(Boolean).join("\n"),
+        }],
+      }],
+      stream: false,
+      temperature: 0.25,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(errorText || `CLIProxy artifact summary failed with ${response.status}`);
+  }
+
+  const text = extractResponseText(await response.json());
+  return text.trim();
 }
