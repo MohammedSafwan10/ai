@@ -799,7 +799,12 @@ export function useChatGeneration({
     };
 
     const removeArtifactBlocksFromChatText = (value: string) => {
-      let cleaned = value.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, _language, blockContent) =>
+      let cleaned = value
+        .replace(/```(?:json)?\s*\n\s*\{[\s\S]*?"action_input"[\s\S]*?```\s*/gi, "")
+        .replace(/\{\s*"action"\s*:\s*"(?:create|update)"[\s\S]*?"action_input"[\s\S]*$/gi, "")
+        .replace(/\{\s*"action_input"[\s\S]*$/gi, "")
+        .replace(/<artifact\b[\s\S]*?(?:<\/artifact>|$)/gi, "");
+      cleaned = cleaned.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, _language, blockContent) =>
         typeof blockContent === "string" && blockContent.trim().length >= 120 ? "" : match
       );
       if (/```([a-zA-Z0-9_-]*)\n[\s\S]*$/m.test(cleaned)) {
@@ -1130,6 +1135,7 @@ export function useChatGeneration({
 
         displayText = displayText.replace(/<thought>([\s\S]*?)(?:<\/thought>|$)/g, "").trim();
         displayText = removeArtifactBlocksFromChatText(displayText);
+        displayThought = removeArtifactBlocksFromChatText(displayThought);
 
         if (displayText || displayThought) {
           setMessages((prev) => {
@@ -1194,7 +1200,7 @@ export function useChatGeneration({
         {
           ...pendingModelMessage,
           content: getArtifactCompletionText(currentText, currentArtifact),
-          thought: currentThought,
+          thought: removeArtifactBlocksFromChatText(currentThought),
           isThinking: false,
           artifact: currentArtifact,
           webSearchStatus: finalWebSearchStatus,
@@ -1240,7 +1246,7 @@ export function useChatGeneration({
         {
           ...pendingModelMessage,
           content: error?.name === "AbortError" || abortControllerRef.current?.signal.aborted ? currentText || stoppedMessage : currentText || errorMessage,
-          thought: currentThought,
+          thought: removeArtifactBlocksFromChatText(currentThought),
           isThinking: false,
           webSearchStatus: finalWebSearchStatus,
           webSearchQueries: finalWebSearchStatus ? currentWebSearchQueries : undefined,

@@ -22,6 +22,7 @@ Artifact rules:
 - Put metadata only in tool fields. Never wrap the content in custom tags like <artifact>, <canvas>, or XML metadata.
 - For SVG artifacts, content must be the raw <svg>...</svg> only. Do not include Markdown fences or artifact wrapper tags.
 - For HTML artifacts, content must be the raw HTML document or fragment only. Do not include Markdown fences or artifact wrapper tags.
+- Never write artifact protocol JSON, action/action_input objects, tool-call arguments, or raw artifact content in chat or thought text.
 - Do not use artifacts for tiny snippets, short answers, casual chat, or normal explanation unless the user asks for a file/canvas/artifact.
 `.trim();
 
