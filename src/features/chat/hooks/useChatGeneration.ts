@@ -384,6 +384,8 @@ export function useChatGeneration({
 Gemini artifact routing:
 - For normal answers, respond normally and do not use the private marker.
 - When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, stream a Canvas artifact instead of pasting it in chat.
+- Never use the private marker for ordinary informational answers, summaries, explanations, Q&A, schedules, recommendations, or answers that merely contain headings, bullets, or Markdown formatting.
+- Only use the private marker when the output should be a reusable standalone asset, file, document, diagram, code artifact, or Canvas item.
 - To stream a Canvas artifact, the first output must be exactly one private header line:
 ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title","language":"svg"}
 - After that header line, stream only the complete artifact content. Do not include explanations, markdown fences, JSON wrappers, XML wrapper metadata, or tool-call text around the content.
@@ -1242,6 +1244,24 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         }
       };
 
+      const shouldAcceptGeminiArtifactRoute = (
+        metadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "language">>,
+        firstContent: string
+      ) => {
+        if (metadata.operation === "update") return true;
+
+        const kind = metadata.kind || deriveArtifactKind(metadata.language, firstContent);
+        if (["svg", "html", "mermaid", "code", "json", "yaml", "sql"].includes(kind)) return true;
+        if (/^\s*(?:<svg\b|<!doctype html\b|<html\b)/i.test(firstContent)) return true;
+
+        const userText = text.toLowerCase();
+        const wantsDurableArtifact =
+          /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/.test(userText) ||
+          /\b(?:write|draft|create|make|build|generate|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,80}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt)\b/.test(userText);
+
+        return wantsDurableArtifact;
+      };
+
       const routeGeminiTextDelta = (delta: string) => {
         if (!useGeminiOutputRouter) {
           appendGeminiChatText(delta);
@@ -1263,6 +1283,14 @@ ${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title"
         const lowerTrimmed = trimmed.toLowerCase();
         const header = parseGeminiArtifactHeader(geminiRoutingBuffer);
         if (header) {
+          if (!shouldAcceptGeminiArtifactRoute(header.metadata, header.rest)) {
+            geminiRoute = "chat";
+            const fallbackText = header.rest || geminiRoutingBuffer.replace(/^:::privora-artifact[^\n]*(?:\n|$)/i, "");
+            geminiRoutingBuffer = "";
+            appendGeminiChatText(fallbackText);
+            return;
+          }
+
           geminiRoute = "artifact";
           geminiArtifactMetadata = header.metadata;
           currentArtifactOperation = header.metadata.operation || "create";

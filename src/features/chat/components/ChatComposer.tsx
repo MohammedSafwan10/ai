@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type KeyboardEvent, type RefObject } from "react";
 import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, Globe, ImagePlus, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -38,6 +38,7 @@ interface ChatComposerProps {
   onInputChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onFileSelect: (event: ChangeEvent<HTMLInputElement>) => void;
   onPreviewAttachment: (attachment: Attachment) => void;
   onRemoveAttachment: (index: number) => void;
@@ -70,6 +71,7 @@ export function ChatComposer({
   onInputChange,
   onSubmit,
   onKeyDown,
+  onPaste,
   onFileSelect,
   onPreviewAttachment,
   onRemoveAttachment,
@@ -225,6 +227,7 @@ export function ChatComposer({
             value={input}
             onChange={(event) => onInputChange(event.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             onFocus={() => {
               window.setTimeout(() => {
                 textareaRef.current?.scrollIntoView({ block: "nearest" });

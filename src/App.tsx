@@ -1,5 +1,5 @@
 // @refresh reset
-import { useState, useRef, useEffect, type CSSProperties } from "react";
+import { useState, useRef, useEffect, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
 import { PanelLeft } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { AttachmentPreviewModal } from "./features/attachments/components/AttachmentPreviewModal";
@@ -120,25 +120,24 @@ export default function App() {
     });
   }, [selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode, composerMode, imageSettings]);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste") => {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
 
     if (attachments.length + files.length > MAX_ATTACHMENTS) {
-      appLogger.warn("Attachment selection exceeded count limit", {
+      appLogger.warn("Attachment add exceeded count limit", {
+        source,
         existingCount: attachments.length,
         selectedCount: files.length,
         maxAttachments: MAX_ATTACHMENTS,
       });
       alert(`You can attach up to ${MAX_ATTACHMENTS} files at once.`);
-      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
     const selectedProvider = getModelOption(selectedModelRef.current)?.provider;
     const newAttachments: Attachment[] = [];
-    for (let i = 0; i < files.length; i++) {
-       const file = files[i];
+    for (const file of files) {
 
        if (selectedProvider === "cliproxy" && !isCliproxySupportedAttachment({ mimeType: file.type, name: file.name })) {
           appLogger.warn("Unsupported CLIProxy attachment rejected", {
@@ -212,14 +211,36 @@ export default function App() {
 
     setAttachments(prev => [...prev, ...newAttachments]);
     appLogger.debug("Attachments added", {
+      source,
       provider: selectedProvider || "unknown",
       addedCount: newAttachments.length,
       totalCount: attachments.length + newAttachments.length,
       totalSize: getAttachmentTotalSize([...attachments, ...newAttachments]),
     });
+  };
+
+  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    await addAttachmentFiles(files, "select");
     if (fileInputRef.current) {
        fileInputRef.current.value = "";
     }
+  };
+
+  const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const filesFromItems = items
+      .filter(item => item.kind === "file")
+      .map(item => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    const files = filesFromItems.length > 0
+      ? filesFromItems
+      : Array.from(event.clipboardData?.files || []);
+    if (files.length === 0) return;
+
+    event.preventDefault();
+    await addAttachmentFiles(files, "paste");
   };
 
   const removeAttachment = (index: number) => {
@@ -556,6 +577,7 @@ export default function App() {
       onInputChange={setInput}
       onSubmit={handleSubmit}
       onKeyDown={handleKeyDown}
+      onPaste={handleComposerPaste}
       onFileSelect={handleFileSelect}
       onPreviewAttachment={setPreviewAttachment}
       onRemoveAttachment={removeAttachment}

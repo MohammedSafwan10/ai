@@ -42,6 +42,17 @@ const getLanguage = (className?: string) => {
   return match?.[1] || "";
 };
 
+const shouldOpenInNewTab = (href?: string) => {
+  if (!href) return false;
+
+  try {
+    const url = new URL(href, window.location.href);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
 const nodeToText = (node: ReactNode): string => {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(nodeToText).join("");
@@ -249,6 +260,28 @@ function MarkdownTable({
   );
 }
 
+function MarkdownLink({
+  href,
+  children,
+  ...props
+}: {
+  href?: string;
+  children?: ReactNode;
+}) {
+  const openInNewTab = shouldOpenInNewTab(href);
+
+  return (
+    <a
+      href={href}
+      target={openInNewTab ? "_blank" : undefined}
+      rel={openInNewTab ? "noreferrer noopener" : undefined}
+      {...props}
+    >
+      {children}
+    </a>
+  );
+}
+
 function MarkdownRendererComponent({
   children,
   compact = false,
@@ -300,6 +333,7 @@ function MarkdownRendererComponent({
         td: ({ children }) => (
           <td className="border-b border-[var(--privora-border)]/70 px-3 py-2.5 align-top leading-relaxed first:font-medium sm:px-4">{children}</td>
         ),
+        a: MarkdownLink,
         code: ({ inline, className, children, node, ...props }: any) => {
           const code = String(children).replace(/\n$/, "");
           const language = getLanguage(className);

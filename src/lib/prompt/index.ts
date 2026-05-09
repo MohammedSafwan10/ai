@@ -8,6 +8,29 @@ export { DEFAULT_RESPONSE_STYLE_ID, getResponseStyle, responseStyleOptions, type
 export { DEEP_RESEARCH_INSTRUCTION, DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, DEEP_RESEARCH_TIME_BUDGET_MS } from "./deepResearch";
 export { CLIPROXY_WEB_SEARCH_INSTRUCTION, GEMINI_WEB_SEARCH_INSTRUCTION } from "./webSearch";
 
+const getCurrentDateTimeInstruction = () => {
+  const now = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
+  const readable = new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(now);
+
+  return [
+    "Current date/time context:",
+    `- Local time: ${readable}`,
+    `- Local time zone: ${timeZone}`,
+    `- UTC ISO timestamp: ${now.toISOString()}`,
+    "- Use this when interpreting relative dates such as today, tomorrow, yesterday, next week, or current.",
+  ].join("\n");
+};
+
 export const getSystemInstruction = ({
   styleId,
   provider,
@@ -28,6 +51,7 @@ export const getSystemInstruction = ({
         : "";
 
   const deepResearchInstruction = deepResearchEnabled ? `\n\n${DEEP_RESEARCH_INSTRUCTION}` : "";
+  const dateTimeInstruction = getCurrentDateTimeInstruction();
 
-  return `${BASE_SYSTEM_INSTRUCTION}\n\n${style.instruction}${deepResearchInstruction}${webSearchInstruction}`;
+  return `${BASE_SYSTEM_INSTRUCTION}\n\n${dateTimeInstruction}\n\n${style.instruction}${deepResearchInstruction}${webSearchInstruction}`;
 };
