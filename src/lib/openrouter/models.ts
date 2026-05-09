@@ -15,30 +15,6 @@ export interface OpenRouterModelCapabilities {
 
 export const openRouterModelCapabilities: OpenRouterModelCapabilities[] = [
   {
-    id: "qwen/qwen3-coder:free",
-    label: "Qwen3 Coder 480B",
-    description: "Free OpenRouter coding model optimized for agentic coding, tool use, and long-context repository work.",
-    contextLength: 262000,
-    maxCompletionTokens: 262000,
-    inputModalities: ["text"],
-    supportsReasoning: false,
-    supportsTools: true,
-    supportsToolChoice: true,
-    supportsStructuredOutputs: false,
-    supportedParameters: [
-      "frequency_penalty",
-      "max_tokens",
-      "presence_penalty",
-      "stop",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_p",
-    ],
-    notes: "Text-only. Strong fit for code/artifact tool calls, but no advertised reasoning parameter.",
-  },
-  {
     id: "inclusionai/ring-2.6-1t:free",
     label: "Ring 2.6 1T",
     description: "Free OpenRouter 1T-scale thinking model for coding agents and multi-step workflows.",

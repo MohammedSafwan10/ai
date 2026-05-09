@@ -417,11 +417,15 @@ export function useChatGeneration({
     const requestWebSearchEnabled = requestWebSearchMode !== "off";
     const userDeclinedArtifacts = /\b(?:no|dont|don't|do not|skip|without|no need)\b.{0,32}\b(?:artifact|artifacts|canvas|file|files)\b/i.test(text) ||
       /\b(?:artifact|artifacts|canvas|file|files)\b.{0,32}\b(?:no|not|dont|don't|skip|unneeded)\b/i.test(text);
+    const userAskedForDurableArtifact =
+      /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/i.test(text) ||
+      /\b(?:write|draft|create|make|build|generate|draw|design|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,100}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt|svg|html|page|app|component|code|function|script|program|class|json|yaml|sql|diagram|mermaid)\b/i.test(text) ||
+      /\b(?:svg|html|mermaid|json|yaml|sql)\b[\s\S]{0,80}\b(?:for|of|with|that|which|about)\b/i.test(text);
     const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !userDeclinedArtifacts;
     const useArtifactOutputRouter =
-      artifactRuntimeEnabled && (requestProvider === "gemini" || requestProvider === "openrouter");
+      artifactRuntimeEnabled && (requestProvider === "gemini" || (requestProvider === "openrouter" && userAskedForDurableArtifact));
     const artifactToolsEnabled =
-      artifactRuntimeEnabled && !useArtifactOutputRouter && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsTools));
+      artifactRuntimeEnabled && !useArtifactOutputRouter && (!requestIsOpenRouter || (userAskedForDurableArtifact && Boolean(openRouterCapabilities?.supportsTools)));
     const baseSystemInstruction = getSystemInstruction({
       styleId: requestStyle,
       provider: requestProvider,
@@ -912,11 +916,6 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         targetArtifactId: streamingArtifactRef.artifactId,
       };
     };
-
-    const userAskedForDurableArtifact =
-      /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/i.test(text) ||
-      /\b(?:write|draft|create|make|build|generate|draw|design|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,100}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt|svg|html|page|app|component|code|function|script|program|class|json|yaml|sql|diagram|mermaid)\b/i.test(text) ||
-      /\b(?:svg|html|mermaid|json|yaml|sql)\b[\s\S]{0,80}\b(?:for|of|with|that|which|about)\b/i.test(text);
 
     const shouldPromoteContentToArtifact = (
       kind: ArtifactDraftPayload["kind"],

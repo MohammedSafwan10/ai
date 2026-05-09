@@ -64,11 +64,17 @@ const extractTextDelta = (data: any) => {
 const extractThoughtDelta = (data: any) => {
   const choice = getChoice(data);
   const delta = choice?.delta || {};
+  const reasoningDetails = Array.isArray(delta.reasoning_details) ? delta.reasoning_details : [];
   const candidates = [
     delta.reasoning,
     delta.reasoning_content,
     delta.reasoningContent,
     delta.thought,
+    ...reasoningDetails.flatMap((detail: any) => [
+      detail?.text,
+      detail?.summary,
+      detail?.content,
+    ]),
     data?.reasoning,
     data?.reasoning_content,
   ];
@@ -103,6 +109,23 @@ const extractOpenRouterErrorMessage = (value: string) => {
   } catch {
     return value;
   }
+};
+
+const splitSseEvents = (buffer: string) => {
+  const events: string[] = [];
+  const delimiter = /\r?\n\r?\n/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = delimiter.exec(buffer))) {
+    events.push(buffer.slice(cursor, match.index));
+    cursor = delimiter.lastIndex;
+  }
+
+  return {
+    events,
+    remaining: buffer.slice(cursor),
+  };
 };
 
 const hasOpenRouterWebSearchSignal = (data: any) => {
@@ -314,8 +337,9 @@ export async function streamOpenRouterResponse({
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const events = buffer.split("\n\n");
-    buffer = events.pop() ?? "";
+    const split = splitSseEvents(buffer);
+    const events = split.events;
+    buffer = split.remaining;
     events.forEach(event => {
       const trimmed = event.trim();
       if (!trimmed || trimmed.startsWith(":")) return;

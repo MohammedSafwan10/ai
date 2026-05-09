@@ -117,7 +117,6 @@ The model list is intentionally capability-driven from OpenRouter's Models API m
 
 | Model | Context | Max output | Input/output | Tools | Reasoning | Structured output | Notes |
 | --- | ---: | ---: | --- | --- | --- | --- | --- |
-| `qwen/qwen3-coder:free` | 262,000 | 262,000 | Text -> text | Yes | No | No | Good fit for code/artifact generation and OpenRouter web search. |
 | `inclusionai/ring-2.6-1t:free` | 262,144 | 65,536 | Text -> text | Yes | Yes | No | Thinking-capable model with tools and long context. |
 | `baidu/cobuddy:free` | 131,072 | 65,536 | Text -> text | Yes | Yes | No | Tools and reasoning are advertised; temperature/tool_choice are not. |
 | `nvidia/nemotron-3-super-120b-a12b:free` | 262,144 | 262,144 | Text -> text | Yes | Yes | Yes | Broadest advertised mix here: tools, reasoning, structured output, long output. |
