@@ -679,7 +679,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <div
-        className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden transition-[margin] duration-200 ease-out md:mr-[var(--privora-canvas-offset)]"
+        className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden transition-[margin] duration-200 ease-out lg:mr-[var(--privora-canvas-offset)]"
         style={{ "--privora-canvas-offset": activeArtifact ? `${canvasWidth}px` : "0px" } as CSSProperties}
       >
         {!isSidebarOpen && (

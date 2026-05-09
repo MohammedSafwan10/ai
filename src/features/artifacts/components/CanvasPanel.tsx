@@ -109,14 +109,35 @@ const buildArtifactTabDocument = (artifact: ArtifactRecord, content: string) => 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(artifact.title)}</title><style>:root{color-scheme:light dark}body{margin:0;background:#f4f0ea;color:#292524;font:14px/1.65 Inter,ui-sans-serif,system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:32px}h1{font-size:20px;margin:0 0 16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #e2dcd0;border-radius:12px;background:#fff;padding:20px}@media (prefers-color-scheme:dark){body{background:#212121;color:#ececec}pre{background:#2f2f2f;border-color:#424242}}</style></head><body><main><h1>${escapeHtml(artifact.title)}</h1><pre>${escapeHtml(content)}</pre></main></body></html>`;
 };
 
-const buildPreviewSrcDoc = (artifact: ArtifactRecord) => {
-  const resizeBridge = `<script>(function(){var id=${JSON.stringify(artifact.id)};var raf=0;function measure(){var body=document.body,doc=document.documentElement;if(!body||!doc)return;var height=Math.ceil(Math.max(body.scrollHeight,body.offsetHeight,doc.scrollHeight,doc.offsetHeight));try{parent.postMessage({type:"privora-artifact-resize",artifactId:id,height:height},"*")}catch(_){}}function queue(){cancelAnimationFrame(raf);raf=requestAnimationFrame(measure)}window.addEventListener("load",queue);window.addEventListener("resize",queue);if("ResizeObserver"in window){new ResizeObserver(queue).observe(document.documentElement)}setTimeout(queue,50);setTimeout(queue,350);})();</script>`;
+const buildSandboxedTabDocument = (title: string, html: string, isDarkMode: boolean) => {
+  const pageBg = isDarkMode ? "#212121" : "#f4f0ea";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>html,body{margin:0;height:100%;background:${pageBg}}body{overflow:hidden}iframe{display:block;width:100%;height:100%;border:0;background:transparent}</style></head><body><iframe title="${escapeHtml(title)}" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${escapeHtml(html)}"></iframe></body></html>`;
+};
+
+const buildSandboxedArtifactTabDocument = (artifact: ArtifactRecord, content: string, isDarkMode: boolean) => {
+  return buildSandboxedTabDocument(artifact.title, buildArtifactTabDocument(artifact, content), isDarkMode);
+};
+
+const createMessageToken = () => {
+  const bytes = new Uint32Array(2);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    bytes[0] = Math.floor(Math.random() * 0xffffffff);
+    bytes[1] = Date.now();
+  }
+  return Array.from(bytes, value => value.toString(36)).join("-");
+};
+
+const buildPreviewSrcDoc = (artifact: ArtifactRecord, messageToken: string) => {
+  const parentOrigin = typeof window === "undefined" ? "*" : window.location.origin;
+  const resizeBridge = `<script>(function(){var id=${JSON.stringify(artifact.id)};var token=${JSON.stringify(messageToken)};var target=${JSON.stringify(parentOrigin)};var raf=0;var stopPolling=0;function post(height){try{parent.postMessage({type:"privora-artifact-resize",artifactId:id,token:token,height:height},target)}catch(_){try{parent.postMessage({type:"privora-artifact-resize",artifactId:id,token:token,height:height},"*")}catch(__){}}}function measure(){var body=document.body,doc=document.documentElement;if(!body||!doc)return;var height=Math.ceil(Math.max(body.scrollHeight,body.offsetHeight,doc.scrollHeight,doc.offsetHeight));post(height)}function queue(){cancelAnimationFrame(raf);raf=requestAnimationFrame(measure)}window.addEventListener("load",queue);window.addEventListener("resize",queue);window.addEventListener("click",function(event){var anchor=event.target&&event.target.closest?event.target.closest("a[href]"):null;if(anchor){anchor.setAttribute("target","_blank");anchor.setAttribute("rel","noopener noreferrer")}},true);if("ResizeObserver"in window){var ro=new ResizeObserver(queue);ro.observe(document.documentElement);if(document.body)ro.observe(document.body)}if("MutationObserver"in window&&document.documentElement){new MutationObserver(queue).observe(document.documentElement,{childList:true,subtree:true,attributes:true,characterData:true})}Array.prototype.forEach.call(document.images||[],function(image){image.addEventListener("load",queue,{once:true});image.addEventListener("error",queue,{once:true})});if(document.fonts&&document.fonts.ready)document.fonts.ready.then(queue).catch(function(){});setTimeout(queue,50);setTimeout(queue,350);stopPolling=window.setInterval(queue,500);setTimeout(function(){clearInterval(stopPolling)},6000);})();</script>`;
   if (artifact.kind === "svg") {
-    return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(artifact.title)}</title><style>html,body{margin:0;background:transparent}body{display:flex;align-items:flex-start;justify-content:center;padding:16px;box-sizing:border-box;overflow:hidden}svg{display:block;max-width:100%;height:auto}</style></head><body>${artifact.content}${resizeBridge}</body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(artifact.title)}</title><style>html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden}body{display:grid;place-items:start center;box-sizing:border-box}svg{display:block;max-width:100%;max-height:100%;width:auto;height:auto}</style></head><body>${artifact.content}${resizeBridge}</body></html>`;
   }
   if (artifact.kind !== "html") return artifact.content;
 
-  const errorBridge = `<script>(function(){var id=${JSON.stringify(artifact.id)};function send(type,event){try{parent.postMessage({type:"privora-artifact-runtime-error",artifactId:id,message:event&&event.message?event.message:String(event&&event.reason||"Artifact runtime error"),line:event&&event.lineno,column:event&&event.colno},"*")}catch(_){}}window.addEventListener("error",function(event){send("error",event)});window.addEventListener("unhandledrejection",function(event){send("unhandledrejection",event)});})();</script>`;
+  const errorBridge = `<script>(function(){var id=${JSON.stringify(artifact.id)};var token=${JSON.stringify(messageToken)};var target=${JSON.stringify(parentOrigin)};function post(message){message.token=token;try{parent.postMessage(message,target)}catch(_){try{parent.postMessage(message,"*")}catch(__){}}}function send(type,event){post({type:"privora-artifact-runtime-error",artifactId:id,message:event&&event.message?event.message:String(event&&event.reason||"Artifact runtime error"),line:event&&event.lineno,column:event&&event.colno})}window.addEventListener("error",function(event){send("error",event)});window.addEventListener("unhandledrejection",function(event){send("unhandledrejection",event)});})();</script>`;
   if (/<head[\s>]/i.test(artifact.content)) {
     return artifact.content.replace(/<head([^>]*)>/i, `<head$1>${errorBridge}${resizeBridge}`);
   }
@@ -148,12 +169,12 @@ const prepareContentForEditor = (artifact?: ArtifactRecord) => {
   return artifact.content;
 };
 
-function MermaidPreview({ content }: { content: string }) {
+function MermaidPreview({ content, isDarkMode }: { content: string; isDarkMode: boolean }) {
   const [svg, setSvg] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    mermaid.initialize({ startOnLoad: false, theme: document.documentElement.classList.contains("dark") ? "dark" : "default" });
+    mermaid.initialize({ startOnLoad: false, theme: isDarkMode ? "dark" : "default" });
     mermaid.render(`privora-artifact-${Date.now()}`, content)
       .then(result => {
         if (!cancelled) setSvg(normalizeMermaidSvg(result.svg));
@@ -164,7 +185,7 @@ function MermaidPreview({ content }: { content: string }) {
     return () => {
       cancelled = true;
     };
-  }, [content]);
+  }, [content, isDarkMode]);
 
   if (!svg) {
     return <pre className="whitespace-pre-wrap rounded-xl border border-[var(--privora-border)] p-4 text-sm">{content}</pre>;
@@ -173,10 +194,22 @@ function MermaidPreview({ content }: { content: string }) {
   return <div className="privora-artifact-mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-function ArtifactPreview({ artifact }: { artifact: ArtifactRecord }) {
+function ArtifactPreview({ artifact, isDarkMode }: { artifact: ArtifactRecord; isDarkMode: boolean }) {
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [iframeHeight, setIframeHeight] = useState<number | null>(null);
-  const previewSrcDoc = useMemo(() => buildPreviewSrcDoc(artifact), [artifact]);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const messageToken = useMemo(() => createMessageToken(), [artifact.id, artifact.updatedAt]);
+  const previewSrcDoc = useMemo(() => buildPreviewSrcDoc(artifact, messageToken), [artifact, messageToken]);
+  const svgAspectRatio = useMemo(() => {
+    if (artifact.kind !== "svg") return undefined;
+    const viewBoxMatch = artifact.content.match(/\bviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+    const widthMatch = artifact.content.match(/\bwidth\s*=\s*["']([\d.]+)(?:px)?["']/i);
+    const heightMatch = artifact.content.match(/\bheight\s*=\s*["']([\d.]+)(?:px)?["']/i);
+    const width = Number(viewBoxMatch?.[1] || widthMatch?.[1]);
+    const height = Number(viewBoxMatch?.[2] || heightMatch?.[1]);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
+    return width / height;
+  }, [artifact.content, artifact.kind]);
 
   useEffect(() => {
     setRuntimeError(null);
@@ -186,36 +219,47 @@ function ArtifactPreview({ artifact }: { artifact: ArtifactRecord }) {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const data = event.data;
-      if (!data || data.artifactId !== artifact.id) return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (!data || data.artifactId !== artifact.id || data.token !== messageToken) return;
       if (data.type === "privora-artifact-runtime-error") {
         const location = data.line ? ` at line ${data.line}${data.column ? `:${data.column}` : ""}` : "";
-        setRuntimeError(`${data.message || "Artifact runtime error"}${location}`);
+        setRuntimeError(`${String(data.message || "Artifact runtime error").slice(0, 500)}${location}`);
       }
       if (data.type === "privora-artifact-resize" && Number.isFinite(data.height)) {
-        const viewportMax = Math.round(window.innerHeight * (artifact.kind === "svg" ? 0.82 : 0.78));
-        const minHeight = artifact.kind === "svg" ? 160 : 320;
-        setIframeHeight(Math.max(minHeight, Math.min(viewportMax, Number(data.height))));
+        if (artifact.kind === "svg") return;
+        const viewportMax = Math.round(window.innerHeight * 0.78);
+        const minHeight = 320;
+        const safeHeight = Math.max(minHeight, Math.min(viewportMax, Math.round(Number(data.height))));
+        setIframeHeight(safeHeight);
       }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [artifact.id, artifact.kind]);
+  }, [artifact.id, artifact.kind, messageToken]);
 
   if (artifact.kind === "html" || artifact.kind === "svg") {
     return (
       <div className="relative">
         <iframe
+          ref={iframeRef}
           key={artifact.id}
           title={artifact.title}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-pointer-lock"
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
           srcDoc={previewSrcDoc}
           className={cn(
-            "w-full bg-transparent",
-            artifact.kind === "html" ? "min-h-80" : "min-h-40"
+            "block w-full bg-transparent",
+            artifact.kind === "html" ? "min-h-80" : "min-h-0"
           )}
           allowTransparency
-          style={{ height: iframeHeight ? `${iframeHeight}px` : artifact.kind === "html" ? "calc(100vh - 8.5rem)" : undefined }}
+          style={artifact.kind === "svg"
+            ? {
+                aspectRatio: svgAspectRatio || 1.6,
+                height: "auto",
+                maxHeight: "calc(100vh - 7.5rem)",
+              }
+            : { height: iframeHeight ? `${iframeHeight}px` : "calc(100vh - 8.5rem)" }}
         />
         {runtimeError && (
           <div className="absolute left-3 right-3 top-3 rounded-lg border border-red-500/25 bg-red-50 px-3 py-2 text-sm text-red-900 shadow-sm dark:bg-red-950/85 dark:text-red-100">
@@ -227,13 +271,13 @@ function ArtifactPreview({ artifact }: { artifact: ArtifactRecord }) {
   }
 
   if (artifact.kind === "mermaid") {
-    return <MermaidPreview content={artifact.content} />;
+    return <MermaidPreview content={artifact.content} isDarkMode={isDarkMode} />;
   }
 
   if (["markdown", "table", "prompt", "text"].includes(artifact.kind)) {
     return (
       <article className="privora-artifact-prose">
-        <MarkdownRenderer tableMode="report">{artifact.content}</MarkdownRenderer>
+        <MarkdownRenderer tableMode="report" isStreaming={artifact.status === "streaming"}>{artifact.content}</MarkdownRenderer>
       </article>
     );
   }
@@ -293,13 +337,22 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
   const previousArtifactContentRef = useRef("");
+  const tabTouchedRef = useRef(false);
+  const downloadWarningRef = useRef<{ artifactId: string; expiresAt: number } | null>(null);
 
   useEffect(() => {
     const nextDraft = prepareContentForEditor(normalizedArtifact);
     setDraft(nextDraft);
     previousArtifactContentRef.current = nextDraft;
+    tabTouchedRef.current = false;
     setTab(normalizedArtifact?.status === "streaming" ? "code" : "preview");
   }, [normalizedArtifact?.id]);
+
+  useEffect(() => {
+    if (normalizedArtifact?.status === "ready" && !tabTouchedRef.current) {
+      setTab("preview");
+    }
+  }, [normalizedArtifact?.status]);
 
   useEffect(() => {
     if (!normalizedArtifact) return;
@@ -314,7 +367,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
   }, [normalizedArtifact?.content, normalizedArtifact?.status]);
 
   const selectedContent = normalizedArtifact ? draft : "";
-  const editorValue = normalizedArtifact?.kind === "html" ? formatHtmlForEditor(selectedContent) : selectedContent;
+  const editorValue = selectedContent;
   const editorLanguage = languageForMonaco(normalizedArtifact);
   const editorLineCount = useMemo(() => Math.max(1, editorValue.split(/\r\n|\r|\n/).length), [editorValue]);
 
@@ -350,7 +403,25 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
   };
 
   const handleDownload = () => {
+    if (!normalizedArtifact) return;
+    const executableArtifact = normalizedArtifact.kind === "html" || normalizedArtifact.kind === "svg";
+    const warningActive =
+      downloadWarningRef.current?.artifactId === normalizedArtifact.id &&
+      downloadWarningRef.current.expiresAt > Date.now();
+
+    if (executableArtifact && !warningActive) {
+      downloadWarningRef.current = { artifactId: normalizedArtifact.id, expiresAt: Date.now() + 8000 };
+      notify({
+        title: "Runnable artifact",
+        description: "HTML/SVG files can run scripts when opened. Click Download again to save it.",
+        variant: "info",
+        durationMs: 8000,
+      });
+      return;
+    }
+
     onDownload();
+    downloadWarningRef.current = null;
     setIsMoreOpen(false);
     notify({ title: "Download started", description: "Artifact file is being downloaded.", variant: "success" });
   };
@@ -369,7 +440,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
     tabWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(normalizedArtifact.title)}</title><style>body{margin:0;background:${isDarkMode ? "#212121" : "#f4f0ea"};color:${isDarkMode ? "#ececec" : "#292524"};font:14px Inter,ui-sans-serif,system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}</style></head><body>Opening...</body></html>`);
     tabWindow.document.close();
 
-    let html = buildArtifactTabDocument(normalizedArtifact, selectedContent);
+    let html = buildSandboxedArtifactTabDocument(normalizedArtifact, selectedContent, isDarkMode);
     if (normalizedArtifact.kind === "mermaid") {
       try {
         mermaid.initialize({ startOnLoad: false, theme: isDarkMode ? "dark" : "default" });
@@ -377,9 +448,10 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
         const pageBg = isDarkMode ? "#212121" : "#f4f0ea";
         const canvasBg = isDarkMode ? "#2f2f2f" : "#fff";
         const border = isDarkMode ? "#424242" : "#e2dcd0";
-        html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(normalizedArtifact.title)}</title><style>html,body{margin:0;min-height:100%;background:${pageBg}}body{padding:32px;box-sizing:border-box;overflow:auto}.canvas{display:inline-block;border:1px solid ${border};border-radius:12px;background:${canvasBg};padding:24px}svg{display:block;max-width:none!important}</style></head><body><div class="canvas">${normalizeMermaidSvg(result.svg)}</div></body></html>`;
+        const mermaidDocument = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(normalizedArtifact.title)}</title><style>html,body{margin:0;min-height:100%;background:${pageBg}}body{padding:32px;box-sizing:border-box;overflow:auto}.canvas{display:inline-block;border:1px solid ${border};border-radius:12px;background:${canvasBg};padding:24px}svg{display:block;max-width:none!important}</style></head><body><div class="canvas">${normalizeMermaidSvg(result.svg)}</div></body></html>`;
+        html = buildSandboxedTabDocument(normalizedArtifact.title, mermaidDocument, isDarkMode);
       } catch {
-        html = buildArtifactTabDocument(normalizedArtifact, selectedContent);
+        html = buildSandboxedArtifactTabDocument(normalizedArtifact, selectedContent, isDarkMode);
       }
     }
 
@@ -443,7 +515,10 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
               <div className="flex shrink-0 items-center rounded-xl border border-[var(--privora-border)] bg-[var(--privora-bg)]/55 p-0.5">
                 <button
                   type="button"
-                  onClick={() => setTab("preview")}
+                  onClick={() => {
+                    tabTouchedRef.current = true;
+                    setTab("preview");
+                  }}
                   className={cn("flex h-8 w-8 items-center justify-center rounded-lg text-[var(--privora-muted)] transition", tab === "preview" ? "bg-[var(--privora-surface)] text-[var(--privora-text)] shadow-sm" : "hover:text-[var(--privora-text)]")}
                   aria-label="Preview artifact"
                   title="Preview"
@@ -452,7 +527,10 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTab("code")}
+                  onClick={() => {
+                    tabTouchedRef.current = true;
+                    setTab("code");
+                  }}
                   className={cn("flex h-8 w-8 items-center justify-center rounded-lg text-[var(--privora-muted)] transition", tab === "code" ? "bg-[var(--privora-surface)] text-[var(--privora-text)] shadow-sm" : "hover:text-[var(--privora-text)]")}
                   aria-label="View code"
                   title="Code"
@@ -509,13 +587,18 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
             </header>
 
             <div className="relative z-10 flex gap-2 border-b border-[var(--privora-border)] bg-[var(--privora-surface)] px-4 py-2 sm:hidden">
-              <button type="button" onClick={() => setTab("preview")} className={cn("h-9 flex-1 rounded-full text-sm", tab === "preview" ? "bg-[var(--privora-text)] text-[var(--privora-bg)]" : "bg-[var(--privora-user-bubble)] text-[var(--privora-muted)]")}>Preview</button>
-              <button type="button" onClick={() => setTab("code")} className={cn("h-9 flex-1 rounded-full text-sm", tab === "code" ? "bg-[var(--privora-text)] text-[var(--privora-bg)]" : "bg-[var(--privora-user-bubble)] text-[var(--privora-muted)]")}>Code</button>
+              <button type="button" onClick={() => { tabTouchedRef.current = true; setTab("preview"); }} className={cn("h-9 flex-1 rounded-full text-sm", tab === "preview" ? "bg-[var(--privora-text)] text-[var(--privora-bg)]" : "bg-[var(--privora-user-bubble)] text-[var(--privora-muted)]")}>Preview</button>
+              <button type="button" onClick={() => { tabTouchedRef.current = true; setTab("code"); }} className={cn("h-9 flex-1 rounded-full text-sm", tab === "code" ? "bg-[var(--privora-text)] text-[var(--privora-bg)]" : "bg-[var(--privora-user-bubble)] text-[var(--privora-muted)]")}>Code</button>
             </div>
 
-            <div className={cn("min-h-0 flex-1", tab === "code" ? "overflow-hidden" : "overflow-auto px-4 py-5 sm:px-6")}>
+            <div
+              className={cn(
+                "min-h-0 flex-1",
+                tab === "code" || (tab === "preview" && previewArtifact.kind === "svg") ? "overflow-hidden" : "overflow-auto px-4 py-5 sm:px-6"
+              )}
+            >
               {tab === "preview" ? (
-                <ArtifactPreview artifact={previewArtifact} />
+                <ArtifactPreview artifact={previewArtifact} isDarkMode={isDarkMode} />
               ) : (
                 <div className="flex h-full min-h-0 overflow-hidden bg-transparent">
                   <ArtifactLineNumbers lineCount={editorLineCount} scrollTop={editorScrollTop} />

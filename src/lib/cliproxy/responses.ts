@@ -100,34 +100,40 @@ const extractTextDelta = (event: string | undefined, data: any) => {
   return "";
 };
 
-const extractThoughtDelta = (event: string | undefined, data: any) => {
+type ExtractedThought = {
+  text: string;
+  mode: "delta" | "snapshot";
+};
+
+const extractThoughtDelta = (event: string | undefined, data: any): ExtractedThought | null => {
   if (
     typeof data?.delta === "string" &&
     (event?.includes("reasoning_summary") || data?.type === "response.reasoning_summary_text.delta")
   ) {
-    return data.delta;
+    return { text: data.delta, mode: "delta" };
   }
 
   if (typeof data?.delta === "string" && event?.includes("reasoning")) {
-    return data.delta;
+    return { text: data.delta, mode: "delta" };
   }
 
   if (typeof data?.text === "string" && data?.type === "summary_text") {
-    return data.text;
+    return { text: data.text, mode: "snapshot" };
   }
 
   if (typeof data?.part?.text === "string" && data?.part?.type === "summary_text") {
-    return data.part.text;
+    return { text: data.part.text, mode: "snapshot" };
   }
 
   if (Array.isArray(data?.summary)) {
-    return data.summary
+    const text = data.summary
       .map((item: any) => item?.text)
       .filter(Boolean)
       .join("");
+    return text ? { text, mode: "snapshot" } : null;
   }
 
-  return "";
+  return null;
 };
 
 const extractWebSearchEvent = (event: string | undefined, data: any) => {
@@ -262,6 +268,8 @@ export async function streamCliproxyResponse({
   const decoder = new TextDecoder();
   let buffer = "";
   let functionArgumentBuffer = "";
+  let hasStreamedThoughtDelta = false;
+  let hasEmittedThoughtSnapshot = false;
 
   const flushEvent = (rawEvent: string) => {
     const lines = rawEvent.split("\n");
@@ -298,7 +306,15 @@ export async function streamCliproxyResponse({
           if (parsed) onArtifactToolCall?.(parsed);
           functionArgumentBuffer = "";
         }
-        if (thoughtDelta) onThoughtDelta(thoughtDelta);
+        if (thoughtDelta?.text) {
+          if (thoughtDelta.mode === "delta") {
+            hasStreamedThoughtDelta = true;
+            onThoughtDelta(thoughtDelta.text);
+          } else if (!hasStreamedThoughtDelta && !hasEmittedThoughtSnapshot) {
+            hasEmittedThoughtSnapshot = true;
+            onThoughtDelta(thoughtDelta.text);
+          }
+        }
         if (textDelta) onTextDelta(textDelta);
       } catch {
         if (!event || event.includes("output_text")) {
