@@ -15,25 +15,33 @@ const getArtifactIcon = (kind: ArtifactReferenceRecord["kind"]) => {
 
 export function ArtifactCard({ artifact, onOpen }: ArtifactCardProps) {
   const Icon = getArtifactIcon(artifact.kind);
+  const isStreaming = artifact.status === "streaming";
+
   return (
     <button
       type="button"
       onClick={onOpen}
       className={cn(
-        "group mt-3 flex w-full items-center gap-3 rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/78 px-3 py-3 text-left shadow-sm transition hover:border-[var(--privora-text)]/20 hover:bg-[var(--privora-surface)]",
-        artifact.status === "streaming" && "border-[var(--privora-accent)]/25 bg-[var(--privora-user-bubble)]/70"
+        "group relative mt-3 flex w-full items-center gap-3 overflow-hidden rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/78 px-3 py-3 text-left shadow-sm transition hover:border-[var(--privora-text)]/20 hover:bg-[var(--privora-surface)]",
+        isStreaming && "border-[var(--privora-accent)]/25 bg-[var(--privora-user-bubble)]/70"
       )}
     >
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--privora-user-bubble)] text-[var(--privora-text)]">
+      {isStreaming && (
+        <span className="pointer-events-none absolute inset-0 -translate-x-full animate-[privora-artifact-card-shimmer_1.8s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-white/45 to-transparent dark:via-white/10" />
+      )}
+      <span className={cn(
+        "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--privora-user-bubble)] text-[var(--privora-text)]",
+        isStreaming && "animate-[privora-artifact-card-pulse_1.6s_ease-in-out_infinite]"
+      )}>
         <Icon className="h-4 w-4" />
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="relative min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold text-[var(--privora-text)]">{artifact.title}</span>
         <span className="mt-0.5 block text-xs capitalize text-[var(--privora-muted)]">
-          {artifact.status === "streaming" ? `Creating ${artifact.kind} artifact` : `${artifact.kind} artifact`}
+          {isStreaming ? `Creating ${artifact.kind} artifact` : `${artifact.kind} artifact`}
         </span>
       </span>
-      <Maximize2 className="h-4 w-4 text-[var(--privora-muted)] transition group-hover:text-[var(--privora-text)]" />
+      <Maximize2 className="relative h-4 w-4 text-[var(--privora-muted)] transition group-hover:text-[var(--privora-text)]" />
     </button>
   );
 }
