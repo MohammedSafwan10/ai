@@ -1,17 +1,18 @@
 # Privora
 
-Privora is a polished local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly and GPT-5.5 through CLIProxyAPI, with streaming chat, Canvas artifacts, image generation/editing, web search, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
+Privora is a polished local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly, GPT-5.5 through CLIProxyAPI, and selected OpenRouter free text models, with streaming chat, Canvas artifacts, image generation/editing, web search, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
 
 ## Features
 
 - Canvas artifacts for substantial generated work: Markdown, code, HTML, SVG, Mermaid, JSON, YAML, SQL, tables, text, and prompts.
 - Live artifact creation/update cards that open automatically in Canvas while generation streams.
 - Split Canvas with preview/code modes, Monaco editing, copy/download/open-tab controls, custom line numbers, transparent editor styling, and iframe runtime error display.
-- Smart artifact routing for Gemini: artifacts stream through a private output marker so Canvas can update progressively even though Gemini native function calls arrive atomically.
+- Smart artifact routing for Gemini and OpenRouter: artifacts stream through a private output marker so Canvas can update progressively even when provider-native function calls arrive atomically.
 - Guardrails that keep ordinary informational Markdown answers in chat instead of incorrectly turning them into Canvas artifacts.
 - Image generation and image editing through CLIProxy image endpoints, including multiple images, partial-image streaming, retry, download, and edit-from-result flows.
 - Async Deep Research with preflight planning, editable plans, live progress, activity/source panels, cancellation, reconnect support, and elapsed timing.
-- Web search support for Gemini grounding and CLIProxy/OpenAI-compatible search events.
+- OpenRouter free text models with capability-aware streaming, reasoning, web search server tools, streamed Canvas routing, and conservative fallback artifact detection.
+- Web search support for Gemini grounding, CLIProxy/OpenAI-compatible search events, and OpenRouter server search, with Auto/discretion by default and a forced-search toggle for the next response.
 - Dynamic current date/time context injected into the system prompt on every request, including local time, local time zone, and UTC ISO timestamp.
 - Calm beige/light and high-contrast dark themes.
 - Claude-style sidebar with a compact collapsed icon rail.
@@ -40,6 +41,7 @@ Privora is a polished local-first AI workspace built with React, TypeScript, Vit
 - KaTeX
 - Shiki via `react-shiki`
 - CLIProxyAPI for local GPT-5.5 routing
+- OpenRouter Chat Completions API for selected free text models
 
 ## Setup
 
@@ -55,6 +57,8 @@ Create `.env`:
 GEMINI_API_KEY=your_gemini_api_key
 CLIPROXY_BASE_URL=http://127.0.0.1:8317
 VITE_CLIPROXY_API_KEY=sk-dummy
+OPENROUTER_API_KEY=your_openrouter_api_key
+APP_URL=http://127.0.0.1:3000
 ```
 
 Run the dev server:
@@ -96,8 +100,38 @@ Gemini requests use `@google/genai` with streaming:
 
 - Instant mode sends normal streaming content.
 - Medium mode enables `thinkingConfig` with `ThinkingLevel.MEDIUM` and `includeThoughts: true`.
-- Web search enables Gemini's `googleSearch` tool and displays grounding/search state when metadata is returned.
-- Artifact-capable Gemini turns use streamed text with a private artifact marker instead of relying on Gemini function-call argument streaming. Gemini native function calls are supported by the SDK, but they arrive as complete calls, so Privora uses output routing when it needs Canvas to update progressively.
+- Web search defaults to Auto: Gemini can use `googleSearch` when the answer needs current information. Turning Web search on for a turn instructs the model to search before answering.
+- Artifact-capable Gemini turns use streamed text with a private artifact marker instead of relying on native function-call argument streaming. Gemini native function calls are supported by the SDK, but they arrive as complete calls, so Privora uses output routing when it needs Canvas to update progressively.
+
+## OpenRouter
+
+Privora routes selected OpenRouter free models through local Vite middleware:
+
+```text
+Browser -> /api/openrouter/chat -> https://openrouter.ai/api/v1/chat/completions
+```
+
+`OPENROUTER_API_KEY` is required. `APP_URL` is optional and is sent as `HTTP-Referer` for OpenRouter attribution.
+
+The model list is intentionally capability-driven from OpenRouter's Models API metadata, not prompt guessing:
+
+| Model | Context | Max output | Input/output | Tools | Reasoning | Structured output | Notes |
+| --- | ---: | ---: | --- | --- | --- | --- | --- |
+| `qwen/qwen3-coder:free` | 262,000 | 262,000 | Text -> text | Yes | No | No | Good fit for code/artifact generation and OpenRouter web search. |
+| `inclusionai/ring-2.6-1t:free` | 262,144 | 65,536 | Text -> text | Yes | Yes | No | Thinking-capable model with tools and long context. |
+| `baidu/cobuddy:free` | 131,072 | 65,536 | Text -> text | Yes | Yes | No | Tools and reasoning are advertised; temperature/tool_choice are not. |
+| `nvidia/nemotron-3-super-120b-a12b:free` | 262,144 | 262,144 | Text -> text | Yes | Yes | Yes | Broadest advertised mix here: tools, reasoning, structured output, long output. |
+
+Current OpenRouter behavior:
+
+- Chat streams over OpenRouter Chat Completions SSE.
+- Reasoning is sent only when the selected model advertises the `reasoning` parameter.
+- Web search is available in Auto mode through `openrouter:web_search` when the model advertises `tools`. Turning Web search on requires search first; models with `tool_choice` also receive `tool_choice: "required"`.
+- OpenRouter server search can consume OpenRouter credits even with `:free` model IDs, depending on the search engine/provider path.
+- Canvas uses a private streamed artifact marker for progressive OpenRouter artifact creation instead of depending on provider-specific tool-call argument chunking.
+- Raw/fenced artifact fallback detection is conservative so normal Markdown answers stay in chat.
+- All configured free OpenRouter models are text-only in current OpenRouter metadata, so Privora disables attachments, file input, and vision for them.
+- OpenRouter Deep Research uses direct source gathering first, then OpenRouter server search when available, then a streamed synthesis response.
 
 ## Canvas Artifacts
 
@@ -112,7 +146,8 @@ Artifacts are used when the user asks for substantial reusable content rather th
 Current Canvas behavior:
 
 - GPT/CLIProxy can use the `create_or_update_artifact` tool.
-- Gemini uses a private streamed artifact marker so the client can route output into Canvas while text arrives.
+- Gemini and OpenRouter use a private streamed artifact marker so the client can route output into Canvas while text arrives.
+- GPT/CLIProxy and provider-native tool paths are still parsed when available, but progressive Canvas streaming does not depend on tool-call argument chunking.
 - The client normalizes common malformed artifact wrappers and extracts raw SVG/HTML when models include extra metadata.
 - The editor uses Monaco with transparent app-integrated themes and custom line numbers.
 - HTML/SVG previews report iframe height and runtime errors back to the parent panel.
@@ -164,6 +199,7 @@ Current runtime:
 
 - Gemini models use Gemini streaming with Google Search grounding.
 - GPT/CLIProxy models use the OpenAI Responses-compatible CLIProxy route with `web_search_preview`.
+- OpenRouter models use OpenRouter Chat Completions. Tool-capable models can add `openrouter:web_search`; non-tool models rely on direct source gathering.
 - Research jobs are exposed through local Vite middleware:
 
 ```text
@@ -184,6 +220,7 @@ Privora uses native provider payloads:
 
 - Gemini: sends attachments as `inlineData`.
 - GPT-5.5/CLIProxy: sends images as `input_image` and files as `input_file`.
+- OpenRouter free models configured here: text-only, so attachments are blocked in the app.
 
 Current in-app limits:
 
@@ -262,6 +299,9 @@ src/
       responses.ts
     gemini/
       client.ts
+    openrouter/
+      models.ts
+      responses.ts
     prompt/
       deepResearch.ts
       styles/
