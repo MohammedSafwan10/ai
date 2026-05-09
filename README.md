@@ -1,9 +1,18 @@
 # Privora
 
-Privora is a polished local-first AI chat app built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly and GPT-5.5 through CLIProxyAPI, with streaming responses, reasoning summaries, web search signals, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
+Privora is a polished local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly and GPT-5.5 through CLIProxyAPI, with streaming chat, Canvas artifacts, image generation/editing, web search, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
 
 ## Features
 
+- Canvas artifacts for substantial generated work: Markdown, code, HTML, SVG, Mermaid, JSON, YAML, SQL, tables, text, and prompts.
+- Live artifact creation/update cards that open automatically in Canvas while generation streams.
+- Split Canvas with preview/code modes, Monaco editing, copy/download/open-tab controls, custom line numbers, transparent editor styling, and iframe runtime error display.
+- Smart artifact routing for Gemini: artifacts stream through a private output marker so Canvas can update progressively even though Gemini native function calls arrive atomically.
+- Guardrails that keep ordinary informational Markdown answers in chat instead of incorrectly turning them into Canvas artifacts.
+- Image generation and image editing through CLIProxy image endpoints, including multiple images, partial-image streaming, retry, download, and edit-from-result flows.
+- Async Deep Research with preflight planning, editable plans, live progress, activity/source panels, cancellation, reconnect support, and elapsed timing.
+- Web search support for Gemini grounding and CLIProxy/OpenAI-compatible search events.
+- Dynamic current date/time context injected into the system prompt on every request, including local time, local time zone, and UTC ISO timestamp.
 - Calm beige/light and high-contrast dark themes.
 - Claude-style sidebar with a compact collapsed icon rail.
 - Local chat history stored in IndexedDB through Dexie.
@@ -11,11 +20,8 @@ Privora is a polished local-first AI chat app built with React, TypeScript, Vite
 - GPT-5.5 through CLIProxyAPI using an OpenAI Responses-compatible endpoint.
 - Instant and Medium reasoning modes.
 - Live reasoning/thought UI with a collapsible thought process panel.
-- Gemini grounding/web-search status display.
-- CLIProxy web-search event display when the proxy/provider emits search events.
-- Deep Research mode with a preflight planner, editable research plan card, live step progress, activity panel, source collection, cancellation, reconnect support, and elapsed timing.
 - Image, PDF, document, text, and code attachments with model-aware validation.
-- Rich markdown with GitHub-flavored markdown, KaTeX math, Shiki syntax highlighting, copy buttons, and collapsed long code blocks.
+- Rich markdown with GitHub-flavored markdown, KaTeX math, Shiki syntax highlighting, copy buttons, collapsed long code blocks, responsive tables, and external links that open in a new tab.
 - Responsive composer, mobile long-press actions, native share support, retry, edit, copy, rename, and delete chat controls.
 
 ## Tech Stack
@@ -28,6 +34,8 @@ Privora is a polished local-first AI chat app built with React, TypeScript, Vite
 - Lucide React
 - Dexie / IndexedDB
 - `@google/genai`
+- Monaco Editor
+- Mermaid
 - React Markdown, remark-gfm, remark-math, rehype-katex
 - KaTeX
 - Shiki via `react-shiki`
@@ -89,6 +97,54 @@ Gemini requests use `@google/genai` with streaming:
 - Instant mode sends normal streaming content.
 - Medium mode enables `thinkingConfig` with `ThinkingLevel.MEDIUM` and `includeThoughts: true`.
 - Web search enables Gemini's `googleSearch` tool and displays grounding/search state when metadata is returned.
+- Artifact-capable Gemini turns use streamed text with a private artifact marker instead of relying on Gemini function-call argument streaming. Gemini native function calls are supported by the SDK, but they arrive as complete calls, so Privora uses output routing when it needs Canvas to update progressively.
+
+## Canvas Artifacts
+
+Artifacts are used when the user asks for substantial reusable content rather than a normal chat answer. The app can create or update:
+
+- Markdown documents, reports, prompts, and tables.
+- Code, JSON, YAML, SQL, and other structured text.
+- Static HTML previews in a sandboxed iframe.
+- SVG previews in a transparent iframe.
+- Mermaid diagrams rendered through Mermaid.
+
+Current Canvas behavior:
+
+- GPT/CLIProxy can use the `create_or_update_artifact` tool.
+- Gemini uses a private streamed artifact marker so the client can route output into Canvas while text arrives.
+- The client normalizes common malformed artifact wrappers and extracts raw SVG/HTML when models include extra metadata.
+- The editor uses Monaco with transparent app-integrated themes and custom line numbers.
+- HTML/SVG previews report iframe height and runtime errors back to the parent panel.
+- Copy, download, and open-tab actions are available from Canvas.
+
+The router intentionally rejects ambiguous artifact markers for ordinary Q&A, summaries, schedules, explanations, and Markdown-formatted chat answers unless the user clearly asked for a reusable artifact/file/document/Canvas item.
+
+## Image Generation
+
+Image generation runs through CLIProxy image endpoints:
+
+```text
+POST /cliproxy/v1/images/generations
+POST /cliproxy/v1/images/edits
+```
+
+Current image model constant:
+
+```text
+gpt-image-2
+```
+
+Current image behavior:
+
+- Generate new images from prompts.
+- Edit images from attachments or generated results.
+- Stream partial image updates when the upstream endpoint provides them.
+- Generate 1-4 images depending on selected options.
+- Download generated images from the result card.
+- Retry stopped or failed image generations.
+
+If the local proxy returns `404`, Privora shows a friendly message telling the user image generation is disabled or unavailable in CLIProxy.
 
 ## Deep Research
 
@@ -154,7 +210,18 @@ privora-local-db
 
 This is local to the current browser profile. Attachments are also persisted as base64 in local chat history, so avoid storing private documents in shared browser profiles.
 
-Persisted chat records include message content, attachments, reasoning text, web-search status, research plans, research activity, research sources, and research timing metadata.
+Persisted chat records include message content, attachments, reasoning text, web-search status, artifacts, image-generation metadata, research plans, research activity, research sources, and research timing metadata.
+
+## Prompt Context
+
+Every request includes the base system instruction, the selected response style, optional web-search/deep-research instructions, and live date/time context.
+
+The date/time context includes:
+
+- Local human-readable date and time.
+- Local time zone from the browser/runtime.
+- UTC ISO timestamp.
+- An instruction to use that context for relative dates such as today, tomorrow, yesterday, next week, and current.
 
 ## Security Notes
 
@@ -179,6 +246,8 @@ npm run preview
 ```text
 src/
   features/
+    artifacts/
+      components/
     attachments/
       components/
     chat/
@@ -187,7 +256,9 @@ src/
   hooks/
   lib/
     attachments.ts
+    artifacts.ts
     cliproxy/
+      images.ts
       responses.ts
     gemini/
       client.ts
