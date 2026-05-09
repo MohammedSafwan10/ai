@@ -9,6 +9,7 @@ import {
   detectArtifactFromMessage,
   deriveArtifactKind,
   getTitleFromContent,
+  normalizeArtifactKind,
   type ArtifactDraftPayload,
   type ArtifactPayload,
 } from "../../../lib/artifacts";
@@ -371,14 +372,31 @@ export function useChatGeneration({
     const userDeclinedArtifacts = /\b(?:no|dont|don't|do not|skip|without|no need)\b.{0,32}\b(?:artifact|artifacts|canvas|file|files)\b/i.test(text) ||
       /\b(?:artifact|artifacts|canvas|file|files)\b.{0,32}\b(?:no|not|dont|don't|skip|unneeded)\b/i.test(text);
     const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !userDeclinedArtifacts;
+    const useGeminiOutputRouter = requestProvider === "gemini" && artifactRuntimeEnabled;
     const baseSystemInstruction = getSystemInstruction({
       styleId: requestStyle,
       provider: requestProvider,
       webSearchEnabled: requestWebSearchEnabled,
       deepResearchEnabled: requestIsImageMode ? false : requestDeepResearchEnabled,
     });
+    const geminiArtifactMarker = ":::privora-artifact";
+    const geminiArtifactStreamInstruction = `
+Gemini artifact routing:
+- For normal answers, respond normally and do not use the private marker.
+- When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, stream a Canvas artifact instead of pasting it in chat.
+- To stream a Canvas artifact, the first output must be exactly one private header line:
+${geminiArtifactMarker} {"operation":"create","kind":"svg","title":"Short title","language":"svg"}
+- After that header line, stream only the complete artifact content. Do not include explanations, markdown fences, JSON wrappers, XML wrapper metadata, or tool-call text around the content.
+- Use operation "update" when revising the most relevant existing artifact; otherwise use "create".
+- Kind must be one of markdown, code, html, svg, mermaid, json, yaml, sql, text, table, prompt.
+- For SVG content, start the content with <svg and end with </svg>.
+- For HTML content, return the raw HTML document or fragment.
+- If the user explicitly wants explanation, review, debugging advice, or casual chat, respond normally without the private header.
+`.trim();
     const systemInstruction = requestIsImageMode
       ? baseSystemInstruction
+      : useGeminiOutputRouter
+        ? `${baseSystemInstruction}\n\n${geminiArtifactStreamInstruction}`
       : artifactRuntimeEnabled
         ? `${baseSystemInstruction}\n\n${ARTIFACT_SYSTEM_INSTRUCTION}`
         : `${baseSystemInstruction}\n\nThe user does not want a Canvas artifact for this turn. Answer normally and do not create or update artifacts.`;
@@ -798,6 +816,33 @@ export function useChatGeneration({
       });
     };
 
+    const getGeminiArtifactStreamDraft = (
+      value: string,
+      metadata?: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "title" | "language" | "targetArtifactId">>
+    ): ArtifactDraftPayload | null => {
+      let content = value.trimStart();
+      const fenced = content.match(/^```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)(?:\n?```)?\s*$/);
+      const language = metadata?.language || fenced?.[1] || undefined;
+      if (fenced) content = fenced[2].trimStart();
+
+      const svgStart = content.search(/<svg\b/i);
+      if (svgStart >= 0) content = content.slice(svgStart);
+      const htmlStart = content.search(/(?:<!doctype html|<html\b)/i);
+      if (htmlStart >= 0 && (svgStart < 0 || htmlStart < svgStart)) content = content.slice(htmlStart);
+
+      const trimmed = content.trim();
+      if (trimmed.length < 40) return null;
+      const kind = metadata?.kind || deriveArtifactKind(language, trimmed);
+      return {
+        operation: metadata?.operation,
+        targetArtifactId: metadata?.targetArtifactId,
+        kind,
+        title: metadata?.title || getTitleFromContent(trimmed, kind),
+        language: language || (kind === "svg" ? "svg" : kind === "html" ? "html" : undefined),
+        content: trimmed,
+      };
+    };
+
     const removeArtifactBlocksFromChatText = (value: string) => {
       let cleaned = value.replace(/<artifact\b[\s\S]*?(?:<\/artifact>|$)/gi, "");
       cleaned = cleaned.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, _language, blockContent) =>
@@ -1119,9 +1164,15 @@ export function useChatGeneration({
     let currentArtifact: ArtifactReferenceRecord | undefined;
     let currentArtifactOperation: "create" | "update" = "create";
     const artifactTasks: Promise<void>[] = [];
+    let geminiArtifactStreamText = "";
+    let geminiRoute: "undecided" | "chat" | "artifact" = useGeminiOutputRouter ? "undecided" : "chat";
+    let geminiRoutingBuffer = "";
+    let geminiArtifactMetadata: Partial<Pick<ArtifactDraftPayload, "operation" | "kind" | "title" | "language" | "targetArtifactId">> | undefined;
 
     try {
       const updateDisplayedGeminiMessage = () => {
+        if (geminiRoute === "artifact") return;
+
         let displayText = currentText;
         let displayThought = currentThought;
 
@@ -1151,18 +1202,105 @@ export function useChatGeneration({
         }
       };
 
+      const appendGeminiChatText = (delta: string) => {
+        currentText += delta;
+        if (artifactRuntimeEnabled && !useGeminiOutputRouter) detectStreamingArtifactFromText(currentText);
+        updateDisplayedGeminiMessage();
+      };
+
+      const appendGeminiArtifactText = (delta: string) => {
+        geminiArtifactStreamText += delta;
+        const draft = getGeminiArtifactStreamDraft(geminiArtifactStreamText, geminiArtifactMetadata);
+        if (draft) {
+          upsertStreamingArtifactFromDraft(draft);
+          updateLastModelMessage({ content: "" });
+        }
+      };
+
+      const parseGeminiArtifactHeader = (value: string) => {
+        const trimmed = value.trimStart();
+        if (!trimmed.toLowerCase().startsWith(geminiArtifactMarker)) return null;
+        const lineEnd = trimmed.indexOf("\n");
+        if (lineEnd < 0) return undefined;
+        const headerLine = trimmed.slice(0, lineEnd).trim();
+        const rest = trimmed.slice(lineEnd + 1);
+        const rawJson = headerLine.slice(geminiArtifactMarker.length).trim();
+        try {
+          const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+          return {
+            metadata: {
+              operation: parsed.operation === "update" ? "update" as const : "create" as const,
+              kind: typeof parsed.kind === "string" ? normalizeArtifactKind(parsed.kind, parsed.language as string | undefined) : undefined,
+              title: typeof parsed.title === "string" ? parsed.title : undefined,
+              language: typeof parsed.language === "string" ? parsed.language : undefined,
+              targetArtifactId: typeof parsed.targetArtifactId === "string" ? parsed.targetArtifactId : undefined,
+            },
+            rest,
+          };
+        } catch {
+          return null;
+        }
+      };
+
+      const routeGeminiTextDelta = (delta: string) => {
+        if (!useGeminiOutputRouter) {
+          appendGeminiChatText(delta);
+          return;
+        }
+
+        if (geminiRoute === "chat") {
+          appendGeminiChatText(delta);
+          return;
+        }
+
+        if (geminiRoute === "artifact") {
+          appendGeminiArtifactText(delta);
+          return;
+        }
+
+        geminiRoutingBuffer += delta;
+        const trimmed = geminiRoutingBuffer.trimStart();
+        const lowerTrimmed = trimmed.toLowerCase();
+        const header = parseGeminiArtifactHeader(geminiRoutingBuffer);
+        if (header) {
+          geminiRoute = "artifact";
+          geminiArtifactMetadata = header.metadata;
+          currentArtifactOperation = header.metadata.operation || "create";
+          geminiRoutingBuffer = "";
+          appendGeminiArtifactText(header.rest);
+          return;
+        }
+
+        if (header === undefined && lowerTrimmed.length <= 240) return;
+
+        const markerPrefix = geminiArtifactMarker.slice(0, Math.max(0, lowerTrimmed.length));
+        if (geminiArtifactMarker.startsWith(lowerTrimmed) && lowerTrimmed.length < geminiArtifactMarker.length) return;
+
+        if (/^(?:<svg\b|<!doctype html\b|<html\b)/i.test(trimmed)) {
+          geminiRoute = "artifact";
+          geminiRoutingBuffer = "";
+          appendGeminiArtifactText(trimmed);
+          return;
+        }
+
+        if (lowerTrimmed.length >= 240 || !markerPrefix.startsWith(lowerTrimmed[0] || "")) {
+          geminiRoute = "chat";
+          const buffered = geminiRoutingBuffer;
+          geminiRoutingBuffer = "";
+          appendGeminiChatText(buffered);
+        }
+      };
+
       await streamGeminiResponse({
         model: requestModel,
         contents: toGeminiContents(newHistory),
         systemInstruction,
         thinkingEnabled: requestThinkingEnabled,
         webSearchEnabled: requestWebSearchEnabled,
-        artifactToolsEnabled: artifactRuntimeEnabled,
+        artifactToolsEnabled: artifactRuntimeEnabled && !useGeminiOutputRouter,
         signal: abortControllerRef.current.signal,
         onTextDelta: (delta) => {
-          currentText += delta;
-          if (artifactRuntimeEnabled) detectStreamingArtifactFromText(currentText);
-          updateDisplayedGeminiMessage();
+          routeGeminiTextDelta(delta);
         },
         onThoughtDelta: (delta) => {
           currentThought += delta;
@@ -1187,7 +1325,35 @@ export function useChatGeneration({
       });
       await Promise.all(artifactTasks);
 
+      if (useGeminiOutputRouter && geminiRoute === "undecided" && geminiRoutingBuffer) {
+        const buffered = geminiRoutingBuffer;
+        geminiRoutingBuffer = "";
+        if (/^(?:<svg\b|<!doctype html\b|<html\b)/i.test(buffered.trimStart())) {
+          geminiRoute = "artifact";
+          appendGeminiArtifactText(buffered.trimStart());
+        } else {
+          geminiRoute = "chat";
+          appendGeminiChatText(buffered);
+        }
+      }
+
       const finalWebSearchStatus = didCompleteWebSearch ? "searched" : undefined;
+      const streamedArtifactDraft = geminiRoute === "artifact" ? getGeminiArtifactStreamDraft(geminiArtifactStreamText, geminiArtifactMetadata) : null;
+      if (streamedArtifactDraft) {
+        currentArtifactOperation = streamedArtifactDraft.operation || "create";
+        currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
+          operation: streamedArtifactDraft.operation || "create",
+          targetArtifactId: streamedArtifactDraft.targetArtifactId || streamingArtifactRef?.artifactId,
+          kind: streamedArtifactDraft.kind,
+          title: streamedArtifactDraft.title,
+          language: streamedArtifactDraft.language,
+          content: streamedArtifactDraft.content,
+        });
+        if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
+      } else if (geminiRoute === "artifact" && geminiArtifactStreamText.trim()) {
+        currentText = geminiArtifactStreamText;
+        updateLastModelMessage({ content: removeArtifactBlocksFromChatText(currentText) || currentText });
+      }
       const detectedArtifact = !currentArtifact && artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
       if (detectedArtifact) {
         currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
@@ -1227,6 +1393,7 @@ export function useChatGeneration({
         model: requestModel,
         durationMs: Date.now() - startedAt,
         outputLength: currentText.length,
+        artifactStreamLength: geminiArtifactStreamText.length,
         thoughtLength: currentThought.length,
         artifactOperation: currentArtifact ? currentArtifactOperation : undefined,
         webSearchCompleted: didCompleteWebSearch,

@@ -1,6 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import {FunctionCallingConfigMode, GoogleGenAI, ThinkingLevel} from '@google/genai';
+import {GoogleGenAI, ThinkingLevel} from '@google/genai';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import path from 'path';
 import pino, {type Logger} from 'pino';
@@ -1326,16 +1326,6 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
               ...(body.thinkingEnabled ? {includeThoughts: true} : {}),
             },
             ...(tools.length > 0 ? {tools} : {}),
-            ...(body.artifactToolsEnabled
-              ? {
-                  toolConfig: {
-                    functionCallingConfig: {
-                      mode: FunctionCallingConfigMode.AUTO,
-                      allowedFunctionNames: [geminiArtifactFunctionDeclaration.name],
-                    },
-                  },
-                }
-              : {}),
           },
         });
 
