@@ -43,6 +43,7 @@ interface ChatComposerProps {
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onFileSelect: (event: ChangeEvent<HTMLInputElement>) => void;
+  onTakeScreenshot: () => void;
   onPreviewAttachment: (attachment: Attachment) => void;
   onRemoveAttachment: (index: number) => void;
   onToggleThinking: () => void;
@@ -76,6 +77,7 @@ export function ChatComposer({
   onKeyDown,
   onPaste,
   onFileSelect,
+  onTakeScreenshot,
   onPreviewAttachment,
   onRemoveAttachment,
   onToggleThinking,
@@ -297,7 +299,7 @@ export function ChatComposer({
                           setIsAddMenuOpen(false);
                           fileInputRef.current?.click();
                         }}
-                        className="w-full text-left px-3 py-2 flex items-center gap-3 text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors text-[var(--privora-text)]"
+                        className="w-full text-left px-3 py-2 flex items-center gap-3 text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors text-[var(--privora-text)] disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         <Paperclip className="w-4 h-4 opacity-70" />
                         <span className="font-medium leading-none">Add files or photos</span>
@@ -318,8 +320,13 @@ export function ChatComposer({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setIsAddMenuOpen(false)}
-                        className="w-full text-left px-3 py-2 flex items-center gap-3 text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors text-[var(--privora-text)]"
+                        disabled={settingsDisabled}
+                        onClick={() => {
+                          setIsAddMenuOpen(false);
+                          onTakeScreenshot();
+                        }}
+                        className="w-full text-left px-3 py-2 flex items-center gap-3 text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors text-[var(--privora-text)] disabled:cursor-not-allowed disabled:opacity-45"
+                        title="Capture a tab, window, or screen as an image attachment"
                       >
                         <Camera className="w-4 h-4 opacity-70" />
                         <span className="font-medium leading-none">Take a screenshot</span>

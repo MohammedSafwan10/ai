@@ -52,6 +52,61 @@ type Chat = ChatRecord;
 
 const CHAT_BOTTOM_THRESHOLD_PX = 128;
 
+const getScreenCaptureFile = async () => {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error("screen-capture-unsupported");
+  }
+
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: {
+      displaySurface: "browser",
+      frameRate: 1,
+    } as MediaTrackConstraints,
+    audio: false,
+  });
+
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error("screen-capture-video-failed"));
+    });
+
+    await video.play();
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) {
+      throw new Error("screen-capture-empty");
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("screen-capture-canvas-failed");
+    }
+
+    context.drawImage(video, 0, 0, width, height);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((nextBlob) => {
+        if (nextBlob) resolve(nextBlob);
+        else reject(new Error("screen-capture-encode-failed"));
+      }, "image/png");
+    });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return new File([blob], `privora-screenshot-${timestamp}.png`, { type: "image/png" });
+  } finally {
+    stream.getTracks().forEach(track => track.stop());
+  }
+};
+
 export default function App() {
   const { notify } = useToast();
   const initialUiSettingsRef = useRef(loadUiSettings());
@@ -129,9 +184,9 @@ export default function App() {
     });
   }, [selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode, composerMode, imageSettings]);
 
-  const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste") => {
+  const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste" | "screenshot") => {
     const files = Array.from(fileList);
-    if (files.length === 0) return;
+    if (files.length === 0) return 0;
 
     if (attachments.length + files.length > MAX_ATTACHMENTS) {
       appLogger.warn("Attachment add exceeded count limit", {
@@ -145,10 +200,11 @@ export default function App() {
         description: `You can attach up to ${MAX_ATTACHMENTS} files at once.`,
         variant: "error",
       });
-      return;
+      return 0;
     }
 
-    const selectedProvider = getModelOption(selectedModelRef.current)?.provider;
+    const isImageAttachmentMode = composerMode === "image";
+    const selectedProvider = isImageAttachmentMode ? "image" : getModelOption(selectedModelRef.current)?.provider;
     const newAttachments: Attachment[] = [];
     const attachmentIssues: string[] = [];
     const noteAttachmentIssue = (message: string) => {
@@ -156,6 +212,16 @@ export default function App() {
     };
 
     for (const file of files) {
+       if (isImageAttachmentMode && !file.type.startsWith("image/")) {
+          appLogger.warn("Non-image attachment rejected in image mode", {
+            mimeType: file.type || "unknown",
+            extension: getAttachmentExtension(file.name),
+            size: file.size,
+          });
+          noteAttachmentIssue(`Image mode only accepts images. "${file.name}" was skipped.`);
+          continue;
+       }
+
        if (selectedProvider === "openrouter") {
           appLogger.warn("OpenRouter attachment rejected", {
             mimeType: file.type || "unknown",
@@ -227,7 +293,7 @@ export default function App() {
         });
         notify({ title: "Attachment problem", description: validationError, variant: "error" });
         if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
+        return 0;
       }
     }
 
@@ -241,7 +307,7 @@ export default function App() {
         });
         notify({ title: "Attachment problem", description: validationError, variant: "error" });
         if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
+        return 0;
       }
     }
 
@@ -254,7 +320,7 @@ export default function App() {
         });
         notify({ title: "Attachment problem", description: validationError, variant: "error" });
         if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
+        return 0;
       }
     }
 
@@ -266,6 +332,7 @@ export default function App() {
       totalCount: attachments.length + newAttachments.length,
       totalSize: getAttachmentTotalSize([...attachments, ...newAttachments]),
     });
+    return newAttachments.length;
   };
 
   const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -290,6 +357,59 @@ export default function App() {
 
     event.preventDefault();
     await addAttachmentFiles(files, "paste");
+  };
+
+  const handleTakeScreenshot = async () => {
+    const selectedProvider = getModelOption(selectedModelRef.current)?.provider;
+    if (composerMode !== "image" && selectedProvider === "openrouter") {
+      notify({
+        title: "Screenshot needs vision",
+        description: "OpenRouter free models are text-only here. Switch to Gemini/GPT, then capture the screen.",
+        variant: "error",
+        durationMs: 6500,
+      });
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      notify({
+        title: "Screen capture unavailable",
+        description: "This browser or mobile device cannot capture the screen directly. Pick a screenshot or photo instead.",
+        variant: "info",
+        durationMs: 6500,
+      });
+      fileInputRef.current?.click();
+      return;
+    }
+
+    notify({
+      title: "Choose what to capture",
+      description: "Select a tab, window, or screen. Privora will attach one PNG frame.",
+      variant: "info",
+      durationMs: 5000,
+    });
+
+    try {
+      const file = await getScreenCaptureFile();
+      const addedCount = await addAttachmentFiles([file], "screenshot");
+      if (addedCount > 0) {
+        notify({ title: "Screenshot attached", description: "Ready to send with your prompt.", variant: "success" });
+      }
+    } catch (error: any) {
+      if (error?.name === "NotAllowedError" || error?.name === "AbortError") {
+        notify({ title: "Screenshot cancelled", description: "No screen was attached.", variant: "info" });
+        return;
+      }
+
+      appLogger.error("Screen capture failed", { err: error });
+      notify({
+        title: "Screen capture failed",
+        description: "Your browser could not capture the screen. Pick a screenshot file instead.",
+        variant: "error",
+        durationMs: 6500,
+      });
+      fileInputRef.current?.click();
+    }
   };
 
   const removeAttachment = (index: number) => {
@@ -628,6 +748,7 @@ export default function App() {
       onKeyDown={handleKeyDown}
       onPaste={handleComposerPaste}
       onFileSelect={handleFileSelect}
+      onTakeScreenshot={handleTakeScreenshot}
       onPreviewAttachment={setPreviewAttachment}
       onRemoveAttachment={removeAttachment}
       onToggleThinking={toggleThinkingForNextMessage}
