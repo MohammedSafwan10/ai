@@ -106,6 +106,11 @@ export function ChatComposer({
   const settingsDisabled = isTyping;
   const isImageMode = composerMode === "image";
   const hasImageAttachment = attachments.some(attachment => attachment.mimeType.startsWith("image/"));
+  const explicitLineCount = input.split("\n").length;
+  const estimatedSoftLineCount = input
+    .split("\n")
+    .reduce((count, line) => count + Math.max(1, Math.ceil(line.length / 72)), 0);
+  const hasExpandedInput = explicitLineCount > 1 || estimatedSoftLineCount > 2;
 
   useEffect(() => {
     if (!settingsDisabled) return;
@@ -246,8 +251,11 @@ export function ChatComposer({
                   ? "Follow up with questions or adjustments"
                   : "How can I help you today?"
             }
-            className="w-full max-h-48 min-h-[52px] sm:min-h-[56px] text-[15px] bg-transparent text-[var(--privora-text)] placeholder-[var(--privora-muted)] px-4 pt-4 outline-none resize-none leading-relaxed transition-colors duration-500 overflow-y-auto"
+            className={`w-full max-h-[min(16rem,42vh)] text-[15px] bg-transparent text-[var(--privora-text)] placeholder-[var(--privora-muted)] px-4 pb-3 pt-4 outline-none resize-none leading-relaxed transition-[color,min-height] duration-200 [overflow-wrap:anywhere] ${
+              hasExpandedInput ? "min-h-[8.5rem] sm:min-h-[9.5rem]" : "min-h-[52px] sm:min-h-[56px]"
+            }`}
             rows={1}
+            wrap="soft"
           />
 
           <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 sm:px-3 py-2.5 sm:py-3">
