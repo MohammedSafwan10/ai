@@ -9,6 +9,8 @@ import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
 import { ArtifactCard } from "../../artifacts/components/ArtifactCard";
 import type { ArtifactReferenceRecord, ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
+import { copyTextToClipboard } from "../../../lib/clipboard";
+import { useToast } from "../../ui/ToastProvider";
 
 interface Attachment {
   url: string;
@@ -70,54 +72,40 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const contentRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  const { notify } = useToast();
   const isResearchRunning = !isUser && researchPlan?.status === "running";
   const isImageGenerationMessage = !isUser && Boolean(imageGeneration);
   const isCompletedResearchReport = !isUser && Boolean(content) && researchStatus === "completed" && Boolean(researchPlan);
   const shouldRenderContent = !isResearchRunning && !isImageGenerationMessage && (content || (!isUser && isTyping && !isThinking));
   const researchElapsedMs = researchStartedAt && researchCompletedAt ? researchCompletedAt - researchStartedAt : undefined;
 
-  const copyText = async (text: string) => {
-    if (navigator.clipboard?.writeText && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.top = "0";
-    textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-
-    try {
-      document.execCommand("copy");
-    } finally {
-      document.body.removeChild(textarea);
-    }
-  };
-
   const handleCopy = async () => {
     try {
-      await copyText(content);
+      await copyTextToClipboard(content);
       setIsCopied(true);
       setIsMenuOpen(false);
+      notify({ title: "Copied", description: isUser ? "Message copied." : "Response copied.", variant: "success" });
       setTimeout(() => setIsCopied(false), 2000);
     } catch (error) {
       console.error("Failed to copy message", error);
+      notify({ title: "Copy failed", description: "Your browser blocked clipboard access.", variant: "error" });
     }
   };
 
   const handleShare = async () => {
+    if (!navigator.share) {
+      setIsMenuOpen(false);
+      notify({ title: "Share unavailable", description: "This browser does not support native sharing.", variant: "error" });
+      return;
+    }
+
     try {
-      if (navigator.share) {
-        await navigator.share({ title: "Privora message", text: content });
-      }
+      await navigator.share({ title: "Privora message", text: content });
+      notify({ title: "Shared", description: "Message shared.", variant: "success" });
     } catch (error: any) {
       if (error?.name !== "AbortError") {
         console.error("Failed to share message", error);
+        notify({ title: "Share failed", description: "Your browser could not share this message.", variant: "error" });
       }
     } finally {
       setIsMenuOpen(false);

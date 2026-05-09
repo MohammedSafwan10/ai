@@ -2,6 +2,7 @@ import { Download, ExternalLink, Pencil, RotateCcw } from "lucide-react";
 import { getAttachmentDataUrl, type Attachment } from "../../../lib/attachments";
 import type { ImageGenerationRecord } from "../../../lib/db";
 import { cn } from "../../../lib/utils";
+import { useToast } from "../../ui/ToastProvider";
 
 interface ImageGenerationCardProps {
   imageGeneration: ImageGenerationRecord;
@@ -27,6 +28,7 @@ export function ImageGenerationCard({
   onRetry,
   onEditImage,
 }: ImageGenerationCardProps) {
+  const { notify } = useToast();
   const isRunning = imageGeneration.status === "queued" || imageGeneration.status === "generating";
   const items = imageGeneration.items?.length
     ? imageGeneration.items
@@ -116,7 +118,7 @@ export function ImageGenerationCard({
                   <button type="button" onClick={() => onPreview?.(attachment)} className="privora-image-action" title="Open image">
                     <ExternalLink className="h-4 w-4" />
                   </button>
-                  <button type="button" onClick={() => downloadAttachment(attachment)} className="privora-image-action" title="Download PNG">
+                  <button type="button" onClick={() => { downloadAttachment(attachment); notify({ title: "Download started", description: "Image file is being downloaded.", variant: "success" }); }} className="privora-image-action" title="Download PNG">
                     <Download className="h-4 w-4" />
                   </button>
                   {onEditImage && (

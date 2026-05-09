@@ -7,6 +7,7 @@ import { MarkdownRenderer } from "../../chat/components/MarkdownRenderer";
 import type { ArtifactRecord } from "../../../lib/db";
 import { normalizeArtifactRecord } from "../../../lib/artifacts";
 import { cn } from "../../../lib/utils";
+import { useToast } from "../../ui/ToastProvider";
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
 const MONACO_LIGHT_THEME = "privora-artifact-light";
@@ -20,7 +21,7 @@ interface CanvasPanelProps {
   width: number;
   onWidthChange: (width: number) => void;
   onClose: () => void;
-  onCopy: () => void;
+  onCopy: () => void | Promise<void>;
   onDownload: () => void;
 }
 
@@ -319,6 +320,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
 
   const livePreviewArtifact = useMemo(() => (normalizedArtifact ? { ...normalizedArtifact, content: selectedContent } : undefined), [normalizedArtifact, selectedContent]);
   const previewArtifact = useStreamingPreviewArtifact(livePreviewArtifact);
+  const { notify } = useToast();
 
   const handleEditorMount: OnMount = (editor) => {
     editor.updateOptions({ wordWrap: "off" });
@@ -336,22 +338,31 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
   };
 
   const handleCopy = async () => {
-    onCopy();
-    setCopied(true);
-    setIsMoreOpen(false);
-    window.setTimeout(() => setCopied(false), 1400);
+    try {
+      await onCopy();
+      setCopied(true);
+      setIsMoreOpen(false);
+      notify({ title: "Copied", description: "Artifact copied.", variant: "success" });
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      notify({ title: "Copy failed", description: "Your browser blocked clipboard access.", variant: "error" });
+    }
   };
 
   const handleDownload = () => {
     onDownload();
     setIsMoreOpen(false);
+    notify({ title: "Download started", description: "Artifact file is being downloaded.", variant: "success" });
   };
 
   const handleOpenInNewTab = async () => {
     if (!normalizedArtifact) return;
     setIsMoreOpen(false);
     const tabWindow = window.open("", "_blank");
-    if (!tabWindow) return;
+    if (!tabWindow) {
+      notify({ title: "Pop-up blocked", description: "Allow pop-ups to open this artifact in a new tab.", variant: "error" });
+      return;
+    }
 
     tabWindow.opener = null;
     tabWindow.document.open();
@@ -376,6 +387,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
     const url = URL.createObjectURL(blob);
     tabWindow.location.href = url;
     window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+    notify({ title: "Opened in new tab", variant: "success" });
   };
 
   const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {

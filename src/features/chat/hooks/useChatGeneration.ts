@@ -1,8 +1,10 @@
 import { useRef, type Dispatch, type FormEvent, type KeyboardEvent, type MutableRefObject, type SetStateAction } from "react";
 import { getModelOption } from "../../../lib/models";
-import { CLIPROXY_IMAGE_MODEL, streamCliproxyImage, type CliproxyImageResult } from "../../../lib/cliproxy/images";
+import { streamCliproxyImage, type CliproxyImageResult } from "../../../lib/cliproxy/images";
 import { generateCliproxyArtifactSummary, streamCliproxyResponse } from "../../../lib/cliproxy/responses";
 import { generateGeminiTitle, streamGeminiResponse, toGeminiContents } from "../../../lib/gemini/client";
+import { generateGeminiImage, type GeminiImageResult } from "../../../lib/gemini/images";
+import { getImageModelOption } from "../../../lib/imageModels";
 import { getOpenRouterModelCapabilities } from "../../../lib/openrouter/models";
 import { generateOpenRouterArtifactSummary, streamOpenRouterResponse } from "../../../lib/openrouter/responses";
 import { appLogger } from "../../../lib/logger";
@@ -26,6 +28,7 @@ import {
 import { DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, getSystemInstruction, type ResponseStyleId, type WebSearchMode } from "../../../lib/prompt";
 import { DEEP_RESEARCH_TIME_BUDGET_MS } from "../../../lib/prompt";
 import { cancelResearchJob, getResearchJobSnapshot, runResearchPreflight, startResearchJob, streamResearchJob, type ResearchStreamEvent } from "../../../lib/research/client";
+import { useToast } from "../../ui/ToastProvider";
 import {
   normalizeMessage,
   createId,
@@ -48,6 +51,7 @@ import type { ImageSettings } from "../../../lib/settings";
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
 type CurrentRef<T> = MutableRefObject<T> | { current: T };
+type GeneratedImageResult = CliproxyImageResult | GeminiImageResult;
 
 interface UseChatGenerationOptions {
   input: string;
@@ -106,6 +110,7 @@ export function useChatGeneration({
   onArtifactUpsert,
   onArtifactOpen,
 }: UseChatGenerationOptions) {
+  const { notify } = useToast();
   const researchJobIdRef = useRef<string | null>(null);
   const editingResearchPlanMessageIdRef = useRef<string | null>(null);
   const composerModeRef = useRef(composerMode);
@@ -229,7 +234,7 @@ export function useChatGeneration({
   };
 
   const imageResultToAttachment = (
-    image: CliproxyImageResult,
+    image: GeneratedImageResult,
     mode: "generate" | "edit",
     prompt: string,
     completedAt = Date.now()
@@ -261,6 +266,21 @@ export function useChatGeneration({
     return "1024x1024";
   };
 
+  const getGeminiAspectRatioForPreset = (sizePreset: ImageSettings["sizePreset"]) => {
+    if (sizePreset === "landscape") return "3:2";
+    if (sizePreset === "widescreen" || sizePreset === "widescreen_4k") return "16:9";
+    if (sizePreset === "portrait") return "2:3";
+    if (sizePreset === "story_4k") return "9:16";
+    if (sizePreset === "auto") return undefined;
+    return "1:1";
+  };
+
+  const getGeminiImageSizeForPreset = (sizePreset: ImageSettings["sizePreset"]) => {
+    if (sizePreset === "widescreen_4k" || sizePreset === "story_4k") return "4K" as const;
+    if (sizePreset === "square_2k" || sizePreset === "widescreen") return "2K" as const;
+    return "1K" as const;
+  };
+
   const isLargeImageSizePreset = (sizePreset: ImageSettings["sizePreset"]) =>
     sizePreset === "square_2k" ||
     sizePreset === "widescreen_4k" ||
@@ -269,8 +289,10 @@ export function useChatGeneration({
 
   const getImageGenerationOptions = (): ImageGenerationOptionsRecord => {
     const settings = imageSettingsRef.current;
+    const imageModel = getImageModelOption(settings.model).id;
     const count = isLargeImageSizePreset(settings.sizePreset) ? 1 : settings.count;
     return {
+      imageModel,
       sizePreset: settings.sizePreset,
       size: getImageSizeForPreset(settings.sizePreset),
       quality: settings.quality,
@@ -320,6 +342,9 @@ export function useChatGeneration({
     }
     if (/disable-image-generation|image generation is disabled/i.test(message)) {
       return "Image generation is disabled in the local AI connection. Enable it there, then retry.";
+    }
+    if (/GEMINI_API_KEY|api key|unauthorized|401/i.test(message)) {
+      return "Gemini image generation is not configured yet. Add GEMINI_API_KEY locally, restart the dev server, then retry.";
     }
     return message || "Image generation failed. Try again in a moment.";
   };
@@ -431,19 +456,29 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
 
     if (requestIsImageMode) {
       if (!text.trim()) {
-        alert("Describe the image you want Privora to create or edit.");
+        notify({
+          title: "Prompt needed",
+          description: "Describe the image you want Privora to create or edit.",
+          variant: "error",
+        });
         return;
       }
 
       const imageAttachments = currentAttachments.filter(attachment => attachment.mimeType.startsWith("image/"));
       if (currentAttachments.length !== imageAttachments.length) {
-        alert("Image mode only supports image attachments for editing. Remove other files first.");
+        notify({
+          title: "Image attachments only",
+          description: "Image mode only supports image attachments for editing. Remove other files first.",
+          variant: "error",
+        });
         return;
       }
 
       const imageMode: "generate" | "edit" = imageAttachments.length > 0 ? "edit" : "generate";
       const startedAt = Date.now();
       const imageOptions = getImageGenerationOptions();
+      const requestImageModel = getImageModelOption(imageOptions.imageModel).id;
+      const requestImageProvider = getImageModelOption(requestImageModel).provider;
       const imageItems: ImageGenerationItemRecord[] = Array.from({ length: imageOptions.count }, (_, index) => ({
         id: `${startedAt}-${index}`,
         status: "queued",
@@ -452,7 +487,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       appLogger.info("Image generation started", {
         chatId,
         mode: imageMode,
-        model: CLIPROXY_IMAGE_MODEL,
+        model: requestImageModel,
+        provider: requestImageProvider,
         sourceImageCount: imageAttachments.length,
         imageCount: imageOptions.count,
         size: imageOptions.size,
@@ -481,7 +517,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             status: "queued",
             mode: imageMode,
             prompt: text,
-            model: CLIPROXY_IMAGE_MODEL,
+            model: requestImageModel,
             options: imageOptions,
             items: imageItems,
             startedAt,
@@ -565,6 +601,36 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         });
       };
 
+      const runGeminiImageRequest = async (itemOffset = 0) => {
+        await generateGeminiImage({
+          model: requestImageModel,
+          prompt: text,
+          images: imageAttachments,
+          options: {
+            aspectRatio: getGeminiAspectRatioForPreset(imageOptions.sizePreset || "square"),
+            imageSize: getGeminiImageSizeForPreset(imageOptions.sizePreset || "square"),
+            count: 1,
+            outputFormat: imageOptions.outputFormat,
+          },
+          signal: abortControllerRef.current!.signal,
+          onCompletedImage: (image, imageIndex) => {
+            const itemIndex = itemOffset + imageIndex;
+            const completedAttachment = imageResultToAttachment(image, imageMode, text, Date.now() + itemIndex);
+            completedAttachments[itemIndex] = completedAttachment;
+            updateImageItem(itemIndex, {
+              status: "completed",
+              outputFormat: image.outputFormat,
+              attachmentName: completedAttachment.name,
+              completedAt: Date.now(),
+            }, { status: "generating", outputFormat: image.outputFormat });
+            updateMessageById(pendingModelMessage.id, message => ({
+              ...message,
+              attachments: completedAttachments.filter((attachment): attachment is Attachment => Boolean(attachment)),
+            }));
+          },
+        });
+      };
+
       const runParallelSingleImageStreams = async () => {
         await Promise.allSettled(
           Array.from({ length: imageOptions.count }, async (_, index) => {
@@ -576,13 +642,19 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       const runSequentialSingleImageStreams = async () => {
         for (let index = 0; index < imageOptions.count; index += 1) {
           if (abortControllerRef.current?.signal.aborted) break;
-          await runImageStream(1, index);
+          if (requestImageProvider === "gemini") {
+            await runGeminiImageRequest(index);
+          } else {
+            await runImageStream(1, index);
+          }
         }
       };
 
       try {
         markQueuedItemsGenerating();
-        if (imageMode === "edit" && imageOptions.count > 1) {
+        if (requestImageProvider === "gemini") {
+          await runSequentialSingleImageStreams();
+        } else if (imageMode === "edit" && imageOptions.count > 1) {
           await runParallelSingleImageStreams();
         } else if (shouldRunImageRequestsIndividually(imageOptions)) {
           await runSequentialSingleImageStreams();
@@ -655,7 +727,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         appLogger.info("Image generation completed", {
           chatId,
           mode: imageMode,
-          model: CLIPROXY_IMAGE_MODEL,
+          model: requestImageModel,
+          provider: requestImageProvider,
           durationMs: completedAt - startedAt,
           imageCount: completedAttachments.filter(Boolean).length,
         });
@@ -688,7 +761,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           appLogger.info("Image generation stopped", {
             chatId,
             mode: imageMode,
-            model: CLIPROXY_IMAGE_MODEL,
+            model: requestImageModel,
+            provider: requestImageProvider,
             durationMs: completedAt - startedAt,
           });
         } else {
@@ -696,7 +770,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             err: error,
             chatId,
             mode: imageMode,
-            model: CLIPROXY_IMAGE_MODEL,
+            model: requestImageModel,
+            provider: requestImageProvider,
             durationMs: completedAt - startedAt,
           });
         }
@@ -713,7 +788,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     if (requestIsCliproxy) {
       const validationError = validateCliproxyAttachments(currentAttachments);
       if (validationError) {
-        alert(validationError);
+        notify({ title: "Attachment problem", description: validationError, variant: "error" });
         return;
       }
     }
@@ -721,7 +796,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     if (requestIsOpenRouter) {
       const validationError = validateOpenRouterAttachments(currentAttachments);
       if (validationError) {
-        alert(validationError);
+        notify({ title: "Attachment problem", description: validationError, variant: "error" });
         return;
       }
     }
@@ -729,7 +804,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     if (requestProvider === "gemini") {
       const validationError = validateGeminiAttachments(currentAttachments);
       if (validationError) {
-        alert(validationError);
+        notify({ title: "Attachment problem", description: validationError, variant: "error" });
         return;
       }
     }
@@ -2546,3 +2621,4 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     stopGeneration,
   };
 }
+

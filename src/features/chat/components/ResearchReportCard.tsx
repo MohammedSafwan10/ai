@@ -12,6 +12,7 @@ import {
   type ResearchReportData,
 } from "../../../lib/research/report";
 import { cn } from "../../../lib/utils";
+import { useToast } from "../../ui/ToastProvider";
 
 interface ResearchReportCardProps {
   report: ResearchReportData;
@@ -22,6 +23,7 @@ export function ResearchReportCard({ report, onOpenActivity }: ResearchReportCar
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const { notify } = useToast();
   const meta = getResearchReportMeta(report);
   const summary = [
     meta.elapsedLabel ? `completed in ${meta.elapsedLabel}` : "completed",
@@ -30,15 +32,27 @@ export function ResearchReportCard({ report, onOpenActivity }: ResearchReportCar
   ].join(" · ");
 
   const handleCopy = async () => {
-    await copyReportContents(report);
-    setIsCopied(true);
-    setIsMenuOpen(false);
-    window.setTimeout(() => setIsCopied(false), 1600);
+    try {
+      await copyReportContents(report);
+      setIsCopied(true);
+      setIsMenuOpen(false);
+      notify({ title: "Copied", description: "Research report copied.", variant: "success" });
+      window.setTimeout(() => setIsCopied(false), 1600);
+    } catch {
+      notify({ title: "Copy failed", description: "Your browser blocked clipboard access.", variant: "error" });
+    }
   };
 
   const handleShare = async () => {
     if (!navigator.share) return;
-    await navigator.share({ title: meta.title, text: buildReportMarkdown(report) }).catch(() => undefined);
+    try {
+      await navigator.share({ title: meta.title, text: buildReportMarkdown(report) });
+      notify({ title: "Shared", description: "Research report shared.", variant: "success" });
+    } catch (error: any) {
+      if (error?.name !== "AbortError") {
+        notify({ title: "Share failed", description: "Your browser could not share this report.", variant: "error" });
+      }
+    }
   };
 
   return (
@@ -96,11 +110,11 @@ export function ResearchReportCard({ report, onOpenActivity }: ResearchReportCar
                         {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                         Copy contents
                       </button>
-                      <button type="button" onClick={() => { exportReportMarkdown(report); setIsMenuOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--privora-text)]/[0.06]">
+                      <button type="button" onClick={() => { exportReportMarkdown(report); setIsMenuOpen(false); notify({ title: "Download started", description: "Markdown report is being downloaded.", variant: "success" }); }} className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--privora-text)]/[0.06]">
                         <Download className="h-4 w-4" />
                         Export Markdown
                       </button>
-                      <button type="button" onClick={() => { void exportReportWord(report); setIsMenuOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--privora-text)]/[0.06]">
+                      <button type="button" onClick={() => { void exportReportWord(report); setIsMenuOpen(false); notify({ title: "Download started", description: "Word report is being prepared.", variant: "success" }); }} className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--privora-text)]/[0.06]">
                         <Download className="h-4 w-4" />
                         Export Word
                       </button>

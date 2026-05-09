@@ -1,4 +1,5 @@
 import { appLogger } from "./logger";
+import { DEFAULT_IMAGE_MODEL_ID, getImageModelOption, type ImageModelId } from "./imageModels";
 import { modelOptions } from "./models";
 import { DEFAULT_RESPONSE_STYLE_ID, getResponseStyle, type ResponseStyleId } from "./prompt";
 
@@ -29,6 +30,7 @@ export type ImageQuality = "low" | "medium" | "high";
 export type ImageCount = 1 | 2 | 3 | 4;
 
 export interface ImageSettings {
+  model: ImageModelId;
   sizePreset: ImageSizePreset;
   quality: ImageQuality;
   count: ImageCount;
@@ -45,6 +47,7 @@ export const defaultUiSettings: UiSettings = {
   isDarkMode: false,
   composerMode: "chat",
   imageSettings: {
+    model: DEFAULT_IMAGE_MODEL_ID,
     sizePreset: "square",
     quality: "medium",
     count: 1,
@@ -65,6 +68,7 @@ const imageSizePresets: ImageSizePreset[] = [
 ];
 
 const normalizeImageSettings = (settings?: Partial<ImageSettings> & { aspectRatio?: "square" | "landscape" | "portrait" }): ImageSettings => {
+  const model = getImageModelOption(settings?.model).id;
   const legacyAspectRatio = settings?.aspectRatio;
   const sizePreset: ImageSizePreset = settings?.sizePreset && imageSizePresets.includes(settings.sizePreset)
     ? settings.sizePreset
@@ -80,6 +84,7 @@ const normalizeImageSettings = (settings?: Partial<ImageSettings> & { aspectRati
     : 1;
 
   return {
+    model,
     sizePreset,
     quality,
     count,

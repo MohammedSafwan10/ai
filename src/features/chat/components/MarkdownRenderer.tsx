@@ -7,6 +7,8 @@ import ShikiHighlighter, { createJavaScriptRegexEngine, isInlineCode } from "rea
 import { Check, ChevronDown, Copy } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { slugifyHeading } from "../../../lib/research/report";
+import { copyTextToClipboard } from "../../../lib/clipboard";
+import { useToast } from "../../ui/ToastProvider";
 
 interface MarkdownRendererProps {
   children: string;
@@ -87,6 +89,7 @@ function CodeBlock({
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains("dark"));
+  const { notify } = useToast();
   const lineCount = code.split("\n").length;
   const shouldCollapse = lineCount > COLLAPSED_CODE_LINES;
   const isCollapsed = shouldCollapse && !isExpanded;
@@ -105,9 +108,14 @@ function CodeBlock({
   }, []);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+    try {
+      await copyTextToClipboard(code);
+      setCopied(true);
+      notify({ title: "Copied", description: "Code block copied.", variant: "success" });
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      notify({ title: "Copy failed", description: "Your browser blocked clipboard access.", variant: "error" });
+    }
   };
 
   return (

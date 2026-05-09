@@ -16,6 +16,7 @@ import {
   isGeminiModel,
   isOpenRouterModel,
 } from "../../../lib/models";
+import { getImageModelOption, imageModelOptions, type ImageModelId } from "../../../lib/imageModels";
 import { getResponseStyle, responseStyleOptions, type ResponseStyleId } from "../../../lib/prompt";
 import type { ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
 
@@ -90,6 +91,7 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [isImageModelDropdownOpen, setIsImageModelDropdownOpen] = useState(false);
   const [isStyleDropdownOpen, setIsStyleDropdownOpen] = useState(false);
   const [isImageOptionsOpen, setIsImageOptionsOpen] = useState(false);
   const selectedModelOption = getModelOption(selectedModel);
@@ -105,6 +107,7 @@ export function ChatComposer({
   const selectedModelIsOpenRouter = isOpenRouterModel(selectedModel);
   const settingsDisabled = isTyping;
   const isImageMode = composerMode === "image";
+  const selectedImageModel = getImageModelOption(imageSettings.model);
   const hasImageAttachment = attachments.some(attachment => attachment.mimeType.startsWith("image/"));
   const explicitLineCount = input.split("\n").length;
   const estimatedSoftLineCount = input
@@ -116,6 +119,7 @@ export function ChatComposer({
     if (!settingsDisabled) return;
     setIsAddMenuOpen(false);
     setIsModelDropdownOpen(false);
+    setIsImageModelDropdownOpen(false);
     setIsStyleDropdownOpen(false);
     setIsImageOptionsOpen(false);
   }, [settingsDisabled]);
@@ -152,12 +156,15 @@ export function ChatComposer({
   const isLargeImageSizePreset = (sizePreset: ImageSizePreset) => largeImageSizePresets.includes(sizePreset);
   const imageSizeLabel = imageSizeOptions.find(option => option.id === imageSettings.sizePreset)?.label || "1:1";
   const qualityLabel = imageSettings.quality[0].toUpperCase() + imageSettings.quality.slice(1);
+  const showImageQuality = selectedImageModel.provider === "cliproxy";
   const updateImageSettings = (patch: Partial<ImageSettings>) => {
     const nextSizePreset = patch.sizePreset || imageSettings.sizePreset;
     const nextCount = patch.count || imageSettings.count;
+    const nextModel = getImageModelOption(patch.model || imageSettings.model);
     onImageSettingsChange({
       ...imageSettings,
       ...patch,
+      model: nextModel.id,
       count: isLargeImageSizePreset(nextSizePreset) && nextCount > 1 ? 1 : nextCount,
       partialImages: 0,
       outputFormat: "png",
@@ -166,9 +173,10 @@ export function ChatComposer({
 
   return (
     <motion.footer
-      layoutId="privora-chat-composer"
-      layout="position"
-      transition={{ type: "spring", stiffness: 420, damping: 38, mass: 0.85 }}
+      initial={{ opacity: 0, y: isLanding ? 8 : 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: isLanding ? -6 : 10 }}
+      transition={{ duration: 0.16, ease: "easeOut" }}
       className={
         isLanding
           ? "w-full px-0 pb-0 pt-0 bg-transparent transition-colors duration-500"
@@ -464,7 +472,7 @@ export function ChatComposer({
                   disabled={settingsDisabled}
                   onClick={() => onSelectComposerMode("chat")}
                   className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-user-bubble)] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/10 disabled:opacity-45"
-                  title="Image mode uses gpt-image-2"
+                  title={`Image mode uses ${selectedImageModel.label}`}
                 >
                   <ImagePlus className="h-3.5 w-3.5" />
                   Create image
@@ -480,8 +488,12 @@ export function ChatComposer({
                     title="Image options"
                   >
                     <span>{imageSizeLabel}</span>
-                    <span className="text-[var(--privora-border)]">·</span>
-                    <span>{qualityLabel}</span>
+                    {showImageQuality && (
+                      <>
+                        <span className="text-[var(--privora-border)]">·</span>
+                        <span>{qualityLabel}</span>
+                      </>
+                    )}
                     <span className="text-[var(--privora-border)]">·</span>
                     <span>{imageSettings.count}</span>
                   </button>
@@ -519,22 +531,24 @@ export function ChatComposer({
                               ))}
                             </div>
 
-                            <div className="grid grid-cols-3 gap-1">
-                              {(["low", "medium", "high"] as const).map((quality) => (
-                                <button
-                                  key={quality}
-                                  type="button"
-                                  onClick={() => updateImageSettings({ quality })}
-                                  className={`rounded-lg px-2 py-2 text-[12px] font-medium capitalize transition-colors ${
-                                    imageSettings.quality === quality
-                                      ? "bg-[var(--privora-user-bubble)] text-[var(--privora-text)]"
-                                      : "text-[var(--privora-muted)] hover:bg-[var(--privora-user-bubble)] hover:text-[var(--privora-text)]"
-                                  }`}
-                                >
-                                  {quality}
-                                </button>
-                              ))}
-                            </div>
+                            {showImageQuality && (
+                              <div className="grid grid-cols-3 gap-1">
+                                {(["low", "medium", "high"] as const).map((quality) => (
+                                  <button
+                                    key={quality}
+                                    type="button"
+                                    onClick={() => updateImageSettings({ quality })}
+                                    className={`rounded-lg px-2 py-2 text-[12px] font-medium capitalize transition-colors ${
+                                      imageSettings.quality === quality
+                                        ? "bg-[var(--privora-user-bubble)] text-[var(--privora-text)]"
+                                        : "text-[var(--privora-muted)] hover:bg-[var(--privora-user-bubble)] hover:text-[var(--privora-text)]"
+                                    }`}
+                                  >
+                                    {quality}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
 
                             <div className="grid grid-cols-4 gap-1">
                               {([1, 2, 3, 4] as ImageCount[]).map((count) => (
@@ -586,9 +600,64 @@ export function ChatComposer({
 
               <div className="relative min-w-0">
                 {isImageMode ? (
-                  <span className="min-w-0 max-w-[9.5rem] sm:max-w-none text-[12px] sm:text-[13px] px-2 py-1.5 flex items-center gap-1.5 font-sans rounded-md text-[var(--privora-muted)] bg-[var(--privora-text)]/[0.04]">
-                    <span className="min-w-0 truncate">gpt-image-2</span>
-                  </span>
+                  <>
+                    <button
+                      type="button"
+                      disabled={settingsDisabled}
+                      onClick={() => setIsImageModelDropdownOpen(!isImageModelDropdownOpen)}
+                      className={`min-w-0 max-w-[9.5rem] sm:max-w-none text-[12px] sm:text-[13px] px-2 py-1.5 flex items-center gap-1.5 font-sans rounded-md transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
+                        isImageModelDropdownOpen
+                          ? "bg-[var(--privora-user-bubble)] text-[var(--privora-text)]"
+                          : "text-[var(--privora-muted)] hover:bg-[var(--privora-user-bubble)] hover:text-[var(--privora-text)]"
+                      }`}
+                      title={selectedImageModel.description}
+                    >
+                      <span className="min-w-0 truncate">{selectedImageModel.label}</span>
+                      <ChevronDown className={`w-3.5 h-3.5 opacity-50 shrink-0 transition-transform ${isImageModelDropdownOpen ? "rotate-180" : ""}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {isImageModelDropdownOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setIsImageModelDropdownOpen(false)}
+                          />
+                          <motion.div
+                            initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                            transition={{ duration: 0.14 }}
+                            className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 flex w-[min(15rem,calc(100vw-2rem))] flex-col rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-1 shadow-[var(--privora-shadow)]"
+                          >
+                            {imageModelOptions.map((option) => {
+                              const isActive = imageSettings.model === option.id;
+
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => {
+                                    updateImageSettings({ model: option.id as ImageModelId });
+                                    setIsImageModelDropdownOpen(false);
+                                  }}
+                                  className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] font-sans transition-colors ${
+                                    isActive
+                                      ? "bg-[var(--privora-user-bubble)] font-medium text-[var(--privora-text)]"
+                                      : "text-[var(--privora-text)] hover:bg-[var(--privora-user-bubble)]"
+                                  }`}
+                                  title={option.description}
+                                >
+                                  <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                                  {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--privora-text)]" />}
+                                </button>
+                              );
+                            })}
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </>
                 ) : (
                 <>
                 <button

@@ -15,6 +15,7 @@ export type ImageGenerationStatus = "queued" | "generating" | "completed" | "sto
 export type ImageGenerationItemStatus = "queued" | "generating" | "completed" | "stopped" | "failed";
 
 export interface ImageGenerationOptionsRecord {
+  imageModel?: string;
   sizePreset?: "square" | "square_2k" | "landscape" | "widescreen" | "widescreen_4k" | "portrait" | "story_4k" | "auto";
   aspectRatio?: "square" | "landscape" | "portrait";
   size: string;

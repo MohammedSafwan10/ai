@@ -23,6 +23,20 @@ const sendJson = (res: ServerResponse, statusCode: number, body: unknown) => {
   res.end(JSON.stringify(body));
 };
 
+const extractGeminiInlineImages = (response: any) => {
+  const parts = response?.candidates?.[0]?.content?.parts || response?.parts || [];
+  return parts
+    .map((part: any, index: number) => {
+      const inlineData = part?.inlineData || part?.inline_data;
+      const data = inlineData?.data;
+      if (!data) return null;
+      const mimeType = inlineData?.mimeType || inlineData?.mime_type || 'image/png';
+      const outputFormat = mimeType.includes('webp') ? 'webp' : mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpeg' : 'png';
+      return {base64: data, mimeType, outputFormat, index};
+    })
+    .filter(Boolean);
+};
+
 type ResearchStatus = 'queued' | 'searching' | 'reading' | 'synthesizing' | 'completed' | 'stopped' | 'failed';
 
 interface ResearchSource {
@@ -1568,6 +1582,43 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
         });
         requestLogger.info({durationMs: Date.now() - startedAt}, 'Gemini title generated');
         sendJson(res, 200, {text: response.text || ''});
+        return;
+      }
+
+      if (requestPath === '/image' || requestPath === '/api/gemini/image') {
+        const contents = [
+          {text: String(body.prompt || '')},
+          ...((Array.isArray(body.images) ? body.images : [])
+            .filter((image: any) => image?.base64 && image?.mimeType)
+            .map((image: any) => ({
+              inlineData: {
+                data: image.base64,
+                mimeType: image.mimeType,
+              },
+            }))),
+        ];
+        const responseFormat = body.aspectRatio || body.imageSize
+          ? {
+              image: {
+                ...(body.aspectRatio ? {aspectRatio: body.aspectRatio} : {}),
+                ...(body.imageSize ? {imageSize: body.imageSize} : {}),
+              },
+            }
+          : undefined;
+        const response = await ai.models.generateContent({
+          model: body.model || 'gemini-3.1-flash-image-preview',
+          contents,
+          config: {
+            responseModalities: ['TEXT', 'IMAGE'],
+            ...(responseFormat ? {responseFormat} : {}),
+          } as any,
+        });
+        const images = extractGeminiInlineImages(response);
+        if (images.length === 0) {
+          throw new Error('Gemini finished without returning an image.');
+        }
+        requestLogger.info({durationMs: Date.now() - startedAt, imageCount: images.length}, 'Gemini image generated');
+        sendJson(res, 200, {images});
         return;
       }
 

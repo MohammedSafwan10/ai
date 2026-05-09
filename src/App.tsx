@@ -1,7 +1,7 @@
 // @refresh reset
 import { useState, useRef, useEffect, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
 import { PanelLeft } from "lucide-react";
-import { motion, AnimatePresence, LayoutGroup } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { AttachmentPreviewModal } from "./features/attachments/components/AttachmentPreviewModal";
 import { ChatComposer } from "./features/chat/components/ChatComposer";
 import { ResearchActivityPanel } from "./features/chat/components/ResearchActivityPanel";
@@ -18,6 +18,7 @@ import { useRootDarkMode } from "./hooks/useRootDarkMode";
 import { useTextareaAutosize } from "./hooks/useTextareaAutosize";
 import { useViewportCssVars } from "./hooks/useViewportCssVars";
 import { useChatGeneration } from "./features/chat/hooks/useChatGeneration";
+import { useToast } from "./features/ui/ToastProvider";
 import {
   GEMINI_MAX_INLINE_PAYLOAD_BYTES,
   MAX_ATTACHMENTS,
@@ -52,6 +53,7 @@ type Chat = ChatRecord;
 const CHAT_BOTTOM_THRESHOLD_PX = 128;
 
 export default function App() {
+  const { notify } = useToast();
   const initialUiSettingsRef = useRef(loadUiSettings());
   const [messages, setMessages] = useState<Message[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -138,12 +140,21 @@ export default function App() {
         selectedCount: files.length,
         maxAttachments: MAX_ATTACHMENTS,
       });
-      alert(`You can attach up to ${MAX_ATTACHMENTS} files at once.`);
+      notify({
+        title: "Too many attachments",
+        description: `You can attach up to ${MAX_ATTACHMENTS} files at once.`,
+        variant: "error",
+      });
       return;
     }
 
     const selectedProvider = getModelOption(selectedModelRef.current)?.provider;
     const newAttachments: Attachment[] = [];
+    const attachmentIssues: string[] = [];
+    const noteAttachmentIssue = (message: string) => {
+      attachmentIssues.push(message);
+    };
+
     for (const file of files) {
        if (selectedProvider === "openrouter") {
           appLogger.warn("OpenRouter attachment rejected", {
@@ -151,7 +162,7 @@ export default function App() {
             extension: getAttachmentExtension(file.name),
             size: file.size,
           });
-          alert(`These OpenRouter free models are text-only here. Remove "${file.name}" or switch to Gemini/GPT for files and vision.`);
+          noteAttachmentIssue(`OpenRouter free models are text-only here. Remove "${file.name}" or switch to Gemini/GPT for files and vision.`);
           continue;
        }
 
@@ -161,7 +172,7 @@ export default function App() {
             extension: getAttachmentExtension(file.name),
             size: file.size,
           });
-          alert(`GPT-5.5 supports images plus common PDF/text/code/Office files here. "${file.name}" is not supported.`);
+          noteAttachmentIssue(`GPT-5.5 supports images plus common PDF/text/code/Office files here. "${file.name}" is not supported.`);
           continue;
        }
 
@@ -171,7 +182,7 @@ export default function App() {
             extension: getAttachmentExtension(file.name),
             size: file.size,
           });
-          alert(`Gemini supports images, PDFs, and common text/code files here. "${file.name}" is not supported.`);
+          noteAttachmentIssue(`Gemini supports images, PDFs, and common text/code files here. "${file.name}" is not supported.`);
           continue;
        }
 
@@ -180,7 +191,7 @@ export default function App() {
             attemptedSize: getAttachmentTotalSize([...attachments, ...newAttachments]) + file.size,
             maxSize: GEMINI_MAX_INLINE_PAYLOAD_BYTES,
           });
-          alert(`Gemini inline uploads are kept under 20 MB in this app. "${file.name}" would go over the limit.`);
+          noteAttachmentIssue(`Gemini inline uploads are kept under 20 MB in this app. "${file.name}" would go over the limit.`);
           continue;
        }
 
@@ -193,8 +204,17 @@ export default function App() {
             extension: getAttachmentExtension(file.name),
             size: file.size,
           });
-          alert(error instanceof Error ? error.message : `Could not read ${file.name}.`);
+          noteAttachmentIssue(error instanceof Error ? error.message : `Could not read ${file.name}.`);
        }
+    }
+
+    if (attachmentIssues.length > 0) {
+      notify({
+        title: attachmentIssues.length === 1 ? "File skipped" : `${attachmentIssues.length} files skipped`,
+        description: attachmentIssues.length === 1 ? attachmentIssues[0] : `${attachmentIssues[0]} +${attachmentIssues.length - 1} more.`,
+        variant: "error",
+        durationMs: 8000,
+      });
     }
 
     if (selectedProvider === "cliproxy") {
@@ -205,7 +225,7 @@ export default function App() {
           attachmentCount: attachments.length + newAttachments.length,
           totalSize: getAttachmentTotalSize([...attachments, ...newAttachments]),
         });
-        alert(validationError);
+        notify({ title: "Attachment problem", description: validationError, variant: "error" });
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
@@ -219,7 +239,7 @@ export default function App() {
           attachmentCount: attachments.length + newAttachments.length,
           totalSize: getAttachmentTotalSize([...attachments, ...newAttachments]),
         });
-        alert(validationError);
+        notify({ title: "Attachment problem", description: validationError, variant: "error" });
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
@@ -232,7 +252,7 @@ export default function App() {
         appLogger.warn("OpenRouter attachment validation failed", {
           attachmentCount: attachments.length + newAttachments.length,
         });
-        alert(validationError);
+        notify({ title: "Attachment problem", description: validationError, variant: "error" });
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
@@ -673,58 +693,63 @@ export default function App() {
           </button>
         )}
 
-        <LayoutGroup>
-          <AnimatePresence mode="popLayout" initial={false}>
-            {isLandingChat ? (
-              <motion.main
-                key="landing"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+        <AnimatePresence mode="wait" initial={false}>
+          {isLandingChat ? (
+            <motion.main
+              key="landing"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+              className="flex-1 overflow-y-auto px-3 sm:px-4"
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
-                className="flex-1 overflow-y-auto px-3 sm:px-4"
+                className="mx-auto flex min-h-full w-full max-w-[46rem] flex-col justify-center pb-[14vh] pt-16 sm:pb-[18vh]"
               >
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.22, ease: "easeOut" }}
-                  className="mx-auto flex min-h-full w-full max-w-[46rem] flex-col justify-center pb-[14vh] pt-16 sm:pb-[18vh]"
-                >
-                  <div className="mb-6 text-center sm:mb-7">
-                    <h1 className="font-display text-[2rem] font-medium leading-tight text-[var(--privora-text)] sm:text-[2.4rem]">
-                      How can I help today?
-                    </h1>
-                  </div>
-                  {renderComposer("landing")}
-                </motion.div>
-              </motion.main>
-            ) : (
-              <motion.div key="chat" className="contents">
-                <ChatViewport
-                  messages={messages}
-                  isTyping={isTyping}
-                  chatScrollRef={chatScrollRef}
-                  messagesEndRef={messagesEndRef}
-                  onScroll={handleChatScroll}
-                  showScrollToLatest={showScrollToLatest}
-                  onScrollToLatest={() => scrollToBottom("smooth")}
-                  onEditMessage={handleEditMessage}
-                  onRetryMessage={handleRetryMessage}
-                  onStartResearchPlan={startResearchPlan}
-                  onEditResearchPlan={editResearchPlan}
-                  onCancelResearchPlan={cancelResearchPlan}
-                  onStopResearchPlan={stopGeneration}
-                  onEditGeneratedImage={handleEditGeneratedImage}
-                  onOpenResearchActivity={() => setIsResearchActivityOpen(true)}
-                  onOpenArtifact={setActiveArtifactId}
-                  onPreviewAttachment={setPreviewAttachment}
-                />
-                {renderComposer("footer")}
+                <div className="mb-6 text-center sm:mb-7">
+                  <h1 className="font-display text-[2rem] font-medium leading-tight text-[var(--privora-text)] sm:text-[2.4rem]">
+                    How can I help today?
+                  </h1>
+                </div>
+                {renderComposer("landing")}
               </motion.div>
-            )}
-          </AnimatePresence>
-        </LayoutGroup>
+            </motion.main>
+          ) : (
+            <motion.div
+              key="chat"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="contents"
+            >
+              <ChatViewport
+                messages={messages}
+                isTyping={isTyping}
+                chatScrollRef={chatScrollRef}
+                messagesEndRef={messagesEndRef}
+                onScroll={handleChatScroll}
+                showScrollToLatest={showScrollToLatest}
+                onScrollToLatest={() => scrollToBottom("smooth")}
+                onEditMessage={handleEditMessage}
+                onRetryMessage={handleRetryMessage}
+                onStartResearchPlan={startResearchPlan}
+                onEditResearchPlan={editResearchPlan}
+                onCancelResearchPlan={cancelResearchPlan}
+                onStopResearchPlan={stopGeneration}
+                onEditGeneratedImage={handleEditGeneratedImage}
+                onOpenResearchActivity={() => setIsResearchActivityOpen(true)}
+                onOpenArtifact={setActiveArtifactId}
+                onPreviewAttachment={setPreviewAttachment}
+              />
+              {renderComposer("footer")}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
       <RenameChatModal
         isOpen={Boolean(renameChatId)}
@@ -767,7 +792,7 @@ export default function App() {
         width={canvasWidth}
         onWidthChange={setCanvasWidth}
         onClose={() => setActiveArtifactId(null)}
-        onCopy={() => activeArtifact && void copyArtifactContent(activeArtifact.content)}
+        onCopy={() => activeArtifact ? copyArtifactContent(activeArtifact.content) : Promise.resolve()}
         onDownload={() => activeArtifact && downloadArtifactContent(activeArtifact.title, activeArtifact.kind, activeArtifact.content, activeArtifact.language)}
       />
 
@@ -775,3 +800,4 @@ export default function App() {
   </div>
 );
 }
+

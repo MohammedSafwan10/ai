@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from "./clipboard";
 import type { ArtifactKind, ArtifactRecord } from "./db";
 
 export const ARTIFACT_SYSTEM_INSTRUCTION = `
@@ -387,23 +388,7 @@ export const getTitleFromContent = (content: string, kind: ArtifactKind) => {
 };
 
 export const copyArtifactContent = async (content: string) => {
-  if (navigator.clipboard?.writeText && window.isSecureContext) {
-    await navigator.clipboard.writeText(content);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = content;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    document.execCommand("copy");
-  } finally {
-    document.body.removeChild(textarea);
-  }
+  await copyTextToClipboard(content);
 };
 
 export const downloadArtifactContent = (title: string, kind: ArtifactKind, content: string, language?: string) => {

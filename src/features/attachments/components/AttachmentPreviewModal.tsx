@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "motion/react";
 import type { Attachment } from "../../../lib/attachments";
+import { useToast } from "../../ui/ToastProvider";
 
 interface AttachmentPreviewModalProps {
   attachment: Attachment | null;
@@ -7,6 +8,8 @@ interface AttachmentPreviewModalProps {
 }
 
 export function AttachmentPreviewModal({ attachment, onClose }: AttachmentPreviewModalProps) {
+  const { notify } = useToast();
+
   return (
     <AnimatePresence>
       {attachment && (
@@ -49,6 +52,7 @@ export function AttachmentPreviewModal({ attachment, onClose }: AttachmentPrevie
                   href={attachment.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => notify({ title: "Download started", description: "Attachment file is being downloaded.", variant: "success" })}
                   className="px-4 py-2 mt-2 bg-[var(--privora-accent)] text-[var(--privora-accent-fg)] rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
                   download={attachment.name}
                 >

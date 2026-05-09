@@ -17,6 +17,7 @@ import {
   VerticalAlign,
   WidthType,
 } from "docx";
+import { copyTextToClipboard } from "../clipboard";
 import type { ResearchPlanRecord, ResearchSourceRecord } from "../db";
 
 export interface ResearchReportData {
@@ -148,22 +149,7 @@ const downloadBlob = (blob: Blob, filename: string) => {
 };
 
 export const copyReportContents = async (data: ResearchReportData) => {
-  const markdown = buildReportMarkdown(data);
-  if (navigator.clipboard?.writeText && window.isSecureContext) {
-    await navigator.clipboard.writeText(markdown);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = markdown;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
+  await copyTextToClipboard(buildReportMarkdown(data));
 };
 
 export const exportReportMarkdown = (data: ResearchReportData) => {
