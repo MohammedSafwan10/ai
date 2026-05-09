@@ -1,4 +1,5 @@
 import type { ChatMessageRecord } from "../db";
+import { normalizeArtifactPayload, type ArtifactPayload } from "../artifacts";
 
 interface StreamGeminiResponseOptions {
   model: string;
@@ -6,10 +7,12 @@ interface StreamGeminiResponseOptions {
   systemInstruction: string;
   thinkingEnabled: boolean;
   webSearchEnabled: boolean;
+  artifactToolsEnabled: boolean;
   signal: AbortSignal;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
   onWebSearch: (event: { status: "searched"; queries?: string[] }) => void;
+  onArtifactToolCall: (payload: ArtifactPayload) => void;
 }
 
 export const toGeminiContents = (messages: ChatMessageRecord[]) =>
@@ -48,10 +51,12 @@ export async function streamGeminiResponse({
   systemInstruction,
   thinkingEnabled,
   webSearchEnabled,
+  artifactToolsEnabled,
   signal,
   onTextDelta,
   onThoughtDelta,
   onWebSearch,
+  onArtifactToolCall,
 }: StreamGeminiResponseOptions) {
   const response = await fetch("/api/gemini/stream", {
     method: "POST",
@@ -62,6 +67,7 @@ export async function streamGeminiResponse({
       systemInstruction,
       thinkingEnabled,
       webSearchEnabled,
+      artifactToolsEnabled,
       temperature: 0.85,
     }),
     signal,
@@ -82,11 +88,16 @@ export async function streamGeminiResponse({
       | { type: "text"; text: string }
       | { type: "thought"; text: string }
       | { type: "webSearch"; status: "searched"; queries?: string[] }
+      | { type: "artifactToolCall"; payload: unknown }
       | { type: "error"; error: string };
 
     if (event.type === "text") onTextDelta(event.text);
     if (event.type === "thought") onThoughtDelta(event.text);
     if (event.type === "webSearch") onWebSearch({ status: event.status, queries: event.queries });
+    if (event.type === "artifactToolCall") {
+      const payload = normalizeArtifactPayload(event.payload);
+      if (payload) onArtifactToolCall(payload);
+    }
     if (event.type === "error") throw new Error(event.error);
   };
 

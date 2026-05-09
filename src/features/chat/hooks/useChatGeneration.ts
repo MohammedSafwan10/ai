@@ -799,11 +799,7 @@ export function useChatGeneration({
     };
 
     const removeArtifactBlocksFromChatText = (value: string) => {
-      let cleaned = value
-        .replace(/```(?:json)?\s*\n\s*\{[\s\S]*?"action_input"[\s\S]*?```\s*/gi, "")
-        .replace(/\{\s*"action"\s*:\s*"(?:create|update)"[\s\S]*?"action_input"[\s\S]*$/gi, "")
-        .replace(/\{\s*"action_input"[\s\S]*$/gi, "")
-        .replace(/<artifact\b[\s\S]*?(?:<\/artifact>|$)/gi, "");
+      let cleaned = value.replace(/<artifact\b[\s\S]*?(?:<\/artifact>|$)/gi, "");
       cleaned = cleaned.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, _language, blockContent) =>
         typeof blockContent === "string" && blockContent.trim().length >= 120 ? "" : match
       );
@@ -1121,6 +1117,8 @@ export function useChatGeneration({
     let currentWebSearchQueries: string[] | undefined;
     let didCompleteWebSearch = false;
     let currentArtifact: ArtifactReferenceRecord | undefined;
+    let currentArtifactOperation: "create" | "update" = "create";
+    const artifactTasks: Promise<void>[] = [];
 
     try {
       const updateDisplayedGeminiMessage = () => {
@@ -1135,7 +1133,6 @@ export function useChatGeneration({
 
         displayText = displayText.replace(/<thought>([\s\S]*?)(?:<\/thought>|$)/g, "").trim();
         displayText = removeArtifactBlocksFromChatText(displayText);
-        displayThought = removeArtifactBlocksFromChatText(displayThought);
 
         if (displayText || displayThought) {
           setMessages((prev) => {
@@ -1160,6 +1157,7 @@ export function useChatGeneration({
         systemInstruction,
         thinkingEnabled: requestThinkingEnabled,
         webSearchEnabled: requestWebSearchEnabled,
+        artifactToolsEnabled: artifactRuntimeEnabled,
         signal: abortControllerRef.current.signal,
         onTextDelta: (delta) => {
           currentText += delta;
@@ -1176,10 +1174,21 @@ export function useChatGeneration({
           currentWebSearchQueries = queries && queries.length > 0 ? queries : currentWebSearchQueries;
           updateLastModelMessage({ webSearchStatus: currentWebSearchStatus, webSearchQueries: currentWebSearchQueries });
         },
+        onArtifactToolCall: (payload) => {
+          if (!artifactRuntimeEnabled) return;
+          currentArtifactOperation = payload.operation;
+          const task = persistArtifactFromPayload(chatId, pendingModelMessage.id, promoteStreamingArtifactPayload(payload)).then((artifactRef) => {
+            if (!artifactRef) return;
+            currentArtifact = artifactRef;
+            updateLastModelMessage({ artifact: artifactRef, content: "" });
+          });
+          artifactTasks.push(task);
+        },
       });
+      await Promise.all(artifactTasks);
 
       const finalWebSearchStatus = didCompleteWebSearch ? "searched" : undefined;
-      const detectedArtifact = artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
+      const detectedArtifact = !currentArtifact && artifactRuntimeEnabled ? detectArtifactFromMessage(currentText) : null;
       if (detectedArtifact) {
         currentArtifact = await persistArtifactFromPayload(chatId, pendingModelMessage.id, {
           ...detectedArtifact,
@@ -1200,7 +1209,7 @@ export function useChatGeneration({
         {
           ...pendingModelMessage,
           content: getArtifactCompletionText(currentText, currentArtifact),
-          thought: removeArtifactBlocksFromChatText(currentThought),
+          thought: currentThought,
           isThinking: false,
           artifact: currentArtifact,
           webSearchStatus: finalWebSearchStatus,
@@ -1219,6 +1228,7 @@ export function useChatGeneration({
         durationMs: Date.now() - startedAt,
         outputLength: currentText.length,
         thoughtLength: currentThought.length,
+        artifactOperation: currentArtifact ? currentArtifactOperation : undefined,
         webSearchCompleted: didCompleteWebSearch,
       });
 
@@ -1246,7 +1256,7 @@ export function useChatGeneration({
         {
           ...pendingModelMessage,
           content: error?.name === "AbortError" || abortControllerRef.current?.signal.aborted ? currentText || stoppedMessage : currentText || errorMessage,
-          thought: removeArtifactBlocksFromChatText(currentThought),
+          thought: currentThought,
           isThinking: false,
           webSearchStatus: finalWebSearchStatus,
           webSearchQueries: finalWebSearchStatus ? currentWebSearchQueries : undefined,

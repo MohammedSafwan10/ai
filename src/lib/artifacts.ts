@@ -3,7 +3,7 @@ import type { ArtifactKind, ArtifactRecord } from "./db";
 export const ARTIFACT_SYSTEM_INSTRUCTION = `
 When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, prefer creating/updating an artifact instead of only writing the full content in chat.
 
-Use the create_or_update_artifact tool with complete artifact content. Keep chat text minimal and let Canvas carry the work.
+Use the create_or_update_artifact tool with complete artifact content when that tool is available. Keep chat text minimal and let Canvas carry the work.
 
 Artifact conversation flow:
 - Do not write a preamble before creating or updating an artifact.
@@ -22,44 +22,52 @@ Artifact rules:
 - Put metadata only in tool fields. Never wrap the content in custom tags like <artifact>, <canvas>, or XML metadata.
 - For SVG artifacts, content must be the raw <svg>...</svg> only. Do not include Markdown fences or artifact wrapper tags.
 - For HTML artifacts, content must be the raw HTML document or fragment only. Do not include Markdown fences or artifact wrapper tags.
-- Never write artifact protocol JSON, action/action_input objects, tool-call arguments, or raw artifact content in chat or thought text.
+- Never simulate tool calls in chat text. If the artifact tool is unavailable, answer normally with concise fenced content.
 - Do not use artifacts for tiny snippets, short answers, casual chat, or normal explanation unless the user asks for a file/canvas/artifact.
 `.trim();
+
+export const artifactToolParameters = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: {
+      type: "string",
+      enum: ["create", "update"],
+    },
+    targetArtifactId: {
+      type: "string",
+      description: "Existing artifact id when updating one.",
+    },
+    kind: {
+      type: "string",
+      enum: ["markdown", "code", "html", "svg", "mermaid", "json", "yaml", "sql", "text", "table", "prompt"],
+    },
+    title: {
+      type: "string",
+    },
+    language: {
+      type: "string",
+      description: "Programming or markup language when relevant.",
+    },
+    content: {
+      type: "string",
+      description: "Full artifact content.",
+    },
+  },
+  required: ["operation", "kind", "title", "content"],
+} as const;
 
 export const artifactToolDefinition = {
   type: "function",
   name: "create_or_update_artifact",
   description: "Create or update a Privora Canvas artifact for substantial code, docs, tables, prompts, diagrams, or structured content.",
-  parameters: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      operation: {
-        type: "string",
-        enum: ["create", "update"],
-      },
-      targetArtifactId: {
-        type: "string",
-        description: "Existing artifact id when updating one.",
-      },
-      kind: {
-        type: "string",
-        enum: ["markdown", "code", "html", "svg", "mermaid", "json", "yaml", "sql", "text", "table", "prompt"],
-      },
-      title: {
-        type: "string",
-      },
-      language: {
-        type: "string",
-        description: "Programming or markup language when relevant.",
-      },
-      content: {
-        type: "string",
-        description: "Full artifact content.",
-      },
-    },
-    required: ["operation", "kind", "title", "content"],
-  },
+  parameters: artifactToolParameters,
+} as const;
+
+export const geminiArtifactFunctionDeclaration = {
+  name: artifactToolDefinition.name,
+  description: artifactToolDefinition.description,
+  parametersJsonSchema: artifactToolParameters,
 } as const;
 
 export interface ArtifactPayload {

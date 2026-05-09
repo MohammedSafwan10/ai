@@ -1,11 +1,12 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import {GoogleGenAI, ThinkingLevel} from '@google/genai';
+import {FunctionCallingConfigMode, GoogleGenAI, ThinkingLevel} from '@google/genai';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import path from 'path';
 import pino, {type Logger} from 'pino';
 import {randomUUID} from 'node:crypto';
 import {defineConfig, loadEnv, type Plugin} from 'vite';
+import {geminiArtifactFunctionDeclaration} from './src/lib/artifacts';
 
 const readJsonBody = async (req: IncomingMessage) => {
   const chunks: Buffer[] = [];
@@ -1307,8 +1308,13 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
       if (requestPath === '/stream' || requestPath === '/api/gemini/stream') {
         let textEvents = 0;
         let thoughtEvents = 0;
+        let artifactToolEvents = 0;
         let webSearchEvents = 0;
         let firstEventMs: number | undefined;
+        const tools = [
+          ...(body.webSearchEnabled ? [{googleSearch: {}}] : []),
+          ...(body.artifactToolsEnabled ? [{functionDeclarations: [geminiArtifactFunctionDeclaration]}] : []),
+        ];
         const responseStream = await ai.models.generateContentStream({
           model: body.model,
           contents: body.contents,
@@ -1319,7 +1325,17 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
               thinkingLevel: body.thinkingEnabled ? ThinkingLevel.MEDIUM : ThinkingLevel.MINIMAL,
               ...(body.thinkingEnabled ? {includeThoughts: true} : {}),
             },
-            ...(body.webSearchEnabled ? {tools: [{googleSearch: {}}]} : {}),
+            ...(tools.length > 0 ? {tools} : {}),
+            ...(body.artifactToolsEnabled
+              ? {
+                  toolConfig: {
+                    functionCallingConfig: {
+                      mode: FunctionCallingConfigMode.AUTO,
+                      allowedFunctionNames: [geminiArtifactFunctionDeclaration.name],
+                    },
+                  },
+                }
+              : {}),
           },
         });
 
@@ -1340,7 +1356,10 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
           firstEventMs ??= Date.now() - startedAt;
           const parts = chunk.candidates?.[0]?.content?.parts || [];
           for (const part of parts) {
-            if (part.thought && part.text) {
+            if (part.functionCall?.name === geminiArtifactFunctionDeclaration.name) {
+              artifactToolEvents += 1;
+              res.write(`${JSON.stringify({type: 'artifactToolCall', payload: part.functionCall.args || {}})}\n`);
+            } else if (part.thought && part.text) {
               thoughtEvents += 1;
               res.write(`${JSON.stringify({type: 'thought', text: part.text})}\n`);
             } else if (!part.thought && part.text) {
@@ -1374,6 +1393,7 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
             clientClosed: res.destroyed && !res.writableEnded,
             textEvents,
             thoughtEvents,
+            artifactToolEvents,
             webSearchEvents,
           },
           'Gemini stream completed',
