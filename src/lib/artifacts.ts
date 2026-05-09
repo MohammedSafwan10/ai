@@ -1,4 +1,4 @@
-import type { ArtifactKind } from "./db";
+import type { ArtifactKind, ArtifactRecord } from "./db";
 
 export const ARTIFACT_SYSTEM_INSTRUCTION = `
 When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, prefer creating/updating an artifact instead of only writing the full content in chat.
@@ -19,6 +19,9 @@ Artifact rules:
 - For code, include the language.
 - For Markdown documents, use kind "markdown".
 - For comparison tables, use kind "table" unless the table is part of a larger document.
+- Put metadata only in tool fields. Never wrap the content in custom tags like <artifact>, <canvas>, or XML metadata.
+- For SVG artifacts, content must be the raw <svg>...</svg> only. Do not include Markdown fences or artifact wrapper tags.
+- For HTML artifacts, content must be the raw HTML document or fragment only. Do not include Markdown fences or artifact wrapper tags.
 - Do not use artifacts for tiny snippets, short answers, casual chat, or normal explanation unless the user asks for a file/canvas/artifact.
 `.trim();
 
@@ -75,6 +78,59 @@ export interface ArtifactDraftPayload {
   language?: string;
   content: string;
 }
+
+const artifactKinds = ["markdown", "code", "html", "svg", "mermaid", "json", "yaml", "sql", "text", "table", "prompt"] as const;
+
+const getAttributeValue = (attributes: string, name: string) => {
+  const match = attributes.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return match?.[1] || match?.[2] || match?.[3];
+};
+
+const stripMarkdownFence = (content: string) => {
+  const trimmed = content.trim();
+  const match = trimmed.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n?```\s*$/);
+  return match ? match[1].trim() : trimmed;
+};
+
+const extractElement = (content: string, tagName: "svg" | "html") => {
+  const start = content.search(new RegExp(`<${tagName}\\b`, "i"));
+  if (start < 0) return undefined;
+  const afterStart = content.slice(start);
+  const endMatch = afterStart.match(new RegExp(`</${tagName}>`, "i"));
+  if (!endMatch || endMatch.index === undefined) return afterStart.trim();
+  return afterStart.slice(0, endMatch.index + endMatch[0].length).trim();
+};
+
+const normalizeArtifactContentShape = (content: string, kindHint?: unknown, titleHint?: string) => {
+  let normalized = stripMarkdownFence(content);
+  let title = titleHint;
+  let kind = typeof kindHint === "string" ? kindHint : undefined;
+  let language: string | undefined;
+
+  const wrapperMatch = normalized.match(/^<artifact\b([^>]*)>([\s\S]*?)(?:<\/artifact>\s*)?$/i);
+  if (wrapperMatch) {
+    const attributes = wrapperMatch[1] || "";
+    title ||= getAttributeValue(attributes, "title");
+    kind = getAttributeValue(attributes, "kind") || kind;
+    language = getAttributeValue(attributes, "language") || language;
+    normalized = wrapperMatch[2].trim();
+  }
+
+  const normalizedKind = kind?.toLowerCase();
+  const renderableMarkupKinds = new Set([undefined, "xml", "svg", "html", "text", "code", "markdown"]);
+
+  const svg = extractElement(normalized, "svg");
+  if (svg && renderableMarkupKinds.has(normalizedKind)) {
+    return { content: svg, kind: "svg", title, language: language || "svg" };
+  }
+
+  const html = extractElement(normalized, "html");
+  if (html && renderableMarkupKinds.has(normalizedKind)) {
+    return { content: html, kind: "html", title, language: language || "html" };
+  }
+
+  return { content: normalized, kind, title, language };
+};
 
 const codeLanguages = new Set([
   "js",
@@ -138,7 +194,7 @@ export const sanitizeArtifactFilename = (title: string, kind: ArtifactKind, lang
 
 export const normalizeArtifactKind = (value: unknown, language?: string, content = ""): ArtifactKind => {
   const raw = typeof value === "string" ? value.toLowerCase() : "";
-  if (["markdown", "code", "html", "svg", "mermaid", "json", "yaml", "sql", "text", "table", "prompt"].includes(raw)) {
+  if (artifactKinds.includes(raw as ArtifactKind)) {
     return raw as ArtifactKind;
   }
   return deriveArtifactKind(language, content);
@@ -146,7 +202,11 @@ export const normalizeArtifactKind = (value: unknown, language?: string, content
 
 export const deriveArtifactKind = (language?: string, content = ""): ArtifactKind => {
   const lang = (language || "").toLowerCase();
-  const trimmed = content.trim();
+  const shaped = normalizeArtifactContentShape(content, lang);
+  const trimmed = shaped.content.trim();
+  if (shaped.kind && artifactKinds.includes(shaped.kind.toLowerCase() as ArtifactKind)) {
+    return shaped.kind.toLowerCase() as ArtifactKind;
+  }
   if (lang === "mermaid") return "mermaid";
   if (lang === "svg" || trimmed.startsWith("<svg")) return "svg";
   if (lang === "html" || /<!doctype html|<html[\s>]/i.test(trimmed)) return "html";
@@ -162,17 +222,36 @@ export const deriveArtifactKind = (language?: string, content = ""): ArtifactKin
 export const normalizeArtifactPayload = (input: unknown): ArtifactPayload | null => {
   if (!input || typeof input !== "object") return null;
   const raw = input as Record<string, unknown>;
-  const content = typeof raw.content === "string" ? raw.content : "";
+  const rawContent = typeof raw.content === "string" ? raw.content : "";
+  if (!rawContent.trim()) return null;
+  const rawTitle = typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : undefined;
+  const rawLanguage = typeof raw.language === "string" && raw.language.trim() ? raw.language.trim() : undefined;
+  const shaped = normalizeArtifactContentShape(rawContent, raw.kind, rawTitle);
+  const content = shaped.content;
   if (!content.trim()) return null;
-  const title = typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : "Untitled artifact";
-  const language = typeof raw.language === "string" && raw.language.trim() ? raw.language.trim() : undefined;
+  const language = shaped.language || rawLanguage;
+  const kind = normalizeArtifactKind(shaped.kind ?? raw.kind, language, content);
+  const title = shaped.title || rawTitle || getTitleFromContent(content, kind) || "Untitled artifact";
   return {
     operation: raw.operation === "update" ? "update" : "create",
     targetArtifactId: typeof raw.targetArtifactId === "string" ? raw.targetArtifactId : undefined,
-    kind: normalizeArtifactKind(raw.kind, language, content),
+    kind,
     title,
     language,
     content,
+  };
+};
+
+export const normalizeArtifactRecord = (artifact: ArtifactRecord): ArtifactRecord => {
+  const shaped = normalizeArtifactContentShape(artifact.content, artifact.kind, artifact.title);
+  const language = shaped.language || artifact.language;
+  const kind = normalizeArtifactKind(shaped.kind ?? artifact.kind, language, shaped.content);
+  return {
+    ...artifact,
+    title: shaped.title || artifact.title,
+    kind,
+    language,
+    content: shaped.content,
   };
 };
 
@@ -227,12 +306,15 @@ export const parsePartialArtifactToolArguments = (rawArguments: string): Artifac
   const parsed = parseArtifactToolArguments(rawArguments);
   if (parsed) return parsed;
 
-  const content = extractJsonStringValue(rawArguments, "content");
-  if (!content || content.trim().length < 40) return null;
+  const rawContent = extractJsonStringValue(rawArguments, "content");
+  if (!rawContent || rawContent.trim().length < 40) return null;
 
-  const language = extractJsonStringValue(rawArguments, "language");
-  const kind = normalizeArtifactKind(extractJsonStringValue(rawArguments, "kind"), language, content);
-  const title = extractJsonStringValue(rawArguments, "title") || getTitleFromContent(content, kind);
+  const rawLanguage = extractJsonStringValue(rawArguments, "language");
+  const shaped = normalizeArtifactContentShape(rawContent, extractJsonStringValue(rawArguments, "kind"), extractJsonStringValue(rawArguments, "title"));
+  const content = shaped.content;
+  const language = shaped.language || rawLanguage;
+  const kind = normalizeArtifactKind(shaped.kind, language, content);
+  const title = shaped.title || getTitleFromContent(content, kind);
   const operation = extractJsonStringValue(rawArguments, "operation") === "update" ? "update" : "create";
   const targetArtifactId = extractJsonStringValue(rawArguments, "targetArtifactId");
 
@@ -254,21 +336,27 @@ export const detectArtifactFromMessage = (message: string): Omit<ArtifactPayload
     .sort((a, b) => b.content.length - a.content.length)[0];
 
   if (bestBlock) {
-    const kind = deriveArtifactKind(bestBlock.language, bestBlock.content);
-    const title = getTitleFromContent(bestBlock.content, kind);
-    return { kind, title, language: bestBlock.language, content: bestBlock.content };
+    const shaped = normalizeArtifactContentShape(bestBlock.content, bestBlock.language);
+    const kind = deriveArtifactKind(shaped.language || bestBlock.language, shaped.content);
+    const title = shaped.title || getTitleFromContent(shaped.content, kind);
+    return { kind, title, language: shaped.language || bestBlock.language, content: shaped.content };
   }
 
-  const trimmed = message.trim();
+  const shaped = normalizeArtifactContentShape(message);
+  const trimmed = shaped.content.trim();
   if (trimmed.length < 700) return null;
 
-  const hasMarkdownShape = /^#{1,3}\s+/m.test(trimmed) || /^\s*\|.+\|\s*\n\s*\|[-:\s|]+\|/m.test(trimmed);
-  if (!hasMarkdownShape) return null;
+  const hasRenderableShape = /^#{1,3}\s+/m.test(trimmed) ||
+    /^\s*\|.+\|\s*\n\s*\|[-:\s|]+\|/m.test(trimmed) ||
+    trimmed.startsWith("<svg") ||
+    /<!doctype html|<html[\s>]/i.test(trimmed);
+  if (!hasRenderableShape) return null;
 
-  const kind = deriveArtifactKind(undefined, trimmed);
+  const kind = deriveArtifactKind(shaped.language, trimmed);
   return {
     kind,
-    title: getTitleFromContent(trimmed, kind),
+    title: shaped.title || getTitleFromContent(trimmed, kind),
+    language: shaped.language,
     content: trimmed,
   };
 };

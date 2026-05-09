@@ -5,6 +5,7 @@ import mermaid from "mermaid";
 import { AnimatePresence, motion } from "motion/react";
 import { MarkdownRenderer } from "../../chat/components/MarkdownRenderer";
 import type { ArtifactRecord } from "../../../lib/db";
+import { normalizeArtifactRecord } from "../../../lib/artifacts";
 import { cn } from "../../../lib/utils";
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
@@ -284,6 +285,7 @@ function ArtifactLineNumbers({ lineCount, scrollTop }: { lineCount: number; scro
 }
 
 export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange, onClose, onCopy, onDownload }: CanvasPanelProps) {
+  const normalizedArtifact = useMemo(() => artifact ? normalizeArtifactRecord(artifact) : undefined, [artifact]);
   const [tab, setTab] = useState<"preview" | "code">("preview");
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
@@ -292,30 +294,30 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
   const previousArtifactContentRef = useRef("");
 
   useEffect(() => {
-    const nextDraft = prepareContentForEditor(artifact);
+    const nextDraft = prepareContentForEditor(normalizedArtifact);
     setDraft(nextDraft);
     previousArtifactContentRef.current = nextDraft;
-    setTab(artifact?.status === "streaming" ? "code" : "preview");
-  }, [artifact?.id]);
+    setTab(normalizedArtifact?.status === "streaming" ? "code" : "preview");
+  }, [normalizedArtifact?.id]);
 
   useEffect(() => {
-    if (!artifact) return;
+    if (!normalizedArtifact) return;
     setDraft(prev => {
-      const nextDraft = prepareContentForEditor(artifact);
+      const nextDraft = prepareContentForEditor(normalizedArtifact);
       const shouldAcceptExternalUpdate =
-        artifact.status === "streaming" ||
+        normalizedArtifact.status === "streaming" ||
         prev === previousArtifactContentRef.current;
       return shouldAcceptExternalUpdate ? nextDraft : prev;
     });
-    previousArtifactContentRef.current = prepareContentForEditor(artifact);
-  }, [artifact?.content, artifact?.status]);
+    previousArtifactContentRef.current = prepareContentForEditor(normalizedArtifact);
+  }, [normalizedArtifact?.content, normalizedArtifact?.status]);
 
-  const selectedContent = artifact ? draft : "";
-  const editorValue = artifact?.kind === "html" ? formatHtmlForEditor(selectedContent) : selectedContent;
-  const editorLanguage = languageForMonaco(artifact);
+  const selectedContent = normalizedArtifact ? draft : "";
+  const editorValue = normalizedArtifact?.kind === "html" ? formatHtmlForEditor(selectedContent) : selectedContent;
+  const editorLanguage = languageForMonaco(normalizedArtifact);
   const editorLineCount = useMemo(() => Math.max(1, editorValue.split(/\r\n|\r|\n/).length), [editorValue]);
 
-  const livePreviewArtifact = useMemo(() => (artifact ? { ...artifact, content: selectedContent } : undefined), [artifact, selectedContent]);
+  const livePreviewArtifact = useMemo(() => (normalizedArtifact ? { ...normalizedArtifact, content: selectedContent } : undefined), [normalizedArtifact, selectedContent]);
   const previewArtifact = useStreamingPreviewArtifact(livePreviewArtifact);
 
   const handleEditorMount: OnMount = (editor) => {
@@ -346,27 +348,27 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
   };
 
   const handleOpenInNewTab = async () => {
-    if (!artifact) return;
+    if (!normalizedArtifact) return;
     setIsMoreOpen(false);
     const tabWindow = window.open("", "_blank");
     if (!tabWindow) return;
 
     tabWindow.opener = null;
     tabWindow.document.open();
-    tabWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(artifact.title)}</title><style>body{margin:0;background:${isDarkMode ? "#212121" : "#f4f0ea"};color:${isDarkMode ? "#ececec" : "#292524"};font:14px Inter,ui-sans-serif,system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}</style></head><body>Opening...</body></html>`);
+    tabWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(normalizedArtifact.title)}</title><style>body{margin:0;background:${isDarkMode ? "#212121" : "#f4f0ea"};color:${isDarkMode ? "#ececec" : "#292524"};font:14px Inter,ui-sans-serif,system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}</style></head><body>Opening...</body></html>`);
     tabWindow.document.close();
 
-    let html = buildArtifactTabDocument(artifact, selectedContent);
-    if (artifact.kind === "mermaid") {
+    let html = buildArtifactTabDocument(normalizedArtifact, selectedContent);
+    if (normalizedArtifact.kind === "mermaid") {
       try {
         mermaid.initialize({ startOnLoad: false, theme: isDarkMode ? "dark" : "default" });
         const result = await mermaid.render(`privora-artifact-tab-${Date.now()}`, selectedContent);
         const pageBg = isDarkMode ? "#212121" : "#f4f0ea";
         const canvasBg = isDarkMode ? "#2f2f2f" : "#fff";
         const border = isDarkMode ? "#424242" : "#e2dcd0";
-        html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(artifact.title)}</title><style>html,body{margin:0;min-height:100%;background:${pageBg}}body{padding:32px;box-sizing:border-box;overflow:auto}.canvas{display:inline-block;border:1px solid ${border};border-radius:12px;background:${canvasBg};padding:24px}svg{display:block;max-width:none!important}</style></head><body><div class="canvas">${normalizeMermaidSvg(result.svg)}</div></body></html>`;
+        html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(normalizedArtifact.title)}</title><style>html,body{margin:0;min-height:100%;background:${pageBg}}body{padding:32px;box-sizing:border-box;overflow:auto}.canvas{display:inline-block;border:1px solid ${border};border-radius:12px;background:${canvasBg};padding:24px}svg{display:block;max-width:none!important}</style></head><body><div class="canvas">${normalizeMermaidSvg(result.svg)}</div></body></html>`;
       } catch {
-        html = buildArtifactTabDocument(artifact, selectedContent);
+        html = buildArtifactTabDocument(normalizedArtifact, selectedContent);
       }
     }
 
@@ -399,7 +401,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
 
   return (
     <AnimatePresence>
-      {isOpen && artifact && previewArtifact && (
+      {isOpen && normalizedArtifact && previewArtifact && (
         <>
           <motion.div
             initial={{ opacity: 0 }}
@@ -449,8 +451,8 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
 
               <div className="min-w-0 flex-1 px-1">
                 <h2 className="truncate text-sm font-medium text-[var(--privora-text)]">
-                  {artifact.title}
-                  <span className="font-normal uppercase text-[var(--privora-muted)]"> · {artifact.language || artifact.kind}</span>
+                  {normalizedArtifact.title}
+                  <span className="font-normal uppercase text-[var(--privora-muted)]"> · {normalizedArtifact.language || normalizedArtifact.kind}</span>
                 </h2>
               </div>
 
@@ -508,7 +510,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
                   <div className="min-w-0 flex-1">
                     <Suspense fallback={<div className="p-4 text-sm text-[var(--privora-muted)]">Loading editor...</div>}>
                     <MonacoEditor
-                      key={artifact.id}
+                      key={normalizedArtifact.id}
                       height="100%"
                       width="100%"
                       beforeMount={defineArtifactEditorThemes}
@@ -537,7 +539,7 @@ export function CanvasPanel({ isOpen, artifact, isDarkMode, width, onWidthChange
                         smoothScrolling: true,
                         renderValidationDecorations: "off",
                       }}
-                      path={`privora://${artifact.id}.${artifact.language || artifact.kind}`}
+                      path={`privora://${normalizedArtifact.id}.${normalizedArtifact.language || normalizedArtifact.kind}`}
                       value={editorValue}
                       onMount={handleEditorMount}
                     />
