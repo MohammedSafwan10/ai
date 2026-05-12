@@ -220,12 +220,23 @@ export function useWebDevGeneration({
   const thoughtFlushTimerRef = useRef<number | null>(null);
   const baselineFilesRef = useRef<Map<string, string>>(new Map());
   const buildPlanRef = useRef<WebDevBuildPlanRecord | undefined>(project?.buildPlan);
+  const projectIdRef = useRef<string | undefined>(project?.id);
   const filesRef = useRef(files);
   const messagesRef = useRef(messages);
   const patchPreviewPathRef = useRef<string | null>(null);
   const patchPreviewContentRef = useRef<Map<string, string>>(new Map());
   const patchPreviewUpdatedAtRef = useRef<Map<string, number>>(new Map());
-  buildPlanRef.current = project?.buildPlan || buildPlanRef.current;
+  if (projectIdRef.current !== project?.id) {
+    projectIdRef.current = project?.id;
+    activityByKeyRef.current = new Map();
+    pendingActivityByKeyRef.current = new Map();
+    inlineActivityKeysRef.current = new Set();
+    streamedPathActivityRef.current = new Set();
+    patchPreviewPathRef.current = null;
+    patchPreviewContentRef.current.clear();
+    patchPreviewUpdatedAtRef.current.clear();
+  }
+  buildPlanRef.current = project?.buildPlan;
   filesRef.current = files;
   messagesRef.current = messages;
 
@@ -961,7 +972,13 @@ export function useWebDevGeneration({
     activityByKeyRef.current = new Map();
     pendingActivityByKeyRef.current = new Map();
     inlineActivityKeysRef.current = new Set();
-    baselineFilesRef.current = new Map(filesRef.current.map(file => [file.path, file.content]));
+    const scopedFiles = filesRef.current.filter(file => file.projectId === projectId);
+    const scopedMessages = messagesRef.current.filter(message => message.projectId === projectId);
+    filesRef.current = scopedFiles;
+    messagesRef.current = scopedMessages;
+    setFiles(scopedFiles);
+    setMessages(scopedMessages);
+    baselineFilesRef.current = new Map(scopedFiles.map(file => [file.path, file.content]));
     const startedEmpty = baselineFilesRef.current.size === 0;
     patchProject(projectId, { status: "generating", selectedModel });
     await updateWebDevProject(projectId, { status: "generating", selectedModel });
@@ -1138,16 +1155,16 @@ export function useWebDevGeneration({
 
     try {
       let providerMessages: WebDevProviderMessage[] = messagesToProviderHistory([
-        ...historyBeforeTurn,
+        ...historyBeforeTurn.filter(message => message.projectId === projectId),
         userMessage,
       ]);
       const context = buildWebDevProjectContext({
         projectTitle: project.title,
         userPrompt: prompt.trim(),
-        files: filesRef.current,
+        files: filesRef.current.filter(file => file.projectId === projectId),
         attachments,
         model: selectedModel,
-        buildPlan: buildPlanRef.current,
+        buildPlan: project.buildPlan,
       });
       providerMessages = appendUserContextMessage(providerMessages, context.text, attachments);
 

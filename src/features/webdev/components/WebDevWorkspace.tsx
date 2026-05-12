@@ -81,9 +81,9 @@ export function WebDevWorkspace({
   useEffect(() => {
     setActiveDiff(null);
     setPatchPreviewDiff(null);
+    setFiles([]);
+    setMessages([]);
     if (!currentProjectId) {
-      setFiles([]);
-      setMessages([]);
       return;
     }
     let cancelled = false;
