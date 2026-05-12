@@ -9,7 +9,49 @@ const MONACO_LIGHT_THEME = "privora-webdev-light";
 const MONACO_DARK_THEME = "privora-webdev-dark";
 const WEBDEV_EDITOR_LINE_HEIGHT = 18;
 
+type MonacoTypeScriptDefaults = {
+  javascriptDefaults?: {
+    setCompilerOptions: (options: Record<string, unknown>) => void;
+    setDiagnosticsOptions: (options: Record<string, unknown>) => void;
+  };
+  typescriptDefaults?: {
+    setCompilerOptions: (options: Record<string, unknown>) => void;
+    setDiagnosticsOptions: (options: Record<string, unknown>) => void;
+  };
+};
+
+const configureTypeScriptDefaults = (monaco: typeof Monaco) => {
+  const ts = (monaco.languages as unknown as { typescript?: MonacoTypeScriptDefaults }).typescript;
+  if (!ts?.typescriptDefaults || !ts.javascriptDefaults) return;
+
+  const compilerOptions = {
+    allowJs: true,
+    allowNonTsExtensions: true,
+    esModuleInterop: true,
+    jsx: 4,
+    module: 99,
+    moduleResolution: 2,
+    noEmit: true,
+    skipLibCheck: true,
+    target: 99,
+  };
+
+  ts.typescriptDefaults.setCompilerOptions(compilerOptions);
+  ts.javascriptDefaults.setCompilerOptions(compilerOptions);
+  ts.typescriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: false,
+    noSuggestionDiagnostics: true,
+  });
+  ts.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: false,
+    noSuggestionDiagnostics: true,
+  });
+};
+
 const defineThemes: BeforeMount = (monaco) => {
+  configureTypeScriptDefaults(monaco);
   monaco.editor.defineTheme(MONACO_LIGHT_THEME, {
     base: "vs",
     inherit: true,
@@ -99,7 +141,13 @@ function ManualWebDevDiffEditor({
     const sessionKey = `${diff.path}:${diff.beforeContent.length}:${diff.afterContent.length}:${firstDiffLine}`;
 
     const revealFirstChange = (editor: Monaco.editor.IStandaloneDiffEditor) => {
-      const lineChanges = editor.getLineChanges();
+      let lineChanges: Monaco.editor.ILineChange[] | null = null;
+      try {
+        lineChanges = editor.getLineChanges();
+      } catch {
+        return;
+      }
+      if (!lineChanges) return;
       const firstChange = lineChanges?.find(change => change.modifiedEndLineNumber > 0 || change.originalEndLineNumber > 0);
       const modifiedLine = Math.max(1, firstChange?.modifiedStartLineNumber || firstDiffLine);
       const originalLine = Math.max(1, firstChange?.originalStartLineNumber || modifiedLine);
@@ -183,6 +231,8 @@ function ManualWebDevDiffEditor({
         }, 120);
       });
       setIsLoading(false);
+    }).catch(() => {
+      if (!disposed) setIsLoading(false);
     });
 
     return () => {
@@ -230,8 +280,21 @@ export function WebDevEditor({
   onChange: (content: string) => void;
 }) {
   const language = useMemo(() => getLanguageForWebDevPath(diff?.path || file?.path || "file.tsx"), [diff?.path, file?.path]);
+  const previewFile = useMemo<WebDevFile | undefined>(() => {
+    if (diff?.status !== "previewing") return undefined;
+    return {
+      id: `${diff.path}:preview`,
+      projectId: file?.projectId || "preview",
+      path: diff.path,
+      content: diff.afterContent,
+      status: "streaming",
+      createdAt: file?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+  }, [diff?.path, diff?.afterContent, diff?.status, file?.projectId, file?.createdAt]);
+  const editorFile = previewFile || file;
   const [editorScrollTop, setEditorScrollTop] = useState(0);
-  const lineCount = useMemo(() => Math.max(1, (file?.content || "").split(/\r\n|\r|\n/).length), [file?.content]);
+  const lineCount = useMemo(() => Math.max(1, (editorFile?.content || "").split(/\r\n|\r|\n/).length), [editorFile?.content]);
   const firstDiffLine = useMemo(
     () => diff ? getFirstChangedModifiedLine(diff.beforeContent, diff.afterContent) : 1,
     [diff?.beforeContent, diff?.afterContent]
@@ -247,7 +310,7 @@ export function WebDevEditor({
     window.requestAnimationFrame(() => editor.layout());
   };
 
-  if (diff) {
+  if (diff && diff.status !== "previewing") {
     return (
       <div className="privora-webdev-diff-editor h-full min-h-0 overflow-hidden bg-[var(--privora-surface)]">
         <ManualWebDevDiffEditor
@@ -260,7 +323,7 @@ export function WebDevEditor({
     );
   }
 
-  if (!file) {
+  if (!editorFile) {
     return (
       <div className="grid h-full place-items-center bg-[var(--privora-surface)] text-sm text-[var(--privora-muted)]">
         Select a file to edit.
@@ -274,18 +337,20 @@ export function WebDevEditor({
       <div className="min-w-0 flex-1 pl-1">
         <Suspense fallback={<div className="p-4 text-sm text-[var(--privora-muted)]">Loading editor...</div>}>
           <MonacoEditor
-            key={file.path}
-            path={`privora-webdev://${file.path}`}
+            key={`${editorFile.path}:${previewFile ? "patch-preview" : "file"}`}
+            path={`${previewFile ? "privora-webdev-preview" : "privora-webdev"}://${editorFile.path}`}
             height="100%"
             width="100%"
             beforeMount={defineThemes}
             onMount={handleEditorMount}
             theme={isDarkMode ? MONACO_DARK_THEME : MONACO_LIGHT_THEME}
             language={language}
-            value={file.content}
-            onChange={(value) => onChange(value || "")}
+            value={editorFile.content}
+            onChange={(value) => {
+              if (!previewFile) onChange(value || "");
+            }}
             options={{
-              readOnly,
+              readOnly: readOnly || Boolean(previewFile),
               minimap: { enabled: false },
               fontSize: 13,
               lineHeight: WEBDEV_EDITOR_LINE_HEIGHT,

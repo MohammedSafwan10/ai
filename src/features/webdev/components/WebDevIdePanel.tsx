@@ -45,7 +45,8 @@ export function WebDevIdePanel({
 }) {
   const [tab, setTab] = useState<WebDevIdeTab>("code");
   const activeFile = useMemo(() => files.find(file => file.path === activeFilePath) || files[0], [activeFilePath, files]);
-  const isDiffOpen = tab === "code" && Boolean(activeDiff);
+  const visibleDiff = isGenerating && activeDiff?.status !== "previewing" ? null : activeDiff;
+  const isDiffOpen = tab === "code" && Boolean(visibleDiff);
   const { runtime, restart } = useWebContainerRuntime(project?.id || null, files);
 
   const handleResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -131,10 +132,12 @@ export function WebDevIdePanel({
             />
             <div className="flex min-h-0 flex-col">
               <div className="flex min-h-10 shrink-0 items-center gap-2 border-b border-[var(--privora-border)] bg-[var(--privora-bg)]/45 px-3 text-xs font-semibold text-[var(--privora-text)]">
-                <span className="truncate">{activeDiff?.path || activeFile?.path || "No file selected"}</span>
+                <span className="truncate">{visibleDiff?.path || activeFile?.path || "No file selected"}</span>
                 {isDiffOpen && (
                   <div className="ml-auto flex items-center rounded-md border border-[var(--privora-border)] bg-[var(--privora-surface)] p-0.5 text-[11px]">
-                    <span className="rounded px-2 py-1 font-semibold text-[var(--privora-text)]">Changes</span>
+                    <span className="rounded px-2 py-1 font-semibold text-[var(--privora-text)]">
+                      {visibleDiff?.status === "previewing" ? "Live patch preview" : "Changes"}
+                    </span>
                     <button
                       type="button"
                       onClick={onCloseDiff}
@@ -149,7 +152,7 @@ export function WebDevIdePanel({
               <div className="min-h-0 flex-1">
                 <WebDevEditor
                   file={activeFile}
-                  diff={activeDiff}
+                  diff={visibleDiff}
                   isDarkMode={isDarkMode}
                   readOnly={isGenerating}
                   onChange={(content) => activeFile && onFileChange(activeFile.path, content)}

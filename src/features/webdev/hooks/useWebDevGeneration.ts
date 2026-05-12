@@ -1,20 +1,22 @@
 import { useRef, type Dispatch, type SetStateAction } from "react";
 import { getModelOption } from "../../../lib/models";
 import type { Attachment } from "../../../lib/attachments";
-import type { WebDevFileRecord, WebDevMessageRecord, WebDevProjectRecord } from "../../../lib/db";
+import type { WebDevBuildPlanRecord, WebDevFileRecord, WebDevMessageRecord, WebDevProjectRecord } from "../../../lib/db";
 import { buildWebDevSystemInstruction } from "../prompts/system";
 import { streamWebDevResponse } from "../lib/provider";
 import { applySearchReplacePatch } from "../lib/tools";
 import {
   appendWebDevMessage,
+  bulkUpsertWebDevFiles,
   deleteWebDevPath,
   renameWebDevPath,
   replaceWebDevProjectFiles,
+  settleRunningWebDevActivities,
   updateWebDevMessage,
   updateWebDevProject,
   upsertWebDevFile,
 } from "../lib/storage";
-import type { WebDevFunctionResponse, WebDevProviderMessage, WebDevToolCall, WebDevToolDraft } from "../lib/types";
+import type { WebDevFileDiff, WebDevFunctionResponse, WebDevProviderMessage, WebDevToolCall, WebDevToolDraft } from "../lib/types";
 import { appendInternalInstruction, appendToolResults, messagesToProviderHistory, withToolCallId, type WebDevToolResultEntry } from "../runtime/providerMessages";
 import { appendUserContextMessage, buildWebDevProjectContext } from "../runtime/contextCompiler";
 import { estimateWebDevTokens } from "../runtime/tokenCounter";
@@ -39,6 +41,7 @@ interface UseWebDevGenerationOptions {
   setFiles: Dispatch<SetStateAction<WebDevFileRecord[]>>;
   setMessages: Dispatch<SetStateAction<WebDevMessageRecord[]>>;
   setIsGenerating: Dispatch<SetStateAction<boolean>>;
+  onPatchPreviewChange?: (diff: WebDevFileDiff | null) => void;
 }
 
 const getToolSummary = (call: WebDevToolCall | WebDevToolDraft) => {
@@ -48,6 +51,7 @@ const getToolSummary = (call: WebDevToolCall | WebDevToolDraft) => {
   if (call.name === "webdev_delete_path") return `Deleting ${args.path}`;
   if (call.name === "webdev_rename_path") return `Renaming ${args.from} to ${args.to}`;
   if (call.name === "webdev_create_project") return `Creating ${(args.title as string) || "project"}`;
+  if (call.name === "webdev_set_build_plan") return "Planning app architecture";
   if (call.name === "webdev_search_files") return "Searching project files";
   if (call.name === "webdev_file_outline") return `Outlining ${args.path}`;
   if (call.name === "webdev_get_diagnostics") return "Checking diagnostics";
@@ -70,24 +74,31 @@ const normalizeGeneratedContent = (path: string, content: string) => {
 };
 
 const getLineDelta = (before = "", after = "") => {
-  if (!before && !after) return { additions: 0, deletions: 0 };
+  if (before === after) return { additions: 0, deletions: 0 };
   const beforeLines = before.split(/\r?\n/);
   const afterLines = after.split(/\r?\n/);
-  const commonPrefixLength = (() => {
-    let index = 0;
-    while (index < beforeLines.length && index < afterLines.length && beforeLines[index] === afterLines[index]) index += 1;
-    return index;
-  })();
-  let beforeEnd = beforeLines.length - 1;
-  let afterEnd = afterLines.length - 1;
-  while (beforeEnd >= commonPrefixLength && afterEnd >= commonPrefixLength && beforeLines[beforeEnd] === afterLines[afterEnd]) {
-    beforeEnd -= 1;
-    afterEnd -= 1;
+
+  const beforeCounts = new Map<string, number>();
+  beforeLines.forEach(line => {
+    beforeCounts.set(line, (beforeCounts.get(line) || 0) + 1);
+  });
+
+  let additions = 0;
+  afterLines.forEach(line => {
+    const count = beforeCounts.get(line) || 0;
+    if (count > 0) {
+      beforeCounts.set(line, count - 1);
+      return;
+    }
+    additions += 1;
+  });
+
+  let deletions = 0;
+  for (const count of beforeCounts.values()) {
+    deletions += count;
   }
-  return {
-    additions: Math.max(0, afterEnd - commonPrefixLength + 1),
-    deletions: Math.max(0, beforeEnd - commonPrefixLength + 1),
-  };
+
+  return { additions, deletions };
 };
 
 const asToolResponse = (response: WebDevFunctionResponse): WebDevFunctionResponse => response;
@@ -99,21 +110,6 @@ const mergeFinalSummary = (existing: string, summary: string) => {
   if (!cleanExisting) return cleanSummary;
   if (cleanExisting.includes(cleanSummary)) return cleanExisting;
   return `${cleanExisting}\n\n${cleanSummary}`;
-};
-
-const summarizeToolResults = (results: ToolExecutionResult[]) => {
-  const changed = results.filter(result =>
-    result.response.success &&
-    ["webdev_write_file", "webdev_patch_file", "webdev_delete_path", "webdev_rename_path", "webdev_create_project"].includes(result.name)
-  );
-  if (changed.length === 0) return "The run paused before making confirmed file changes.";
-  const paths = changed
-    .map(result => String(result.response.meta?.path || result.response.data?.path || ""))
-    .filter(Boolean)
-    .filter((path, index, all) => all.indexOf(path) === index);
-  const preview = paths.slice(0, 6).join(", ");
-  const extra = paths.length > 6 ? ` and ${paths.length - 6} more` : "";
-  return `The run paused after ${changed.length} confirmed file ${changed.length === 1 ? "change" : "changes"}${preview ? `: ${preview}${extra}` : ""}.`;
 };
 
 const getReadableWebDevError = (error: unknown) => {
@@ -150,12 +146,16 @@ const hasSuccessfulVerification = (results: ToolExecutionResult[]) =>
 const chooseDiagnosticsScript = (files: WebDevFileRecord[]) =>
   ["build", "lint", "typecheck", "test"].find(script => !getSafeWebDevScriptError(files, script)) || "build";
 
+const MAX_WEBDEV_AGENT_ITERATIONS = 80;
+const MAX_WEBDEV_AGENT_RUN_MS = 45 * 60 * 1000;
+
 const getActivityOperationForTool = (name: string): WebDevMessageRecord["activityOperation"] => {
   if (name === "webdev_write_file") return "updated";
   if (name === "webdev_patch_file") return "patched";
   if (name === "webdev_delete_path") return "deleted";
   if (name === "webdev_rename_path") return "renamed";
   if (name === "webdev_create_project") return "created_project";
+  if (name === "webdev_set_build_plan") return "outlined";
   if (name === "webdev_search_files") return "searched";
   if (name === "webdev_file_outline") return "outlined";
   if (name === "webdev_get_diagnostics") return "checked";
@@ -174,6 +174,7 @@ const getActivityKeyForTool = (call: Pick<WebDevToolCall, "name" | "arguments">)
   if (call.name === "webdev_get_diagnostics") return "webdev_get_diagnostics::";
   if (call.name === "webdev_run_command") return `webdev_run_command:${args.script || ""}:`;
   if (call.name === "webdev_create_project") return "webdev_create_project:::";
+  if (call.name === "webdev_set_build_plan") return "webdev_set_build_plan:::";
   return `${call.name}:${args.path || args.from || args.script || ""}:${args.to || ""}`;
 };
 
@@ -209,6 +210,7 @@ export function useWebDevGeneration({
   setFiles,
   setMessages,
   setIsGenerating,
+  onPatchPreviewChange,
 }: UseWebDevGenerationOptions) {
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamedPathActivityRef = useRef<Set<string>>(new Set());
@@ -217,8 +219,13 @@ export function useWebDevGeneration({
   const inlineActivityKeysRef = useRef<Set<string>>(new Set());
   const thoughtFlushTimerRef = useRef<number | null>(null);
   const baselineFilesRef = useRef<Map<string, string>>(new Map());
+  const buildPlanRef = useRef<WebDevBuildPlanRecord | undefined>(project?.buildPlan);
   const filesRef = useRef(files);
   const messagesRef = useRef(messages);
+  const patchPreviewPathRef = useRef<string | null>(null);
+  const patchPreviewContentRef = useRef<Map<string, string>>(new Map());
+  const patchPreviewUpdatedAtRef = useRef<Map<string, number>>(new Map());
+  buildPlanRef.current = project?.buildPlan || buildPlanRef.current;
   filesRef.current = files;
   messagesRef.current = messages;
 
@@ -294,6 +301,12 @@ export function useWebDevGeneration({
   const finalizeRunningActivities = async (status: "done" | "error" = "done") => {
     await settlePendingActivities();
     const updates: Promise<void>[] = [];
+    const runningMessages = messagesRef.current.filter(message => message.projectId === project?.id && message.role === "activity" && message.activityStatus === "running");
+    runningMessages.forEach(message => {
+      const next = { ...message, activityStatus: status };
+      upsertMessageRef(next);
+      updates.push(updateWebDevMessage(message.id, { activityStatus: status }));
+    });
     activityByKeyRef.current.forEach((message, key) => {
       if (message.activityStatus !== "running") return;
       const next = { ...message, activityStatus: status };
@@ -334,6 +347,40 @@ export function useWebDevGeneration({
     onActivity?: (message: WebDevMessageRecord, key: string) => void
   ) => {
     await showToolDraftActivity(projectId, draft, onActivity);
+    if (draft.name === "webdev_patch_file") {
+      const path = typeof draft.arguments.path === "string" ? draft.arguments.path : "";
+      if (!isLikelyCompleteWebDevPath(path)) return;
+      const current = filesRef.current.find(file => file.path === path && file.status !== "deleted");
+      if (!current) return;
+      const patched = applySearchReplacePatch(current.content, draft.arguments.patch);
+      if (patched === null || patched === current.content) return;
+      const nextContent = normalizeGeneratedContent(path, patched);
+      const now = Date.now();
+      const previousPreview = patchPreviewContentRef.current.get(path);
+      const previousPreviewAt = patchPreviewUpdatedAtRef.current.get(path) || 0;
+      if (previousPreview === nextContent || now - previousPreviewAt < 120) return;
+      const delta = getLineDelta(current.content, nextContent);
+      patchPreviewContentRef.current.set(path, nextContent);
+      patchPreviewUpdatedAtRef.current.set(path, now);
+      patchPreviewPathRef.current = path;
+      patchProject(projectId, { activeFilePath: path });
+      const activity = await addActivity(projectId, `Patching ${path}`, path, `webdev_patch_file:${path}::`, {
+        activityOperation: "patched",
+        activityStatus: "running",
+        additions: delta.additions,
+        deletions: delta.deletions,
+        beforeContent: current.content,
+        afterContent: nextContent,
+      });
+      onActivity?.(activity, `webdev_patch_file:${path}::`);
+      onPatchPreviewChange?.({
+        path,
+        beforeContent: current.content,
+        afterContent: nextContent,
+        status: "previewing",
+      });
+      return;
+    }
     if (draft.name !== "webdev_write_file") return;
     const path = typeof draft.arguments.path === "string" ? draft.arguments.path : "";
     const content = typeof draft.arguments.content === "string" ? draft.arguments.content : "";
@@ -403,10 +450,65 @@ export function useWebDevGeneration({
       return { id: call.id, name: call.name, arguments: call.arguments, response: next };
     };
 
-    if (call.name !== "webdev_finish" && !["webdev_search_files", "webdev_file_outline", "webdev_get_diagnostics", "webdev_run_command"].includes(call.name)) {
+    if (call.name !== "webdev_finish" && !["webdev_set_build_plan", "webdev_search_files", "webdev_file_outline", "webdev_get_diagnostics", "webdev_run_command"].includes(call.name)) {
       const path = typeof args.path === "string" ? args.path : undefined;
       const key = getActivityKeyForTool(call);
       await addActivity(projectId, getToolSummary(call), path, key, { activityStatus: "running" });
+    }
+
+    if (call.name === "webdev_set_build_plan") {
+      const now = Date.now();
+      const buildPlan: WebDevBuildPlanRecord = {
+        summary: typeof args.summary === "string" ? args.summary : "Planned app architecture.",
+        routingRequired: Boolean(args.routingRequired),
+        routingStrategy: ["browser-router", "hash-router", "state-screens", "none"].includes(String(args.routingStrategy))
+          ? args.routingStrategy as WebDevBuildPlanRecord["routingStrategy"]
+          : Boolean(args.routingRequired)
+            ? "browser-router"
+            : "none",
+        componentStrategy: ["shadcn-local", "custom-css", "minimal"].includes(String(args.componentStrategy))
+          ? args.componentStrategy as WebDevBuildPlanRecord["componentStrategy"]
+          : Boolean(args.routingRequired)
+            ? "shadcn-local"
+            : "minimal",
+        designDirection: typeof args.designDirection === "string" ? args.designDirection : "",
+        primaryScreens: Array.isArray(args.primaryScreens) ? args.primaryScreens.filter((item): item is string => typeof item === "string") : [],
+        qualityChecklist: Array.isArray(args.qualityChecklist) ? args.qualityChecklist.filter((item): item is string => typeof item === "string") : [],
+        pages: Array.isArray(args.pages) ? args.pages.filter((item): item is string => typeof item === "string") : [],
+        keyFiles: Array.isArray(args.keyFiles) ? args.keyFiles.filter((item): item is string => typeof item === "string") : [],
+        verification: typeof args.verification === "string" ? args.verification : "Run diagnostics/build after implementation.",
+        createdAt: buildPlanRef.current?.createdAt || now,
+        updatedAt: now,
+      };
+      buildPlanRef.current = buildPlan;
+      patchProject(projectId, { buildPlan });
+      await updateWebDevProject(projectId, { buildPlan });
+      await addActivity(projectId, buildPlan.routingRequired ? "Planned routed app structure" : "Planned single-screen app structure", undefined, "webdev_set_build_plan:::", {
+        activityOperation: "outlined",
+        activityStatus: "done",
+        activityDetail: [
+          buildPlan.summary,
+          `Routing: ${buildPlan.routingRequired ? buildPlan.routingStrategy : "not required"}`,
+          `Components: ${buildPlan.componentStrategy || "not specified"}`,
+          buildPlan.designDirection ? `Design: ${buildPlan.designDirection}` : "",
+          `Primary screens: ${buildPlan.primaryScreens?.join(", ") || "none"}`,
+          `Pages/screens: ${buildPlan.pages?.join(", ") || "none"}`,
+          `Key files: ${buildPlan.keyFiles?.join(", ") || "none"}`,
+          buildPlan.qualityChecklist?.length ? `Quality: ${buildPlan.qualityChecklist.join(", ")}` : "",
+        ].filter(Boolean).join("\n"),
+      });
+      return ok({
+        output: buildPlan.routingRequired
+          ? `Build plan recorded with ${buildPlan.routingStrategy}, ${buildPlan.componentStrategy}, and ${buildPlan.pages?.length || 0} planned pages.`
+          : `Build plan recorded as a ${buildPlan.componentStrategy || "minimal"} single-screen app.`,
+        data: { buildPlan: buildPlan as unknown as Record<string, unknown> },
+        meta: {
+          operation: "planned",
+          routingRequired: buildPlan.routingRequired,
+          routingStrategy: buildPlan.routingStrategy,
+          componentStrategy: buildPlan.componentStrategy,
+        },
+      });
     }
 
     if (call.name === "webdev_create_project") {
@@ -484,6 +586,12 @@ export function useWebDevGeneration({
       const current = filesRef.current.find(file => file.path === path);
       const patched = current ? applySearchReplacePatch(current.content, args.patch) : null;
       if (current && patched !== null) {
+        if (patchPreviewPathRef.current === path) {
+          patchPreviewPathRef.current = null;
+          patchPreviewContentRef.current.delete(path);
+          patchPreviewUpdatedAtRef.current.delete(path);
+          onPatchPreviewChange?.(null);
+        }
         const before = current.content;
         const nextContent = normalizeGeneratedContent(path, patched);
         const delta = getLineDelta(before, nextContent);
@@ -516,6 +624,12 @@ export function useWebDevGeneration({
           },
         });
       } else {
+        if (patchPreviewPathRef.current === path) {
+          patchPreviewPathRef.current = null;
+          patchPreviewContentRef.current.delete(path);
+          patchPreviewUpdatedAtRef.current.delete(path);
+          onPatchPreviewChange?.(null);
+        }
         await addActivity(projectId, `Patch skipped because exact source text was not found in ${path}.`, path, `webdev_patch_file:${path}::`, {
           activityOperation: "skipped",
           activityStatus: "error",
@@ -712,6 +826,83 @@ export function useWebDevGeneration({
     return fail(`Unknown Web Dev tool: ${call.name}`);
   };
 
+  const applyWriteFileBatch = async (
+    projectId: string,
+    batch: Array<Required<Pick<WebDevToolCall, "id">> & WebDevToolCall>,
+    changedPaths: Set<string>,
+    iteration: number
+  ): Promise<ToolExecutionResult[]> => {
+    const beforeByPath = new Map(filesRef.current.map(file => [file.path, file.content]));
+    const normalized = batch.map(call => {
+      const args = call.arguments || {};
+      const path = String(args.path || "");
+      const content = normalizeGeneratedContent(path, String(args.content || ""));
+      const before = beforeByPath.get(path) || "";
+      const existed = beforeByPath.has(path);
+      const delta = existed ? getLineDelta(before, content) : { additions: countLines(content), deletions: 0 };
+      return {
+        call,
+        path,
+        content,
+        before,
+        existed,
+        delta,
+        summary: typeof args.summary === "string" ? args.summary : undefined,
+      };
+    }).filter(item => item.path);
+
+    if (normalized.length === 0) return [];
+
+    for (const item of normalized) {
+      await persistAssistantToolCall(projectId, item.call, iteration);
+    }
+
+    const records = await bulkUpsertWebDevFiles(projectId, normalized.map(item => ({
+      path: item.path,
+      content: item.content,
+      status: "ready",
+      summary: item.summary,
+    })));
+    const recordByPath = new Map(records.map(record => [record.path, record]));
+    const nextById = new Map(filesRef.current.map(file => [file.id, file]));
+    records.forEach(record => nextById.set(record.id, record));
+    const nextFiles = [...nextById.values()].sort((a, b) => a.path.localeCompare(b.path));
+    setFileRef(nextFiles);
+    setFiles(nextFiles);
+
+    const results: ToolExecutionResult[] = [];
+    for (const item of normalized) {
+      const file = recordByPath.get(item.path);
+      const response = asToolResponse({
+        success: true,
+        output: `${item.existed ? "Edited" : "Created"} ${file?.path || item.path}`,
+        data: { path: file?.path || item.path },
+        meta: {
+          operation: item.existed ? "updated" : "created",
+          path: file?.path || item.path,
+          additions: item.delta.additions,
+          deletions: item.delta.deletions,
+          wasNew: !item.existed,
+        },
+      });
+      if (file) changedPaths.add(file.path);
+      await addActivity(projectId, `${item.existed ? "Edited" : "Created"} ${file?.path || item.path}`, file?.path || item.path, `write:${file?.path || item.path}`, {
+        activityOperation: item.existed ? "updated" : "created",
+        activityStatus: "done",
+        additions: item.delta.additions,
+        deletions: item.delta.deletions,
+        beforeContent: item.before,
+        afterContent: item.content,
+      });
+      await persistToolResult(projectId, item.call, response, iteration);
+      results.push({ id: item.call.id, name: item.call.name, arguments: item.call.arguments, response });
+    }
+
+    const activePath = records.at(-1)?.path;
+    if (activePath) patchProject(projectId, { activeFilePath: activePath });
+    return results;
+  };
+
   const executeToolCalls = async (
     projectId: string,
     calls: Array<Required<Pick<WebDevToolCall, "id">> & WebDevToolCall>,
@@ -722,10 +913,7 @@ export function useWebDevGeneration({
     const results: ToolExecutionResult[] = [];
     const flushWriteBatch = async (batch: Array<Required<Pick<WebDevToolCall, "id">> & WebDevToolCall>) => {
       if (batch.length === 0) return;
-      const settled = await Promise.all(batch.map(async call => {
-        await persistAssistantToolCall(projectId, call, iteration);
-        return applyToolCall(projectId, call, changedPaths, iteration);
-      }));
+      const settled = await applyWriteFileBatch(projectId, batch, changedPaths, iteration);
       results.push(...settled);
     };
 
@@ -759,9 +947,17 @@ export function useWebDevGeneration({
     const provider = getModelOption(selectedModel)?.provider;
     const supportsThinking = getModelRuntimeLimits(selectedModel).supportsThinking;
     const abortController = new AbortController();
+    const staleActivities = await settleRunningWebDevActivities(projectId, "done");
+    if (staleActivities.length > 0) {
+      staleActivities.forEach(message => upsertMessageRef(message));
+    }
     abortControllerRef.current = abortController;
     setIsGenerating(true);
     streamedPathActivityRef.current = new Set();
+    patchPreviewPathRef.current = null;
+    patchPreviewContentRef.current.clear();
+    patchPreviewUpdatedAtRef.current.clear();
+    onPatchPreviewChange?.(null);
     activityByKeyRef.current = new Map();
     pendingActivityByKeyRef.current = new Map();
     inlineActivityKeysRef.current = new Set();
@@ -920,10 +1116,24 @@ export function useWebDevGeneration({
         removeTextTailFromParts(removeTail);
       }
 
-      await settlePendingActivities();
+      await settleDraftActivities();
       syncAssistantMessage({ content: assistantText, isThinking: false, hiddenFromChat: !hasAssistantLead() });
       const finalMessage = await appendWebDevMessage(projectId, "assistant", cleanSummary);
       appendMessagesRef([finalMessage]);
+    };
+    const draftActivityPromises = new Set<Promise<void>>();
+    const trackDraftActivity = (promise: Promise<unknown>) => {
+      const tracked = promise
+        .catch(() => undefined)
+        .then(() => undefined);
+      draftActivityPromises.add(tracked);
+      void tracked.finally(() => draftActivityPromises.delete(tracked));
+    };
+    const settleDraftActivities = async () => {
+      if (draftActivityPromises.size > 0) {
+        await Promise.allSettled([...draftActivityPromises]);
+      }
+      await settlePendingActivities();
     };
 
     try {
@@ -937,16 +1147,20 @@ export function useWebDevGeneration({
         files: filesRef.current,
         attachments,
         model: selectedModel,
+        buildPlan: buildPlanRef.current,
       });
       providerMessages = appendUserContextMessage(providerMessages, context.text, attachments);
 
-      const maxIterations = 12;
+      const runStartedAt = Date.now();
       let completed = false;
-      let lastToolResults: ToolExecutionResult[] = [];
       const allToolResults: ToolExecutionResult[] = [];
       let verificationNudged = false;
 
-      for (let iteration = 1; iteration <= maxIterations && !completed; iteration += 1) {
+      for (
+        let iteration = 1;
+        iteration <= MAX_WEBDEV_AGENT_ITERATIONS && !completed && Date.now() - runStartedAt < MAX_WEBDEV_AGENT_RUN_MS;
+        iteration += 1
+      ) {
         const toolCalls: Array<Required<Pick<WebDevToolCall, "id">> & WebDevToolCall> = [];
         const seenToolCalls = new Set<string>();
         let iterationText = "";
@@ -975,7 +1189,7 @@ export function useWebDevGeneration({
           },
           onToolDelta: (draft) => {
             endActiveThinkingPart();
-            void applyDraft(projectId, draft, appendToolActivityPart);
+            trackDraftActivity(applyDraft(projectId, draft, appendToolActivityPart));
           },
           onToolCall: (call) => {
             endActiveThinkingPart();
@@ -985,13 +1199,14 @@ export function useWebDevGeneration({
             if (seenToolCalls.has(signature) || seenToolCalls.has(argsSignature)) return;
             seenToolCalls.add(signature);
             seenToolCalls.add(argsSignature);
-            void showToolDraftActivity(projectId, normalized, appendToolActivityPart);
+            trackDraftActivity(showToolDraftActivity(projectId, normalized, appendToolActivityPart));
             toolCalls.push(normalized);
           },
         });
 
         endActiveThinkingPart();
         if (assistantThought) flushThought();
+        await settleDraftActivities();
 
         if (toolCalls.length === 0) {
           const hasFreshVisibleText = iterationText.trim().length > 0;
@@ -1007,7 +1222,7 @@ export function useWebDevGeneration({
                 continue;
               }
               if (hasMutations) {
-                const finishGate = evaluateWebDevFinish({ files: filesRef.current, startedEmpty, toolResults: allToolResults });
+                const finishGate = evaluateWebDevFinish({ files: filesRef.current, startedEmpty, toolResults: allToolResults, buildPlan: buildPlanRef.current });
                 if (!finishGate.accepted) {
                   providerMessages = appendInternalInstruction(
                     providerMessages,
@@ -1046,7 +1261,6 @@ export function useWebDevGeneration({
         ];
 
         const results = await executeToolCalls(projectId, toolCalls, changedPaths, iteration, abortController.signal);
-        lastToolResults = results;
         allToolResults.push(...results);
         providerMessages = appendToolResults(providerMessages, results);
 
@@ -1076,7 +1290,7 @@ export function useWebDevGeneration({
 
         const finish = results.find(result => result.name === "webdev_finish" && result.response.success);
         if (finish) {
-          const finishGate = evaluateWebDevFinish({ files: filesRef.current, startedEmpty, toolResults: allToolResults });
+          const finishGate = evaluateWebDevFinish({ files: filesRef.current, startedEmpty, toolResults: allToolResults, buildPlan: buildPlanRef.current });
           if (hasSuccessfulMutation(allToolResults) && !hasSuccessfulVerification(allToolResults) && !verificationNudged) {
             verificationNudged = true;
             providerMessages = appendInternalInstruction(
@@ -1101,19 +1315,14 @@ export function useWebDevGeneration({
 
       if (!completed) {
         const fallback = allToolResults.length > 0
-          ? summarizeToolResults(allToolResults)
-          : lastToolResults.length > 0
-            ? "The run paused after tool work. Review the latest file changes and send another message to continue."
-            : "I could not complete the Web Dev turn. Please try again.";
-        if (allToolResults.length > 0) {
-          await appendFinalAssistantMessage(fallback, true);
-        } else {
-          assistantText = mergeFinalSummary(assistantText, fallback);
-          syncAssistantMessage({ content: assistantText, isThinking: false });
-        }
+          ? "The model used the full Web Dev run budget before it sent a final summary. Completed file changes are preserved; send continue and it will resume from the current project state."
+          : "The model used the full Web Dev run budget before producing a usable response. Please try again.";
+        assistantText = mergeFinalSummary(assistantText, fallback);
+        syncAssistantMessage({ content: assistantText, isThinking: false });
       } else {
         syncAssistantMessage({ isThinking: false });
       }
+      await settleDraftActivities();
       await finalizeRunningActivities("done");
       patchProject(projectId, { status: "idle" });
       await updateWebDevProject(projectId, { status: "idle" });
@@ -1126,6 +1335,7 @@ export function useWebDevGeneration({
         : getReadableWebDevError(error);
       assistantText = content;
       syncAssistantMessage({ content, isThinking: false });
+      await settleDraftActivities();
       await finalizeRunningActivities(isStopped ? "done" : "error");
       patchProject(projectId, { status: isStopped ? "idle" : "error", error: isStopped ? undefined : content });
       await updateWebDevProject(projectId, { status: isStopped ? "idle" : "error", error: isStopped ? undefined : content });
@@ -1135,6 +1345,10 @@ export function useWebDevGeneration({
         thoughtFlushTimerRef.current = null;
       }
       setIsGenerating(false);
+      patchPreviewPathRef.current = null;
+      patchPreviewContentRef.current.clear();
+      patchPreviewUpdatedAtRef.current.clear();
+      onPatchPreviewChange?.(null);
       abortControllerRef.current = null;
     }
   };

@@ -70,6 +70,7 @@ export function WebDevWorkspace({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isIdeOpen, setIsIdeOpen] = useState(true);
   const [activeDiff, setActiveDiff] = useState<WebDevFileDiff | null>(null);
+  const [patchPreviewDiff, setPatchPreviewDiff] = useState<WebDevFileDiff | null>(null);
   const [fileActionDialog, setFileActionDialog] = useState<FileActionDialog | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +80,7 @@ export function WebDevWorkspace({
 
   useEffect(() => {
     setActiveDiff(null);
+    setPatchPreviewDiff(null);
     if (!currentProjectId) {
       setFiles([]);
       setMessages([]);
@@ -105,6 +107,21 @@ export function WebDevWorkspace({
     setFiles,
     setMessages,
     setIsGenerating,
+    onPatchPreviewChange: (diff) => {
+      setPatchPreviewDiff(prev => {
+        if (!diff) return null;
+        if (
+          prev?.path === diff.path &&
+          prev.beforeContent === diff.beforeContent &&
+          prev.afterContent === diff.afterContent &&
+          prev.status === diff.status
+        ) {
+          return prev;
+        }
+        return diff;
+      });
+      if (diff) setIsIdeOpen(true);
+    },
   });
 
   const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste" | "screenshot") => {
@@ -227,6 +244,8 @@ export function WebDevWorkspace({
     const pendingAttachments = attachments;
     setInput("");
     setAttachments([]);
+    setActiveDiff(null);
+    setPatchPreviewDiff(null);
     void sendWebDevMessage(value, pendingAttachments);
     setIsIdeOpen(true);
   };
@@ -244,6 +263,7 @@ export function WebDevWorkspace({
     setProjects(prev => prev.map(item => item.id === project.id ? { ...item, activeFilePath: path, updatedAt: Date.now() } : item));
     void updateWebDevProject(project.id, { activeFilePath: path });
     setActiveDiff(null);
+    setPatchPreviewDiff(null);
   };
 
   const handleSelectActivityFile = (path: string) => {
@@ -383,14 +403,17 @@ export function WebDevWorkspace({
           project={project}
           files={files}
           activeFilePath={activeFilePath}
-          activeDiff={activeDiff}
+          activeDiff={patchPreviewDiff || activeDiff}
           isDarkMode={isDarkMode}
           isGenerating={isGenerating}
           width={webDevPanelWidth}
           onWidthChange={onPanelWidthChange}
           onClose={() => setIsIdeOpen(false)}
           onSelectFile={handleSelectFile}
-          onCloseDiff={() => setActiveDiff(null)}
+          onCloseDiff={() => {
+            setPatchPreviewDiff(null);
+            setActiveDiff(null);
+          }}
           onFileChange={handleFileChange}
           onCreateFile={createFile}
           onCreateFolder={createFolder}

@@ -12,6 +12,7 @@ export interface WebDevFileDiff {
   path: string;
   beforeContent: string;
   afterContent: string;
+  status?: "previewing" | "committed";
 }
 
 export interface WebDevRuntimeState {

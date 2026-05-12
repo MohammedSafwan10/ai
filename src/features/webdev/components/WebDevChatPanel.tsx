@@ -71,20 +71,28 @@ const countChangedLines = (before = "", after = "") => {
   if (before === after) return { additions: 0, deletions: 0 };
   const beforeLines = before ? before.split(/\r?\n/) : [];
   const afterLines = after ? after.split(/\r?\n/) : [];
-  let start = 0;
-  while (start < beforeLines.length && start < afterLines.length && beforeLines[start] === afterLines[start]) {
-    start += 1;
+
+  const beforeCounts = new Map<string, number>();
+  beforeLines.forEach(line => {
+    beforeCounts.set(line, (beforeCounts.get(line) || 0) + 1);
+  });
+
+  let additions = 0;
+  afterLines.forEach(line => {
+    const count = beforeCounts.get(line) || 0;
+    if (count > 0) {
+      beforeCounts.set(line, count - 1);
+      return;
+    }
+    additions += 1;
+  });
+
+  let deletions = 0;
+  for (const count of beforeCounts.values()) {
+    deletions += count;
   }
-  let beforeEnd = beforeLines.length - 1;
-  let afterEnd = afterLines.length - 1;
-  while (beforeEnd >= start && afterEnd >= start && beforeLines[beforeEnd] === afterLines[afterEnd]) {
-    beforeEnd -= 1;
-    afterEnd -= 1;
-  }
-  return {
-    additions: Math.max(0, afterEnd - start + 1),
-    deletions: Math.max(0, beforeEnd - start + 1),
-  };
+
+  return { additions, deletions };
 };
 
 const getEffectiveActivityDelta = (message: WebDevMessage) => {
@@ -132,10 +140,93 @@ const hasVisibleActivityDelta = (message: WebDevMessage) =>
   hasMeaningfulActivityDelta(message) ||
   Boolean(message.activityDetail);
 
-const removeStalePrefixActivities = (messages: WebDevMessage[]) =>
-  messages.filter(message => {
+const getActivityRank = (message: WebDevMessage) => {
+  if (hasMeaningfulActivityDelta(message)) return 4;
+  if (message.beforeContent !== undefined || message.afterContent !== undefined) return 3;
+  if (message.activityStatus === "done") return 2;
+  if (message.activityDetail) return 1;
+  return 0;
+};
+
+const getPreferredDeltaSource = (primary: WebDevMessage, fallback: WebDevMessage) => {
+  if (primary.beforeContent !== undefined || primary.afterContent !== undefined) return primary;
+  if (fallback.beforeContent !== undefined || fallback.afterContent !== undefined) return fallback;
+  if (hasMeaningfulActivityDelta(primary)) return primary;
+  if (hasMeaningfulActivityDelta(fallback)) return fallback;
+  return primary;
+};
+
+const getCreatedAt = (message: WebDevMessage) => typeof message.createdAt === "number" ? message.createdAt : 0;
+
+const getNetContentDelta = (first: WebDevMessage, second: WebDevMessage) => {
+  const earliest = getCreatedAt(first) <= getCreatedAt(second) ? first : second;
+  const latest = earliest === first ? second : first;
+  const beforeContent =
+    earliest.beforeContent !== undefined
+      ? earliest.beforeContent
+      : latest.beforeContent;
+  const afterContent =
+    latest.afterContent !== undefined
+      ? latest.afterContent
+      : earliest.afterContent;
+
+  if (beforeContent === undefined && afterContent === undefined) {
+    return undefined;
+  }
+
+  return {
+    beforeContent,
+    afterContent,
+    ...countChangedLines(beforeContent || "", afterContent || ""),
+  };
+};
+
+const mergeActivityMessages = (messages: WebDevMessage[]) => {
+  const merged = new Map<string, WebDevMessage>();
+  const passthrough: WebDevMessage[] = [];
+
+  messages.forEach(message => {
+    if (!message.filePath) {
+      passthrough.push(message);
+      return;
+    }
+
+    const existing = merged.get(message.filePath);
+    if (!existing) {
+      merged.set(message.filePath, message);
+      return;
+    }
+
+    const preferNext = getActivityRank(message) >= getActivityRank(existing);
+    const base = preferNext ? message : existing;
+    const fallback = preferNext ? existing : message;
+    const deltaSource = getPreferredDeltaSource(base, fallback);
+    const netDelta = getNetContentDelta(existing, message);
+    const delta = netDelta || getEffectiveActivityDelta(deltaSource);
+
+    merged.set(message.filePath, {
+      ...fallback,
+      ...base,
+      activityStatus: existing.activityStatus === "running" || message.activityStatus === "running" ? "running" : base.activityStatus,
+      additions: delta.additions,
+      deletions: delta.deletions,
+      beforeContent: netDelta ? netDelta.beforeContent : deltaSource.beforeContent,
+      afterContent: netDelta ? netDelta.afterContent : deltaSource.afterContent,
+      activityDetail: base.activityDetail || fallback.activityDetail,
+    });
+  });
+
+  const byId = new Map([...merged.values(), ...passthrough].map(message => [message.id, message]));
+  return messages
+    .map(message => message.filePath ? merged.get(message.filePath) : byId.get(message.id))
+    .filter((message, index, all): message is WebDevMessage => Boolean(message) && all.findIndex(item => item?.id === message.id) === index);
+};
+
+const removeStalePrefixActivities = (messages: WebDevMessage[]) => {
+  const mergedMessages = mergeActivityMessages(messages);
+  return mergedMessages.filter(message => {
     if (!message.filePath || hasVisibleActivityDelta(message)) return true;
-    return !messages.some(other =>
+    return !mergedMessages.some(other =>
       other.id !== message.id &&
       other.filePath &&
       other.filePath !== message.filePath &&
@@ -143,6 +234,7 @@ const removeStalePrefixActivities = (messages: WebDevMessage[]) =>
       hasVisibleActivityDelta(other)
     );
   });
+};
 
 const groupOrderedParts = (parts: WebDevContentPart[], activitiesById: Map<string, WebDevMessage>) => {
   const rendered: WebDevRenderedPart[] = [];
