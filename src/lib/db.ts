@@ -109,14 +109,23 @@ export interface WebDevMessageRecord {
   content: string;
   thought?: string;
   isThinking?: boolean;
-  contentParts?: Array<{
-    type: "thinking" | "text";
-    text: string;
-    title?: string;
-    active?: boolean;
-    startedAt?: number;
-    endedAt?: number;
-  }>;
+  contentParts?: Array<
+    | {
+        type: "thinking" | "text";
+        text: string;
+        title?: string;
+        active?: boolean;
+        startedAt?: number;
+        endedAt?: number;
+      }
+    | {
+        type: "tool";
+        activityId: string;
+        activityKey?: string;
+        startedAt?: number;
+        endedAt?: number;
+      }
+  >;
   attachments?: AttachmentRecord[];
   toolCallId?: string;
   toolName?: string;
@@ -128,10 +137,13 @@ export interface WebDevMessageRecord {
   hiddenFromChat?: boolean;
   activityType?: string;
   filePath?: string;
-  activityOperation?: "created" | "updated" | "patched" | "deleted" | "renamed" | "created_project" | "skipped";
+  activityOperation?: "created" | "updated" | "patched" | "deleted" | "renamed" | "created_project" | "skipped" | "searched" | "outlined" | "checked" | "command";
   activityStatus?: "running" | "done" | "error";
+  activityDetail?: string;
   additions?: number;
   deletions?: number;
+  beforeContent?: string;
+  afterContent?: string;
   createdAt: number;
 }
 

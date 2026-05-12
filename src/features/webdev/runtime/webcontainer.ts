@@ -6,8 +6,24 @@ import type { WebDevFile, WebDevRuntimeState } from "../lib/types";
 declare global {
   interface Window {
     __privoraWebContainerBootPromise?: Promise<WebContainer>;
+    __privoraWebContainerCommandPackageHash?: string;
   }
 }
+
+const RUNTIME_RESTART_PATHS = [
+  "package.json",
+  "vite.config.ts",
+  "vite.config.js",
+  "vite.config.mts",
+  "vite.config.mjs",
+  "tsconfig.json",
+  "tsconfig.app.json",
+  "tsconfig.node.json",
+  "postcss.config.js",
+  "postcss.config.cjs",
+  "tailwind.config.js",
+  "tailwind.config.ts",
+];
 
 let configuredApiKey = false;
 
@@ -39,6 +55,8 @@ const bootWebContainer = async () => {
   return window.__privoraWebContainerBootPromise;
 };
 
+export const canUseWebDevCommands = canUseWebContainer;
+
 const hasRunnableViteProject = (files: WebDevFile[]) => {
   const packageFile = files.find(file => normalizeWebDevPath(file.path) === "package.json");
   if (!packageFile) return false;
@@ -48,6 +66,13 @@ const hasRunnableViteProject = (files: WebDevFile[]) => {
   } catch {
     return false;
   }
+};
+
+const getRuntimeRestartSignature = (files: WebDevFile[]) => {
+  const byPath = new Map(files.map(file => [normalizeWebDevPath(file.path), file.content]));
+  return RUNTIME_RESTART_PATHS
+    .map(path => `${path}:${byPath.get(path) || ""}`)
+    .join("\n---privora-runtime-config---\n");
 };
 
 const ensureRuntimeFiles = (files: WebDevFile[]): WebDevFile[] => {
@@ -98,6 +123,145 @@ const readProcessOutput = (
   void pump();
 };
 
+const runProcessWithOutput = async (
+  process: WebContainerProcess,
+  onLine: (line: string) => void,
+  signal: AbortSignal,
+  timeoutMs: number,
+) => {
+  readProcessOutput(process, onLine);
+  let timeout: number | undefined;
+  const timeoutPromise = new Promise<number>((resolve) => {
+    timeout = window.setTimeout(() => {
+      process.kill();
+      onLine(`Command timed out after ${Math.round(timeoutMs / 1000)}s.`);
+      resolve(124);
+    }, timeoutMs);
+  });
+  const abortPromise = new Promise<number>((resolve) => {
+    if (signal.aborted) {
+      process.kill();
+      resolve(130);
+      return;
+    }
+    signal.addEventListener("abort", () => {
+      process.kill();
+      resolve(130);
+    }, { once: true });
+  });
+  const exitCode = await Promise.race([process.exit, timeoutPromise, abortPromise]);
+  if (timeout) window.clearTimeout(timeout);
+  return exitCode;
+};
+
+const mountFilesForCommand = async (files: WebDevFile[], onLine: (line: string) => void) => {
+  const activeFiles = ensureRuntimeFiles(files.filter(file => file.status !== "deleted" && file.status !== "streaming"));
+  if (!hasRunnableViteProject(activeFiles)) {
+    throw new Error("No runnable package.json with a dev script exists yet.");
+  }
+  const webcontainer = await bootWebContainer();
+  onLine("Mounting project files...");
+  await webcontainer.mount(toWebContainerTree(activeFiles));
+  return { webcontainer, activeFiles };
+};
+
+const getPackageJson = (files: WebDevFile[]) => {
+  const packageFile = files.find(file => normalizeWebDevPath(file.path) === "package.json");
+  if (!packageFile) return null;
+  try {
+    return JSON.parse(packageFile.content) as { scripts?: Record<string, string> };
+  } catch {
+    return null;
+  }
+};
+
+export const SAFE_WEBDEV_NPM_SCRIPTS = new Set(["build", "lint", "test", "typecheck", "preview"]);
+
+export const getSafeWebDevScriptError = (files: WebDevFile[], script: string) => {
+  const cleanScript = script.trim();
+  if (!SAFE_WEBDEV_NPM_SCRIPTS.has(cleanScript)) {
+    return `Only safe npm scripts are allowed here: ${[...SAFE_WEBDEV_NPM_SCRIPTS].join(", ")}.`;
+  }
+  const packageJson = getPackageJson(files);
+  if (!packageJson?.scripts?.[cleanScript]) {
+    return `package.json does not define an npm script named "${cleanScript}".`;
+  }
+  return null;
+};
+
+export interface WebDevCommandResult {
+  success: boolean;
+  output: string;
+  error?: string;
+  exitCode?: number;
+}
+
+export const runWebDevNpmScript = async ({
+  files,
+  script,
+  args = [],
+  signal,
+  onLine,
+  timeoutMs = 120000,
+}: {
+  files: WebDevFile[];
+  script: string;
+  args?: string[];
+  signal: AbortSignal;
+  onLine: (line: string) => void;
+  timeoutMs?: number;
+}): Promise<WebDevCommandResult> => {
+  if (!canUseWebContainer()) {
+    return {
+      success: false,
+      error: "WebContainer commands need cross-origin isolation.",
+      output: "WebContainer commands need cross-origin isolation.",
+    };
+  }
+  const scriptError = getSafeWebDevScriptError(files, script);
+  if (scriptError) return { success: false, error: scriptError, output: scriptError };
+
+  const output: string[] = [];
+  const append = (line: string) => {
+    output.push(line);
+    onLine(line);
+    window.dispatchEvent(new CustomEvent("privora-webdev-command-output", { detail: { line } }));
+  };
+
+  try {
+    const { webcontainer, activeFiles } = await mountFilesForCommand(files, append);
+    const packageHash = getPackageHash(activeFiles);
+    if (window.__privoraWebContainerCommandPackageHash !== packageHash) {
+      append("Installing dependencies...");
+      const install = await webcontainer.spawn("npm", ["install", "--prefer-offline", "--no-audit", "--no-fund"]);
+      const installCode = await runProcessWithOutput(install, append, signal, timeoutMs);
+      if (installCode !== 0) {
+        return {
+          success: false,
+          error: `npm install exited with code ${installCode}`,
+          output: output.join("\n"),
+          exitCode: installCode,
+        };
+      }
+      window.__privoraWebContainerCommandPackageHash = packageHash;
+    }
+
+    append(`Running npm run ${script}${args.length ? ` -- ${args.join(" ")}` : ""}...`);
+    const process = await webcontainer.spawn("npm", ["run", script, ...(args.length ? ["--", ...args] : [])]);
+    const exitCode = await runProcessWithOutput(process, append, signal, timeoutMs);
+    return {
+      success: exitCode === 0,
+      output: output.join("\n"),
+      error: exitCode === 0 ? undefined : `npm run ${script} exited with code ${exitCode}`,
+      exitCode,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "WebContainer command failed.";
+    append(message);
+    return { success: false, error: message, output: output.join("\n") || message };
+  }
+};
+
 export function useWebContainerRuntime(projectId: string | null, files: WebDevFile[]) {
   const [state, setState] = useState<WebDevRuntimeState>({
     status: "idle",
@@ -109,8 +273,12 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
   const mountedProjectRef = useRef<string | null>(null);
   const syncedFilesRef = useRef<Map<string, string>>(new Map());
   const packageHashRef = useRef("");
+  const installedPackageHashRef = useRef("");
+  const restartSignatureRef = useRef("");
+  const restartCleanupRef = useRef<(() => void) | undefined>(undefined);
   const activeFiles = useMemo(() => ensureRuntimeFiles(files.filter(file => file.status !== "deleted" && file.status !== "streaming")), [files]);
   const packageHash = useMemo(() => getPackageHash(activeFiles), [activeFiles]);
+  const restartSignature = useMemo(() => getRuntimeRestartSignature(activeFiles), [activeFiles]);
 
   const appendTerminal = (line: string) => {
     setState(prev => ({
@@ -126,7 +294,7 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
     devProcessRef.current = null;
   };
 
-  const restart = async (reason = "restart") => {
+  const restart = async (reason = "restart", options: { forceInstall?: boolean } = {}) => {
     if (!projectId || activeFiles.length === 0) return;
     if (!hasRunnableViteProject(activeFiles)) {
       setState(prev => ({
@@ -147,6 +315,8 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
       return;
     }
 
+    restartCleanupRef.current?.();
+    restartCleanupRef.current = undefined;
     stopProcesses();
     setState(prev => ({
       ...prev,
@@ -173,15 +343,22 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
       syncedFilesRef.current = new Map(activeFiles.map(file => [normalizeWebDevPath(file.path), file.content]));
       mountedProjectRef.current = projectId;
       packageHashRef.current = packageHash;
+      restartSignatureRef.current = restartSignature;
 
-      setState(prev => ({ ...prev, status: "installing" }));
-      appendTerminal("Installing dependencies...");
-      const install = await webcontainer.spawn("npm", ["install", "--prefer-offline", "--no-audit", "--no-fund"]);
-      installProcessRef.current = install;
-      readProcessOutput(install, appendTerminal);
-      const installCode = await install.exit;
-      installProcessRef.current = null;
-      if (installCode !== 0) throw new Error(`npm install exited with code ${installCode}`);
+      if (options.forceInstall || installedPackageHashRef.current !== packageHash) {
+        setState(prev => ({ ...prev, status: "installing" }));
+        appendTerminal("Installing dependencies...");
+        const install = await webcontainer.spawn("npm", ["install", "--prefer-offline", "--no-audit", "--no-fund"]);
+        installProcessRef.current = install;
+        readProcessOutput(install, appendTerminal);
+        const installCode = await install.exit;
+        installProcessRef.current = null;
+        if (installCode !== 0) throw new Error(`npm install exited with code ${installCode}`);
+        installedPackageHashRef.current = packageHash;
+        window.__privoraWebContainerCommandPackageHash = packageHash;
+      } else {
+        appendTerminal("Dependencies unchanged; restarting dev server.");
+      }
 
       setState(prev => ({ ...prev, status: "starting" }));
       appendTerminal("Starting Vite dev server...");
@@ -204,20 +381,25 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
 
   useEffect(() => {
     let cancelled = false;
-    let cleanup: (() => void) | undefined;
     const run = async () => {
-      const result = await restart(mountedProjectRef.current === projectId ? "restart" : "mount");
+      const packageChanged = packageHashRef.current !== packageHash;
+      const result = await restart(mountedProjectRef.current === projectId ? "restart" : "mount", {
+        forceInstall: packageChanged,
+      });
       if (cancelled) result?.();
-      else cleanup = result;
+      else restartCleanupRef.current = result;
     };
-    if (projectId && activeFiles.length > 0 && (mountedProjectRef.current !== projectId || packageHashRef.current !== packageHash)) {
-      void run();
+    if (projectId && activeFiles.length > 0 && (mountedProjectRef.current !== projectId || restartSignatureRef.current !== restartSignature)) {
+      const timeout = window.setTimeout(() => void run(), mountedProjectRef.current === projectId ? 700 : 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timeout);
+      };
     }
     return () => {
       cancelled = true;
-      cleanup?.();
     };
-  }, [projectId, packageHash]);
+  }, [projectId, packageHash, restartSignature]);
 
   useEffect(() => {
     if (!projectId || mountedProjectRef.current !== projectId || state.status === "installing" || state.status === "booting") return;
@@ -249,10 +431,22 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
     return () => window.clearTimeout(timeout);
   }, [projectId, activeFiles, state.status]);
 
-  useEffect(() => () => stopProcesses(), []);
+  useEffect(() => {
+    const onCommandOutput = (event: Event) => {
+      const line = (event as CustomEvent<{ line?: string }>).detail?.line;
+      if (line) appendTerminal(line);
+    };
+    window.addEventListener("privora-webdev-command-output", onCommandOutput);
+    return () => {
+      window.removeEventListener("privora-webdev-command-output", onCommandOutput);
+      restartCleanupRef.current?.();
+      restartCleanupRef.current = undefined;
+      stopProcesses();
+    };
+  }, []);
 
   return {
     runtime: state,
-    restart: () => void restart("restart"),
+    restart: () => void restart("restart", { forceInstall: true }),
   };
 }

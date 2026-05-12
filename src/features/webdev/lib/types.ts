@@ -8,6 +8,12 @@ export type WebDevMessage = WebDevMessageRecord;
 
 export type WebDevIdeTab = "code" | "preview";
 
+export interface WebDevFileDiff {
+  path: string;
+  beforeContent: string;
+  afterContent: string;
+}
+
 export interface WebDevRuntimeState {
   status: "idle" | "booting" | "installing" | "starting" | "running" | "error" | "unsupported";
   previewUrl?: string;

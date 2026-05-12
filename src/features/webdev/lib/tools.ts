@@ -30,7 +30,7 @@ export const webDevToolDefinitions = [
   {
     type: "function",
     name: "webdev_patch_file",
-    description: "Patch a file with an exact search/replace edit. Use write_file if exact source text is uncertain.",
+    description: "Patch an existing file. Prefer this over write_file for targeted edits. Supports either { search, replace } or a unified-diff style patch string.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -42,8 +42,8 @@ export const webDevToolDefinitions = [
           properties: {
             search: { type: "string" },
             replace: { type: "string" },
+            diff: { type: "string" },
           },
-          required: ["search", "replace"],
         },
         summary: { type: "string" },
       },
@@ -115,6 +115,61 @@ export const webDevToolDefinitions = [
         path: { type: "string" },
       },
       required: ["path"],
+    },
+  },
+  {
+    type: "function",
+    name: "webdev_search_files",
+    description: "Search current Web Dev project file contents. Use before editing when you need to find symbols, text, or likely files.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { type: "string" },
+        includePattern: { type: "string" },
+        caseSensitive: { type: "boolean" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    type: "function",
+    name: "webdev_file_outline",
+    description: "Get imports, exports, functions/components/types, CSS selectors, or JSON top-level keys for a file without reading all content.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        path: { type: "string" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    type: "function",
+    name: "webdev_get_diagnostics",
+    description: "Run project diagnostics/build checks in the WebContainer and return errors or warnings. Use after meaningful edits.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        paths: { type: "array", items: { type: "string" } },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "webdev_run_command",
+    description: "Run one safe npm script from package.json in the WebContainer, such as build, lint, test, typecheck, or preview. No arbitrary shell.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        script: { type: "string" },
+        args: { type: "array", items: { type: "string" } },
+      },
+      required: ["script"],
     },
   },
   {
@@ -206,8 +261,43 @@ export const parsePartialWebDevToolCall = (name: string | undefined, rawArgument
   const path = extractJsonStringValue(rawArguments, "path");
   const content = extractJsonStringValue(rawArguments, "content");
   const summary = extractJsonStringValue(rawArguments, "summary");
-  if (!path || content === undefined) return null;
-  return normalizeWebDevToolCall({ name, arguments: { path, content, summary } });
+  const patch = extractJsonStringValue(rawArguments, "patch");
+  const search = extractJsonStringValue(rawArguments, "search");
+  const replace = extractJsonStringValue(rawArguments, "replace");
+  const from = extractJsonStringValue(rawArguments, "from");
+  const to = extractJsonStringValue(rawArguments, "to");
+  const query = extractJsonStringValue(rawArguments, "query");
+  const includePattern = extractJsonStringValue(rawArguments, "includePattern");
+  const script = extractJsonStringValue(rawArguments, "script");
+
+  if (name === "webdev_write_file") {
+    if (!path || content === undefined) return null;
+    return normalizeWebDevToolCall({ name, arguments: { path, content, summary } });
+  }
+  if (name === "webdev_patch_file") {
+    if (!path) return null;
+    return normalizeWebDevToolCall({ name, arguments: { path, patch, search, replace, summary } });
+  }
+  if (name === "webdev_delete_path" || name === "webdev_file_outline") {
+    if (!path) return null;
+    return normalizeWebDevToolCall({ name, arguments: { path, summary } });
+  }
+  if (name === "webdev_rename_path") {
+    if (!from && !to) return null;
+    return normalizeWebDevToolCall({ name, arguments: { from, to, summary } });
+  }
+  if (name === "webdev_search_files") {
+    if (!query) return null;
+    return normalizeWebDevToolCall({ name, arguments: { query, includePattern } });
+  }
+  if (name === "webdev_run_command") {
+    if (!script) return null;
+    return normalizeWebDevToolCall({ name, arguments: { script } });
+  }
+  if (name === "webdev_get_diagnostics") {
+    return normalizeWebDevToolCall({ name, arguments: {} });
+  }
+  return null;
 };
 
 export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | null => {
@@ -249,6 +339,46 @@ export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | 
     if (!isSafeWebDevPath(path)) return null;
     return { ...call, arguments: { path } };
   }
+  if (call.name === "webdev_search_files") {
+    return {
+      ...call,
+      arguments: {
+        query: typeof args.query === "string" ? args.query : "",
+        includePattern: typeof args.includePattern === "string" ? args.includePattern : undefined,
+        caseSensitive: Boolean(args.caseSensitive),
+      },
+    };
+  }
+  if (call.name === "webdev_file_outline") {
+    const path = typeof args.path === "string" ? normalizeWebDevPath(args.path) : "";
+    if (!isSafeWebDevPath(path)) return null;
+    return { ...call, arguments: { path } };
+  }
+  if (call.name === "webdev_get_diagnostics") {
+    const paths = Array.isArray(args.paths)
+      ? args.paths
+          .filter((path): path is string => typeof path === "string")
+          .map(normalizeWebDevPath)
+          .filter(isSafeWebDevPath)
+      : undefined;
+    return { ...call, arguments: paths?.length ? { paths } : {} };
+  }
+  if (call.name === "webdev_run_command") {
+    const safeArgs = Array.isArray(args.args)
+      ? args.args.filter((value): value is string =>
+          typeof value === "string" &&
+          value.length <= 80 &&
+          !/[;&|`$<>]/.test(value)
+        )
+      : [];
+    return {
+      ...call,
+      arguments: {
+        script: typeof args.script === "string" ? args.script.trim() : "",
+        args: safeArgs,
+      },
+    };
+  }
   if (call.name === "webdev_finish") {
     return {
       ...call,
@@ -262,9 +392,65 @@ export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | 
 };
 
 export const applySearchReplacePatch = (content: string, patch: unknown) => {
+  if (typeof patch === "string") return applyUnifiedTextPatch(content, patch);
+  const diff = typeof (patch as any)?.diff === "string" ? (patch as any).diff : "";
+  if (diff.trim()) return applyUnifiedTextPatch(content, diff);
   const search = typeof (patch as any)?.search === "string" ? (patch as any).search : "";
   const replace = typeof (patch as any)?.replace === "string" ? (patch as any).replace : "";
   if (!search) return null;
   if (!content.includes(search)) return null;
   return content.replace(search, replace);
+};
+
+const stripPatchEnvelope = (patch: string) =>
+  patch
+    .replace(/^\*\*\* Begin Patch\s*/m, "")
+    .replace(/\*\*\* End Patch\s*$/m, "")
+    .split(/\r?\n/)
+    .filter(line => !line.startsWith("*** Update File:") && !line.startsWith("--- ") && !line.startsWith("+++ "));
+
+const applyUnifiedTextPatch = (content: string, patch: string) => {
+  const lines = stripPatchEnvelope(patch);
+  const hunks: Array<{ search: string; replace: string }> = [];
+  let search: string[] = [];
+  let replace: string[] = [];
+  let inHunk = false;
+
+  const flush = () => {
+    if (!inHunk) return;
+    const searchText = search.join("\n");
+    if (searchText) hunks.push({ search: searchText, replace: replace.join("\n") });
+    search = [];
+    replace = [];
+    inHunk = false;
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      flush();
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    if (line.startsWith("+")) {
+      replace.push(line.slice(1));
+      continue;
+    }
+    if (line.startsWith("-")) {
+      search.push(line.slice(1));
+      continue;
+    }
+    const value = line.startsWith(" ") ? line.slice(1) : line;
+    search.push(value);
+    replace.push(value);
+  }
+  flush();
+
+  if (hunks.length === 0) return null;
+  let next = content;
+  for (const hunk of hunks) {
+    if (!next.includes(hunk.search)) return null;
+    next = next.replace(hunk.search, hunk.replace);
+  }
+  return next;
 };

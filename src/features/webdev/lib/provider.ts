@@ -171,6 +171,26 @@ const extractOpenRouterErrorMessage = (value: string) => {
   }
 };
 
+const extractCliproxyErrorMessage = (value: string) => {
+  try {
+    const parsed = JSON.parse(value);
+    const message = parsed?.error?.message || parsed?.message || value;
+    const code = parsed?.error?.code || parsed?.code || "";
+    if (
+      code === "auth_unavailable" ||
+      /auth_unavailable|invalidated oauth token|no auth available/i.test(String(message))
+    ) {
+      return "CLIProxy authentication is unavailable for this model. Reconnect or restart the CLIProxy/Codex session, or switch to another configured model/provider and try again.";
+    }
+    return String(message || value);
+  } catch {
+    if (/auth_unavailable|invalidated oauth token|no auth available/i.test(value)) {
+      return "CLIProxy authentication is unavailable for this model. Reconnect or restart the CLIProxy/Codex session, or switch to another configured model/provider and try again.";
+    }
+    return value;
+  }
+};
+
 const extractCliproxyTextDelta = (event: string | undefined, data: any) => {
   if (typeof data?.delta === "string" && event?.includes("output_text")) return data.delta;
   if (typeof data?.choices?.[0]?.delta?.content === "string") return data.choices[0].delta.content;
@@ -206,7 +226,7 @@ const findCompletedFunctionCall = (event: string | undefined, data: any) => {
   if (!type.includes("function_call") && item?.type !== "function_call") return null;
   if (typeof name !== "string" || !name.startsWith("webdev_")) return null;
   if (typeof argumentsText !== "string") return null;
-  return { id: item?.id || item?.call_id || data?.id || data?.call_id, name, argumentsText };
+  return { id: item?.call_id || data?.call_id || item?.id || data?.id, name, argumentsText };
 };
 
 async function streamCliproxyWebDevResponse({
@@ -243,13 +263,14 @@ async function streamCliproxyWebDevResponse({
 
   if (!response.ok || !response.body) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(errorText || `CLIProxy Web Dev request failed with ${response.status}`);
+    throw new Error(extractCliproxyErrorMessage(errorText) || `CLIProxy Web Dev request failed with ${response.status}`);
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let currentFunctionName = "";
+  let currentFunctionCallId = "";
   let argumentBuffer = "";
   const emittedToolCallKeys = new Set<string>();
 
@@ -274,6 +295,10 @@ async function streamCliproxyWebDevResponse({
         if (typeof itemName === "string" && itemName.startsWith("webdev_")) {
           currentFunctionName = itemName;
         }
+        const itemCallId = data?.item?.call_id || data?.output_item?.call_id || data?.call_id || data?.item?.id || data?.output_item?.id || data?.id;
+        if (typeof itemCallId === "string") {
+          currentFunctionCallId = itemCallId;
+        }
 
         const textDelta = extractCliproxyTextDelta(event, data);
         if (textDelta) onTextDelta(textDelta);
@@ -292,10 +317,12 @@ async function streamCliproxyWebDevResponse({
           emitToolCallOnce(completed.name, completed.argumentsText, (completed as any).id || (completed as any).call_id);
           argumentBuffer = "";
           currentFunctionName = "";
+          currentFunctionCallId = "";
         } else if (argumentBuffer && type.includes("function_call_arguments.done")) {
-          emitToolCallOnce(currentFunctionName, argumentBuffer);
+          emitToolCallOnce(currentFunctionName, argumentBuffer, currentFunctionCallId || undefined);
           argumentBuffer = "";
           currentFunctionName = "";
+          currentFunctionCallId = "";
         }
       } catch {
         if (!event || event.includes("output_text")) onTextDelta(dataLine);
