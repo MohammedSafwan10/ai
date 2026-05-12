@@ -8,6 +8,7 @@ import type { ArtifactRecord } from "../../../lib/db";
 import { normalizeArtifactRecord } from "../../../lib/artifacts";
 import { cn } from "../../../lib/utils";
 import { useToast } from "../../ui/ToastProvider";
+import { SandboxedPreviewFrame } from "./SandboxedPreviewFrame";
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
 const MONACO_LIGHT_THEME = "privora-artifact-light";
@@ -195,11 +196,6 @@ function MermaidPreview({ content, isDarkMode }: { content: string; isDarkMode: 
 }
 
 function ArtifactPreview({ artifact, isDarkMode }: { artifact: ArtifactRecord; isDarkMode: boolean }) {
-  const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [iframeHeight, setIframeHeight] = useState<number | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const messageToken = useMemo(() => createMessageToken(), [artifact.id, artifact.updatedAt]);
-  const previewSrcDoc = useMemo(() => buildPreviewSrcDoc(artifact, messageToken), [artifact, messageToken]);
   const svgAspectRatio = useMemo(() => {
     if (artifact.kind !== "svg") return undefined;
     const viewBoxMatch = artifact.content.match(/\bviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*["']/i);
@@ -211,62 +207,24 @@ function ArtifactPreview({ artifact, isDarkMode }: { artifact: ArtifactRecord; i
     return width / height;
   }, [artifact.content, artifact.kind]);
 
-  useEffect(() => {
-    setRuntimeError(null);
-    setIframeHeight(null);
-  }, [artifact.id, artifact.updatedAt, artifact.content]);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const data = event.data;
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (!data || data.artifactId !== artifact.id || data.token !== messageToken) return;
-      if (data.type === "privora-artifact-runtime-error") {
-        const location = data.line ? ` at line ${data.line}${data.column ? `:${data.column}` : ""}` : "";
-        setRuntimeError(`${String(data.message || "Artifact runtime error").slice(0, 500)}${location}`);
-      }
-      if (data.type === "privora-artifact-resize" && Number.isFinite(data.height)) {
-        if (artifact.kind === "svg") return;
-        const viewportMax = Math.round(window.innerHeight * 0.78);
-        const minHeight = 320;
-        const safeHeight = Math.max(minHeight, Math.min(viewportMax, Math.round(Number(data.height))));
-        setIframeHeight(safeHeight);
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [artifact.id, artifact.kind, messageToken]);
-
   if (artifact.kind === "html" || artifact.kind === "svg") {
     return (
-      <div className="relative">
-        <iframe
-          ref={iframeRef}
-          key={artifact.id}
-          title={artifact.title}
-          sandbox="allow-scripts"
-          referrerPolicy="no-referrer"
-          srcDoc={previewSrcDoc}
-          className={cn(
-            "block w-full bg-transparent",
-            artifact.kind === "html" ? "min-h-80" : "min-h-0"
-          )}
-          allowTransparency
-          style={artifact.kind === "svg"
-            ? {
-                aspectRatio: svgAspectRatio || 1.6,
-                height: "auto",
-                maxHeight: "calc(100vh - 7.5rem)",
-              }
-            : { height: iframeHeight ? `${iframeHeight}px` : "calc(100vh - 8.5rem)" }}
-        />
-        {runtimeError && (
-          <div className="absolute left-3 right-3 top-3 rounded-lg border border-red-500/25 bg-red-50 px-3 py-2 text-sm text-red-900 shadow-sm dark:bg-red-950/85 dark:text-red-100">
-            Canvas script error: {runtimeError}
-          </div>
-        )}
-      </div>
+      <SandboxedPreviewFrame
+        id={artifact.id}
+        title={artifact.title}
+        content={artifact.content}
+        mode={artifact.kind}
+        updatedAt={artifact.updatedAt}
+        theme={isDarkMode ? "dark" : "light"}
+        className={artifact.kind === "html" ? "min-h-80" : "min-h-0"}
+        style={artifact.kind === "svg"
+          ? {
+              aspectRatio: svgAspectRatio || 1.6,
+              height: "auto",
+              maxHeight: "calc(100vh - 7.5rem)",
+            }
+          : undefined}
+      />
     );
   }
 
