@@ -7,6 +7,7 @@ declare global {
   interface Window {
     __privoraWebContainerBootPromise?: Promise<WebContainer>;
     __privoraWebContainerCommandPackageHash?: string;
+    __privoraWebContainerSyncedFiles?: Map<string, string>;
   }
 }
 
@@ -155,15 +156,61 @@ const runProcessWithOutput = async (
 };
 
 const mountFilesForCommand = async (files: WebDevFile[], onLine: (line: string) => void) => {
-  const activeFiles = ensureRuntimeFiles(files.filter(file => file.status !== "deleted" && file.status !== "streaming"));
+  const activeFiles = ensureRuntimeFiles(files.filter(file => file.status !== "deleted"));
   if (!hasRunnableViteProject(activeFiles)) {
     throw new Error("No runnable package.json with a dev script exists yet.");
   }
   const webcontainer = await bootWebContainer();
-  onLine("Mounting project files...");
-  await webcontainer.mount(toWebContainerTree(activeFiles));
+  if (window.__privoraWebContainerSyncedFiles) {
+    onLine("Syncing project files...");
+    window.__privoraWebContainerSyncedFiles = await syncWebContainerFiles({
+      webcontainer,
+      files: activeFiles,
+      previous: window.__privoraWebContainerSyncedFiles,
+      onLine,
+    });
+  } else {
+    onLine("Mounting project files...");
+    await webcontainer.mount(toWebContainerTree(activeFiles));
+    window.__privoraWebContainerSyncedFiles = new Map(activeFiles.map(file => [normalizeWebDevPath(file.path), file.content]));
+  }
   return { webcontainer, activeFiles };
 };
+
+async function syncWebContainerFiles({
+  webcontainer,
+  files,
+  previous,
+  onLine,
+}: {
+  webcontainer: WebContainer;
+  files: WebDevFile[];
+  previous: Map<string, string>;
+  onLine: (line: string) => void;
+}) {
+  const next = new Map(files.map(file => [normalizeWebDevPath(file.path), file.content]));
+  for (const [path, previousContent] of previous.entries()) {
+    const fsPath = `/${path}`;
+    if (!next.has(path)) {
+      await webcontainer.fs.rm(fsPath, { force: true, recursive: true }).catch(() => undefined);
+      onLine(`Removed ${path}`);
+    } else if (next.get(path) !== previousContent) {
+      const folder = path.split("/").slice(0, -1).join("/");
+      if (folder) await webcontainer.fs.mkdir(`/${folder}`, { recursive: true }).catch(() => undefined);
+      await webcontainer.fs.writeFile(fsPath, next.get(path) || "");
+      onLine(`Updated ${path}`);
+    }
+  }
+  for (const [path, content] of next.entries()) {
+    if (!previous.has(path)) {
+      const folder = path.split("/").slice(0, -1).join("/");
+      if (folder) await webcontainer.fs.mkdir(`/${folder}`, { recursive: true }).catch(() => undefined);
+      await webcontainer.fs.writeFile(`/${path}`, content);
+      onLine(`Created ${path}`);
+    }
+  }
+  return next;
+}
 
 const getPackageJson = (files: WebDevFile[]) => {
   const packageFile = files.find(file => normalizeWebDevPath(file.path) === "package.json");
@@ -276,7 +323,7 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
   const installedPackageHashRef = useRef("");
   const restartSignatureRef = useRef("");
   const restartCleanupRef = useRef<(() => void) | undefined>(undefined);
-  const activeFiles = useMemo(() => ensureRuntimeFiles(files.filter(file => file.status !== "deleted" && file.status !== "streaming")), [files]);
+  const activeFiles = useMemo(() => ensureRuntimeFiles(files.filter(file => file.status !== "deleted")), [files]);
   const packageHash = useMemo(() => getPackageHash(activeFiles), [activeFiles]);
   const restartSignature = useMemo(() => getRuntimeRestartSignature(activeFiles), [activeFiles]);
 
@@ -341,6 +388,7 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
 
       await webcontainer.mount(toWebContainerTree(activeFiles));
       syncedFilesRef.current = new Map(activeFiles.map(file => [normalizeWebDevPath(file.path), file.content]));
+      window.__privoraWebContainerSyncedFiles = syncedFilesRef.current;
       mountedProjectRef.current = projectId;
       packageHashRef.current = packageHash;
       restartSignatureRef.current = restartSignature;
@@ -406,26 +454,14 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
     const sync = async () => {
       if (!window.__privoraWebContainerBootPromise) return;
       const webcontainer = await window.__privoraWebContainerBootPromise;
-      const next = new Map(activeFiles.map(file => [normalizeWebDevPath(file.path), file.content]));
-      for (const [path, previousContent] of syncedFilesRef.current.entries()) {
-        const fsPath = `/${path}`;
-        if (!next.has(path)) {
-          await webcontainer.fs.rm(fsPath, { force: true, recursive: true }).catch(() => undefined);
-          appendTerminal(`Removed ${path}`);
-        } else if (next.get(path) !== previousContent) {
-          await webcontainer.fs.writeFile(fsPath, next.get(path) || "");
-          appendTerminal(`Updated ${path}`);
-        }
-      }
-      for (const [path, content] of next.entries()) {
-        if (!syncedFilesRef.current.has(path)) {
-          const folder = path.split("/").slice(0, -1).join("/");
-          if (folder) await webcontainer.fs.mkdir(`/${folder}`, { recursive: true }).catch(() => undefined);
-          await webcontainer.fs.writeFile(`/${path}`, content);
-          appendTerminal(`Created ${path}`);
-        }
-      }
+      const next = await syncWebContainerFiles({
+        webcontainer,
+        files: activeFiles,
+        previous: syncedFilesRef.current,
+        onLine: appendTerminal,
+      });
       syncedFilesRef.current = next;
+      window.__privoraWebContainerSyncedFiles = next;
     };
     const timeout = window.setTimeout(() => void sync(), 350);
     return () => window.clearTimeout(timeout);

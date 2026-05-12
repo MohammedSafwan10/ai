@@ -2,6 +2,51 @@ import { useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Terminal } from "lucide-react";
 import type { WebDevRuntimeState } from "../lib/types";
 
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const openPreviewWindow = (previewUrl: string) => {
+  const tab = window.open("", "_blank");
+  if (!tab) return false;
+  const safeUrl = escapeHtml(previewUrl);
+  tab.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privora Preview</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1115; color: #f7f4ed; }
+    .bar { height: 38px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,.12); padding: 0 12px; background: #17191f; font-size: 12px; color: rgba(247,244,237,.72); }
+    .dot { width: 7px; height: 7px; border-radius: 999px; background: #25c26e; }
+    .url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .hint { margin-left: auto; white-space: nowrap; color: rgba(247,244,237,.58); }
+    a { color: inherit; text-decoration: none; }
+    a:hover { color: #fff; }
+    iframe { display: block; width: 100%; height: calc(100% - 38px); border: 0; background: white; }
+    @media (max-width: 720px) { .hint { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span class="dot"></span>
+    <span class="url">${safeUrl}</span>
+    <a class="hint" href="chrome://settings/content/popups" title="Chrome cannot be opened here on every browser. If needed, add https://[*.]webcontainer-api.io to allowed pop-ups.">If connection appears, allow pop-ups for webcontainer-api.io.</a>
+  </div>
+  <iframe src="${safeUrl}" allow="cross-origin-isolated"></iframe>
+</body>
+</html>`);
+  tab.document.close();
+  tab.focus();
+  return true;
+};
+
 export function WebDevPreview({
   runtime,
   onRestart,
@@ -43,10 +88,10 @@ export function WebDevPreview({
           </button>
           <button
             type="button"
-            onClick={() => runtime.previewUrl && window.open(runtime.previewUrl, "_blank")}
+            onClick={() => runtime.previewUrl && openPreviewWindow(runtime.previewUrl)}
             disabled={!runtime.previewUrl}
             className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--privora-muted)] transition hover:bg-[var(--privora-bg)] hover:text-[var(--privora-text)] disabled:cursor-not-allowed disabled:opacity-35"
-            title="Open preview in new tab"
+            title="Open preview in a Privora tab. Raw WebContainer tabs may require Chrome popup/cookie exceptions."
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
