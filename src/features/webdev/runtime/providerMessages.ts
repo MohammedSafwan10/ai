@@ -25,6 +25,17 @@ export const withToolCallId = (call: WebDevToolCall): Required<Pick<WebDevToolCa
 
 export const messagesToProviderHistory = (messages: WebDevMessageRecord[]): WebDevProviderMessage[] => {
   const providerMessages: WebDevProviderMessage[] = [];
+  const toolResultIds = new Set(
+    messages
+      .filter(message => message.role === "tool" && message.toolCallId && message.toolResult)
+      .map(message => message.toolCallId!)
+  );
+  const toolCallIds = new Set(
+    messages
+      .filter(message => message.role === "assistant" && message.toolCallId && message.toolName && message.toolArguments)
+      .map(message => message.toolCallId!)
+  );
+
   for (const message of messages) {
     const isHiddenToolCall =
       message.role === "assistant" &&
@@ -37,6 +48,7 @@ export const messagesToProviderHistory = (messages: WebDevMessageRecord[]): WebD
     }
     if (message.role === "assistant") {
       if (message.toolCallId && message.toolName && message.toolArguments) {
+        if (!toolResultIds.has(message.toolCallId)) continue;
         providerMessages.push({
           role: "assistant",
           content: message.content || "",
@@ -53,6 +65,7 @@ export const messagesToProviderHistory = (messages: WebDevMessageRecord[]): WebD
       continue;
     }
     if (message.role === "tool" && message.toolCallId && message.toolName && message.toolResult) {
+      if (!toolCallIds.has(message.toolCallId)) continue;
       providerMessages.push({
         role: "user",
         content: "",
