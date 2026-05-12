@@ -1,12 +1,13 @@
 # Privora
 
-Privora is a polished local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly, GPT-5.5 through CLIProxyAPI, and selected OpenRouter free text models, with streaming chat, Canvas artifacts, image generation/editing, web search, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
+Privora is a polished local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly, GPT-5.5 through CLIProxyAPI, and selected OpenRouter free text models, with streaming chat, Canvas artifacts, an embedded Web Dev workspace, image generation/editing, web search, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
 
 ## Features
 
 - Canvas artifacts for substantial generated work: Markdown, code, HTML, SVG, Mermaid, JSON, YAML, SQL, tables, text, and prompts.
 - Live artifact creation/update cards that open automatically in Canvas while generation streams.
-- Split Canvas with preview/code modes, Monaco editing, copy/download/open-tab controls, custom line numbers, transparent editor styling, and iframe runtime error display.
+- Split Canvas with preview/code modes, Monaco editing, copy/download/open-tab controls, custom line numbers, transparent editor styling, sandboxed HTML/SVG previews, iframe runtime error display, and Tailwind-preview warnings.
+- Embedded Web Dev workspace with project chat, file tree, Monaco editor, live WebContainer previews, terminal output, attachment support, and local project persistence.
 - Smart artifact routing for Gemini and OpenRouter: artifacts stream through a private output marker so Canvas can update progressively even when provider-native function calls arrive atomically.
 - Guardrails that keep ordinary informational Markdown answers in chat instead of incorrectly turning them into Canvas artifacts.
 - Image generation and image editing through CLIProxy image endpoints, including multiple images, partial-image streaming, retry, download, and edit-from-result flows.
@@ -36,6 +37,7 @@ Privora is a polished local-first AI workspace built with React, TypeScript, Vit
 - Dexie / IndexedDB
 - `@google/genai`
 - Monaco Editor
+- WebContainer API
 - Mermaid
 - React Markdown, remark-gfm, remark-math, rehype-katex
 - KaTeX
@@ -59,6 +61,7 @@ CLIPROXY_BASE_URL=http://127.0.0.1:8317
 VITE_CLIPROXY_API_KEY=sk-dummy
 OPENROUTER_API_KEY=your_openrouter_api_key
 APP_URL=http://127.0.0.1:3000
+VITE_WEBCONTAINER_API_KEY=
 ```
 
 Run the dev server:
@@ -154,6 +157,21 @@ Current Canvas behavior:
 
 The router intentionally rejects ambiguous artifact markers for ordinary Q&A, summaries, schedules, explanations, and Markdown-formatted chat answers unless the user clearly asked for a reusable artifact/file/document/Canvas item.
 
+## Web Dev Workspace
+
+Privora includes a separate `Web Dev` workspace for generating and iterating on small web apps without leaving the browser.
+
+Current Web Dev behavior:
+
+- Projects, files, messages, tool activity, attachments, and preview state are persisted in IndexedDB.
+- The sidebar can switch between normal chats and Web Dev projects.
+- The workspace includes a chat panel, file tree, Monaco editor, preview panel, terminal output, and manual file/folder actions.
+- Generated projects run in WebContainer when the browser supports cross-origin isolation and `SharedArrayBuffer`.
+- The Vite dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` so WebContainer can boot locally.
+- If a generated React project is missing a Vite config, Privora injects a runtime-only Vite config for preview bootstrapping.
+
+`VITE_WEBCONTAINER_API_KEY` is optional. It is a frontend-exposed `VITE_*` value, so only use a key/token that is safe to expose to the browser.
+
 ## Image Generation
 
 Image generation runs through CLIProxy image endpoints:
@@ -248,6 +266,8 @@ This is local to the current browser profile. Attachments are also persisted as 
 
 Persisted chat records include message content, attachments, reasoning text, web-search status, artifacts, image-generation metadata, research plans, research activity, research sources, and research timing metadata.
 
+Web Dev projects use the same IndexedDB database for project metadata, generated files, project chat messages, and workspace UI state.
+
 ## Prompt Context
 
 Every request includes the base system instruction, the selected response style, optional web-search/deep-research instructions, and live date/time context.
@@ -264,6 +284,7 @@ The date/time context includes:
 - `.env` files are ignored by git.
 - `.env.example` is safe to commit.
 - This app currently injects `GEMINI_API_KEY` into the frontend build for local/private use.
+- Any `VITE_*` value, including `VITE_WEBCONTAINER_API_KEY`, is exposed to browser code and must not contain private server-side secrets.
 - Vite middleware keeps local research and proxy routes convenient for development, but production deployment needs equivalent backend routes.
 - For public deployment, move Gemini, CLIProxy, and research job calls behind a real backend so provider keys never ship to browsers and research jobs are durable.
 - Do not commit local CLIProxy auth files, personal configs, `.env`, or generated `dist` output.
@@ -289,6 +310,12 @@ src/
     chat/
       components/
       hooks/
+    webdev/
+      components/
+      hooks/
+      lib/
+      prompts/
+      runtime/
   hooks/
   lib/
     attachments.ts
