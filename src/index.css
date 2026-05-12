@@ -239,14 +239,14 @@ body,
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   font-size: 0.9rem;
 }
 
 .privora-md-table-element th,
 .privora-md-table-element td {
-  min-width: 8.5rem;
-  max-width: 14rem;
+  min-width: 9.5rem;
+  max-width: 18rem;
   overflow-wrap: normal;
   word-break: normal;
   hyphens: none;
@@ -254,8 +254,9 @@ body,
 
 .privora-md-table-element th:first-child,
 .privora-md-table-element td:first-child {
-  min-width: 7.25rem;
-  max-width: 9rem;
+  min-width: 4.25rem;
+  max-width: 6rem;
+  width: 4.25rem;
 }
 
 .privora-md-table--chat .privora-md-table-element {
@@ -264,13 +265,24 @@ body,
 
 .privora-md-table--chat .privora-md-table-element th,
 .privora-md-table--chat .privora-md-table-element td {
-  min-width: 7.75rem;
-  max-width: 12rem;
+  min-width: 9rem;
+  max-width: 17rem;
 }
 
 .privora-md-table--preview .privora-md-table-element {
-  min-width: 42rem;
+  min-width: 56rem;
   font-size: 0.84rem;
+}
+
+.privora-md-table--preview.privora-md-table--wide .privora-md-table-element th,
+.privora-md-table--preview.privora-md-table--wide .privora-md-table-element td {
+  min-width: 10rem;
+  max-width: 20rem;
+}
+
+.privora-md-table--wide .privora-md-table-element th,
+.privora-md-table--wide .privora-md-table-element td {
+  vertical-align: top;
 }
 
 .privora-md-table--compact .privora-md-table-element {
@@ -299,8 +311,8 @@ body,
 
 .privora-md-table--report .privora-md-table-element th,
 .privora-md-table--report .privora-md-table-element td {
-  min-width: 10rem;
-  max-width: 15.5rem;
+  min-width: 10.5rem;
+  max-width: 22rem;
 }
 
 .privora-md-table--report .privora-md-table-element th:first-child,
