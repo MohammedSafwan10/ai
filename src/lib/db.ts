@@ -76,6 +76,21 @@ export type WebDevProjectStatus = "idle" | "generating" | "installing" | "runnin
 export type WebDevFileStatus = "ready" | "streaming" | "created" | "updated" | "deleted" | "error";
 export type WebDevMessageRole = "user" | "assistant" | "activity" | "tool";
 
+export interface WebDevBuildPlanRecord {
+  summary?: string;
+  routingRequired?: boolean;
+  routingStrategy?: "browser-router" | "hash-router" | "state-screens" | "none";
+  componentStrategy?: "shadcn-local" | "custom-css" | "minimal";
+  designDirection?: string;
+  primaryScreens?: string[];
+  qualityChecklist?: string[];
+  pages?: string[];
+  keyFiles?: string[];
+  verification?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export interface WebDevProjectRecord {
   id: string;
   title: string;
@@ -86,6 +101,7 @@ export interface WebDevProjectRecord {
   status: WebDevProjectStatus;
   runtimeStatus?: string;
   previewUrl?: string;
+  buildPlan?: WebDevBuildPlanRecord;
   error?: string;
   createdAt: number;
   updatedAt: number;

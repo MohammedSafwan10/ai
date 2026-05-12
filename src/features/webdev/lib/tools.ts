@@ -95,6 +95,28 @@ export const webDevToolDefinitions = [
   },
   {
     type: "function",
+    name: "webdev_set_build_plan",
+    description: "Record the intended app architecture and design direction before a major fresh build or large restructure. Use this before writing files when deciding pages, component strategy, visual direction, and verification.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        summary: { type: "string" },
+        routingRequired: { type: "boolean" },
+        routingStrategy: { type: "string", enum: ["browser-router", "hash-router", "state-screens", "none"] },
+        componentStrategy: { type: "string", enum: ["shadcn-local", "custom-css", "minimal"] },
+        designDirection: { type: "string" },
+        primaryScreens: { type: "array", items: { type: "string" } },
+        qualityChecklist: { type: "array", items: { type: "string" } },
+        pages: { type: "array", items: { type: "string" } },
+        keyFiles: { type: "array", items: { type: "string" } },
+        verification: { type: "string" },
+      },
+      required: ["summary", "routingRequired", "routingStrategy", "componentStrategy", "designDirection", "primaryScreens", "qualityChecklist", "pages", "keyFiles", "verification"],
+    },
+  },
+  {
+    type: "function",
     name: "webdev_list_files",
     description: "List current project files with path, status, line count, and size. Use before editing when project state is uncertain.",
     parameters: {
@@ -262,6 +284,7 @@ export const parsePartialWebDevToolCall = (name: string | undefined, rawArgument
   const content = extractJsonStringValue(rawArguments, "content");
   const summary = extractJsonStringValue(rawArguments, "summary");
   const patch = extractJsonStringValue(rawArguments, "patch");
+  const diff = extractJsonStringValue(rawArguments, "diff");
   const search = extractJsonStringValue(rawArguments, "search");
   const replace = extractJsonStringValue(rawArguments, "replace");
   const from = extractJsonStringValue(rawArguments, "from");
@@ -276,7 +299,13 @@ export const parsePartialWebDevToolCall = (name: string | undefined, rawArgument
   }
   if (name === "webdev_patch_file") {
     if (!path) return null;
-    return normalizeWebDevToolCall({ name, arguments: { path, patch, search, replace, summary } });
+    const partialPatch = diff !== undefined
+      ? { diff }
+      : search !== undefined
+        ? { search, replace: replace || "" }
+        : patch;
+    if (partialPatch === undefined) return normalizeWebDevToolCall({ name, arguments: { path, summary } });
+    return normalizeWebDevToolCall({ name, arguments: { path, patch: partialPatch, summary } });
   }
   if (name === "webdev_delete_path" || name === "webdev_file_outline") {
     if (!path) return null;
@@ -293,6 +322,9 @@ export const parsePartialWebDevToolCall = (name: string | undefined, rawArgument
   if (name === "webdev_run_command") {
     if (!script) return null;
     return normalizeWebDevToolCall({ name, arguments: { script } });
+  }
+  if (name === "webdev_set_build_plan") {
+    return normalizeWebDevToolCall({ name, arguments: parsed || {} });
   }
   if (name === "webdev_get_diagnostics") {
     return normalizeWebDevToolCall({ name, arguments: {} });
@@ -333,6 +365,40 @@ export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | 
   }
   if (call.name === "webdev_list_files") {
     return { ...call, arguments: {} };
+  }
+  if (call.name === "webdev_set_build_plan") {
+    const cleanStringList = (value: unknown) =>
+      Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === "string").map(item => item.trim()).filter(Boolean).slice(0, 20)
+        : [];
+    const pages = cleanStringList(args.pages);
+    const primaryScreens = cleanStringList(args.primaryScreens);
+    const keyFiles = cleanStringList(args.keyFiles).map(normalizeWebDevPath).filter(isSafeWebDevPath);
+    const routingStrategy = ["browser-router", "hash-router", "state-screens", "none"].includes(String(args.routingStrategy))
+      ? String(args.routingStrategy)
+      : Boolean(args.routingRequired)
+        ? "browser-router"
+        : "none";
+    const componentStrategy = ["shadcn-local", "custom-css", "minimal"].includes(String(args.componentStrategy))
+      ? String(args.componentStrategy)
+      : Boolean(args.routingRequired) || pages.length > 1 || primaryScreens.length > 1 || keyFiles.length > 6
+        ? "shadcn-local"
+        : "minimal";
+    return {
+      ...call,
+      arguments: {
+        summary: typeof args.summary === "string" ? args.summary.trim() : "Planned app architecture.",
+        routingRequired: Boolean(args.routingRequired),
+        routingStrategy,
+        componentStrategy,
+        designDirection: typeof args.designDirection === "string" ? args.designDirection.trim() : "",
+        primaryScreens,
+        qualityChecklist: cleanStringList(args.qualityChecklist),
+        pages,
+        keyFiles,
+        verification: typeof args.verification === "string" ? args.verification.trim() : "Run diagnostics/build after implementation.",
+      },
+    };
   }
   if (call.name === "webdev_read_file") {
     const path = typeof args.path === "string" ? normalizeWebDevPath(args.path) : "";

@@ -1,4 +1,5 @@
 import type { Attachment } from "../../../lib/attachments";
+import type { WebDevBuildPlanRecord } from "../../../lib/db";
 import type { WebDevFile, WebDevProviderMessage } from "../lib/types";
 import { estimateWebDevTokens } from "./tokenCounter";
 import { getModelRuntimeLimits } from "./modelLimits";
@@ -25,12 +26,14 @@ export const buildWebDevProjectContext = ({
   files,
   attachments,
   model,
+  buildPlan,
 }: {
   projectTitle: string;
   userPrompt: string;
   files: WebDevFile[];
   attachments: Attachment[];
   model: string;
+  buildPlan?: WebDevBuildPlanRecord;
 }) => {
   const limits = getModelRuntimeLimits(model);
   const contextBudget = Math.max(12000, Math.min(48000, limits.contextWindow - MIN_OUTPUT_RESERVE - 6000));
@@ -42,12 +45,30 @@ export const buildWebDevProjectContext = ({
       "Runtime environment:",
       "- This project runs inside Privora Web Dev using a browser WebContainer.",
       "- Privora mounts files, installs dependencies, starts Vite, and shows the Preview tab automatically.",
+      "- Multi-page V1 apps should be React SPA routes inside this Vite app; BrowserRouter routes work in the preview through Vite's fallback.",
       "- Do not tell the user to run npm install, npm run dev, or other local terminal commands unless they explicitly ask for external/local setup instructions.",
       "- Final summaries should describe completed changes and important files; mention the Preview tab instead of command-line run steps when relevant.",
     ].join("\n"),
     "Current project file tree:",
     tree,
   ];
+  if (buildPlan) {
+    sections.push(
+      "Current Web Dev build plan:",
+      [
+        `Summary: ${buildPlan.summary || "(none)"}`,
+        `Routing required: ${buildPlan.routingRequired ? "yes" : "no"}`,
+        `Routing strategy: ${buildPlan.routingStrategy || "(none)"}`,
+        `Component strategy: ${buildPlan.componentStrategy || "(none)"}`,
+        `Design direction: ${buildPlan.designDirection || "(none)"}`,
+        `Primary screens: ${(buildPlan.primaryScreens || []).join(", ") || "(none)"}`,
+        `Planned pages/screens: ${(buildPlan.pages || []).join(", ") || "(none)"}`,
+        `Key files: ${(buildPlan.keyFiles || []).join(", ") || "(none)"}`,
+        `Quality checklist: ${(buildPlan.qualityChecklist || []).join(", ") || "(none)"}`,
+        `Verification: ${buildPlan.verification || "(none)"}`,
+      ].join("\n")
+    );
+  }
   const attachmentsSummary = attachmentText(attachments);
   if (attachmentsSummary) {
     sections.push("User attachments:", attachmentsSummary);

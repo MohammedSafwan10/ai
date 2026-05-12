@@ -75,6 +75,39 @@ export const upsertWebDevFile = async (
   return record;
 };
 
+export const bulkUpsertWebDevFiles = async (
+  projectId: string,
+  files: Array<Pick<WebDevFileRecord, "path" | "content"> & Partial<Pick<WebDevFileRecord, "status" | "summary">>>
+) => {
+  const now = Date.now();
+  const normalized = files.map(file => ({
+    ...file,
+    path: normalizeWebDevPath(file.path),
+  }));
+  const existing = await db.webDevFiles.bulkGet(normalized.map(file => getWebDevFileId(projectId, file.path)));
+  const records: WebDevFileRecord[] = normalized.map((file, index) => {
+    const previous = existing[index];
+    return {
+      id: getWebDevFileId(projectId, file.path),
+      projectId,
+      path: file.path,
+      content: file.content,
+      status: file.status || (previous ? "updated" : "created"),
+      summary: file.summary,
+      createdAt: previous?.createdAt || now + index,
+      updatedAt: now + index,
+    };
+  });
+  await db.transaction("rw", db.webDevFiles, db.webDevProjects, async () => {
+    if (records.length > 0) await db.webDevFiles.bulkPut(records);
+    await db.webDevProjects.update(projectId, {
+      activeFilePath: records.at(-1)?.path,
+      updatedAt: Date.now(),
+    });
+  });
+  return records;
+};
+
 export const deleteWebDevPath = async (projectId: string, path: string) => {
   const normalized = normalizeWebDevPath(path);
   const files = await db.webDevFiles.where("projectId").equals(projectId).toArray();
@@ -156,6 +189,22 @@ export const appendWebDevMessage = async (
 
 export const updateWebDevMessage = async (messageId: string, patch: Partial<WebDevMessageRecord>) => {
   await db.webDevMessages.update(messageId, patch);
+};
+
+export const settleRunningWebDevActivities = async (
+  projectId: string,
+  status: Extract<WebDevMessageRecord["activityStatus"], "done" | "error"> = "done"
+) => {
+  const running = await db.webDevMessages
+    .where("projectId")
+    .equals(projectId)
+    .filter(message => message.role === "activity" && message.activityStatus === "running")
+    .toArray();
+  if (running.length === 0) return [];
+  await db.transaction("rw", db.webDevMessages, async () => {
+    await Promise.all(running.map(message => db.webDevMessages.update(message.id, { activityStatus: status })));
+  });
+  return running.map(message => ({ ...message, activityStatus: status }));
 };
 
 export const deleteWebDevProject = async (projectId: string) => {
