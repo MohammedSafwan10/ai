@@ -46,6 +46,8 @@ export const buildWebDevProjectContext = ({
       "- This project runs inside Privora Web Dev using a browser WebContainer.",
       "- Privora mounts files, installs dependencies, starts Vite, and shows the Preview tab automatically.",
       "- Multi-page V1 apps should be React SPA routes inside this Vite app; BrowserRouter routes work in the preview through Vite's fallback.",
+      "- Three.js, WebGL, and React Three Fiber are supported in the preview. Blank 3D previews usually mean a code/runtime/dependency/canvas sizing issue, not unsupported rendering.",
+      "- For 3D projects, keep Canvas containers explicitly sized, prefer generated/local primitives over CORS-risky remote assets, and inspect diagnostics/runtime errors before simplifying libraries.",
       "- Do not tell the user to run npm install, npm run dev, or other local terminal commands unless they explicitly ask for external/local setup instructions.",
       "- Final summaries should describe completed changes and important files; mention the Preview tab instead of command-line run steps when relevant.",
     ].join("\n"),

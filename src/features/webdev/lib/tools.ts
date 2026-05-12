@@ -170,7 +170,7 @@ export const webDevToolDefinitions = [
   {
     type: "function",
     name: "webdev_get_diagnostics",
-    description: "Run project diagnostics/build checks in the WebContainer and return errors or warnings. Use after meaningful edits.",
+    description: "Run project diagnostics/build checks in the WebContainer and return errors or warnings, including recent preview runtime errors when available. Use after meaningful edits and to diagnose blank previews.",
     parameters: {
       type: "object",
       additionalProperties: false,

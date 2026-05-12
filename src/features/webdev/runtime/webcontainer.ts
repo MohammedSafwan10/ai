@@ -8,6 +8,7 @@ declare global {
     __privoraWebContainerBootPromise?: Promise<WebContainer>;
     __privoraWebContainerCommandPackageHash?: string;
     __privoraWebContainerSyncedFiles?: Map<string, string>;
+    __privoraWebContainerPreviewErrors?: string[];
   }
 }
 
@@ -46,6 +47,11 @@ const cleanTerminalLine = (value: string) =>
     .replace(/\r/g, "\n")
     .replace(/[^\S\n]+/g, " ")
     .trim();
+
+const previewRuntimeErrors = () => (window.__privoraWebContainerPreviewErrors || [])
+  .map(cleanTerminalLine)
+  .filter(Boolean)
+  .slice(-12);
 
 const bootWebContainer = async () => {
   configureApiKey();
@@ -296,6 +302,11 @@ export const runWebDevNpmScript = async ({
     append(`Running npm run ${script}${args.length ? ` -- ${args.join(" ")}` : ""}...`);
     const process = await webcontainer.spawn("npm", ["run", script, ...(args.length ? ["--", ...args] : [])]);
     const exitCode = await runProcessWithOutput(process, append, signal, timeoutMs);
+    const runtimeErrors = previewRuntimeErrors();
+    if (runtimeErrors.length) {
+      append("Recent preview runtime errors:");
+      runtimeErrors.forEach(line => append(line));
+    }
     return {
       success: exitCode === 0,
       output: output.join("\n"),
@@ -365,6 +376,7 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
     restartCleanupRef.current?.();
     restartCleanupRef.current = undefined;
     stopProcesses();
+    window.__privoraWebContainerPreviewErrors = [];
     setState(prev => ({
       ...prev,
       status: "booting",
@@ -382,7 +394,11 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
         appendTerminal(`Preview ready: ${url}`);
       });
       const unsubscribePreview = webcontainer.on("preview-message", (message: any) => {
-        const text = message?.message || message?.type || "Preview runtime error";
+        const text = message?.message || message?.error?.message || message?.type || "Preview runtime error";
+        window.__privoraWebContainerPreviewErrors = [
+          ...(window.__privoraWebContainerPreviewErrors || []).slice(-20),
+          String(text),
+        ];
         setState(prev => ({ ...prev, errors: [...prev.errors.slice(-20), String(text)] }));
       });
 
