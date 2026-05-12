@@ -1628,9 +1628,14 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
         let artifactToolEvents = 0;
         let webSearchEvents = 0;
         let firstEventMs: number | undefined;
+        const extraFunctionDeclarations = Array.isArray(body.functionDeclarations) ? body.functionDeclarations : [];
+        const functionDeclarations = [
+          ...(body.artifactToolsEnabled ? [geminiArtifactFunctionDeclaration] : []),
+          ...extraFunctionDeclarations,
+        ];
         const tools = [
           ...(body.webSearchEnabled ? [{googleSearch: {}}] : []),
-          ...(body.artifactToolsEnabled ? [{functionDeclarations: [geminiArtifactFunctionDeclaration]}] : []),
+          ...(functionDeclarations.length > 0 ? [{functionDeclarations}] : []),
         ];
         const responseStream = await ai.models.generateContentStream({
           model: body.model,
@@ -1638,6 +1643,7 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
           config: {
             systemInstruction: body.systemInstruction,
             temperature: body.temperature ?? 0.85,
+            ...(typeof body.maxOutputTokens === 'number' ? {maxOutputTokens: body.maxOutputTokens} : {}),
             thinkingConfig: {
               thinkingLevel: body.thinkingEnabled ? ThinkingLevel.MEDIUM : ThinkingLevel.MINIMAL,
               ...(body.thinkingEnabled ? {includeThoughts: true} : {}),
@@ -1666,6 +1672,9 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
             if (part.functionCall?.name === geminiArtifactFunctionDeclaration.name) {
               artifactToolEvents += 1;
               res.write(`${JSON.stringify({type: 'artifactToolCall', payload: part.functionCall.args || {}})}\n`);
+            } else if (part.functionCall?.name) {
+              artifactToolEvents += 1;
+              res.write(`${JSON.stringify({type: 'toolCall', name: part.functionCall.name, payload: part.functionCall.args || {}})}\n`);
             } else if (part.thought && part.text) {
               thoughtEvents += 1;
               res.write(`${JSON.stringify({type: 'thought', text: part.text})}\n`);
@@ -1852,6 +1861,10 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
+      headers: {
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Opener-Policy': 'same-origin',
+      },
       // HMR can be disabled for automated editing sessions via DISABLE_HMR.
       hmr: process.env.DISABLE_HMR !== 'true',
       proxy: {
@@ -1902,6 +1915,12 @@ export default defineConfig(({mode}) => {
             });
           },
         },
+      },
+    },
+    preview: {
+      headers: {
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Opener-Policy': 'same-origin',
       },
     },
   };

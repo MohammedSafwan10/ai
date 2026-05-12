@@ -7,6 +7,7 @@ export const SETTINGS_STORAGE_KEY = "privora-ui-settings";
 export const DEFAULT_MODEL_ID = "gemini-3.1-flash-lite-preview";
 
 export interface UiSettings {
+  workspaceMode: "chat" | "web-dev";
   selectedModel: string;
   selectedStyle: ResponseStyleId;
   isThinkingEnabled: boolean;
@@ -39,6 +40,7 @@ export interface ImageSettings {
 }
 
 export const defaultUiSettings: UiSettings = {
+  workspaceMode: "chat",
   selectedModel: DEFAULT_MODEL_ID,
   selectedStyle: DEFAULT_RESPONSE_STYLE_ID,
   isThinkingEnabled: false,
@@ -107,6 +109,7 @@ export const loadUiSettings = (): UiSettings => {
     const isDeepResearchEnabled = Boolean(parsedSettings.isDeepResearchEnabled);
 
     return {
+      workspaceMode: parsedSettings.workspaceMode === "web-dev" ? "web-dev" : "chat",
       selectedModel,
       selectedStyle,
       isThinkingEnabled: Boolean(parsedSettings.isThinkingEnabled),

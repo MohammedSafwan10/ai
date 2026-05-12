@@ -9,6 +9,8 @@ interface RenameChatModalProps {
   onTitleChange: (title: string) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  heading?: string;
+  placeholder?: string;
 }
 
 export function RenameChatModal({
@@ -18,6 +20,8 @@ export function RenameChatModal({
   onTitleChange,
   onClose,
   onSubmit,
+  heading = "Rename chat",
+  placeholder = "Chat title",
 }: RenameChatModalProps) {
   const handleFormClick = (event: MouseEvent<HTMLFormElement>) => {
     event.stopPropagation();
@@ -54,7 +58,7 @@ export function RenameChatModal({
                 <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--privora-text)]/5 text-[var(--privora-text)]">
                   <Pencil className="h-4 w-4" />
                 </div>
-                <h2 className="min-w-0 text-[15px] font-medium text-[var(--privora-text)]">Rename chat</h2>
+                <h2 className="min-w-0 text-[15px] font-medium text-[var(--privora-text)]">{heading}</h2>
               </div>
               <div className="space-y-4 px-5 py-5">
                 <input
@@ -65,7 +69,7 @@ export function RenameChatModal({
                   onKeyDown={handleInputKeyDown}
                   maxLength={80}
                   className="w-full rounded-xl border border-[var(--privora-border)] bg-[var(--privora-bg)] px-4 py-3 text-[15px] text-[var(--privora-text)] outline-none transition-colors placeholder:text-[var(--privora-muted)] focus:border-[var(--privora-text)]/30 focus:bg-[var(--privora-surface)]"
-                  placeholder="Chat title"
+                  placeholder={placeholder}
                 />
                 <div className="flex items-center justify-end gap-2">
                   <button

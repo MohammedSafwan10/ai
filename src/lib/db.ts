@@ -72,6 +72,69 @@ export interface ArtifactRecord {
   updatedAt: number;
 }
 
+export type WebDevProjectStatus = "idle" | "generating" | "installing" | "running" | "error";
+export type WebDevFileStatus = "ready" | "streaming" | "created" | "updated" | "deleted" | "error";
+export type WebDevMessageRole = "user" | "assistant" | "activity" | "tool";
+
+export interface WebDevProjectRecord {
+  id: string;
+  title: string;
+  selectedModel?: string;
+  isStarred?: boolean;
+  activeFilePath?: string;
+  packageHash?: string;
+  status: WebDevProjectStatus;
+  runtimeStatus?: string;
+  previewUrl?: string;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WebDevFileRecord {
+  id: string;
+  projectId: string;
+  path: string;
+  content: string;
+  status: WebDevFileStatus;
+  summary?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WebDevMessageRecord {
+  id: string;
+  projectId: string;
+  role: WebDevMessageRole;
+  content: string;
+  thought?: string;
+  isThinking?: boolean;
+  contentParts?: Array<{
+    type: "thinking" | "text";
+    text: string;
+    title?: string;
+    active?: boolean;
+    startedAt?: number;
+    endedAt?: number;
+  }>;
+  attachments?: AttachmentRecord[];
+  toolCallId?: string;
+  toolName?: string;
+  toolArguments?: Record<string, unknown>;
+  toolResult?: Record<string, unknown>;
+  toolStatus?: "running" | "completed" | "failed" | "cancelled";
+  isSummary?: boolean;
+  iteration?: number;
+  hiddenFromChat?: boolean;
+  activityType?: string;
+  filePath?: string;
+  activityOperation?: "created" | "updated" | "patched" | "deleted" | "renamed" | "created_project" | "skipped";
+  activityStatus?: "running" | "done" | "error";
+  additions?: number;
+  deletions?: number;
+  createdAt: number;
+}
+
 export interface ResearchSourceRecord {
   title?: string;
   url: string;
@@ -163,6 +226,9 @@ class PrivoraDatabase extends Dexie {
   chats!: Table<ChatRow, string>;
   messages!: Table<ChatMessageRecord, string>;
   artifacts!: Table<ArtifactRecord, string>;
+  webDevProjects!: Table<WebDevProjectRecord, string>;
+  webDevFiles!: Table<WebDevFileRecord, string>;
+  webDevMessages!: Table<WebDevMessageRecord, string>;
 
   constructor() {
     super("privora-local-db");
@@ -181,6 +247,14 @@ class PrivoraDatabase extends Dexie {
       messages: "&id, chatId, createdAt",
       artifacts: "&id, chatId, messageId, updatedAt",
       artifactVersions: null,
+    });
+    this.version(4).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      webDevProjects: "&id, updatedAt, status",
+      webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
+      webDevMessages: "&id, projectId, createdAt",
     });
   }
 }

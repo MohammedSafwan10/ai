@@ -1,4 +1,5 @@
 // @refresh reset
+import { setupConnect } from "@webcontainer/api/connect";
 import { useState, useRef, useEffect, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
 import { PanelLeft } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -10,6 +11,7 @@ import { ChatSidebar } from "./features/chat/components/ChatSidebar";
 import { ChatViewport } from "./features/chat/components/ChatViewport";
 import { RenameChatModal } from "./features/chat/components/RenameChatModal";
 import { SearchModal } from "./features/chat/components/SearchModal";
+import { WebDevWorkspace } from "./features/webdev/components/WebDevWorkspace";
 import { getModelOption } from "./lib/models";
 import { appLogger } from "./lib/logger";
 import { useChatStorage } from "./features/chat/hooks/useChatStorage";
@@ -44,13 +46,17 @@ import {
   type ArtifactRecord,
   type ChatMessageRecord,
   type ChatRecord,
+  type WebDevProjectRecord,
 } from "./lib/db";
 import { copyArtifactContent, downloadArtifactContent } from "./lib/artifacts";
+import { createWebDevProject, deleteWebDevProject, loadWebDevProjects, updateWebDevProject } from "./features/webdev/lib/storage";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
 
 const CHAT_BOTTOM_THRESHOLD_PX = 128;
+const isWebContainerConnectRoute =
+  typeof window !== "undefined" && window.location.pathname.startsWith("/webcontainer/connect/");
 
 const getScreenCaptureFile = async () => {
   if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -108,14 +114,35 @@ const getScreenCaptureFile = async () => {
 };
 
 export default function App() {
+  useEffect(() => {
+    if (!isWebContainerConnectRoute) return;
+    try {
+      setupConnect({ editorOrigin: window.location.origin });
+    } catch (error) {
+      appLogger.error("Failed to setup WebContainer preview connection", { err: error });
+    }
+  }, []);
+
+  if (isWebContainerConnectRoute) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--privora-bg)] px-6 text-center text-sm text-[var(--privora-muted)]">
+        Connecting preview...
+      </div>
+    );
+  }
+
   const { notify } = useToast();
   const initialUiSettingsRef = useRef(loadUiSettings());
   const [messages, setMessages] = useState<Message[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<"chat" | "web-dev">(initialUiSettingsRef.current.workspaceMode);
+  const [webDevProjects, setWebDevProjects] = useState<WebDevProjectRecord[]>([]);
+  const [currentWebDevProjectId, setCurrentWebDevProjectId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
+  const [webDevPanelWidth, setWebDevPanelWidth] = useState(720);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -132,7 +159,7 @@ export default function App() {
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isStorageReady, setIsStorageReady] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [renameChatId, setRenameChatId] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ kind: "chat" | "web-dev"; id: string } | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -157,13 +184,13 @@ export default function App() {
   const imageSettingsRef = useLatestRef(imageSettings);
 
   useEffect(() => {
-    if (!renameChatId) return;
+    if (!renameTarget) return;
 
     window.setTimeout(() => {
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
     }, 0);
-  }, [renameChatId]);
+  }, [renameTarget]);
 
   useEffect(() => {
     if (getModelOption(selectedModel)) return;
@@ -173,6 +200,7 @@ export default function App() {
 
   useEffect(() => {
     saveUiSettings({
+      workspaceMode,
       selectedModel,
       selectedStyle,
       isThinkingEnabled,
@@ -182,7 +210,7 @@ export default function App() {
       composerMode,
       imageSettings,
     });
-  }, [selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode, composerMode, imageSettings]);
+  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode, composerMode, imageSettings]);
 
   const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste" | "screenshot") => {
     const files = Array.from(fileList);
@@ -426,6 +454,15 @@ export default function App() {
   useTextareaAutosize(textareaRef, input);
   useViewportCssVars();
   useRootDarkMode(isDarkMode);
+
+  useEffect(() => {
+    void loadWebDevProjects()
+      .then((projects) => {
+        setWebDevProjects(projects);
+        setCurrentWebDevProjectId(projects[0]?.id || null);
+      })
+      .catch(err => appLogger.error("Failed to load Web Dev projects", { err }));
+  }, []);
   
   const selectModelForNextMessage = (modelId: string) => {
     selectedModelRef.current = modelId;
@@ -582,6 +619,20 @@ export default function App() {
     await createChat(newChat);
   };
 
+  const handleNewWebDevProject = async () => {
+    const { project } = await createWebDevProject("New web app", selectedModelRef.current);
+    setWebDevProjects(prev => [project, ...prev]);
+    setCurrentWebDevProjectId(project.id);
+    setWorkspaceMode("web-dev");
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const selectWebDevProject = (id: string) => {
+    setCurrentWebDevProjectId(id);
+    setWorkspaceMode("web-dev");
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
   const selectChat = (id: string) => {
     const chat = chats.find(c => c.id === id);
     if (chat) {
@@ -603,7 +654,7 @@ export default function App() {
   };
 
   const closeRenameDialog = () => {
-    setRenameChatId(null);
+    setRenameTarget(null);
     setRenameTitle("");
   };
 
@@ -611,14 +662,23 @@ export default function App() {
     e.stopPropagation();
     const chat = chatsRef.current.find(c => c.id === id);
     if (!chat) return;
-    setRenameChatId(id);
+    setRenameTarget({ kind: "chat", id });
     setRenameTitle(chat.title);
+    setActiveMenuId(null);
+  };
+
+  const renameWebDevProject = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const project = webDevProjects.find(item => item.id === id);
+    if (!project) return;
+    setRenameTarget({ kind: "web-dev", id });
+    setRenameTitle(project.title);
     setActiveMenuId(null);
   };
 
   const submitRenameChat = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!renameChatId) return;
+    if (!renameTarget) return;
 
     const title = renameTitle.trim();
     if (!title) {
@@ -626,9 +686,15 @@ export default function App() {
       return;
     }
 
-    const chatId = renameChatId;
-    setChats(prev => prev.map(c => c.id === chatId ? { ...c, title, updatedAt: Date.now() } : c));
-    await updateChatMeta(chatId, { title });
+    if (renameTarget.kind === "chat") {
+      const chatId = renameTarget.id;
+      setChats(prev => prev.map(c => c.id === chatId ? { ...c, title, updatedAt: Date.now() } : c));
+      await updateChatMeta(chatId, { title });
+    } else {
+      const projectId = renameTarget.id;
+      setWebDevProjects(prev => prev.map(project => project.id === projectId ? { ...project, title, updatedAt: Date.now() } : project));
+      await updateWebDevProject(projectId, { title });
+    }
     closeRenameDialog();
   };
 
@@ -653,6 +719,29 @@ export default function App() {
         await handleNewChat();
       }
     }
+    setActiveMenuId(null);
+  };
+
+  const deleteWebDevProjectById = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const updatedProjects = webDevProjects.filter(project => project.id !== id);
+    setWebDevProjects(updatedProjects);
+    await deleteWebDevProject(id);
+    if (currentWebDevProjectId === id) {
+      setCurrentWebDevProjectId(updatedProjects[0]?.id || null);
+    }
+    setActiveMenuId(null);
+  };
+
+  const toggleStarWebDevProject = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const project = webDevProjects.find(item => item.id === id);
+    const isStarred = !project?.isStarred;
+    setWebDevProjects(prev => prev
+      .map(item => item.id === id ? { ...item, isStarred, updatedAt: Date.now() } : item)
+      .sort((a, b) => Number(Boolean(b.isStarred)) - Number(Boolean(a.isStarred)) || b.updatedAt - a.updatedAt)
+    );
+    await updateWebDevProject(id, { isStarred });
     setActiveMenuId(null);
   };
 
@@ -781,27 +870,39 @@ export default function App() {
 
       <ChatSidebar
         isOpen={isSidebarOpen}
+        workspaceMode={workspaceMode}
         chats={chats}
+        webDevProjects={webDevProjects}
         currentChatId={currentChatId}
+        currentWebDevProjectId={currentWebDevProjectId}
         isTyping={isTyping}
         isDarkMode={isDarkMode}
         activeMenuId={activeMenuId}
         onOpenChange={setIsSidebarOpen}
+        onWorkspaceModeChange={(mode) => {
+          setWorkspaceMode(mode);
+          if (mode === "web-dev") setActiveArtifactId(null);
+        }}
         onNewChat={handleNewChat}
+        onNewWebDevProject={() => void handleNewWebDevProject()}
         onSearchOpen={() => setIsSearchModalOpen(true)}
         onSelectChat={selectChat}
+        onSelectWebDevProject={selectWebDevProject}
         onChatRowKeyDown={handleChatRowKeyDown}
         onActiveMenuChange={setActiveMenuId}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
         onToggleStarChat={toggleStarChat}
         onRenameChat={renameChat}
         onDeleteChat={deleteChat}
+        onRenameWebDevProject={renameWebDevProject}
+        onDeleteWebDevProject={deleteWebDevProjectById}
+        onToggleStarWebDevProject={toggleStarWebDevProject}
       />
 
       {/* Main Content Area */}
       <div
         className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden transition-[margin] duration-200 ease-out lg:mr-[var(--privora-canvas-offset)]"
-        style={{ "--privora-canvas-offset": activeArtifact ? `${canvasWidth}px` : "0px" } as CSSProperties}
+        style={{ "--privora-canvas-offset": workspaceMode === "chat" && activeArtifact ? `${canvasWidth}px` : "0px" } as CSSProperties}
       >
         {!isSidebarOpen && (
           <button
@@ -815,7 +916,32 @@ export default function App() {
         )}
 
         <AnimatePresence mode="wait" initial={false}>
-          {isLandingChat ? (
+          {workspaceMode === "web-dev" ? (
+            <motion.div
+              key="web-dev"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="contents"
+            >
+              <WebDevWorkspace
+                projects={webDevProjects}
+                currentProjectId={currentWebDevProjectId}
+                isDarkMode={isDarkMode}
+                selectedModel={selectedModel}
+                isThinkingEnabled={isThinkingEnabled}
+                webDevPanelWidth={webDevPanelWidth}
+                setProjects={setWebDevProjects}
+                setCurrentProjectId={setCurrentWebDevProjectId}
+                onNewProject={handleNewWebDevProject}
+                onSelectModel={selectModelForNextMessage}
+                onToggleThinking={toggleThinkingForNextMessage}
+                onPanelWidthChange={setWebDevPanelWidth}
+                onPreviewAttachment={setPreviewAttachment}
+              />
+            </motion.div>
+          ) : isLandingChat ? (
             <motion.main
               key="landing"
               initial={{ opacity: 0 }}
@@ -873,12 +999,14 @@ export default function App() {
         </AnimatePresence>
 
       <RenameChatModal
-        isOpen={Boolean(renameChatId)}
+        isOpen={Boolean(renameTarget)}
         title={renameTitle}
         inputRef={renameInputRef}
         onTitleChange={setRenameTitle}
         onClose={closeRenameDialog}
         onSubmit={submitRenameChat}
+        heading={renameTarget?.kind === "web-dev" ? "Rename web app" : "Rename chat"}
+        placeholder={renameTarget?.kind === "web-dev" ? "Web app title" : "Chat title"}
       />
 
       <SearchModal
@@ -907,7 +1035,7 @@ export default function App() {
       />
 
       <CanvasPanel
-        isOpen={Boolean(activeArtifact)}
+        isOpen={workspaceMode === "chat" && Boolean(activeArtifact)}
         artifact={activeArtifact}
         isDarkMode={isDarkMode}
         width={canvasWidth}

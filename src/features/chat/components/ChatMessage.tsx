@@ -53,6 +53,7 @@ interface ChatMessageProps {
   onEditGeneratedImage?: (attachment: Attachment) => void;
   attachments?: Attachment[];
   onPreviewAttachment?: (att: Attachment) => void;
+  hideActions?: boolean;
 }
 
 const formatElapsed = (milliseconds: number) => {
@@ -64,7 +65,7 @@ const formatElapsed = (milliseconds: number) => {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onEditGeneratedImage, attachments, onPreviewAttachment }: ChatMessageProps) {
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -395,7 +396,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
                  {!isUser && artifact && (
                    <ArtifactCard artifact={artifact} onOpen={onOpenArtifact || (() => undefined)} />
                  )}
-              {!isUser && !isTyping && content && !isCompletedResearchReport && !isImageGenerationMessage && (
+              {!hideActions && !isUser && !isTyping && content && !isCompletedResearchReport && !isImageGenerationMessage && (
                  <>
                    {researchSources && researchSources.length > 0 && (
                      <div className="mt-4 w-full max-w-full rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)]/75 p-3">
@@ -490,6 +491,7 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.messageIndex === next.messageIndex &&
     prev.messageCount === next.messageCount &&
     prev.onEditGeneratedImage === next.onEditGeneratedImage &&
-    prev.attachments === next.attachments
+    prev.attachments === next.attachments &&
+    prev.hideActions === next.hideActions
   );
 });
