@@ -234,7 +234,7 @@ function ArtifactPreview({ artifact, isDarkMode }: { artifact: ArtifactRecord; i
 
   if (["markdown", "table", "prompt", "text"].includes(artifact.kind)) {
     return (
-      <article className="privora-artifact-prose">
+      <article className="markdown-body privora-artifact-prose">
         <MarkdownRenderer tableMode="report" isStreaming={artifact.status === "streaming"}>{artifact.content}</MarkdownRenderer>
       </article>
     );

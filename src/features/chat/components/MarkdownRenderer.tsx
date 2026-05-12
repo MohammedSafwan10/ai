@@ -40,18 +40,45 @@ function normalizeMathDelimiters(markdown: string) {
 }
 
 const getLanguage = (className?: string) => {
-  const match = /language-(\w+)/.exec(className || "");
-  return match?.[1] || "";
+  const match = /language-([^\s]+)/.exec(className || "");
+  const language = match?.[1]?.toLowerCase() || "";
+  const aliases: Record<string, string> = {
+    "c++": "cpp",
+    "objective-c": "objectivec",
+    js: "javascript",
+    jsx: "jsx",
+    ts: "typescript",
+    tsx: "tsx",
+  };
+  return aliases[language] || language;
 };
 
 const shouldOpenInNewTab = (href?: string) => {
   if (!href) return false;
+  const trimmed = href.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
 
   try {
-    const url = new URL(href, window.location.href);
-    return url.protocol === "http:" || url.protocol === "https:";
+    const url = new URL(trimmed);
+    return url.origin !== window.location.origin;
   } catch {
     return false;
+  }
+};
+
+const getSafeHref = (href?: string) => {
+  if (!href) return undefined;
+  const trimmed = href.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    const url = new URL(trimmed, window.location.href);
+    const safeProtocols = new Set(["http:", "https:", "mailto:", "tel:"]);
+    if (safeProtocols.has(url.protocol)) return trimmed;
+    if (url.protocol === window.location.protocol && (trimmed.startsWith("/") || trimmed.startsWith("#"))) return trimmed;
+    return undefined;
+  } catch {
+    return trimmed.startsWith("#") || trimmed.startsWith("/") ? trimmed : undefined;
   }
 };
 
@@ -130,7 +157,7 @@ function CodeBlock({
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--privora-muted)] opacity-80 transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] group-hover/code:opacity-100"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--privora-muted)] opacity-80 transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45 group-hover/code:opacity-100"
           title="Copy code"
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -182,7 +209,7 @@ function CodeBlock({
           <button
             type="button"
             onClick={() => setIsExpanded(true)}
-            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--privora-border)] bg-[var(--privora-surface)] px-3 py-1.5 text-xs font-medium text-[var(--privora-text)] shadow-sm transition hover:bg-[var(--privora-text)]/[0.06]"
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--privora-border)] bg-[var(--privora-surface)] px-3 py-1.5 text-xs font-medium text-[var(--privora-text)] shadow-sm transition hover:bg-[var(--privora-text)]/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45"
           >
             Show full code
             <ChevronDown className="h-3.5 w-3.5" />
@@ -195,7 +222,7 @@ function CodeBlock({
           <button
             type="button"
             onClick={() => setIsExpanded(false)}
-            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-[var(--privora-muted)] transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)]"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-[var(--privora-muted)] transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45"
           >
             Collapse code
             <ChevronDown className="h-3.5 w-3.5 rotate-180" />
@@ -256,7 +283,13 @@ function MarkdownTable({
         canScrollRight && "can-scroll-right"
       )}
     >
-      <div ref={scrollRef} onScroll={updateScrollState} className="privora-md-table-scroll">
+      <div
+        ref={scrollRef}
+        onScroll={updateScrollState}
+        className="privora-md-table-scroll"
+        tabIndex={hasOverflow ? 0 : undefined}
+        aria-label={hasOverflow ? "Scrollable table" : undefined}
+      >
         <table className="privora-md-table-element">{children}</table>
       </div>
       {hasOverflow && (
@@ -271,16 +304,19 @@ function MarkdownTable({
 function MarkdownLink({
   href,
   children,
+  node: _node,
   ...props
 }: {
   href?: string;
   children?: ReactNode;
+  node?: unknown;
 }) {
-  const openInNewTab = shouldOpenInNewTab(href);
+  const safeHref = getSafeHref(href);
+  const openInNewTab = shouldOpenInNewTab(safeHref);
 
   return (
     <a
-      href={href}
+      href={safeHref}
       target={openInNewTab ? "_blank" : undefined}
       rel={openInNewTab ? "noreferrer noopener" : undefined}
       {...props}
@@ -314,21 +350,27 @@ function MarkdownRendererComponent({
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[[rehypeKatex, { errorColor: "var(--privora-text)", strict: "ignore", throwOnError: false }]]}
       components={{
-        h1: ({ children }) => <h1 {...getHeadingProps(children)}>{children}</h1>,
-        h2: ({ children }) => <h2 {...getHeadingProps(children)}>{children}</h2>,
-        h3: ({ children }) => <h3 {...getHeadingProps(children)}>{children}</h3>,
-        p: ({ children }) => (
-          <p className={cn(compact ? "my-1 leading-6" : "my-3 leading-8")}>{children}</p>
+        h1: ({ children, node: _node, className, ...props }) => (
+          <h1 {...props} {...getHeadingProps(children)} className={className}>{children}</h1>
         ),
-        ul: ({ children }) => (
-          <ul className={cn("list-disc pl-6", compact ? "my-2 space-y-1" : "my-4 space-y-2")}>{children}</ul>
+        h2: ({ children, node: _node, className, ...props }) => (
+          <h2 {...props} {...getHeadingProps(children)} className={className}>{children}</h2>
         ),
-        ol: ({ children }) => (
-          <ol className={cn("list-decimal pl-6", compact ? "my-2 space-y-1" : "my-4 space-y-2")}>{children}</ol>
+        h3: ({ children, node: _node, className, ...props }) => (
+          <h3 {...props} {...getHeadingProps(children)} className={className}>{children}</h3>
         ),
-        li: ({ children }) => <li className="pl-1 leading-7 marker:text-[var(--privora-muted)]">{children}</li>,
-        blockquote: ({ children }) => (
-          <blockquote className="my-4 border-l-2 border-[var(--privora-border)] pl-4 text-[var(--privora-muted)]">
+        p: ({ children, node: _node, className, ...props }) => (
+          <p {...props} className={cn(compact ? "my-1 leading-6" : "my-3 leading-8", className)}>{children}</p>
+        ),
+        ul: ({ children, node: _node, className, ...props }) => (
+          <ul {...props} className={cn("list-disc pl-6", compact ? "my-2 space-y-1" : "my-4 space-y-2", className)}>{children}</ul>
+        ),
+        ol: ({ children, node: _node, className, ...props }) => (
+          <ol {...props} className={cn("list-decimal pl-6", compact ? "my-2 space-y-1" : "my-4 space-y-2", className)}>{children}</ol>
+        ),
+        li: ({ children, node: _node, className, ...props }) => <li {...props} className={cn("pl-1 leading-7 marker:text-[var(--privora-muted)]", className)}>{children}</li>,
+        blockquote: ({ children, node: _node, className, ...props }) => (
+          <blockquote {...props} className={cn("my-4 border-l-2 border-[var(--privora-border)] pl-4 text-[var(--privora-muted)]", className)}>
             {children}
           </blockquote>
         ),

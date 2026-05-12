@@ -125,18 +125,25 @@ export function ResearchReportCard({ report, onOpenActivity }: ResearchReportCar
             </div>
           </div>
 
-          <button
-            type="button"
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setIsViewerOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setIsViewerOpen(true);
+              }
+            }}
             className={cn(
-              "relative block max-h-[28rem] w-full overflow-hidden px-5 py-6 text-left sm:px-8",
+              "relative block max-h-[28rem] w-full cursor-pointer overflow-hidden px-5 py-6 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45 sm:px-8",
               "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-28 after:bg-gradient-to-t after:from-[var(--privora-surface)] after:to-transparent"
             )}
           >
             <div className="markdown-body pointer-events-none max-w-none text-[var(--privora-text)]">
               <MarkdownRenderer tableMode="preview">{report.content}</MarkdownRenderer>
             </div>
-          </button>
+          </div>
         </div>
 
         <div className="mt-3 flex items-center gap-3 text-[var(--privora-muted)]">

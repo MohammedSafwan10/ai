@@ -134,6 +134,17 @@ body,
 }
 
 .markdown-body {
+  overflow-wrap: break-word;
+}
+
+.markdown-body p,
+.markdown-body li,
+.markdown-body blockquote {
+  overflow-wrap: break-word;
+}
+
+.markdown-body a,
+.markdown-body code {
   overflow-wrap: anywhere;
 }
 
@@ -207,6 +218,29 @@ body,
   overflow-wrap: anywhere;
 }
 
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem 0;
+  border: 1px solid var(--privora-border);
+  border-radius: 0.95rem;
+  background: var(--privora-surface);
+}
+
+.markdown-body p > img:only-child {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.markdown-body del {
+  color: var(--privora-muted);
+}
+
+.markdown-body sup {
+  line-height: 0;
+}
+
 .markdown-body pre {
   scrollbar-width: thin;
 }
@@ -214,6 +248,21 @@ body,
 .markdown-body input[type="checkbox"] {
   accent-color: var(--privora-accent);
   margin-right: 0.45rem;
+}
+
+.markdown-body .contains-task-list {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+
+.markdown-body .task-list-item {
+  list-style: none;
+  padding-left: 0;
+}
+
+.markdown-body .task-list-item input[type="checkbox"] {
+  margin: 0 0.55rem 0 0;
+  transform: translateY(0.1rem);
 }
 
 .privora-md-table {
@@ -247,9 +296,17 @@ body,
 .privora-md-table-element td {
   min-width: 9.5rem;
   max-width: 18rem;
-  overflow-wrap: normal;
+  overflow-wrap: break-word;
   word-break: normal;
   hyphens: none;
+}
+
+.privora-md-table-element tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.privora-md-table-element code {
+  white-space: normal;
 }
 
 .privora-md-table-element th:first-child,
@@ -278,6 +335,10 @@ body,
 .privora-md-table--preview.privora-md-table--wide .privora-md-table-element td {
   min-width: 10rem;
   max-width: 20rem;
+}
+
+.privora-md-table--preview .privora-md-table-hint {
+  display: none;
 }
 
 .privora-md-table--wide .privora-md-table-element th,
