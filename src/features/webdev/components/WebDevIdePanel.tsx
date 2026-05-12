@@ -3,7 +3,7 @@ import { useMemo, useState, type CSSProperties, type PointerEvent as ReactPointe
 import { cn } from "../../../lib/utils";
 import { useWebContainerRuntime } from "../runtime/webcontainer";
 import { downloadWebDevProject } from "../lib/download";
-import type { WebDevFile, WebDevIdeTab, WebDevProject } from "../lib/types";
+import type { WebDevFile, WebDevFileDiff, WebDevIdeTab, WebDevProject } from "../lib/types";
 import { WebDevEditor } from "./WebDevEditor";
 import { WebDevFileTree } from "./WebDevFileTree";
 import { WebDevPreview } from "./WebDevPreview";
@@ -12,12 +12,14 @@ export function WebDevIdePanel({
   project,
   files,
   activeFilePath,
+  activeDiff,
   isDarkMode,
   isGenerating,
   width,
   onWidthChange,
   onClose,
   onSelectFile,
+  onCloseDiff,
   onFileChange,
   onCreateFile,
   onCreateFolder,
@@ -27,12 +29,14 @@ export function WebDevIdePanel({
   project?: WebDevProject;
   files: WebDevFile[];
   activeFilePath?: string;
+  activeDiff?: WebDevFileDiff | null;
   isDarkMode: boolean;
   isGenerating: boolean;
   width: number;
   onWidthChange: (width: number) => void;
   onClose: () => void;
   onSelectFile: (path: string) => void;
+  onCloseDiff: () => void;
   onFileChange: (path: string, content: string) => void;
   onCreateFile: (basePath?: string) => void;
   onCreateFolder: (basePath?: string) => void;
@@ -41,6 +45,7 @@ export function WebDevIdePanel({
 }) {
   const [tab, setTab] = useState<WebDevIdeTab>("code");
   const activeFile = useMemo(() => files.find(file => file.path === activeFilePath) || files[0], [activeFilePath, files]);
+  const isDiffOpen = tab === "code" && Boolean(activeDiff);
   const { runtime, restart } = useWebContainerRuntime(project?.id || null, files);
 
   const handleResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -126,12 +131,25 @@ export function WebDevIdePanel({
             />
             <div className="flex min-h-0 flex-col">
               <div className="flex min-h-10 shrink-0 items-center gap-2 border-b border-[var(--privora-border)] bg-[var(--privora-bg)]/45 px-3 text-xs font-semibold text-[var(--privora-text)]">
-                <span className="truncate">{activeFile?.path || "No file selected"}</span>
-                {isGenerating && <span className="ml-auto text-[var(--privora-muted)]">Read only while AI edits</span>}
+                <span className="truncate">{activeDiff?.path || activeFile?.path || "No file selected"}</span>
+                {isDiffOpen && (
+                  <div className="ml-auto flex items-center rounded-md border border-[var(--privora-border)] bg-[var(--privora-surface)] p-0.5 text-[11px]">
+                    <span className="rounded px-2 py-1 font-semibold text-[var(--privora-text)]">Changes</span>
+                    <button
+                      type="button"
+                      onClick={onCloseDiff}
+                      className="rounded px-2 py-1 text-[var(--privora-muted)] transition hover:bg-[var(--privora-bg)] hover:text-[var(--privora-text)]"
+                    >
+                      File
+                    </button>
+                  </div>
+                )}
+                {isGenerating && !isDiffOpen && <span className="ml-auto text-[var(--privora-muted)]">Read only while AI edits</span>}
               </div>
               <div className="min-h-0 flex-1">
                 <WebDevEditor
                   file={activeFile}
+                  diff={activeDiff}
                   isDarkMode={isDarkMode}
                   readOnly={isGenerating}
                   onChange={(content) => activeFile && onFileChange(activeFile.path, content)}

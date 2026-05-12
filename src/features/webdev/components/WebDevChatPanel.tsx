@@ -6,10 +6,33 @@ import { ChatMessage } from "../../chat/components/ChatMessage";
 import { MarkdownRenderer } from "../../chat/components/MarkdownRenderer";
 import { TypingIndicator } from "../../chat/components/TypingIndicator";
 import type { Attachment } from "../../../lib/attachments";
-import type { WebDevMessage } from "../lib/types";
+import type { WebDevFileDiff, WebDevMessage } from "../lib/types";
 import { WebDevComposer } from "./WebDevComposer";
 
 const WEBDEV_CHAT_BOTTOM_THRESHOLD_PX = 128;
+type WebDevThoughtContentPart = {
+  type: "thinking";
+  text: string;
+  title?: string;
+  active?: boolean;
+  startedAt?: number;
+  endedAt?: number;
+};
+type WebDevTextContentPart = {
+  type: "text";
+  text: string;
+  startedAt?: number;
+  endedAt?: number;
+};
+type WebDevToolContentPart = {
+  type: "tool";
+  activityId: string;
+  activityKey?: string;
+  startedAt?: number;
+  endedAt?: number;
+};
+type WebDevContentPart = WebDevThoughtContentPart | WebDevTextContentPart | WebDevToolContentPart;
+type WebDevRenderedPart = WebDevThoughtContentPart | WebDevTextContentPart | { type: "toolGroup"; activities: WebDevMessage[] };
 
 const getActivityLabel = (message: WebDevMessage, allowRunningLabel = true) => {
   const operation = message.activityOperation;
@@ -20,70 +43,183 @@ const getActivityLabel = (message: WebDevMessage, allowRunningLabel = true) => {
   if (operation === "renamed") return "Renamed file";
   if (operation === "created_project") return "Created project files";
   if (operation === "skipped") return "Skipped edit";
+  if (operation === "searched") return "Searched files";
+  if (operation === "outlined") return "Outlined file";
+  if (operation === "checked") return "Checked diagnostics";
+  if (operation === "command") return "Ran command";
   return message.content || "Updated project";
 };
 
-const getActivityPath = (message: WebDevMessage) => message.filePath || message.content.replace(/^(Created|Edited|Patched|Updating|Writing|Deleting)\s+/i, "");
+const getActivityPath = (message: WebDevMessage) => message.filePath || message.content.replace(/^(Created|Edited|Patched|Updating|Writing|Deleting|Outlined|Searched|Checked|Running)\s+/i, "");
 
 const isCurrentRunActivity = (message: WebDevMessage, activeRunStartedAt?: number) =>
   Boolean(activeRunStartedAt && message.activityStatus === "running" && message.createdAt >= activeRunStartedAt);
 
+const isCommandLikeActivity = (message: WebDevMessage) =>
+  message.activityOperation === "checked" || message.activityOperation === "command";
+
+const getCompactActivityDetail = (message: WebDevMessage) => {
+  const detail = message.activityDetail?.trim();
+  if (!detail) return "";
+  if (!isCommandLikeActivity(message)) return detail;
+  const lines = detail.split(/\r?\n/).filter(Boolean);
+  const important = lines.filter(line => /\berror\b|failed|cannot find|exited with code|warning/i.test(line));
+  return (important.length ? important : lines.slice(-8)).slice(0, 12).join("\n");
+};
+
+const countChangedLines = (before = "", after = "") => {
+  if (before === after) return { additions: 0, deletions: 0 };
+  const beforeLines = before ? before.split(/\r?\n/) : [];
+  const afterLines = after ? after.split(/\r?\n/) : [];
+  let start = 0;
+  while (start < beforeLines.length && start < afterLines.length && beforeLines[start] === afterLines[start]) {
+    start += 1;
+  }
+  let beforeEnd = beforeLines.length - 1;
+  let afterEnd = afterLines.length - 1;
+  while (beforeEnd >= start && afterEnd >= start && beforeLines[beforeEnd] === afterLines[afterEnd]) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  return {
+    additions: Math.max(0, afterEnd - start + 1),
+    deletions: Math.max(0, beforeEnd - start + 1),
+  };
+};
+
+const getEffectiveActivityDelta = (message: WebDevMessage) => {
+  if (message.beforeContent !== undefined || message.afterContent !== undefined) {
+    return countChangedLines(message.beforeContent || "", message.afterContent || "");
+  }
+  return {
+    additions: typeof message.additions === "number" ? message.additions : 0,
+    deletions: typeof message.deletions === "number" ? message.deletions : 0,
+  };
+};
+
+const hasMeaningfulActivityDelta = (message: WebDevMessage) => {
+  const delta = getEffectiveActivityDelta(message);
+  return delta.additions > 0 || delta.deletions > 0;
+};
+
 const getActivityGroupLabel = (messages: WebDevMessage[], activeRunStartedAt?: number) => {
   const running = messages.find(message => isCurrentRunActivity(message, activeRunStartedAt));
-  if (running) return running.content;
   const created = messages.filter(message => message.activityOperation === "created" || message.activityOperation === "created_project").length;
   const edited = messages.filter(message => message.activityOperation === "updated" || message.activityOperation === "patched").length;
   const deleted = messages.filter(message => message.activityOperation === "deleted").length;
   const renamed = messages.filter(message => message.activityOperation === "renamed").length;
   const skipped = messages.filter(message => message.activityOperation === "skipped" || message.activityStatus === "error").length;
+  const checked = messages.filter(message => message.activityOperation === "checked" || message.activityOperation === "command").length;
+  const inspected = messages.filter(message => message.activityOperation === "searched" || message.activityOperation === "outlined").length;
+  if (running) {
+    const fileCount = new Set(messages.map(message => message.filePath).filter(Boolean)).size;
+    if (fileCount > 1) return `Working on ${fileCount} files`;
+    return running.content || "Working on the project";
+  }
   const parts = [
     created ? `Created ${created} ${created === 1 ? "file" : "files"}` : "",
     edited ? `Edited ${edited} ${edited === 1 ? "file" : "files"}` : "",
     deleted ? `Deleted ${deleted} ${deleted === 1 ? "file" : "files"}` : "",
     renamed ? `Renamed ${renamed} ${renamed === 1 ? "path" : "paths"}` : "",
+    inspected ? `Inspected ${inspected}` : "",
+    checked ? `Checked ${checked}` : "",
     skipped ? `Skipped ${skipped} ${skipped === 1 ? "edit" : "edits"}` : "",
   ].filter(Boolean);
   return parts.join(", ") || getActivityLabel(messages[messages.length - 1], false);
 };
+
+const hasVisibleActivityDelta = (message: WebDevMessage) =>
+  hasMeaningfulActivityDelta(message) ||
+  Boolean(message.activityDetail);
+
+const removeStalePrefixActivities = (messages: WebDevMessage[]) =>
+  messages.filter(message => {
+    if (!message.filePath || hasVisibleActivityDelta(message)) return true;
+    return !messages.some(other =>
+      other.id !== message.id &&
+      other.filePath &&
+      other.filePath !== message.filePath &&
+      other.filePath.startsWith(message.filePath) &&
+      hasVisibleActivityDelta(other)
+    );
+  });
+
+const groupOrderedParts = (parts: WebDevContentPart[], activitiesById: Map<string, WebDevMessage>) => {
+  const rendered: WebDevRenderedPart[] = [];
+  let activityBuffer: WebDevMessage[] = [];
+  const flushActivities = () => {
+    if (activityBuffer.length === 0) return;
+    rendered.push({ type: "toolGroup", activities: activityBuffer });
+    activityBuffer = [];
+  };
+
+  parts.forEach(part => {
+    if (part.type === "tool") {
+      const activity = activitiesById.get(part.activityId);
+      if (activity) activityBuffer.push(activity);
+      return;
+    }
+    flushActivities();
+    rendered.push(part);
+  });
+  flushActivities();
+  return rendered;
+};
+
+function ActivityDetail({ message }: { message: WebDevMessage }) {
+  const detail = getCompactActivityDetail(message);
+  if (!detail) return null;
+  return (
+    <pre className="mt-1.5 max-h-32 w-full overflow-auto rounded-md border border-[var(--privora-border)] bg-[var(--privora-bg)]/55 px-2.5 py-2 font-mono text-[11px] leading-5 text-[var(--privora-muted)]">
+      {detail}
+    </pre>
+  );
+}
 
 function WebDevActivityGroup({
   messages,
   isGenerating,
   activeRunStartedAt,
   onSelectFile,
+  onOpenFileDiff,
 }: {
   messages: WebDevMessage[];
   isGenerating: boolean;
   activeRunStartedAt?: number;
   onSelectFile?: (path: string) => void;
+  onOpenFileDiff?: (diff: WebDevFileDiff) => void;
 }) {
+  const visibleMessages = removeStalePrefixActivities(messages);
   const hasCurrentRunning = isGenerating && messages.some(message => isCurrentRunActivity(message, activeRunStartedAt));
   const hasAnyRunning = messages.some(message => message.activityStatus === "running");
   const [isOpen, setIsOpen] = useState(hasCurrentRunning);
   const isRunning = hasCurrentRunning;
-  const additions = messages.reduce((total, message) => total + (typeof message.additions === "number" ? message.additions : 0), 0);
-  const deletions = messages.reduce((total, message) => total + (typeof message.deletions === "number" ? message.deletions : 0), 0);
+  const runningMessage = visibleMessages.find(message => isCurrentRunActivity(message, activeRunStartedAt));
+  const additions = visibleMessages.reduce((total, message) => total + getEffectiveActivityDelta(message).additions, 0);
+  const deletions = visibleMessages.reduce((total, message) => total + getEffectiveActivityDelta(message).deletions, 0);
 
   useEffect(() => {
-    if (hasCurrentRunning) setIsOpen(true);
-    else if (!hasAnyRunning) setIsOpen(false);
-    else setIsOpen(false);
+    const nextOpen = Boolean(hasCurrentRunning && hasAnyRunning);
+    setIsOpen(current => current === nextOpen ? current : nextOpen);
   }, [hasCurrentRunning, hasAnyRunning]);
 
   return (
     <div className="flex justify-start">
-      <div className="min-w-0 max-w-[min(42rem,88%)] px-1 py-1 text-[13px] text-[var(--privora-muted)]">
+      <div className="min-w-0 max-w-[min(42rem,92%)] px-1 py-0.5 text-[13px] text-[var(--privora-muted)]">
         <button
           type="button"
           onClick={() => setIsOpen(value => !value)}
-          className="flex min-w-0 items-center gap-2 rounded-md py-1 text-left transition hover:text-[var(--privora-text)]"
+          className={cn(
+            "inline-flex max-w-full items-center gap-2 rounded-md border border-transparent px-1.5 py-1 text-left transition hover:border-[var(--privora-border)] hover:bg-[var(--privora-surface)] hover:text-[var(--privora-text)]",
+            isOpen && "border-[var(--privora-border)] bg-[var(--privora-surface)]/55"
+          )}
         >
           {isRunning ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
           ) : (
             <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
           )}
-          <span className={cn("min-w-0 truncate", isRunning && "animate-text-shimmer")}>{getActivityGroupLabel(messages, activeRunStartedAt)}</span>
+          <span className={cn("min-w-0 truncate", isRunning && "animate-text-shimmer")}>{getActivityGroupLabel(visibleMessages, activeRunStartedAt)}</span>
           {(additions > 0 || deletions > 0) && (
             <span className="ml-1 flex shrink-0 items-center gap-1">
               {additions > 0 && <span className="text-emerald-500">+{additions}</span>}
@@ -93,32 +229,53 @@ function WebDevActivityGroup({
           <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", !isOpen && "-rotate-90")} />
         </button>
         {isOpen && (
-          <div className="ml-5 mt-1 space-y-1.5">
-            {messages.map((message) => {
-              const fileAdditions = typeof message.additions === "number" ? message.additions : undefined;
-              const fileDeletions = typeof message.deletions === "number" ? message.deletions : undefined;
+          <div className="ml-5 mt-1.5 space-y-1.5 border-l border-[var(--privora-border)]/70 pl-3">
+            {runningMessage && (
+              <div className="min-w-0 truncate text-[12px] text-[var(--privora-muted)]">
+                {runningMessage.content}
+              </div>
+            )}
+            {visibleMessages.map((message) => {
+              const fileDelta = getEffectiveActivityDelta(message);
               const path = getActivityPath(message);
-              const canOpen = Boolean(message.filePath && onSelectFile);
+              const isMessageRunning = isGenerating && isCurrentRunActivity(message, activeRunStartedAt);
+              const canOpenDiff = Boolean(message.filePath && message.beforeContent !== undefined && message.afterContent !== undefined && onOpenFileDiff);
+              const canOpen = Boolean(message.filePath && (onSelectFile || canOpenDiff));
+              const openFile = () => {
+                if (canOpenDiff) {
+                  onOpenFileDiff?.({
+                    path: message.filePath!,
+                    beforeContent: message.beforeContent || "",
+                    afterContent: message.afterContent || "",
+                  });
+                  return;
+                }
+                onSelectFile?.(message.filePath!);
+              };
               return (
-                <div key={message.id} className="flex min-w-0 items-center gap-1.5 text-[13px]">
-                  {canOpen ? (
-                    <button
-                      type="button"
-                      onClick={() => onSelectFile?.(message.filePath!)}
-                      className="min-w-0 truncate text-left text-[var(--privora-text)] underline-offset-4 transition hover:underline"
-                      title={`Open ${message.filePath}`}
-                    >
-                      {path}
-                    </button>
-                  ) : (
-                    <span className="min-w-0 truncate text-[var(--privora-text)]">{path}</span>
-                  )}
-                  {(fileAdditions !== undefined || fileDeletions !== undefined) && (
-                    <>
-                      <span className="text-emerald-500">+{fileAdditions || 0}</span>
-                      <span className="text-red-500">-{fileDeletions || 0}</span>
-                    </>
-                  )}
+                <div key={message.id} className="min-w-0 text-[13px]">
+                  <div className={cn("flex min-w-0 items-center gap-1.5", isMessageRunning && "text-[var(--privora-accent)]")}>
+                    {isMessageRunning ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <span className="h-3 w-3 shrink-0" />}
+                    {canOpen ? (
+                      <button
+                        type="button"
+                        onClick={openFile}
+                        className="min-w-0 truncate text-left text-[var(--privora-text)] underline-offset-4 transition hover:underline"
+                        title={canOpenDiff ? `Open changes for ${message.filePath}` : `Open ${message.filePath}`}
+                      >
+                        {path}
+                      </button>
+                    ) : (
+                      <span className="min-w-0 truncate text-[var(--privora-text)]">{path}</span>
+                    )}
+                    {(fileDelta.additions > 0 || fileDelta.deletions > 0) && (
+                      <span className="flex shrink-0 items-center gap-1">
+                        {fileDelta.additions > 0 && <span className="text-emerald-500">+{fileDelta.additions}</span>}
+                        {fileDelta.deletions > 0 && <span className="text-red-500">-{fileDelta.deletions}</span>}
+                      </span>
+                    )}
+                  </div>
+                  {!message.filePath && <ActivityDetail message={message} />}
                 </div>
               );
             })}
@@ -134,29 +291,46 @@ function WebDevActivityRow({
   isGenerating,
   activeRunStartedAt,
   onSelectFile,
+  onOpenFileDiff,
 }: {
   message: WebDevMessage;
   isGenerating: boolean;
   activeRunStartedAt?: number;
   onSelectFile?: (path: string) => void;
+  onOpenFileDiff?: (diff: WebDevFileDiff) => void;
 }) {
   const isRunning = isGenerating && isCurrentRunActivity(message, activeRunStartedAt);
   const [isOpen, setIsOpen] = useState(isRunning);
-  const additions = typeof message.additions === "number" ? message.additions : undefined;
-  const deletions = typeof message.deletions === "number" ? message.deletions : undefined;
-  const showDelta = additions !== undefined || deletions !== undefined;
+  const { additions, deletions } = getEffectiveActivityDelta(message);
+  const showDelta = additions > 0 || deletions > 0;
+  const canOpenDiff = Boolean(message.filePath && message.beforeContent !== undefined && message.afterContent !== undefined && onOpenFileDiff);
+  const openFile = () => {
+    if (!message.filePath) return;
+    if (canOpenDiff) {
+      onOpenFileDiff?.({
+        path: message.filePath,
+        beforeContent: message.beforeContent || "",
+        afterContent: message.afterContent || "",
+      });
+      return;
+    }
+    onSelectFile?.(message.filePath);
+  };
 
   useEffect(() => {
-    setIsOpen(isRunning);
+    setIsOpen(current => current === isRunning ? current : isRunning);
   }, [isRunning]);
 
   return (
     <div className="flex justify-start">
-      <div className="min-w-0 max-w-[min(42rem,88%)] px-1 py-1 text-[13px] text-[var(--privora-muted)]">
+      <div className="min-w-0 max-w-[min(42rem,92%)] px-1 py-0.5 text-[13px] text-[var(--privora-muted)]">
         <button
           type="button"
           onClick={() => setIsOpen(value => !value)}
-          className="flex min-w-0 items-center gap-2 rounded-md py-1 text-left transition hover:text-[var(--privora-text)]"
+          className={cn(
+            "inline-flex max-w-full items-center gap-2 rounded-md border border-transparent px-1.5 py-1 text-left transition hover:border-[var(--privora-border)] hover:bg-[var(--privora-surface)] hover:text-[var(--privora-text)]",
+            isOpen && "border-[var(--privora-border)] bg-[var(--privora-surface)]/55"
+          )}
         >
           {isRunning ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
@@ -166,22 +340,27 @@ function WebDevActivityRow({
           <span className={cn("min-w-0 truncate", isRunning && "animate-text-shimmer")}>{getActivityLabel(message, isRunning)}</span>
           <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", !isOpen && "-rotate-90")} />
         </button>
-        {isOpen && message.filePath && (
-          <div className="ml-5 mt-0.5 flex min-w-0 items-center gap-1.5 text-[13px]">
-            <button
-              type="button"
-              onClick={() => onSelectFile?.(message.filePath!)}
-              className="min-w-0 truncate text-left text-[var(--privora-text)] underline-offset-4 transition hover:underline"
-              title={`Open ${message.filePath}`}
-            >
-              {message.filePath}
-            </button>
-            {showDelta && (
-              <>
-                <span className="text-emerald-500">+{additions || 0}</span>
-                <span className="text-red-500">-{deletions || 0}</span>
-              </>
+        {isOpen && (message.filePath || message.activityDetail) && (
+          <div className="ml-5 mt-1.5 min-w-0 border-l border-[var(--privora-border)]/70 pl-3 text-[13px]">
+            {message.filePath && (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={openFile}
+                  className="min-w-0 truncate text-left text-[var(--privora-text)] underline-offset-4 transition hover:underline"
+                  title={canOpenDiff ? `Open changes for ${message.filePath}` : `Open ${message.filePath}`}
+                >
+                  {message.filePath}
+                </button>
+                {showDelta && (
+                  <>
+                    {additions > 0 && <span className="text-emerald-500">+{additions}</span>}
+                    {deletions > 0 && <span className="text-red-500">-{deletions}</span>}
+                  </>
+                )}
+              </div>
             )}
+            <ActivityDetail message={message} />
           </div>
         )}
       </div>
@@ -189,7 +368,7 @@ function WebDevActivityRow({
   );
 }
 
-function WebDevThoughtPart({ part }: { part: NonNullable<WebDevMessage["contentParts"]>[number] }) {
+function WebDevThoughtPart({ part }: { part: WebDevThoughtContentPart }) {
   const [isOpen, setIsOpen] = useState(Boolean(part.active));
   const title = part.active ? "Thinking" : part.title || "Thought process";
 
@@ -233,14 +412,88 @@ function WebDevThoughtPart({ part }: { part: NonNullable<WebDevMessage["contentP
 
 function WebDevAssistantMessage({
   message,
+  activitiesById,
   isActiveAssistant,
+  isGenerating,
+  activeRunStartedAt,
+  onSelectFile,
+  onOpenFileDiff,
   onPreviewAttachment,
 }: {
   message: WebDevMessage;
+  activitiesById: Map<string, WebDevMessage>;
   isActiveAssistant: boolean;
+  isGenerating: boolean;
+  activeRunStartedAt?: number;
+  onSelectFile?: (path: string) => void;
+  onOpenFileDiff?: (diff: WebDevFileDiff) => void;
   onPreviewAttachment: (attachment: Attachment) => void;
 }) {
-  const thinkingParts = (message.contentParts || []).filter(part => part.type === "thinking" && part.text.trim());
+  const contentParts = (message.contentParts || []) as WebDevContentPart[];
+  const hasOrderedParts = contentParts.some(part => part.type === "tool" ? true : part.text.trim().length > 0);
+  const thinkingParts = contentParts.filter((part): part is WebDevThoughtContentPart => part.type === "thinking" && part.text.trim().length > 0);
+  const renderedParts = groupOrderedParts(contentParts, activitiesById);
+
+  if (hasOrderedParts) {
+    return (
+      <div className="flex w-full flex-col gap-1.5">
+        {renderedParts.map((part, index) => {
+          if (part.type === "thinking") {
+            if (!part.text.trim()) return null;
+            return <WebDevThoughtPart key={`${message.id}-thinking-${index}`} part={part} />;
+          }
+
+          if (part.type === "toolGroup") {
+            if (part.activities.length === 0) return null;
+            if (part.activities.length === 1) {
+              return (
+                <WebDevActivityRow
+                  key={`${message.id}-tool-${part.activities[0].id}`}
+                  message={part.activities[0]}
+                  isGenerating={isGenerating}
+                  activeRunStartedAt={activeRunStartedAt}
+                  onSelectFile={onSelectFile}
+                  onOpenFileDiff={onOpenFileDiff}
+                />
+              );
+            }
+            return (
+              <WebDevActivityGroup
+                key={`${message.id}-tool-group-${part.activities.map(activity => activity.id).join(":")}`}
+                messages={part.activities}
+                isGenerating={isGenerating}
+                activeRunStartedAt={activeRunStartedAt}
+                onSelectFile={onSelectFile}
+                onOpenFileDiff={onOpenFileDiff}
+              />
+            );
+          }
+
+          const textPart = part as WebDevTextContentPart;
+          if (!textPart.text.trim()) return null;
+          return (
+            <div key={`${message.id}-text-${index}`} className="w-full px-4 md:px-6">
+              <div className="w-full max-w-[min(42rem,92%)] text-[1.05rem] leading-8 text-[var(--privora-text)]">
+                <MarkdownRenderer isStreaming={isActiveAssistant && index === renderedParts.length - 1}>
+                  {textPart.text}
+                </MarkdownRenderer>
+              </div>
+            </div>
+          );
+        })}
+        {message.attachments && message.attachments.length > 0 && (
+          <ChatMessage
+            role="model"
+            content=""
+            isTyping={false}
+            hideActions
+            attachments={message.attachments}
+            onPreviewAttachment={onPreviewAttachment}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -274,6 +527,7 @@ export function WebDevChatPanel({
   onStop,
   onOpenIde,
   onSelectFile,
+  onOpenFileDiff,
   attachments,
   textareaRef,
   fileInputRef,
@@ -296,6 +550,7 @@ export function WebDevChatPanel({
   onStop: () => void;
   onOpenIde?: () => void;
   onSelectFile?: (path: string) => void;
+  onOpenFileDiff?: (diff: WebDevFileDiff) => void;
   attachments: Attachment[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -311,7 +566,19 @@ export function WebDevChatPanel({
   const shouldAutoScrollRef = useRef(true);
   const isScrollingToLatestRef = useRef(false);
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
-  const visibleMessages = messages.filter(message => !message.hiddenFromChat && message.role !== "tool");
+  const inlineActivityIds = new Set(
+    messages.flatMap(message =>
+      ((message.contentParts || []) as WebDevContentPart[])
+        .filter((part): part is WebDevToolContentPart => part.type === "tool")
+        .map(part => part.activityId)
+    )
+  );
+  const activitiesById = new Map(messages.filter(message => message.role === "activity").map(message => [message.id, message]));
+  const visibleMessages = messages.filter(message =>
+    !message.hiddenFromChat &&
+    message.role !== "tool" &&
+    !(message.role === "activity" && inlineActivityIds.has(message.id))
+  );
   const messageBlocks = visibleMessages.reduce<Array<WebDevMessage | WebDevMessage[]>>((blocks, message) => {
     if (message.role !== "activity") {
       blocks.push(message);
@@ -406,14 +673,14 @@ export function WebDevChatPanel({
             )}
             {messageBlocks.map((block) => {
               if (Array.isArray(block)) {
-                if (block.length === 1) return <WebDevActivityRow key={block[0].id} message={block[0]} isGenerating={isGenerating} activeRunStartedAt={activeRunStartedAt} onSelectFile={onSelectFile} />;
-                return <WebDevActivityGroup key={block.map(message => message.id).join(":")} messages={block} isGenerating={isGenerating} activeRunStartedAt={activeRunStartedAt} onSelectFile={onSelectFile} />;
+                if (block.length === 1) return <WebDevActivityRow key={block[0].id} message={block[0]} isGenerating={isGenerating} activeRunStartedAt={activeRunStartedAt} onSelectFile={onSelectFile} onOpenFileDiff={onOpenFileDiff} />;
+                return <WebDevActivityGroup key={block.map(message => message.id).join(":")} messages={block} isGenerating={isGenerating} activeRunStartedAt={activeRunStartedAt} onSelectFile={onSelectFile} onOpenFileDiff={onOpenFileDiff} />;
               }
               const message = block;
               const isUser = message.role === "user";
               const isActivity = message.role === "activity";
               if (isActivity) {
-                return <WebDevActivityRow key={message.id} message={message} isGenerating={isGenerating} activeRunStartedAt={activeRunStartedAt} onSelectFile={onSelectFile} />;
+                return <WebDevActivityRow key={message.id} message={message} isGenerating={isGenerating} activeRunStartedAt={activeRunStartedAt} onSelectFile={onSelectFile} onOpenFileDiff={onOpenFileDiff} />;
               }
               if (message.role === "assistant") {
                 const isActiveAssistant = message.id === activeAssistantId;
@@ -421,7 +688,12 @@ export function WebDevChatPanel({
                   <WebDevAssistantMessage
                     key={message.id}
                     message={message}
+                    activitiesById={activitiesById}
                     isActiveAssistant={isActiveAssistant}
+                    isGenerating={isGenerating}
+                    activeRunStartedAt={activeRunStartedAt}
+                    onSelectFile={onSelectFile}
+                    onOpenFileDiff={onOpenFileDiff}
                     onPreviewAttachment={onPreviewAttachment}
                   />
                 );

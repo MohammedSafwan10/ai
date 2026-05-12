@@ -25,6 +25,7 @@ import { deleteWebDevPath, renameWebDevPath } from "../lib/storage";
 import { normalizeWebDevPath } from "../lib/files";
 import { WebDevChatPanel } from "./WebDevChatPanel";
 import { WebDevIdePanel } from "./WebDevIdePanel";
+import type { WebDevFileDiff } from "../lib/types";
 
 type FileActionDialog =
   | { type: "create-file"; title: string; value: string }
@@ -68,6 +69,7 @@ export function WebDevWorkspace({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isIdeOpen, setIsIdeOpen] = useState(true);
+  const [activeDiff, setActiveDiff] = useState<WebDevFileDiff | null>(null);
   const [fileActionDialog, setFileActionDialog] = useState<FileActionDialog | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -76,6 +78,7 @@ export function WebDevWorkspace({
   useTextareaAutosize(textareaRef, input);
 
   useEffect(() => {
+    setActiveDiff(null);
     if (!currentProjectId) {
       setFiles([]);
       setMessages([]);
@@ -240,11 +243,20 @@ export function WebDevWorkspace({
     if (!project) return;
     setProjects(prev => prev.map(item => item.id === project.id ? { ...item, activeFilePath: path, updatedAt: Date.now() } : item));
     void updateWebDevProject(project.id, { activeFilePath: path });
+    setActiveDiff(null);
   };
 
   const handleSelectActivityFile = (path: string) => {
     setIsIdeOpen(true);
     handleSelectFile(path);
+  };
+
+  const handleOpenActivityDiff = (diff: WebDevFileDiff) => {
+    if (!project) return;
+    setIsIdeOpen(true);
+    setActiveDiff(diff);
+    setProjects(prev => prev.map(item => item.id === project.id ? { ...item, activeFilePath: diff.path, updatedAt: Date.now() } : item));
+    void updateWebDevProject(project.id, { activeFilePath: diff.path });
   };
 
   const handleFileChange = async (path: string, content: string) => {
@@ -359,6 +371,7 @@ export function WebDevWorkspace({
         onStop={stopWebDevGeneration}
         onOpenIde={isIdeOpen ? undefined : () => setIsIdeOpen(true)}
         onSelectFile={handleSelectActivityFile}
+        onOpenFileDiff={handleOpenActivityDiff}
         onPaste={handlePaste}
         onFileSelect={handleFileSelect}
         onTakeScreenshot={handleTakeScreenshot}
@@ -370,12 +383,14 @@ export function WebDevWorkspace({
           project={project}
           files={files}
           activeFilePath={activeFilePath}
+          activeDiff={activeDiff}
           isDarkMode={isDarkMode}
           isGenerating={isGenerating}
           width={webDevPanelWidth}
           onWidthChange={onPanelWidthChange}
           onClose={() => setIsIdeOpen(false)}
           onSelectFile={handleSelectFile}
+          onCloseDiff={() => setActiveDiff(null)}
           onFileChange={handleFileChange}
           onCreateFile={createFile}
           onCreateFolder={createFolder}

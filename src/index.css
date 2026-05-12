@@ -73,6 +73,17 @@ body,
   background: var(--privora-scrollbar-hover);
 }
 
+.privora-webdev-diff-editor .monaco-editor .margin,
+.privora-webdev-diff-editor .monaco-editor .glyph-margin,
+.privora-webdev-diff-editor .monaco-editor .line-numbers {
+  background-color: var(--privora-surface) !important;
+}
+
+.privora-webdev-diff-editor .monaco-scrollable-element > .shadow.left,
+.privora-webdev-diff-editor .monaco-scrollable-element > .shadow.top-left-corner {
+  box-shadow: none !important;
+}
+
 @keyframes text-shimmer {
   0% { background-position: -200% center; }
   100% { background-position: 200% center; }
