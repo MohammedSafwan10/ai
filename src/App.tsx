@@ -1,6 +1,7 @@
 // @refresh reset
 import { setupConnect } from "@webcontainer/api/connect";
-import { useState, useRef, useEffect, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
+import { useState, useRef, useEffect, useMemo, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { PanelLeft } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { AttachmentPreviewModal } from "./features/attachments/components/AttachmentPreviewModal";
@@ -12,6 +13,7 @@ import { ChatViewport } from "./features/chat/components/ChatViewport";
 import { RenameChatModal } from "./features/chat/components/RenameChatModal";
 import { SearchModal } from "./features/chat/components/SearchModal";
 import { WebDevWorkspace } from "./features/webdev/components/WebDevWorkspace";
+import { CharacterWorkspace } from "./features/characters/components/CharacterWorkspace";
 import { getModelOption } from "./lib/models";
 import { appLogger } from "./lib/logger";
 import { useChatStorage } from "./features/chat/hooks/useChatStorage";
@@ -44,19 +46,49 @@ import {
   loadArtifactsForChat,
   updateChatMeta,
   type ArtifactRecord,
+  type CharacterRecord,
+  type CharacterSessionRecord,
   type ChatMessageRecord,
   type ChatRecord,
   type WebDevProjectRecord,
 } from "./lib/db";
 import { copyArtifactContent, downloadArtifactContent } from "./lib/artifacts";
 import { createWebDevProject, deleteWebDevProject, loadWebDevProjects, updateWebDevProject } from "./features/webdev/lib/storage";
+import { deleteCharacterSession, loadCharacterSessions, loadCharacters } from "./features/characters/lib/storage";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
+type WorkspaceMode = "chat" | "web-dev" | "characters";
+type AppRouteState =
+  | { mode: "chat"; chatId: string | null }
+  | { mode: "web-dev"; projectId: string | null }
+  | { mode: "characters"; sessionId: string | null; view: "home" | "library" };
 
 const CHAT_BOTTOM_THRESHOLD_PX = 128;
 const isWebContainerConnectRoute =
   typeof window !== "undefined" && window.location.pathname.startsWith("/webcontainer/connect/");
+
+const parseAppRoute = (pathname: string, fallbackMode: WorkspaceMode): AppRouteState => {
+  const parts = pathname.split("/").filter(Boolean);
+  const [modeSegment, idSegment] = parts;
+
+  if (modeSegment === "web-dev") {
+    return { mode: "web-dev", projectId: idSegment || null };
+  }
+
+  if (modeSegment === "characters") {
+    if (idSegment === "library") return { mode: "characters", sessionId: null, view: "library" };
+    return { mode: "characters", sessionId: idSegment || null, view: "home" };
+  }
+
+  if (modeSegment === "chat") {
+    return { mode: "chat", chatId: idSegment || null };
+  }
+
+  if (fallbackMode === "web-dev") return { mode: "web-dev", projectId: null };
+  if (fallbackMode === "characters") return { mode: "characters", sessionId: null, view: "home" };
+  return { mode: "chat", chatId: null };
+};
 
 const getScreenCaptureFile = async () => {
   if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -132,13 +164,24 @@ export default function App() {
   }
 
   const { notify } = useToast();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: state => state.location.pathname });
   const initialUiSettingsRef = useRef(loadUiSettings());
+  const routeState = useMemo(
+    () => parseAppRoute(pathname, initialUiSettingsRef.current.workspaceMode),
+    [pathname]
+  );
+  const workspaceMode = routeState.mode;
   const [messages, setMessages] = useState<Message[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
-  const [workspaceMode, setWorkspaceMode] = useState<"chat" | "web-dev">(initialUiSettingsRef.current.workspaceMode);
   const [webDevProjects, setWebDevProjects] = useState<WebDevProjectRecord[]>([]);
   const [currentWebDevProjectId, setCurrentWebDevProjectId] = useState<string | null>(null);
+  const [isWebDevStorageReady, setIsWebDevStorageReady] = useState(false);
+  const [characters, setCharacters] = useState<CharacterRecord[]>([]);
+  const [characterSessions, setCharacterSessions] = useState<CharacterSessionRecord[]>([]);
+  const [currentCharacterSessionId, setCurrentCharacterSessionId] = useState<string | null>(null);
+  const [isCharactersStorageReady, setIsCharactersStorageReady] = useState(false);
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
@@ -456,12 +499,30 @@ export default function App() {
   useRootDarkMode(isDarkMode);
 
   useEffect(() => {
+    setIsWebDevStorageReady(false);
     void loadWebDevProjects()
       .then((projects) => {
         setWebDevProjects(projects);
-        setCurrentWebDevProjectId(projects[0]?.id || null);
+        setIsWebDevStorageReady(true);
       })
-      .catch(err => appLogger.error("Failed to load Web Dev projects", { err }));
+      .catch(err => {
+        setIsWebDevStorageReady(true);
+        appLogger.error("Failed to load Web Dev projects", { err });
+      });
+  }, []);
+
+  useEffect(() => {
+    setIsCharactersStorageReady(false);
+    void Promise.all([loadCharacters(), loadCharacterSessions()])
+      .then(([nextCharacters, nextSessions]) => {
+        setCharacters(nextCharacters);
+        setCharacterSessions(nextSessions);
+        setIsCharactersStorageReady(true);
+      })
+      .catch(err => {
+        setIsCharactersStorageReady(true);
+        appLogger.error("Failed to load Characters workspace", { err });
+      });
   }, []);
   
   const selectModelForNextMessage = (modelId: string) => {
@@ -599,6 +660,46 @@ export default function App() {
     setShowScrollToLatest(true);
   }, [messages, isTyping]);
 
+  const navigateToChat = (chatId?: string | null, replace = false) => {
+    if (chatId) {
+      void navigate({ to: "/chat/$chatId", params: { chatId } as any, replace });
+      return;
+    }
+    void navigate({ to: "/chat", replace });
+  };
+
+  const navigateToWebDevProject = (projectId?: string | null, replace = false) => {
+    if (projectId) {
+      void navigate({ to: "/web-dev/$projectId", params: { projectId } as any, replace });
+      return;
+    }
+    void navigate({ to: "/web-dev", replace });
+  };
+
+  const navigateToCharacters = (sessionId?: string | null, replace = false) => {
+    if (sessionId) {
+      void navigate({ to: "/characters/$sessionId", params: { sessionId } as any, replace });
+      return;
+    }
+    void navigate({ to: "/characters", replace });
+  };
+
+  const navigateToWorkspaceMode = (mode: WorkspaceMode) => {
+    if (mode === "web-dev") {
+      setActiveArtifactId(null);
+      navigateToWebDevProject(currentWebDevProjectId);
+      return;
+    }
+
+    if (mode === "characters") {
+      setActiveArtifactId(null);
+      navigateToCharacters(currentCharacterSessionId);
+      return;
+    }
+
+    navigateToChat(currentChatId);
+  };
+
   const handleNewChat = async () => {
     const now = Date.now();
     const newChatId = createId("chat");
@@ -617,19 +718,34 @@ export default function App() {
     shouldAutoScrollRef.current = true;
     setShowScrollToLatest(false);
     await createChat(newChat);
+    navigateToChat(newChatId);
   };
 
   const handleNewWebDevProject = async () => {
     const { project } = await createWebDevProject("New web app", selectedModelRef.current);
     setWebDevProjects(prev => [project, ...prev]);
     setCurrentWebDevProjectId(project.id);
-    setWorkspaceMode("web-dev");
+    navigateToWebDevProject(project.id);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
   const selectWebDevProject = (id: string) => {
     setCurrentWebDevProjectId(id);
-    setWorkspaceMode("web-dev");
+    navigateToWebDevProject(id);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const handleNewCharacterSession = () => {
+    setCurrentCharacterSessionId(null);
+    setActiveArtifactId(null);
+    navigateToCharacters(null);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const selectCharacterSession = (id: string) => {
+    setCurrentCharacterSessionId(id);
+    setActiveArtifactId(null);
+    navigateToCharacters(id);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
@@ -641,6 +757,7 @@ export default function App() {
       shouldAutoScrollRef.current = true;
       setShowScrollToLatest(false);
       setMessages(chat.messages);
+      navigateToChat(id);
     }
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
@@ -714,7 +831,7 @@ export default function App() {
     await deleteChatFromDb(id);
     if (currentChatId === id) {
       if (updatedChats.length > 0) {
-        selectChat(updatedChats[0].id);
+        navigateToChat(updatedChats[0].id, true);
       } else {
         await handleNewChat();
       }
@@ -728,7 +845,20 @@ export default function App() {
     setWebDevProjects(updatedProjects);
     await deleteWebDevProject(id);
     if (currentWebDevProjectId === id) {
-      setCurrentWebDevProjectId(updatedProjects[0]?.id || null);
+      setCurrentWebDevProjectId(null);
+      navigateToWebDevProject(null, true);
+    }
+    setActiveMenuId(null);
+  };
+
+  const deleteCharacterSessionById = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const updatedSessions = characterSessions.filter(session => session.id !== id);
+    setCharacterSessions(updatedSessions);
+    await deleteCharacterSession(id);
+    if (currentCharacterSessionId === id) {
+      setCurrentCharacterSessionId(null);
+      navigateToCharacters(null, true);
     }
     setActiveMenuId(null);
   };
@@ -746,10 +876,81 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isStorageReady && !currentChatId) {
-      handleNewChat();
+    if (pathname !== "/") return;
+    const fallbackMode = initialUiSettingsRef.current.workspaceMode;
+    if (fallbackMode === "web-dev") {
+      navigateToWebDevProject(null, true);
+      return;
     }
-  }, [selectedModel, isStorageReady, currentChatId]);
+    if (fallbackMode === "characters") {
+      navigateToCharacters(null, true);
+      return;
+    }
+    navigateToChat(null, true);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (workspaceMode !== "chat") {
+      setActiveArtifactId(null);
+      return;
+    }
+
+    if (routeState.mode !== "chat") return;
+
+    if (routeState.chatId) {
+      const chat = chats.find(item => item.id === routeState.chatId);
+      if (chat) {
+        if (currentChatId !== chat.id) {
+          setCurrentChatId(chat.id);
+          shouldAutoScrollRef.current = true;
+          setShowScrollToLatest(false);
+        }
+        setMessages(chat.messages);
+      } else if (isStorageReady) {
+        navigateToChat(null, true);
+      }
+      return;
+    }
+
+    if (!isStorageReady) return;
+    if (chats.length > 0) {
+      navigateToChat(chats[0].id, true);
+    } else {
+      void handleNewChat();
+    }
+  }, [workspaceMode, routeState, chats, currentChatId, isStorageReady]);
+
+  useEffect(() => {
+    if (workspaceMode !== "web-dev" || routeState.mode !== "web-dev") return;
+
+    if (!routeState.projectId) {
+      if (currentWebDevProjectId !== null) setCurrentWebDevProjectId(null);
+      return;
+    }
+
+    const project = webDevProjects.find(item => item.id === routeState.projectId);
+    if (project) {
+      if (currentWebDevProjectId !== project.id) setCurrentWebDevProjectId(project.id);
+    } else if (isWebDevStorageReady) {
+      navigateToWebDevProject(null, true);
+    }
+  }, [workspaceMode, routeState, webDevProjects, currentWebDevProjectId, isWebDevStorageReady]);
+
+  useEffect(() => {
+    if (workspaceMode !== "characters" || routeState.mode !== "characters") return;
+
+    if (!routeState.sessionId) {
+      if (currentCharacterSessionId !== null) setCurrentCharacterSessionId(null);
+      return;
+    }
+
+    const session = characterSessions.find(item => item.id === routeState.sessionId);
+    if (session) {
+      if (currentCharacterSessionId !== session.id) setCurrentCharacterSessionId(session.id);
+    } else if (isCharactersStorageReady) {
+      navigateToCharacters(null, true);
+    }
+  }, [workspaceMode, routeState, characterSessions, currentCharacterSessionId, isCharactersStorageReady]);
 
   const {
     handleEditMessage,
@@ -873,21 +1074,25 @@ export default function App() {
         workspaceMode={workspaceMode}
         chats={chats}
         webDevProjects={webDevProjects}
+        characters={characters}
+        characterSessions={characterSessions}
         currentChatId={currentChatId}
         currentWebDevProjectId={currentWebDevProjectId}
+        currentCharacterSessionId={currentCharacterSessionId}
         isTyping={isTyping}
         isDarkMode={isDarkMode}
         activeMenuId={activeMenuId}
         onOpenChange={setIsSidebarOpen}
         onWorkspaceModeChange={(mode) => {
-          setWorkspaceMode(mode);
-          if (mode === "web-dev") setActiveArtifactId(null);
+          navigateToWorkspaceMode(mode);
         }}
         onNewChat={handleNewChat}
         onNewWebDevProject={() => void handleNewWebDevProject()}
+        onNewCharacterSession={handleNewCharacterSession}
         onSearchOpen={() => setIsSearchModalOpen(true)}
         onSelectChat={selectChat}
         onSelectWebDevProject={selectWebDevProject}
+        onSelectCharacterSession={selectCharacterSession}
         onChatRowKeyDown={handleChatRowKeyDown}
         onActiveMenuChange={setActiveMenuId}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
@@ -897,6 +1102,7 @@ export default function App() {
         onRenameWebDevProject={renameWebDevProject}
         onDeleteWebDevProject={deleteWebDevProjectById}
         onToggleStarWebDevProject={toggleStarWebDevProject}
+        onDeleteCharacterSession={deleteCharacterSessionById}
       />
 
       {/* Main Content Area */}
@@ -938,6 +1144,40 @@ export default function App() {
                 onSelectModel={selectModelForNextMessage}
                 onToggleThinking={toggleThinkingForNextMessage}
                 onPanelWidthChange={setWebDevPanelWidth}
+                onPreviewAttachment={setPreviewAttachment}
+              />
+            </motion.div>
+          ) : workspaceMode === "characters" ? (
+            <motion.div
+              key="characters"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="contents"
+            >
+              <CharacterWorkspace
+                characters={characters}
+                sessions={characterSessions}
+                currentSessionId={currentCharacterSessionId}
+                setCharacters={setCharacters}
+                setSessions={setCharacterSessions}
+                setCurrentSessionId={(sessionId) => {
+                  setCurrentCharacterSessionId(sessionId);
+                  navigateToCharacters(sessionId);
+                }}
+                selectedModel={selectedModel}
+                selectedStyle={selectedStyle}
+                isThinkingEnabled={isThinkingEnabled}
+                isWebSearchEnabled={isWebSearchEnabled}
+                isDeepResearchEnabled={isDeepResearchEnabled}
+                imageSettings={imageSettings}
+                onSelectModel={selectModelForNextMessage}
+                onSelectStyle={selectStyleForNextMessage}
+                onToggleThinking={toggleThinkingForNextMessage}
+                onToggleWebSearch={toggleWebSearchForNextMessage}
+                onToggleDeepResearch={toggleDeepResearchForNextMessage}
+                onImageSettingsChange={setImageSettings}
                 onPreviewAttachment={setPreviewAttachment}
               />
             </motion.div>

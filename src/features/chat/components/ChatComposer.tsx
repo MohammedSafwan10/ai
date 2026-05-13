@@ -56,6 +56,7 @@ interface ChatComposerProps {
   onStopGeneration: () => void;
   onClearResearchEdit?: () => void;
   placement?: "footer" | "landing";
+  showTopBorder?: boolean;
 }
 
 export function ChatComposer({
@@ -90,6 +91,7 @@ export function ChatComposer({
   onStopGeneration,
   onClearResearchEdit,
   placement = "footer",
+  showTopBorder = true,
 }: ChatComposerProps) {
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -182,7 +184,7 @@ export function ChatComposer({
       className={
         isLanding
           ? "w-full px-0 pb-0 pt-0 bg-transparent transition-colors duration-500"
-          : "shrink-0 w-full px-3 sm:px-4 pb-2 sm:pb-4 pt-2 sm:pt-4 bg-[var(--privora-bg)] transition-colors duration-500 border-t border-[var(--privora-border)]/50"
+          : `shrink-0 w-full px-3 sm:px-4 pb-2 sm:pb-4 pt-2 sm:pt-4 bg-[var(--privora-bg)] transition-colors duration-500 ${showTopBorder ? "border-t border-[var(--privora-border)]/50" : ""}`
       }
     >
       <div className="max-w-[46rem] mx-auto relative">

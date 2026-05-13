@@ -224,7 +224,7 @@ export function ResearchReportViewer({ isOpen, report, onClose, onOpenActivity }
               >
                 <ListTree className="h-4 w-4" />
               </button>
-              {navigator.share && (
+              {typeof navigator.share === "function" && (
                 <button
                   type="button"
                   onClick={handleShare}

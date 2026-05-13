@@ -163,6 +163,90 @@ export interface WebDevMessageRecord {
   createdAt: number;
 }
 
+export type CharacterCategory =
+  | "Companions"
+  | "Historical Minds"
+  | "Travel Guides"
+  | "Mentors"
+  | "Tutors"
+  | "Creative Partners"
+  | "Cinema & Manga"
+  | "Story Worlds"
+  | "Games"
+  | "Productivity"
+  | "Wellness-lite"
+  | "Debate"
+  | "Originals";
+
+export type CharacterVisibility = "private" | "unlisted" | "public";
+export type CharacterMemoryType = "fact" | "preference" | "relationship" | "lore";
+
+export interface CharacterRecord {
+  id: string;
+  starterKey?: string;
+  name: string;
+  avatar: string;
+  color: string;
+  tagline: string;
+  category: CharacterCategory;
+  greeting: string;
+  personality: string;
+  speakingStyle: string;
+  boundaries: string;
+  exampleDialogue: string;
+  visibility: CharacterVisibility;
+  isStarred?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CharacterSessionRecord {
+  id: string;
+  characterId: string;
+  title: string;
+  model?: string;
+  userPersonaId?: string;
+  sceneId?: string;
+  isStarred?: boolean;
+  memoryEnabled?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CharacterMessageRecord {
+  id: string;
+  sessionId: string;
+  role: "user" | "model";
+  content: string;
+  thought?: string;
+  isThinking?: boolean;
+  attachments?: AttachmentRecord[];
+  createdAt: number;
+}
+
+export interface CharacterMemoryRecord {
+  id: string;
+  characterId: string;
+  sessionId?: string;
+  type: CharacterMemoryType;
+  content: string;
+  pinned?: boolean;
+  sourceMessageId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface UserPersonaRecord {
+  id: string;
+  name: string;
+  description: string;
+  preferences: string;
+  boundaries: string;
+  isDefault?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ResearchSourceRecord {
   title?: string;
   url: string;
@@ -257,6 +341,11 @@ class PrivoraDatabase extends Dexie {
   webDevProjects!: Table<WebDevProjectRecord, string>;
   webDevFiles!: Table<WebDevFileRecord, string>;
   webDevMessages!: Table<WebDevMessageRecord, string>;
+  characters!: Table<CharacterRecord, string>;
+  characterSessions!: Table<CharacterSessionRecord, string>;
+  characterMessages!: Table<CharacterMessageRecord, string>;
+  characterMemories!: Table<CharacterMemoryRecord, string>;
+  userPersonas!: Table<UserPersonaRecord, string>;
 
   constructor() {
     super("privora-local-db");
@@ -283,6 +372,19 @@ class PrivoraDatabase extends Dexie {
       webDevProjects: "&id, updatedAt, status",
       webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
       webDevMessages: "&id, projectId, createdAt",
+    });
+    this.version(5).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      webDevProjects: "&id, updatedAt, status",
+      webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
+      webDevMessages: "&id, projectId, createdAt",
+      characters: "&id, updatedAt, category, isStarred",
+      characterSessions: "&id, characterId, updatedAt, isStarred",
+      characterMessages: "&id, sessionId, createdAt",
+      characterMemories: "&id, characterId, sessionId, pinned, updatedAt",
+      userPersonas: "&id, isDefault, updatedAt",
     });
   }
 }

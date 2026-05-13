@@ -213,7 +213,7 @@ const buildOpenRouterBody = ({
   }
   if (tools.length > 0) {
     body.tools = tools;
-    if (capabilities.supportsToolChoice) {
+    if (capabilities?.supportsToolChoice) {
       body.tool_choice = webSearchRequired && webSearchEnabled ? "required" : "auto";
     }
   }

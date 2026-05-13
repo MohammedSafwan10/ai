@@ -290,11 +290,12 @@ export function useChatGeneration({
   const getImageGenerationOptions = (): ImageGenerationOptionsRecord => {
     const settings = imageSettingsRef.current;
     const imageModel = getImageModelOption(settings.model).id;
-    const count = isLargeImageSizePreset(settings.sizePreset) ? 1 : settings.count;
+    const sizePreset = settings.sizePreset || "square";
+    const count = isLargeImageSizePreset(sizePreset) ? 1 : settings.count;
     return {
       imageModel,
-      sizePreset: settings.sizePreset,
-      size: getImageSizeForPreset(settings.sizePreset),
+      sizePreset,
+      size: getImageSizeForPreset(sizePreset),
       quality: settings.quality,
       count,
       partialImages: settings.partialImages,
@@ -303,7 +304,7 @@ export function useChatGeneration({
   };
 
   const shouldRunImageRequestsIndividually = (options: ImageGenerationOptionsRecord) =>
-    options.count > 1 && isLargeImageSizePreset(options.sizePreset);
+    options.count > 1 && isLargeImageSizePreset(options.sizePreset || "square");
 
   const getCliproxyFailureMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error || "");
@@ -333,7 +334,7 @@ export function useChatGeneration({
   const getImageGenerationFailureMessage = (error: unknown, options: ImageGenerationOptionsRecord) => {
     const message = error instanceof Error ? error.message : String(error || "");
     if (/stream error|INTERNAL_ERROR|received from peer/i.test(message)) {
-      return isLargeImageSizePreset(options.sizePreset)
+      return isLargeImageSizePreset(options.sizePreset || "square")
         ? "The image stream dropped while creating a large image. Try the 1536x1024 or 1024x1536 size for a faster, steadier run."
         : "The image stream dropped before an image was returned. Try again in a moment.";
     }
@@ -1256,7 +1257,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
               ...detected,
               operation: "create",
               targetArtifactId: streamingArtifactRef?.artifactId,
-            });
+            }) || undefined;
             if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
           }
         }
@@ -1495,7 +1496,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             title: streamedArtifactDraft.title,
             language: streamedArtifactDraft.language,
             content: streamedArtifactDraft.content,
-          });
+          }) || undefined;
           if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
         } else if (openRouterRoute === "artifact" && openRouterArtifactStreamText.trim()) {
           currentText = openRouterArtifactStreamText;
@@ -1509,7 +1510,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
               ...detected,
               operation: "create",
               targetArtifactId: streamingArtifactRef?.artifactId,
-            });
+            }) || undefined;
             if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
           }
         }
@@ -1781,7 +1782,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           title: streamedArtifactDraft.title,
           language: streamedArtifactDraft.language,
           content: streamedArtifactDraft.content,
-        });
+        }) || undefined;
         if (currentArtifact) updateLastModelMessage({ artifact: currentArtifact, content: "" });
       } else if (geminiRoute === "artifact" && geminiArtifactStreamText.trim()) {
         currentText = geminiArtifactStreamText;
@@ -1793,7 +1794,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           ...detectedArtifact,
           operation: "create",
           targetArtifactId: streamingArtifactRef?.artifactId,
-        });
+        }) || undefined;
       }
       updateLastModelMessage({
         isThinking: false,

@@ -219,18 +219,20 @@ const mergeActivityMessages = (messages: WebDevMessage[]) => {
   const byId = new Map([...merged.values(), ...passthrough].map(message => [message.id, message]));
   return messages
     .map(message => message.filePath ? merged.get(message.filePath) : byId.get(message.id))
-    .filter((message, index, all): message is WebDevMessage => Boolean(message) && all.findIndex(item => item?.id === message.id) === index);
+    .filter((message): message is WebDevMessage => Boolean(message))
+    .filter((message, index, all) => all.findIndex(item => item.id === message.id) === index);
 };
 
 const removeStalePrefixActivities = (messages: WebDevMessage[]) => {
   const mergedMessages = mergeActivityMessages(messages);
   return mergedMessages.filter(message => {
     if (!message.filePath || hasVisibleActivityDelta(message)) return true;
+    const parentPath = message.filePath;
     return !mergedMessages.some(other =>
       other.id !== message.id &&
-      other.filePath &&
-      other.filePath !== message.filePath &&
-      other.filePath.startsWith(message.filePath) &&
+      Boolean(other.filePath) &&
+      other.filePath !== parentPath &&
+      other.filePath!.startsWith(parentPath) &&
       hasVisibleActivityDelta(other)
     );
   });

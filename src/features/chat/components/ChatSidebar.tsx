@@ -1,25 +1,81 @@
-import type { KeyboardEvent, MouseEvent } from "react";
+import type { ComponentType, KeyboardEvent, MouseEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Code2, MessageCircle, Moon, MoreHorizontal, PanelLeft, Pencil, Plus, Search, Star, Sun, Trash2 } from "lucide-react";
-import type { ChatRecord, WebDevProjectRecord } from "../../../lib/db";
+import type { CharacterRecord, CharacterSessionRecord, ChatRecord, WebDevProjectRecord } from "../../../lib/db";
+
+type WorkspaceMode = "chat" | "web-dev" | "characters";
+
+function CharacterModeIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none">
+      <path
+        d="M7.75 12.5c2.35-2.55 6.15-2.55 8.5 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.25 16.75c3.35-3.15 8.15-3.15 11.5 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="8.25" cy="8.25" r="2.25" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="15.75" cy="8.25" r="2.25" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M12 4.5v1.25M12 18.25v1.25"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+const workspaceNavItems: Array<{
+  mode: WorkspaceMode;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+}> = [
+  {
+    mode: "chat",
+    label: "Chat",
+    icon: MessageCircle,
+  },
+  {
+    mode: "web-dev",
+    label: "Web Dev",
+    icon: Code2,
+  },
+  {
+    mode: "characters",
+    label: "Characters",
+    icon: CharacterModeIcon,
+  },
+];
 
 interface ChatSidebarProps {
   isOpen: boolean;
-  workspaceMode: "chat" | "web-dev";
+  workspaceMode: WorkspaceMode;
   chats: ChatRecord[];
   webDevProjects: WebDevProjectRecord[];
+  characters: CharacterRecord[];
+  characterSessions: CharacterSessionRecord[];
   currentChatId: string | null;
   currentWebDevProjectId: string | null;
+  currentCharacterSessionId: string | null;
   isTyping: boolean;
   isDarkMode: boolean;
   activeMenuId: string | null;
   onOpenChange: (isOpen: boolean) => void;
-  onWorkspaceModeChange: (mode: "chat" | "web-dev") => void;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   onNewChat: () => void;
   onNewWebDevProject: () => void;
+  onNewCharacterSession: () => void;
   onSearchOpen: () => void;
   onSelectChat: (chatId: string) => void;
   onSelectWebDevProject: (projectId: string) => void;
+  onSelectCharacterSession: (sessionId: string) => void;
   onChatRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chatId: string) => void;
   onActiveMenuChange: (chatId: string | null) => void;
   onToggleDarkMode: () => void;
@@ -29,6 +85,7 @@ interface ChatSidebarProps {
   onRenameWebDevProject: (event: MouseEvent, projectId: string) => void;
   onDeleteWebDevProject: (event: MouseEvent, projectId: string) => void;
   onToggleStarWebDevProject: (event: MouseEvent, projectId: string) => void;
+  onDeleteCharacterSession: (event: MouseEvent, sessionId: string) => void;
 }
 
 interface ChatRowProps {
@@ -154,18 +211,24 @@ function ChatSection({
   "workspaceMode" |
   "isDarkMode" |
   "webDevProjects" |
+  "characters" |
+  "characterSessions" |
   "currentWebDevProjectId" |
+  "currentCharacterSessionId" |
   "onOpenChange" |
   "onWorkspaceModeChange" |
   "onNewChat" |
   "onNewWebDevProject" |
+  "onNewCharacterSession" |
   "onSearchOpen" |
   "onSelectWebDevProject" |
+  "onSelectCharacterSession" |
   "onToggleDarkMode" |
   "chats"
   | "onRenameWebDevProject"
   | "onDeleteWebDevProject"
   | "onToggleStarWebDevProject"
+  | "onDeleteCharacterSession"
 > & {
   title: string;
   chats: ChatRecord[];
@@ -192,6 +255,99 @@ function ChatSection({
           onDelete={onDeleteChat}
         />
       ))}
+    </div>
+  );
+}
+
+function CharacterSection({
+  sessions,
+  characters,
+  currentCharacterSessionId,
+  activeMenuId,
+  onSelectCharacterSession,
+  onActiveMenuChange,
+  onDeleteCharacterSession,
+}: {
+  sessions: CharacterSessionRecord[];
+  characters: CharacterRecord[];
+  currentCharacterSessionId: string | null;
+  activeMenuId: string | null;
+  onSelectCharacterSession: (sessionId: string) => void;
+  onActiveMenuChange: (sessionId: string | null) => void;
+  onDeleteCharacterSession: (event: MouseEvent, sessionId: string) => void;
+}) {
+  if (sessions.length === 0) {
+    return <div className="px-3 py-4 text-sm text-[var(--privora-muted)]">No character chats yet.</div>;
+  }
+
+  return (
+    <div>
+      <div className="px-3 pb-2 pt-2 text-xs font-medium text-[var(--privora-muted)]">Character chats</div>
+      {sessions.map(session => {
+        const character = characters.find(item => item.id === session.characterId);
+        const isActive = currentCharacterSessionId === session.id;
+        const isMenuOpen = activeMenuId === session.id;
+        return (
+          <div
+            key={session.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelectCharacterSession(session.id)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectCharacterSession(session.id);
+              }
+            }}
+            className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 text-left text-sm transition ${
+              isActive
+                ? "bg-[var(--privora-text)]/10 font-medium text-[var(--privora-text)]"
+                : "text-[var(--privora-text)]/70 hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
+            }`}
+          >
+            <span
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-semibold text-white"
+              style={{ background: character?.color || "var(--privora-accent)" }}
+            >
+              {character?.avatar || "AI"}
+            </span>
+            <span className="min-w-0 flex-1 truncate pr-7">{session.title}</span>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onActiveMenuChange(isMenuOpen ? null : session.id);
+              }}
+              className={`absolute right-1.5 rounded-md p-1.5 text-[var(--privora-muted)] opacity-100 transition hover:bg-[var(--privora-text)]/10 hover:text-[var(--privora-text)] sm:opacity-0 sm:group-hover:opacity-100 ${isMenuOpen ? "bg-[var(--privora-text)]/10 text-[var(--privora-text)] opacity-100" : ""}`}
+              title="Character chat options"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+            <AnimatePresence>
+              {isMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={(event) => { event.stopPropagation(); onActiveMenuChange(null); }} />
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="absolute right-2 top-8 z-50 w-40 overflow-hidden rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] py-1 shadow-xl"
+                  >
+                    <button
+                      type="button"
+                      onClick={(event) => onDeleteCharacterSession(event, session.id)}
+                      className="flex w-full items-center gap-3 px-3 py-2 text-sm text-red-500 transition-colors hover:bg-red-500/10"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </button>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -312,8 +468,11 @@ export function ChatSidebar({
   workspaceMode,
   chats,
   webDevProjects,
+  characters,
+  characterSessions,
   currentChatId,
   currentWebDevProjectId,
+  currentCharacterSessionId,
   isTyping,
   isDarkMode,
   activeMenuId,
@@ -321,9 +480,11 @@ export function ChatSidebar({
   onWorkspaceModeChange,
   onNewChat,
   onNewWebDevProject,
+  onNewCharacterSession,
   onSearchOpen,
   onSelectChat,
   onSelectWebDevProject,
+  onSelectCharacterSession,
   onChatRowKeyDown,
   onActiveMenuChange,
   onToggleDarkMode,
@@ -333,9 +494,27 @@ export function ChatSidebar({
   onRenameWebDevProject,
   onDeleteWebDevProject,
   onToggleStarWebDevProject,
+  onDeleteCharacterSession,
 }: ChatSidebarProps) {
   const starredChats = chats.filter(chat => chat.isStarred);
   const recentChats = chats.filter(chat => !chat.isStarred);
+  const activeMode = workspaceNavItems.find(item => item.mode === workspaceMode) || workspaceNavItems[0];
+  const ActiveModeIcon = activeMode.icon;
+  const newItemLabel =
+    workspaceMode === "web-dev" ? "New web app" :
+    workspaceMode === "characters" ? "New character chat" :
+    "New chat";
+  const runNewItemAction = () => {
+    if (workspaceMode === "web-dev") {
+      onNewWebDevProject();
+      return;
+    }
+    if (workspaceMode === "characters") {
+      onNewCharacterSession();
+      return;
+    }
+    if (!isTyping) onNewChat();
+  };
 
   return (
     <motion.aside
@@ -359,10 +538,10 @@ export function ChatSidebar({
 
           <div className="mt-4 flex flex-col items-center gap-2">
             <button
-              onClick={() => workspaceMode === "web-dev" ? onNewWebDevProject() : !isTyping && onNewChat()}
+              onClick={runNewItemAction}
               disabled={workspaceMode === "chat" && isTyping}
               className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              title={workspaceMode === "web-dev" ? "New web app" : "New chat"}
+              title={newItemLabel}
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -373,26 +552,27 @@ export function ChatSidebar({
             >
               <Search className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => {
-                onWorkspaceModeChange("chat");
-                onOpenChange(true);
-              }}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
-              title="Chats"
-            >
-              <MessageCircle className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                onWorkspaceModeChange("web-dev");
-                onOpenChange(true);
-              }}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)] transition-colors"
-              title="Web Dev"
-            >
-              <Code2 className="w-4 h-4" />
-            </button>
+            {workspaceNavItems.map(item => {
+              const Icon = item.icon;
+              const isActive = workspaceMode === item.mode;
+              return (
+                <button
+                  key={item.mode}
+                  onClick={() => {
+                    onWorkspaceModeChange(item.mode);
+                    onOpenChange(true);
+                  }}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                    isActive
+                      ? "bg-[var(--privora-text)] text-[var(--privora-bg)]"
+                      : "text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
+                  }`}
+                  title={item.label}
+                >
+                  <Icon className="w-4 h-4" />
+                </button>
+              );
+            })}
             {starredChats.length > 0 && (
               <button
                 onClick={() => onOpenChange(true)}
@@ -428,37 +608,43 @@ export function ChatSidebar({
               </button>
             </div>
 
-            <div className="flex flex-col gap-1 w-full mt-2">
-              <div className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--privora-border)] bg-[var(--privora-bg)] p-1">
-                <button
-                  type="button"
-                  onClick={() => onWorkspaceModeChange("chat")}
-                  className={`flex h-9 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition ${
-                    workspaceMode === "chat" ? "bg-[var(--privora-surface)] text-[var(--privora-text)] shadow-sm" : "text-[var(--privora-muted)] hover:text-[var(--privora-text)]"
-                  }`}
-                >
-                  <MessageCircle className="h-4 w-4" /> Chat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onWorkspaceModeChange("web-dev")}
-                  className={`flex h-9 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition ${
-                    workspaceMode === "web-dev" ? "bg-[var(--privora-surface)] text-[var(--privora-text)] shadow-sm" : "text-[var(--privora-muted)] hover:text-[var(--privora-text)]"
-                  }`}
-                >
-                  <Code2 className="h-4 w-4" /> Web Dev
-                </button>
+            <div className="flex flex-col gap-3 w-full mt-2">
+              <div>
+                <div className="space-y-1 rounded-2xl border border-[var(--privora-border)] bg-[var(--privora-bg)]/45 p-1">
+                  {workspaceNavItems.map(item => {
+                    const Icon = item.icon;
+                    const isActive = workspaceMode === item.mode;
+                    return (
+                      <button
+                        key={item.mode}
+                        type="button"
+                        onClick={() => onWorkspaceModeChange(item.mode)}
+                        className={`flex h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-medium transition ${
+                          isActive
+                            ? "bg-[var(--privora-surface)] text-[var(--privora-text)] shadow-sm"
+                            : "text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
+                        }`}
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg">
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <button
-                onClick={() => workspaceMode === "web-dev" ? onNewWebDevProject() : !isTyping && onNewChat()}
+                onClick={runNewItemAction}
                 disabled={workspaceMode === "chat" && isTyping}
-                className="flex items-center gap-3 w-full p-2.5 rounded-lg hover:bg-[var(--privora-text)]/5 transition-colors text-sm font-medium text-[var(--privora-text)] text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                className="flex items-center gap-3 w-full rounded-xl border border-[var(--privora-border)] bg-[var(--privora-bg)]/55 p-2.5 text-left text-sm font-medium text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/5 disabled:cursor-not-allowed disabled:opacity-50 group"
               >
                 <div className="w-7 h-7 rounded-full bg-[var(--privora-text)]/5 flex items-center justify-center group-hover:bg-[var(--privora-text)]/10 transition-colors shrink-0">
                   <Plus className="w-4 h-4" />
                 </div>
-                {workspaceMode === "web-dev" ? "New web app" : "New chat"}
+                <span className="min-w-0 flex-1 truncate">{newItemLabel}</span>
+                <ActiveModeIcon className="h-4 w-4 shrink-0 text-[var(--privora-muted)]" />
               </button>
 
               {workspaceMode === "chat" && (
@@ -486,6 +672,16 @@ export function ChatSidebar({
                 onRenameWebDevProject={onRenameWebDevProject}
                 onDeleteWebDevProject={onDeleteWebDevProject}
                 onToggleStarWebDevProject={onToggleStarWebDevProject}
+              />
+            ) : workspaceMode === "characters" ? (
+              <CharacterSection
+                sessions={characterSessions}
+                characters={characters}
+                currentCharacterSessionId={currentCharacterSessionId}
+                activeMenuId={activeMenuId}
+                onSelectCharacterSession={onSelectCharacterSession}
+                onActiveMenuChange={onActiveMenuChange}
+                onDeleteCharacterSession={onDeleteCharacterSession}
               />
             ) : (
               <>

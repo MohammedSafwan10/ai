@@ -150,7 +150,7 @@ export function ResearchReportCard({ report, onOpenActivity }: ResearchReportCar
           <button type="button" onClick={handleCopy} className="p-1 -m-1 transition-colors hover:text-[var(--privora-text)]" title="Copy contents">
             {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
           </button>
-          {navigator.share && (
+          {typeof navigator.share === "function" && (
             <button type="button" onClick={handleShare} className="p-1 -m-1 transition-colors hover:text-[var(--privora-text)]" title="Share report">
               <Share2 className="h-4 w-4" />
             </button>
