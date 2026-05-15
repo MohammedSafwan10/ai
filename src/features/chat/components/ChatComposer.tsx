@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type KeyboardEvent, type RefObject } from "react";
-import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, Globe, ImagePlus, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
+import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, GitCompare, Globe, ImagePlus, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   CLIPROXY_ATTACHMENT_ACCEPT,
@@ -18,7 +18,7 @@ import {
 } from "../../../lib/models";
 import { getImageModelOption, imageModelOptions, type ImageModelId } from "../../../lib/imageModels";
 import { getResponseStyle, responseStyleOptions, type ResponseStyleId } from "../../../lib/prompt";
-import type { ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
+import type { DebateSettings, ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
 
 
 
@@ -31,7 +31,9 @@ interface ChatComposerProps {
   isThinkingEnabled: boolean;
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
+  isDebateModeEnabled: boolean;
   composerMode: "chat" | "image";
+  debateSettings: DebateSettings;
   imageSettings: ImageSettings;
   researchEditContext?: {
     title: string;
@@ -49,7 +51,9 @@ interface ChatComposerProps {
   onToggleThinking: () => void;
   onToggleWebSearch: () => void;
   onToggleDeepResearch: () => void;
+  onToggleDebateMode: () => void;
   onSelectComposerMode: (mode: "chat" | "image") => void;
+  onDebateSettingsChange: (settings: DebateSettings) => void;
   onImageSettingsChange: (settings: ImageSettings) => void;
   onSelectModel: (modelId: string) => void;
   onSelectStyle: (styleId: ResponseStyleId) => void;
@@ -68,7 +72,9 @@ export function ChatComposer({
   isThinkingEnabled,
   isWebSearchEnabled,
   isDeepResearchEnabled,
+  isDebateModeEnabled,
   composerMode,
+  debateSettings,
   imageSettings,
   researchEditContext,
   textareaRef,
@@ -84,7 +90,9 @@ export function ChatComposer({
   onToggleThinking,
   onToggleWebSearch,
   onToggleDeepResearch,
+  onToggleDebateMode,
   onSelectComposerMode,
+  onDebateSettingsChange,
   onImageSettingsChange,
   onSelectModel,
   onSelectStyle,
@@ -98,6 +106,7 @@ export function ChatComposer({
   const [isImageModelDropdownOpen, setIsImageModelDropdownOpen] = useState(false);
   const [isStyleDropdownOpen, setIsStyleDropdownOpen] = useState(false);
   const [isImageOptionsOpen, setIsImageOptionsOpen] = useState(false);
+  const [isDebateOptionsOpen, setIsDebateOptionsOpen] = useState(false);
   const selectedModelOption = getModelOption(selectedModel);
   const selectedModelLabel = getModelLabel(selectedModel);
   const modelProviderGroups = getModelProviderGroups();
@@ -126,6 +135,7 @@ export function ChatComposer({
     setIsImageModelDropdownOpen(false);
     setIsStyleDropdownOpen(false);
     setIsImageOptionsOpen(false);
+    setIsDebateOptionsOpen(false);
   }, [settingsDisabled]);
 
   const handleSelectModel = (modelId: string) => {
@@ -174,6 +184,14 @@ export function ChatComposer({
       outputFormat: "png",
     });
   };
+  const updateDebateSettings = (patch: Partial<DebateSettings>) => {
+    onDebateSettingsChange({ ...debateSettings, ...patch });
+  };
+  const debateModelRows: Array<{ key: keyof DebateSettings; label: string }> = [
+    { key: "agentAModel", label: "Agent A" },
+    { key: "agentBModel", label: "Agent B" },
+    { key: "judgeModel", label: "Judge" },
+  ];
 
   return (
     <motion.footer
@@ -390,6 +408,17 @@ export function ChatComposer({
                           </div>
                           {isDeepResearchEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
                         </button>
+                        <button
+                          type="button"
+                          onClick={onToggleDebateMode}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isDebateModeEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <GitCompare className={`w-4 h-4 ${isDebateModeEnabled ? "opacity-100" : "opacity-70"}`} />
+                            <span className="font-medium leading-none">Debate mode</span>
+                          </div>
+                          {isDebateModeEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                        </button>
                       </>
                       )}
                       {!isImageMode && (
@@ -474,6 +503,50 @@ export function ChatComposer({
                   <Microscope className="h-3.5 w-3.5" />
                   Deep Research
                 </span>
+              )}
+              {isDebateModeEnabled && !isImageMode && (
+                <div className="relative hidden sm:block">
+                  <button
+                    type="button"
+                    disabled={settingsDisabled}
+                    onClick={() => setIsDebateOptionsOpen(!isDebateOptionsOpen)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-user-bubble)] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/10 disabled:opacity-45"
+                    title="Debate model settings"
+                  >
+                    <GitCompare className="h-3.5 w-3.5" />
+                    Debate
+                    <ChevronDown className={`h-3 w-3 opacity-50 transition-transform ${isDebateOptionsOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  <AnimatePresence>
+                    {isDebateOptionsOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsDebateOptionsOpen(false)} />
+                        <motion.div
+                          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                          transition={{ duration: 0.14 }}
+                          className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-2 shadow-xl"
+                        >
+                          <div className="mb-1 px-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--privora-muted)]">Debate Models</div>
+                          <div className="flex flex-col gap-0.5">
+                            {debateModelRows.map(row => (
+                              <div key={row.key} className="flex flex-col gap-1.5 rounded-lg p-1.5 transition-colors hover:bg-[var(--privora-bg)]/80">
+                                <span className="px-0.5 text-[12px] font-medium text-[var(--privora-text)] opacity-80">{row.label}</span>
+                                <DebateModelSelect
+                                  value={debateSettings[row.key]}
+                                  onChange={(val) => updateDebateSettings({ [row.key]: val })}
+                                  selectedModelLabel={selectedModelLabel}
+                                  modelProviderGroups={modelProviderGroups}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
               )}
               {isImageMode && (
                 <button
@@ -769,5 +842,82 @@ export function ChatComposer({
         </form>
       </div>
     </motion.footer>
+  );
+}
+
+function DebateModelSelect({
+  value,
+  onChange,
+  selectedModelLabel,
+  modelProviderGroups,
+}: {
+  value: string | undefined;
+  onChange: (val: string | undefined) => void;
+  selectedModelLabel: string;
+  modelProviderGroups: any[];
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const currentLabel = value
+    ? modelProviderGroups.flatMap(g => g.models).find(m => m.id === value)?.label || value
+    : `Current (${selectedModelLabel})`;
+
+  return (
+    <div className="relative min-w-0">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-[12px] font-medium outline-none transition-colors ${isOpen ? "border-transparent bg-[var(--privora-user-bubble)] text-[var(--privora-text)]" : "border-[var(--privora-border)] bg-[var(--privora-surface)] text-[var(--privora-text)] hover:bg-[var(--privora-user-bubble)]"}`}
+      >
+        <span className="truncate">{currentLabel}</span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 opacity-50 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setIsOpen(false); }} />
+            <motion.div
+              initial={{ opacity: 0, y: -4, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -4, scale: 0.98 }}
+              transition={{ duration: 0.14 }}
+              className="absolute left-0 bottom-[calc(100%+4px)] z-[70] flex max-h-56 w-[min(18rem,calc(100vw-2rem))] flex-col overflow-y-auto rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-1 shadow-lg"
+            >
+              <button
+                type="button"
+                onClick={() => { onChange(undefined); setIsOpen(false); }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-[12px] transition-colors ${!value ? "bg-[var(--privora-user-bubble)] font-medium text-[var(--privora-text)]" : "text-[var(--privora-text)] hover:bg-[var(--privora-user-bubble)]"}`}
+              >
+                <span className="truncate">Current ({selectedModelLabel})</span>
+                {!value && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--privora-text)]" />}
+              </button>
+              
+              {modelProviderGroups.map((group, groupIndex) => (
+                <div key={group.id} className="mt-1 border-t border-[var(--privora-border)]/60 pt-1">
+                  <div className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--privora-muted)]">
+                    {group.label}
+                  </div>
+                  {group.models.map((option: any) => {
+                    const isActive = value === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => { onChange(option.id); setIsOpen(false); }}
+                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-[12px] transition-colors ${isActive ? "bg-[var(--privora-user-bubble)] font-medium text-[var(--privora-text)]" : "text-[var(--privora-text)] hover:bg-[var(--privora-user-bubble)]"}`}
+                        title={option.description}
+                      >
+                        <span className="truncate">{option.label}</span>
+                        {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-[var(--privora-text)]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
