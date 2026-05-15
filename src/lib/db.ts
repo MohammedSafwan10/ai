@@ -49,6 +49,27 @@ export interface ImageGenerationRecord {
   outputFormat?: string;
 }
 
+export type DebateAgentId = "a" | "b" | "judge";
+export type DebateAgentStatus = "queued" | "streaming" | "done" | "error" | "stopped";
+
+export interface DebateAgentRecord {
+  id: DebateAgentId;
+  label: string;
+  model: string;
+  status: DebateAgentStatus;
+  content: string;
+  thought?: string;
+  error?: string;
+}
+
+export interface DebateRecord {
+  status: DebateAgentStatus;
+  prompt: string;
+  agents: DebateAgentRecord[];
+  startedAt: number;
+  completedAt?: number;
+}
+
 export type ArtifactKind = "markdown" | "code" | "html" | "svg" | "mermaid" | "json" | "yaml" | "sql" | "text" | "table" | "prompt";
 export type ArtifactStatus = "streaming" | "ready" | "failed";
 
@@ -326,6 +347,7 @@ export interface ChatMessageRecord {
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
   imageGeneration?: ImageGenerationRecord;
+  debate?: DebateRecord;
   artifact?: ArtifactReferenceRecord;
   attachments?: AttachmentRecord[];
   createdAt: number;
@@ -448,6 +470,7 @@ export const normalizeMessage = (
   researchCompletedAt: message.researchCompletedAt,
   researchTimeBudgetMs: message.researchTimeBudgetMs,
   imageGeneration: message.imageGeneration,
+  debate: message.debate,
   artifact: message.artifact,
   attachments: message.attachments,
   createdAt: message.createdAt || fallbackCreatedAt,

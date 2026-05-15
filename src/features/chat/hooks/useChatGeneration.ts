@@ -39,6 +39,8 @@ import {
   type ArtifactReferenceRecord,
   type ChatMessageRecord,
   type ChatRecord,
+  type DebateAgentRecord,
+  type DebateAgentStatus,
   type ImageGenerationItemRecord,
   type ImageGenerationOptionsRecord,
   type PendingResearchIntentRecord,
@@ -46,7 +48,7 @@ import {
   type ResearchPlanRecord,
   type ResearchPlanStepStatus,
 } from "../../../lib/db";
-import type { ImageSettings } from "../../../lib/settings";
+import type { DebateSettings, ImageSettings } from "../../../lib/settings";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
@@ -71,6 +73,8 @@ interface UseChatGenerationOptions {
   isThinkingEnabledRef: CurrentRef<boolean>;
   isWebSearchEnabledRef: CurrentRef<boolean>;
   isDeepResearchEnabledRef: CurrentRef<boolean>;
+  isDebateModeEnabledRef: CurrentRef<boolean>;
+  debateSettingsRef: CurrentRef<DebateSettings>;
   imageSettingsRef: CurrentRef<ImageSettings>;
   messagesRef: CurrentRef<Message[]>;
   chatsRef: CurrentRef<Chat[]>;
@@ -100,6 +104,8 @@ export function useChatGeneration({
   isThinkingEnabledRef,
   isWebSearchEnabledRef,
   isDeepResearchEnabledRef,
+  isDebateModeEnabledRef,
+  debateSettingsRef,
   imageSettingsRef,
   messagesRef,
   chatsRef,
@@ -413,6 +419,7 @@ export function useChatGeneration({
     const requestStyle = selectedStyleRef.current;
     const requestThinkingEnabled = isThinkingEnabledRef.current;
     const requestDeepResearchEnabled = isDeepResearchEnabledRef.current;
+    const requestDebateModeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && isDebateModeEnabledRef.current;
     const requestForcedWebSearch = !requestIsImageMode && (isWebSearchEnabledRef.current || requestDeepResearchEnabled);
     const requestWebSearchMode: WebSearchMode = requestIsImageMode ? "off" : requestForcedWebSearch ? "forced" : "auto";
     const requestWebSearchEnabled = requestWebSearchMode !== "off";
@@ -842,12 +849,28 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       chatId
     );
     const newHistory = [...currentHistory, userMessage];
+    const debateSettings = debateSettingsRef.current;
+    const getDebateModel = (modelId?: string) => getModelOption(modelId || "")?.id || requestModel;
+    const debateAgentAModel = getDebateModel(debateSettings.agentAModel);
+    const debateAgentBModel = getDebateModel(debateSettings.agentBModel);
+    const debateJudgeModel = getDebateModel(debateSettings.judgeModel);
+    const debateAgents: DebateAgentRecord[] = [
+      { id: "a", label: "Agent A", model: debateAgentAModel, status: "queued", content: "" },
+      { id: "b", label: "Agent B", model: debateAgentBModel, status: "queued", content: "" },
+      { id: "judge", label: "Judge", model: debateJudgeModel, status: "queued", content: "" },
+    ];
     const pendingModelMessage = normalizeMessage(
       {
         role: "model",
         content: "",
-        isThinking: requestDeepResearchEnabled ? true : requestThinkingEnabled,
+        isThinking: requestDeepResearchEnabled || requestDebateModeEnabled ? true : requestThinkingEnabled,
         webSearchStatus: requestForcedWebSearch && !requestDeepResearchEnabled ? "searching" : undefined,
+        debate: requestDebateModeEnabled ? {
+          status: "streaming",
+          prompt: text,
+          agents: debateAgents,
+          startedAt,
+        } : undefined,
       },
       chatId,
       Date.now() + 1
@@ -858,6 +881,183 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       void syncChatMessages(chatId, pendingMessages).catch((error) => {
         appLogger.error("Pending chat save failed", { err: error, chatId });
       });
+    }
+
+    if (requestDebateModeEnabled) {
+      let debateMessage = pendingModelMessage;
+      const updateDebateAgent = (agentId: DebateAgentRecord["id"], patch: Partial<DebateAgentRecord>, status: DebateAgentStatus = "streaming") => {
+        debateMessage = {
+          ...debateMessage,
+          isThinking: status === "streaming",
+          debate: debateMessage.debate ? {
+            ...debateMessage.debate,
+            status,
+            completedAt: status === "done" || status === "error" || status === "stopped" ? Date.now() : debateMessage.debate.completedAt,
+            agents: debateMessage.debate.agents.map(agent => agent.id === agentId ? { ...agent, ...patch } : agent),
+          } : undefined,
+        };
+        setMessages([...newHistory, debateMessage]);
+      };
+
+      const compactDebateContext = (value: string) =>
+        value.length > 8000 ? `${value.slice(0, 8000)}\n\n[Truncated for judge context.]` : value;
+
+      const streamDebateModel = async ({
+        model,
+        instruction,
+        history,
+        webSearchEnabled,
+        onTextDelta,
+        onThoughtDelta,
+      }: {
+        model: string;
+        instruction: string;
+        history: Message[];
+        webSearchEnabled: boolean;
+        onTextDelta: (delta: string) => void;
+        onThoughtDelta: (delta: string) => void;
+      }) => {
+        const provider = getModelOption(model)?.provider;
+        const webSearchMode: WebSearchMode = webSearchEnabled ? "forced" : "off";
+        const instructionBase = getSystemInstruction({
+          styleId: requestStyle,
+          provider,
+          webSearchMode,
+          deepResearchEnabled: false,
+        });
+        const signal = abortControllerRef.current!.signal;
+
+        if (provider === "cliproxy") {
+          await streamCliproxyResponse({
+            model,
+            instructions: `${instructionBase}\n\n${instruction}`,
+            history,
+            reasoningEffort: requestThinkingEnabled ? "medium" : "none",
+            webSearchEnabled,
+            artifactToolsEnabled: false,
+            signal,
+            onTextDelta,
+            onThoughtDelta,
+          });
+          return;
+        }
+
+        if (provider === "openrouter") {
+          const capabilities = getOpenRouterModelCapabilities(model);
+          await streamOpenRouterResponse({
+            model,
+            instructions: `${instructionBase}\n\n${instruction}`,
+            history,
+            reasoningEnabled: requestThinkingEnabled && Boolean(capabilities?.supportsReasoning),
+            webSearchEnabled: webSearchEnabled && Boolean(capabilities?.supportsTools),
+            webSearchRequired: false,
+            artifactToolsEnabled: false,
+            signal,
+            onTextDelta,
+            onThoughtDelta,
+          });
+          return;
+        }
+
+        await streamGeminiResponse({
+          model,
+          contents: toGeminiContents(history),
+          systemInstruction: `${instructionBase}\n\n${instruction}`,
+          thinkingEnabled: requestThinkingEnabled,
+          webSearchEnabled,
+          artifactToolsEnabled: false,
+          signal,
+          onTextDelta,
+          onThoughtDelta,
+          onWebSearch: () => undefined,
+          onArtifactToolCall: () => undefined,
+        });
+      };
+
+      const runDebateAgent = async (agentId: "a" | "b", model: string, agentInstruction: string) => {
+        let content = "";
+        let thought = "";
+        updateDebateAgent(agentId, { status: "streaming" });
+        await streamDebateModel({
+          model,
+          instruction: agentInstruction,
+          history: newHistory,
+          webSearchEnabled: requestWebSearchEnabled,
+          onTextDelta: (delta) => {
+            content += delta;
+            updateDebateAgent(agentId, { content, thought, status: "streaming" });
+          },
+          onThoughtDelta: (delta) => {
+            thought += delta;
+            updateDebateAgent(agentId, { content, thought, status: "streaming" });
+          },
+        });
+        updateDebateAgent(agentId, { content, thought, status: "done" });
+        return content;
+      };
+
+      const runJudge = async (agentA: string, agentB: string) => {
+        let content = "";
+        let thought = "";
+        const judgePrompt = [
+          `Original user request:\n${text}`,
+          `Agent A argument:\n${compactDebateContext(agentA)}`,
+          `Agent B argument:\n${compactDebateContext(agentB)}`,
+          "Compare both arguments. Identify strongest points, weaknesses, hidden risks, and give one clear recommendation with practical next steps.",
+        ].join("\n\n");
+        const judgeHistory = [...currentHistory, normalizeMessage({ role: "user", content: judgePrompt }, chatId)];
+        updateDebateAgent("judge", { status: "streaming" });
+        await streamDebateModel({
+          model: debateJudgeModel,
+          instruction: "You are the Judge. Do not continue the debate. Synthesize Agent A and Agent B into the best answer for the user.",
+          history: judgeHistory,
+          webSearchEnabled: false,
+          onTextDelta: (delta) => {
+            content += delta;
+            updateDebateAgent("judge", { content, thought, status: "streaming" });
+          },
+          onThoughtDelta: (delta) => {
+            thought += delta;
+            updateDebateAgent("judge", { content, thought, status: "streaming" });
+          },
+        });
+        updateDebateAgent("judge", { content, thought, status: "done" }, "done");
+      };
+
+      try {
+        const [agentA, agentB] = await Promise.all([
+          runDebateAgent("a", debateAgentAModel, "You are Debater A. Argue for one strong solution. Be practical, specific, and acknowledge risks. Do not produce the final verdict."),
+          runDebateAgent("b", debateAgentBModel, "You are Debater B. Argue for a meaningfully different solution. Challenge Agent A's likely assumptions. Be practical and specific. Do not produce the final verdict."),
+        ]);
+        if (!abortControllerRef.current?.signal.aborted) {
+          await runJudge(agentA, agentB);
+        }
+        const finalMessages = [...newHistory, { ...debateMessage, isThinking: false }];
+        await persistFinalGeneration(chatId, finalMessages, { model: requestModel });
+      } catch (error: any) {
+        const stopped = error?.name === "AbortError" || abortControllerRef.current?.signal.aborted;
+        const status = stopped ? "stopped" : "error";
+        debateMessage = {
+          ...debateMessage,
+          isThinking: false,
+          debate: debateMessage.debate ? {
+            ...debateMessage.debate,
+            status,
+            completedAt: Date.now(),
+            agents: debateMessage.debate.agents.map(agent =>
+              agent.status === "streaming" || agent.status === "queued"
+                ? { ...agent, status, error: stopped ? undefined : getOpenRouterFailureMessage(error) }
+                : agent
+            ),
+          } : undefined,
+        };
+        await persistFinalGeneration(chatId, [...newHistory, debateMessage], { model: requestModel });
+      } finally {
+        isTypingRef.current = false;
+        setIsTyping(false);
+        abortControllerRef.current = null;
+      }
+      return;
     }
 
     let streamingArtifactRef: ArtifactReferenceRecord | undefined;

@@ -44,10 +44,12 @@ export function ChatViewport({
   onEditGeneratedImage,
   onPreviewAttachment,
 }: ChatViewportProps) {
+  const hasWideMessage = messages.some(message => message.debate);
+
   return (
     <div className="relative min-h-0 flex-1">
       <main ref={chatScrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="w-full max-w-[46rem] mx-auto flex flex-col justify-end min-h-full pb-4 pt-14 sm:pb-6 sm:pt-20">
+        <div className={`${hasWideMessage ? "max-w-[72rem]" : "max-w-[46rem]"} w-full mx-auto flex flex-col justify-end min-h-full pb-4 pt-14 sm:pb-6 sm:pt-20`}>
           {messages.length > 0 && (
             <div className="flex flex-col w-full">
               {messages.map((message, index) => (
@@ -68,6 +70,7 @@ export function ChatViewport({
                   researchCompletedAt={message.researchCompletedAt}
                   researchTimeBudgetMs={message.researchTimeBudgetMs}
                   imageGeneration={message.imageGeneration}
+                  debate={message.debate}
                   artifact={message.artifact}
                   isTyping={isTyping && index === messages.length - 1}
                   messageIndex={index}

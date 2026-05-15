@@ -947,7 +947,9 @@ export function CharacterWorkspace({
               isThinkingEnabled={isThinkingEnabled}
               isWebSearchEnabled={isWebSearchEnabled}
               isDeepResearchEnabled={isDeepResearchEnabled}
+              isDebateModeEnabled={false}
               composerMode="chat"
+              debateSettings={{}}
               imageSettings={imageSettings}
               textareaRef={textareaRef}
               fileInputRef={fileInputRef}
@@ -972,7 +974,9 @@ export function CharacterWorkspace({
               onToggleThinking={onToggleThinking}
               onToggleWebSearch={onToggleWebSearch}
               onToggleDeepResearch={onToggleDeepResearch}
+              onToggleDebateMode={() => undefined}
               onSelectComposerMode={() => undefined}
+              onDebateSettingsChange={() => undefined}
               onImageSettingsChange={onImageSettingsChange}
               onSelectModel={onSelectModel}
               onSelectStyle={onSelectStyle}

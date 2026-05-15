@@ -13,9 +13,17 @@ export interface UiSettings {
   isThinkingEnabled: boolean;
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
+  isDebateModeEnabled: boolean;
   isDarkMode: boolean;
   composerMode: "chat" | "image";
+  debateSettings: DebateSettings;
   imageSettings: ImageSettings;
+}
+
+export interface DebateSettings {
+  agentAModel?: string;
+  agentBModel?: string;
+  judgeModel?: string;
 }
 
 export type ImageSizePreset =
@@ -46,8 +54,10 @@ export const defaultUiSettings: UiSettings = {
   isThinkingEnabled: false,
   isWebSearchEnabled: false,
   isDeepResearchEnabled: false,
+  isDebateModeEnabled: false,
   isDarkMode: false,
   composerMode: "chat",
+  debateSettings: {},
   imageSettings: {
     model: DEFAULT_IMAGE_MODEL_ID,
     sizePreset: "square",
@@ -56,6 +66,16 @@ export const defaultUiSettings: UiSettings = {
     partialImages: 0,
     outputFormat: "png",
   },
+};
+
+const normalizeDebateSettings = (settings?: Partial<DebateSettings>): DebateSettings => {
+  const normalizeModel = (modelId?: string) =>
+    modelId && modelOptions.some(option => option.id === modelId) ? modelId : undefined;
+  return {
+    agentAModel: normalizeModel(settings?.agentAModel),
+    agentBModel: normalizeModel(settings?.agentBModel),
+    judgeModel: normalizeModel(settings?.judgeModel),
+  };
 };
 
 const imageSizePresets: ImageSizePreset[] = [
@@ -117,8 +137,10 @@ export const loadUiSettings = (): UiSettings => {
       isThinkingEnabled: Boolean(parsedSettings.isThinkingEnabled),
       isWebSearchEnabled: Boolean(parsedSettings.isWebSearchEnabled) || isDeepResearchEnabled,
       isDeepResearchEnabled,
+      isDebateModeEnabled: Boolean(parsedSettings.isDebateModeEnabled) && !isDeepResearchEnabled,
       isDarkMode: Boolean(parsedSettings.isDarkMode),
       composerMode: parsedSettings.composerMode === "image" ? "image" : "chat",
+      debateSettings: normalizeDebateSettings(parsedSettings.debateSettings),
       imageSettings: normalizeImageSettings(parsedSettings.imageSettings),
     };
   } catch {

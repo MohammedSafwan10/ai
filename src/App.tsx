@@ -37,7 +37,7 @@ import {
   validateOpenRouterAttachments,
   type Attachment,
 } from "./lib/attachments";
-import { DEFAULT_MODEL_ID, loadUiSettings, saveUiSettings, type ImageSettings } from "./lib/settings";
+import { DEFAULT_MODEL_ID, loadUiSettings, saveUiSettings, type DebateSettings, type ImageSettings } from "./lib/settings";
 import type { ResponseStyleId } from "./lib/prompt";
 import {
   createChat,
@@ -200,7 +200,9 @@ export default function App() {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(initialUiSettingsRef.current.isWebSearchEnabled);
   const [isDeepResearchEnabled, setIsDeepResearchEnabled] = useState(initialUiSettingsRef.current.isDeepResearchEnabled);
+  const [isDebateModeEnabled, setIsDebateModeEnabled] = useState(initialUiSettingsRef.current.isDebateModeEnabled);
   const [composerMode, setComposerMode] = useState<"chat" | "image">(initialUiSettingsRef.current.composerMode);
+  const [debateSettings, setDebateSettings] = useState<DebateSettings>(initialUiSettingsRef.current.debateSettings);
   const [imageSettings, setImageSettings] = useState<ImageSettings>(initialUiSettingsRef.current.imageSettings);
   const [isResearchActivityOpen, setIsResearchActivityOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -228,6 +230,8 @@ export default function App() {
   const isThinkingEnabledRef = useLatestRef(isThinkingEnabled);
   const isWebSearchEnabledRef = useLatestRef(isWebSearchEnabled);
   const isDeepResearchEnabledRef = useLatestRef(isDeepResearchEnabled);
+  const isDebateModeEnabledRef = useLatestRef(isDebateModeEnabled);
+  const debateSettingsRef = useLatestRef(debateSettings);
   const imageSettingsRef = useLatestRef(imageSettings);
 
   useEffect(() => {
@@ -253,11 +257,13 @@ export default function App() {
       isThinkingEnabled,
       isWebSearchEnabled,
       isDeepResearchEnabled,
+      isDebateModeEnabled,
       isDarkMode,
       composerMode,
+      debateSettings,
       imageSettings,
     });
-  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDarkMode, composerMode, imageSettings]);
+  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDebateModeEnabled, isDarkMode, composerMode, debateSettings, imageSettings]);
 
   const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste" | "screenshot") => {
     const files = Array.from(fileList);
@@ -572,9 +578,23 @@ export default function App() {
     isDeepResearchEnabledRef.current = nextValue;
     setIsDeepResearchEnabled(nextValue);
     if (nextValue) {
+      isDebateModeEnabledRef.current = false;
+      setIsDebateModeEnabled(false);
       isWebSearchEnabledRef.current = true;
       setIsWebSearchEnabled(true);
     } else {
+      clearCurrentPendingResearchIntent();
+    }
+  };
+
+  const toggleDebateModeForNextMessage = () => {
+    const nextValue = !isDebateModeEnabledRef.current;
+    setComposerMode("chat");
+    isDebateModeEnabledRef.current = nextValue;
+    setIsDebateModeEnabled(nextValue);
+    if (nextValue) {
+      isDeepResearchEnabledRef.current = false;
+      setIsDeepResearchEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -584,8 +604,10 @@ export default function App() {
     if (mode === "image") {
       isWebSearchEnabledRef.current = false;
       isDeepResearchEnabledRef.current = false;
+      isDebateModeEnabledRef.current = false;
       setIsWebSearchEnabled(false);
       setIsDeepResearchEnabled(false);
+      setIsDebateModeEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -1045,6 +1067,8 @@ export default function App() {
     isThinkingEnabledRef,
     isWebSearchEnabledRef,
     isDeepResearchEnabledRef,
+    isDebateModeEnabledRef,
+    debateSettingsRef,
     imageSettingsRef,
     messagesRef,
     chatsRef,
@@ -1089,7 +1113,9 @@ export default function App() {
       isThinkingEnabled={isThinkingEnabled}
       isWebSearchEnabled={isWebSearchEnabled}
       isDeepResearchEnabled={isDeepResearchEnabled}
+      isDebateModeEnabled={isDebateModeEnabled}
       composerMode={composerMode}
+      debateSettings={debateSettings}
       imageSettings={imageSettings}
       researchEditContext={editingResearchPlanMessage?.researchPlan ? {
         title: editingResearchPlanMessage.researchPlan.title,
@@ -1107,7 +1133,9 @@ export default function App() {
       onToggleThinking={toggleThinkingForNextMessage}
       onToggleWebSearch={toggleWebSearchForNextMessage}
       onToggleDeepResearch={toggleDeepResearchForNextMessage}
+      onToggleDebateMode={toggleDebateModeForNextMessage}
       onSelectComposerMode={selectComposerMode}
+      onDebateSettingsChange={setDebateSettings}
       onImageSettingsChange={setImageSettings}
       onSelectModel={selectModelForNextMessage}
       onSelectStyle={selectStyleForNextMessage}
