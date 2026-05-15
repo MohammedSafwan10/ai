@@ -51,9 +51,10 @@ import {
   type ChatMessageRecord,
   type ChatRecord,
   type WebDevProjectRecord,
+  type WebDevThreadRecord,
 } from "./lib/db";
 import { copyArtifactContent, downloadArtifactContent } from "./lib/artifacts";
-import { createWebDevProject, deleteWebDevProject, loadWebDevProjects, updateWebDevProject } from "./features/webdev/lib/storage";
+import { createWebDevProject, createWebDevThread, deleteWebDevProject, deleteWebDevThread, ensureDefaultWebDevThread, loadWebDevProjects, loadWebDevThreads, updateWebDevProject } from "./features/webdev/lib/storage";
 import { deleteCharacterSession, loadCharacterSessions, loadCharacters } from "./features/characters/lib/storage";
 
 type Message = ChatMessageRecord;
@@ -61,7 +62,7 @@ type Chat = ChatRecord;
 type WorkspaceMode = "chat" | "web-dev" | "characters";
 type AppRouteState =
   | { mode: "chat"; chatId: string | null }
-  | { mode: "web-dev"; projectId: string | null }
+  | { mode: "web-dev"; projectId: string | null; threadId: string | null }
   | { mode: "characters"; sessionId: string | null; view: "home" | "library" };
 
 const CHAT_BOTTOM_THRESHOLD_PX = 128;
@@ -73,7 +74,8 @@ const parseAppRoute = (pathname: string, fallbackMode: WorkspaceMode): AppRouteS
   const [modeSegment, idSegment] = parts;
 
   if (modeSegment === "web-dev") {
-    return { mode: "web-dev", projectId: idSegment || null };
+    const threadId = parts[2] === "thread" ? parts[3] || null : null;
+    return { mode: "web-dev", projectId: idSegment || null, threadId };
   }
 
   if (modeSegment === "characters") {
@@ -85,7 +87,7 @@ const parseAppRoute = (pathname: string, fallbackMode: WorkspaceMode): AppRouteS
     return { mode: "chat", chatId: idSegment || null };
   }
 
-  if (fallbackMode === "web-dev") return { mode: "web-dev", projectId: null };
+  if (fallbackMode === "web-dev") return { mode: "web-dev", projectId: null, threadId: null };
   if (fallbackMode === "characters") return { mode: "characters", sessionId: null, view: "home" };
   return { mode: "chat", chatId: null };
 };
@@ -176,7 +178,9 @@ export default function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [webDevProjects, setWebDevProjects] = useState<WebDevProjectRecord[]>([]);
+  const [webDevThreads, setWebDevThreads] = useState<WebDevThreadRecord[]>([]);
   const [currentWebDevProjectId, setCurrentWebDevProjectId] = useState<string | null>(null);
+  const [currentWebDevThreadId, setCurrentWebDevThreadId] = useState<string | null>(null);
   const [isWebDevStorageReady, setIsWebDevStorageReady] = useState(false);
   const [characters, setCharacters] = useState<CharacterRecord[]>([]);
   const [characterSessions, setCharacterSessions] = useState<CharacterSessionRecord[]>([]);
@@ -668,7 +672,11 @@ export default function App() {
     void navigate({ to: "/chat", replace });
   };
 
-  const navigateToWebDevProject = (projectId?: string | null, replace = false) => {
+  const navigateToWebDevProject = (projectId?: string | null, replace = false, threadId?: string | null) => {
+    if (projectId && threadId) {
+      void navigate({ to: "/web-dev/$projectId/thread/$threadId", params: { projectId, threadId } as any, replace });
+      return;
+    }
     if (projectId) {
       void navigate({ to: "/web-dev/$projectId", params: { projectId } as any, replace });
       return;
@@ -687,7 +695,7 @@ export default function App() {
   const navigateToWorkspaceMode = (mode: WorkspaceMode) => {
     if (mode === "web-dev") {
       setActiveArtifactId(null);
-      navigateToWebDevProject(currentWebDevProjectId);
+      navigateToWebDevProject(currentWebDevProjectId, false, currentWebDevThreadId);
       return;
     }
 
@@ -722,17 +730,61 @@ export default function App() {
   };
 
   const handleNewWebDevProject = async () => {
-    const { project } = await createWebDevProject("New web app", selectedModelRef.current);
+    const { project, thread } = await createWebDevProject("New web app", selectedModelRef.current);
     setWebDevProjects(prev => [project, ...prev]);
+    setWebDevThreads([thread]);
     setCurrentWebDevProjectId(project.id);
-    navigateToWebDevProject(project.id);
+    setCurrentWebDevThreadId(thread.id);
+    navigateToWebDevProject(project.id, false, thread.id);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
-  const selectWebDevProject = (id: string) => {
+  const selectWebDevProject = async (id: string) => {
     setCurrentWebDevProjectId(id);
-    navigateToWebDevProject(id);
+    const defaultThread = await ensureDefaultWebDevThread(id);
+    const threads = await loadWebDevThreads(id);
+    setWebDevThreads(threads);
+    const thread = threads.find(item => item.id === currentWebDevThreadId) || defaultThread;
+    setCurrentWebDevThreadId(thread.id);
+    navigateToWebDevProject(id, false, thread.id);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const selectWebDevThread = (projectId: string, threadId: string) => {
+    setCurrentWebDevProjectId(projectId);
+    setCurrentWebDevThreadId(threadId);
+    navigateToWebDevProject(projectId, false, threadId);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const handleNewWebDevThread = async (projectId: string) => {
+    const { thread } = await createWebDevThread(projectId, "New thread");
+    const threads = await loadWebDevThreads(projectId);
+    setWebDevThreads(threads);
+    setCurrentWebDevProjectId(projectId);
+    setCurrentWebDevThreadId(thread.id);
+    navigateToWebDevProject(projectId, false, thread.id);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
+  const deleteWebDevThreadById = async (e: React.MouseEvent, projectId: string, threadId: string) => {
+    e.stopPropagation();
+    const projectThreads = webDevThreads.filter(thread => thread.projectId === projectId);
+    const remainingThreads = projectThreads.filter(thread => thread.id !== threadId);
+    await deleteWebDevThread(threadId);
+
+    let nextThreads = webDevThreads.filter(thread => thread.id !== threadId);
+    let nextThread = remainingThreads[0] || null;
+    if (!nextThread) {
+      nextThread = await ensureDefaultWebDevThread(projectId);
+      nextThreads = await loadWebDevThreads(projectId);
+    }
+    setWebDevThreads(nextThreads);
+
+    if (currentWebDevProjectId === projectId && currentWebDevThreadId === threadId) {
+      setCurrentWebDevThreadId(nextThread.id);
+      navigateToWebDevProject(projectId, true, nextThread.id);
+    }
   };
 
   const handleNewCharacterSession = () => {
@@ -925,16 +977,27 @@ export default function App() {
 
     if (!routeState.projectId) {
       if (currentWebDevProjectId !== null) setCurrentWebDevProjectId(null);
+      if (currentWebDevThreadId !== null) setCurrentWebDevThreadId(null);
+      setWebDevThreads([]);
       return;
     }
 
     const project = webDevProjects.find(item => item.id === routeState.projectId);
     if (project) {
       if (currentWebDevProjectId !== project.id) setCurrentWebDevProjectId(project.id);
+      void (async () => {
+        const defaultThread = await ensureDefaultWebDevThread(project.id);
+        const threads = await loadWebDevThreads(project.id);
+        setWebDevThreads(threads);
+        const routeThread = routeState.threadId ? threads.find(thread => thread.id === routeState.threadId) : undefined;
+        const selectedThread = routeThread || threads.find(thread => thread.id === currentWebDevThreadId) || defaultThread;
+        if (currentWebDevThreadId !== selectedThread.id) setCurrentWebDevThreadId(selectedThread.id);
+        if (!routeState.threadId || !routeThread) navigateToWebDevProject(project.id, true, selectedThread.id);
+      })().catch(err => appLogger.error("Failed to load Web Dev threads", { err, projectId: project.id }));
     } else if (isWebDevStorageReady) {
       navigateToWebDevProject(null, true);
     }
-  }, [workspaceMode, routeState, webDevProjects, currentWebDevProjectId, isWebDevStorageReady]);
+  }, [workspaceMode, routeState, webDevProjects, currentWebDevProjectId, currentWebDevThreadId, isWebDevStorageReady]);
 
   useEffect(() => {
     if (workspaceMode !== "characters" || routeState.mode !== "characters") return;
@@ -1074,10 +1137,12 @@ export default function App() {
         workspaceMode={workspaceMode}
         chats={chats}
         webDevProjects={webDevProjects}
+        webDevThreads={webDevThreads}
         characters={characters}
         characterSessions={characterSessions}
         currentChatId={currentChatId}
         currentWebDevProjectId={currentWebDevProjectId}
+        currentWebDevThreadId={currentWebDevThreadId}
         currentCharacterSessionId={currentCharacterSessionId}
         isTyping={isTyping}
         isDarkMode={isDarkMode}
@@ -1088,10 +1153,13 @@ export default function App() {
         }}
         onNewChat={handleNewChat}
         onNewWebDevProject={() => void handleNewWebDevProject()}
+        onNewWebDevThread={(projectId) => void handleNewWebDevThread(projectId)}
+        onDeleteWebDevThread={(event, projectId, threadId) => void deleteWebDevThreadById(event, projectId, threadId)}
         onNewCharacterSession={handleNewCharacterSession}
         onSearchOpen={() => setIsSearchModalOpen(true)}
         onSelectChat={selectChat}
         onSelectWebDevProject={selectWebDevProject}
+        onSelectWebDevThread={selectWebDevThread}
         onSelectCharacterSession={selectCharacterSession}
         onChatRowKeyDown={handleChatRowKeyDown}
         onActiveMenuChange={setActiveMenuId}
@@ -1121,33 +1189,28 @@ export default function App() {
           </button>
         )}
 
+        <div className={workspaceMode === "web-dev" ? "contents" : "hidden"} aria-hidden={workspaceMode !== "web-dev"}>
+          <WebDevWorkspace
+            projects={webDevProjects}
+            threads={webDevThreads}
+            currentProjectId={currentWebDevProjectId}
+            currentThreadId={currentWebDevThreadId}
+            isDarkMode={isDarkMode}
+            selectedModel={selectedModel}
+            isThinkingEnabled={isThinkingEnabled}
+            webDevPanelWidth={webDevPanelWidth}
+            setProjects={setWebDevProjects}
+            setCurrentProjectId={setCurrentWebDevProjectId}
+            onNewProject={handleNewWebDevProject}
+            onSelectModel={selectModelForNextMessage}
+            onToggleThinking={toggleThinkingForNextMessage}
+            onPanelWidthChange={setWebDevPanelWidth}
+            onPreviewAttachment={setPreviewAttachment}
+          />
+        </div>
+
         <AnimatePresence mode="wait" initial={false}>
-          {workspaceMode === "web-dev" ? (
-            <motion.div
-              key="web-dev"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12, ease: "easeOut" }}
-              className="contents"
-            >
-              <WebDevWorkspace
-                projects={webDevProjects}
-                currentProjectId={currentWebDevProjectId}
-                isDarkMode={isDarkMode}
-                selectedModel={selectedModel}
-                isThinkingEnabled={isThinkingEnabled}
-                webDevPanelWidth={webDevPanelWidth}
-                setProjects={setWebDevProjects}
-                setCurrentProjectId={setCurrentWebDevProjectId}
-                onNewProject={handleNewWebDevProject}
-                onSelectModel={selectModelForNextMessage}
-                onToggleThinking={toggleThinkingForNextMessage}
-                onPanelWidthChange={setWebDevPanelWidth}
-                onPreviewAttachment={setPreviewAttachment}
-              />
-            </motion.div>
-          ) : workspaceMode === "characters" ? (
+          {workspaceMode === "web-dev" ? null : workspaceMode === "characters" ? (
             <motion.div
               key="characters"
               initial={{ opacity: 0 }}

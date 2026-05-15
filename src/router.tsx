@@ -34,6 +34,11 @@ const webDevDetailRoute = createRoute({
   path: "/web-dev/$projectId",
 });
 
+const webDevThreadRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/web-dev/$projectId/thread/$threadId",
+});
+
 const charactersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/characters",
@@ -65,6 +70,7 @@ const routeTree = rootRoute.addChildren([
   chatDetailRoute,
   webDevRoute,
   webDevDetailRoute,
+  webDevThreadRoute,
   charactersRoute,
   charactersLibraryRoute,
   characterSessionRoute,
