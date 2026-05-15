@@ -4,6 +4,7 @@ import {
   type WebDevFileRecord,
   type WebDevMessageRecord,
   type WebDevProjectRecord,
+  type WebDevThreadRecord,
 } from "../../../lib/db";
 import { getWebDevFileId, normalizeWebDevPath } from "./files";
 
@@ -14,8 +15,103 @@ export const loadWebDevProjects = async () =>
 export const loadWebDevFiles = async (projectId: string) =>
   db.webDevFiles.where("projectId").equals(projectId).sortBy("path");
 
-export const loadWebDevMessages = async (projectId: string) =>
-  db.webDevMessages.where("projectId").equals(projectId).sortBy("createdAt");
+export const settleStreamingWebDevFiles = async (projectId: string) => {
+  const streamingFiles = await db.webDevFiles
+    .where("projectId")
+    .equals(projectId)
+    .filter(file => file.status === "streaming")
+    .toArray();
+  if (streamingFiles.length === 0) return [];
+  const updatedAt = Date.now();
+  const settled = streamingFiles.map(file => ({
+    ...file,
+    status: "ready" as const,
+    summary: file.summary === "Streaming" ? undefined : file.summary,
+    updatedAt,
+  }));
+  await db.webDevFiles.bulkPut(settled);
+  return settled;
+};
+
+export const loadWebDevThreads = async (projectId: string) =>
+  db.webDevThreads.where("projectId").equals(projectId).sortBy("updatedAt")
+    .then(threads => threads.sort((a, b) => Number(Boolean(b.isStarred)) - Number(Boolean(a.isStarred)) || a.createdAt - b.createdAt));
+
+export const ensureDefaultWebDevThread = async (projectId: string) => {
+  const existing = await db.webDevThreads.where("projectId").equals(projectId).sortBy("createdAt");
+  if (existing.length > 0) {
+    const defaultThread = existing[0];
+    await db.webDevMessages
+      .where("projectId")
+      .equals(projectId)
+      .filter(message => !message.threadId)
+      .modify({ threadId: defaultThread.id });
+    return defaultThread;
+  }
+  const now = Date.now();
+  const thread: WebDevThreadRecord = {
+    id: createId("webdev_thread"),
+    projectId,
+    title: "Main",
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.transaction("rw", db.webDevThreads, db.webDevMessages, async () => {
+    await db.webDevThreads.put(thread);
+    await db.webDevMessages
+      .where("projectId")
+      .equals(projectId)
+      .filter(message => !message.threadId)
+      .modify({ threadId: thread.id });
+  });
+  return thread;
+};
+
+export const createWebDevThread = async (projectId: string, title = "New thread") => {
+  const now = Date.now();
+  const thread: WebDevThreadRecord = {
+    id: createId("webdev_thread"),
+    projectId,
+    title,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const message: WebDevMessageRecord = {
+    id: createId("webdev_msg"),
+    projectId,
+    threadId: thread.id,
+    role: "assistant",
+    content: "What should we work on in this thread?",
+    createdAt: now + 1,
+  };
+  await db.transaction("rw", db.webDevThreads, db.webDevMessages, async () => {
+    await db.webDevThreads.put(thread);
+    await db.webDevMessages.put(message);
+  });
+  await updateWebDevProject(projectId, {});
+  return { thread, messages: [message] };
+};
+
+export const updateWebDevThread = async (threadId: string, patch: Partial<WebDevThreadRecord>) => {
+  await db.webDevThreads.update(threadId, {
+    ...patch,
+    updatedAt: patch.updatedAt || Date.now(),
+  });
+};
+
+export const deleteWebDevThread = async (threadId: string) => {
+  await db.transaction("rw", db.webDevThreads, db.webDevMessages, async () => {
+    await db.webDevMessages.where("threadId").equals(threadId).delete();
+    await db.webDevThreads.delete(threadId);
+  });
+};
+
+export const loadWebDevMessages = async (projectId: string, threadId?: string) => {
+  if (threadId) await ensureDefaultWebDevThread(projectId);
+  const messages = await db.webDevMessages.where("projectId").equals(projectId).sortBy("createdAt");
+  if (!threadId) return messages;
+  return messages.filter(message => message.threadId === threadId);
+};
 
 export const createWebDevProject = async (title = "New web app", selectedModel?: string) => {
   const now = Date.now();
@@ -32,18 +128,29 @@ export const createWebDevProject = async (title = "New web app", selectedModel?:
   const message: WebDevMessageRecord = {
     id: createId("webdev_msg"),
     projectId: project.id,
+    threadId: undefined,
     role: "assistant",
     content: "Tell me what to build. I’ll create the project files from scratch.",
     createdAt: now + 1,
   };
 
-  await db.transaction("rw", db.webDevProjects, db.webDevFiles, db.webDevMessages, async () => {
+  const thread: WebDevThreadRecord = {
+    id: createId("webdev_thread"),
+    projectId: project.id,
+    title: "Main",
+    createdAt: now,
+    updatedAt: now,
+  };
+  message.threadId = thread.id;
+
+  await db.transaction("rw", db.webDevProjects, db.webDevThreads, db.webDevFiles, db.webDevMessages, async () => {
     await db.webDevProjects.put(project);
+    await db.webDevThreads.put(thread);
     await db.webDevFiles.bulkPut(files);
     await db.webDevMessages.put(message);
   });
 
-  return { project, files, messages: [message] };
+  return { project, thread, files, messages: [message] };
 };
 
 export const updateWebDevProject = async (projectId: string, patch: Partial<WebDevProjectRecord>) => {
@@ -170,6 +277,7 @@ export const replaceWebDevProjectFiles = async (
 
 export const appendWebDevMessage = async (
   projectId: string,
+  threadId: string | undefined,
   role: WebDevMessageRecord["role"],
   content: string,
   extra: Partial<Omit<WebDevMessageRecord, "id" | "projectId" | "role" | "content" | "createdAt">> = {}
@@ -177,12 +285,14 @@ export const appendWebDevMessage = async (
   const message: WebDevMessageRecord = {
     id: createId("webdev_msg"),
     projectId,
+    threadId,
     role,
     content,
     ...extra,
     createdAt: Date.now(),
   };
   await db.webDevMessages.put(message);
+  if (threadId) await updateWebDevThread(threadId, {});
   await updateWebDevProject(projectId, {});
   return message;
 };
@@ -193,12 +303,13 @@ export const updateWebDevMessage = async (messageId: string, patch: Partial<WebD
 
 export const settleRunningWebDevActivities = async (
   projectId: string,
+  threadId?: string,
   status: Extract<WebDevMessageRecord["activityStatus"], "done" | "error"> = "done"
 ) => {
   const running = await db.webDevMessages
     .where("projectId")
     .equals(projectId)
-    .filter(message => message.role === "activity" && message.activityStatus === "running")
+    .filter(message => message.role === "activity" && message.activityStatus === "running" && (!threadId || message.threadId === threadId))
     .toArray();
   if (running.length === 0) return [];
   await db.transaction("rw", db.webDevMessages, async () => {
@@ -208,8 +319,9 @@ export const settleRunningWebDevActivities = async (
 };
 
 export const deleteWebDevProject = async (projectId: string) => {
-  await db.transaction("rw", db.webDevProjects, db.webDevFiles, db.webDevMessages, async () => {
+  await db.transaction("rw", db.webDevProjects, db.webDevThreads, db.webDevFiles, db.webDevMessages, async () => {
     await db.webDevMessages.where("projectId").equals(projectId).delete();
+    await db.webDevThreads.where("projectId").equals(projectId).delete();
     await db.webDevFiles.where("projectId").equals(projectId).delete();
     await db.webDevProjects.delete(projectId);
   });
