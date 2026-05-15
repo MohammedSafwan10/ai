@@ -1,14 +1,14 @@
 import { memo, useState, useEffect, useRef } from "react";
 import { cn } from "../../../lib/utils";
 import { motion, AnimatePresence } from "motion/react";
-import { Copy, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3, CornerDownRight } from "lucide-react";
+import { Copy, Files, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3, CornerDownRight, GitCompare } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ImageGenerationCard } from "./ImageGenerationCard";
 import { ResearchPlanCard } from "./ResearchPlanCard";
 import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
 import { ArtifactCard } from "../../artifacts/components/ArtifactCard";
-import type { ArtifactReferenceRecord, ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
+import type { ArtifactReferenceRecord, DebateRecord, ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useToast } from "../../ui/ToastProvider";
 
@@ -38,6 +38,7 @@ interface ChatMessageProps {
   researchCompletedAt?: number;
   researchTimeBudgetMs?: number;
   imageGeneration?: ImageGenerationRecord;
+  debate?: DebateRecord;
   artifact?: ArtifactReferenceRecord;
   isTyping?: boolean;
   messageIndex?: number;
@@ -65,7 +66,86 @@ const formatElapsed = (milliseconds: number) => {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
+function DebateCard({
+  debate,
+  onCopyText,
+  onRetry,
+  onShareText,
+}: {
+  debate: DebateRecord;
+  onCopyText: (text: string, description?: string) => void;
+  onRetry?: () => void;
+  onShareText: (text: string) => void;
+}) {
+  const debaters = debate.agents.filter(agent => agent.id !== "judge");
+  const judge = debate.agents.find(agent => agent.id === "judge");
+  const fullDebateText = [
+    `Prompt:\n${debate.prompt}`,
+    ...debaters.map(agent => `${agent.label}:\n${agent.content}`),
+    judge ? `${judge.label}:\n${judge.content}` : "",
+  ].filter(Boolean).join("\n\n");
+  const verdictText = judge?.content || fullDebateText;
+  return (
+    <div className="w-full">
+      <div className="mb-4 flex items-center justify-between gap-3 border-b border-[var(--privora-border)]/50 pb-2">
+        <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-[var(--privora-text)]">
+          <GitCompare className="h-4 w-4 shrink-0 text-[var(--privora-accent)]" />
+          <span>Debate</span>
+        </div>
+      </div>
+      <div className="grid w-full gap-5 lg:grid-cols-2">
+        {debaters.map(agent => (
+          <section key={agent.id} className="min-w-0 border-l border-[var(--privora-border)]/70 pl-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold text-[var(--privora-text)]">{agent.label}</div>
+                <div className="truncate text-[11px] text-[var(--privora-muted)]">{agent.model}</div>
+              </div>
+            </div>
+            <div className="markdown-body max-w-none text-[13px] leading-6 text-[var(--privora-text)]">
+              {agent.content ? <MarkdownRenderer compact isStreaming={agent.status === "streaming"}>{agent.content}</MarkdownRenderer> : <TypingIndicator size={18} isAnimating={agent.status === "streaming" || agent.status === "queued"} />}
+              {agent.error && <div className="text-red-500">{agent.error}</div>}
+            </div>
+          </section>
+        ))}
+      </div>
+      {judge && (
+        <section className="mt-6 border-t border-[var(--privora-border)]/50 pt-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[13px] font-semibold text-[var(--privora-text)]">{judge.label}</div>
+              <div className="text-[11px] text-[var(--privora-muted)]">{judge.model}</div>
+            </div>
+          </div>
+          <div className="markdown-body max-w-none text-[14px] leading-7 text-[var(--privora-text)]">
+            {judge.content ? <MarkdownRenderer isStreaming={judge.status === "streaming"}>{judge.content}</MarkdownRenderer> : <TypingIndicator size={18} isAnimating={judge.status === "streaming" || judge.status === "queued"} />}
+            {judge.error && <div className="text-red-500">{judge.error}</div>}
+          </div>
+        </section>
+      )}
+      {debate.status !== "streaming" && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-[var(--privora-muted)]">
+          <button type="button" onClick={() => onCopyText(verdictText, "Verdict copied.")} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Copy verdict" aria-label="Copy verdict">
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+          <button type="button" onClick={() => onCopyText(fullDebateText, "Full debate copied.")} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Copy full debate" aria-label="Copy full debate">
+            <Files className="h-3.5 w-3.5" />
+          </button>
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Retry debate" aria-label="Retry debate">
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button type="button" onClick={() => onShareText(verdictText)} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Share verdict" aria-label="Share verdict">
+            <Share2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -76,8 +156,9 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
   const { notify } = useToast();
   const isResearchRunning = !isUser && researchPlan?.status === "running";
   const isImageGenerationMessage = !isUser && Boolean(imageGeneration);
+  const isDebateMessage = !isUser && Boolean(debate);
   const isCompletedResearchReport = !isUser && Boolean(content) && researchStatus === "completed" && Boolean(researchPlan);
-  const shouldRenderContent = !isResearchRunning && !isImageGenerationMessage && (content || (!isUser && isTyping && !isThinking));
+  const shouldRenderContent = !isResearchRunning && !isImageGenerationMessage && !isDebateMessage && (content || (!isUser && isTyping && !isThinking));
   const researchElapsedMs = researchStartedAt && researchCompletedAt ? researchCompletedAt - researchStartedAt : undefined;
 
   const handleCopy = async () => {
@@ -93,7 +174,17 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
     }
   };
 
-  const handleShare = async () => {
+  const copyCustomText = async (text: string, description = "Copied.") => {
+    try {
+      await copyTextToClipboard(text);
+      notify({ title: "Copied", description, variant: "success" });
+    } catch (error) {
+      console.error("Failed to copy message", error);
+      notify({ title: "Copy failed", description: "Your browser blocked clipboard access.", variant: "error" });
+    }
+  };
+
+  const shareCustomText = async (text: string) => {
     if (!navigator.share) {
       setIsMenuOpen(false);
       notify({ title: "Share unavailable", description: "This browser does not support native sharing.", variant: "error" });
@@ -101,7 +192,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
     }
 
     try {
-      await navigator.share({ title: "Privora message", text: content });
+      await navigator.share({ title: "Privora message", text });
       notify({ title: "Shared", description: "Message shared.", variant: "success" });
     } catch (error: any) {
       if (error?.name !== "AbortError") {
@@ -111,6 +202,10 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
     } finally {
       setIsMenuOpen(false);
     }
+  };
+
+  const handleShare = async () => {
+    await shareCustomText(content);
   };
 
   const openMessageMenu = (clientX: number, clientY: number) => {
@@ -277,6 +372,8 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
               onEditImage={onEditGeneratedImage}
             />
           )}
+
+          {!isUser && debate && <DebateCard debate={debate} onCopyText={copyCustomText} onRetry={onRetry} onShareText={shareCustomText} />}
 
           {!isUser && researchPlan && !isCompletedResearchReport && (
             <ResearchPlanCard
@@ -484,6 +581,7 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.researchCompletedAt === next.researchCompletedAt &&
     prev.researchTimeBudgetMs === next.researchTimeBudgetMs &&
     prev.imageGeneration === next.imageGeneration &&
+    prev.debate === next.debate &&
     prev.artifact === next.artifact &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
     prev.onOpenArtifact === next.onOpenArtifact &&
