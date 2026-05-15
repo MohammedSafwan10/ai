@@ -127,15 +127,25 @@ const normalizeArtifactContentShape = (content: string, kindHint?: unknown, titl
   }
 
   const normalizedKind = kind?.toLowerCase();
-  const renderableMarkupKinds = new Set([undefined, "xml", "svg", "html", "text", "code", "markdown"]);
+  const startsWithSvg = /^\s*<svg\b/i.test(normalized);
+  const startsWithHtml = /^\s*(?:<!doctype\s+html\b|<html\b)/i.test(normalized);
+  const explicitSvgKind = normalizedKind === "svg" || normalizedKind === "xml";
+  const explicitHtmlKind = normalizedKind === "html";
 
-  const svg = extractElement(normalized, "svg");
-  if (svg && renderableMarkupKinds.has(normalizedKind)) {
+  if ((explicitHtmlKind || startsWithHtml) && !startsWithSvg) {
+    const html = extractElement(normalized, "html");
+    if (html) {
+      return { content: html, kind: "html", title, language: language || "html" };
+    }
+  }
+
+  const svg = (explicitSvgKind || startsWithSvg) ? extractElement(normalized, "svg") : undefined;
+  if (svg) {
     return { content: svg, kind: "svg", title, language: language || "svg" };
   }
 
-  const html = extractElement(normalized, "html");
-  if (html && renderableMarkupKinds.has(normalizedKind)) {
+  const html = (explicitHtmlKind || startsWithHtml) ? extractElement(normalized, "html") : undefined;
+  if (html) {
     return { content: html, kind: "html", title, language: language || "html" };
   }
 
