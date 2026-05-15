@@ -16,7 +16,10 @@ const attachmentText = (attachments: Attachment[]) => {
   if (attachments.length === 0) return "";
   return attachments.map((attachment, index) => {
     const size = typeof attachment.size === "number" ? `${Math.round(attachment.size / 1024)} KB` : "unknown size";
-    return `Attachment ${index + 1}: ${attachment.name} (${attachment.mimeType || "unknown"}, ${size})`;
+    const availability = attachment.mimeType.startsWith("image/")
+      ? "image data included"
+      : "metadata only; contents are not available unless shown in the user request";
+    return `Attachment ${index + 1}: ${attachment.name} (${attachment.mimeType || "unknown"}, ${size}; ${availability})`;
   }).join("\n");
 };
 

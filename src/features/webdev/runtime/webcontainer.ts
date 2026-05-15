@@ -334,6 +334,7 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
   const installedPackageHashRef = useRef("");
   const restartSignatureRef = useRef("");
   const restartCleanupRef = useRef<(() => void) | undefined>(undefined);
+  const previousProjectIdRef = useRef<string | null>(projectId);
   const activeFiles = useMemo(() => ensureRuntimeFiles(files.filter(file => file.status !== "deleted")), [files]);
   const packageHash = useMemo(() => getPackageHash(activeFiles), [activeFiles]);
   const restartSignature = useMemo(() => getRuntimeRestartSignature(activeFiles), [activeFiles]);
@@ -350,6 +351,26 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
     devProcessRef.current?.kill();
     installProcessRef.current = null;
     devProcessRef.current = null;
+  };
+
+  const resetRuntimeForProject = () => {
+    restartCleanupRef.current?.();
+    restartCleanupRef.current = undefined;
+    stopProcesses();
+    mountedProjectRef.current = null;
+    syncedFilesRef.current = new Map();
+    packageHashRef.current = "";
+    restartSignatureRef.current = "";
+    window.__privoraWebContainerSyncedFiles = syncedFilesRef.current;
+    window.__privoraWebContainerPreviewErrors = [];
+    setState({
+      status: "idle",
+      previewUrl: undefined,
+      errors: [],
+      terminalLines: projectId
+        ? ["Preview is waiting for this project's files."]
+        : ["Preview is waiting for a Web Dev project."],
+    });
   };
 
   const restart = async (reason = "restart", options: { forceInstall?: boolean } = {}) => {
@@ -442,6 +463,13 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
       }));
     }
   };
+
+  useEffect(() => {
+    if (previousProjectIdRef.current !== projectId) {
+      previousProjectIdRef.current = projectId;
+      resetRuntimeForProject();
+    }
+  }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;

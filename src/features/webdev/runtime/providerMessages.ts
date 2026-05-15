@@ -15,6 +15,32 @@ export interface WebDevToolResultEntry {
   };
 }
 
+const MAX_TOOL_TEXT_CHARS = 6000;
+const MAX_TOOL_DATA_CHARS = 12000;
+
+const truncateToolText = (value?: string) => {
+  if (!value || value.length <= MAX_TOOL_TEXT_CHARS) return value;
+  return `${value.slice(0, MAX_TOOL_TEXT_CHARS)}\n\n[Tool output truncated. Use a targeted inspect/read command if more detail is needed.]`;
+};
+
+const compactToolData = (value?: Record<string, unknown>) => {
+  if (!value) return undefined;
+  const serialized = JSON.stringify(value);
+  if (serialized.length <= MAX_TOOL_DATA_CHARS) return value;
+  return {
+    truncated: true,
+    originalChars: serialized.length,
+    summary: serialized.slice(0, MAX_TOOL_DATA_CHARS),
+  };
+};
+
+const compactToolResponse = (response: WebDevToolResultEntry["response"]) => ({
+  ...response,
+  output: truncateToolText(response.output),
+  error: truncateToolText(response.error),
+  data: compactToolData(response.data),
+});
+
 export const createToolCallId = () =>
   `webdev_call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -75,10 +101,10 @@ export const messagesToProviderHistory = (messages: WebDevMessageRecord[]): WebD
           name: message.toolName,
           response: {
             success: message.toolStatus !== "failed",
-            output: typeof message.toolResult.output === "string" ? message.toolResult.output : undefined,
-            error: typeof message.toolResult.error === "string" ? message.toolResult.error : undefined,
+            output: typeof message.toolResult.output === "string" ? truncateToolText(message.toolResult.output) : undefined,
+            error: typeof message.toolResult.error === "string" ? truncateToolText(message.toolResult.error) : undefined,
             meta: typeof message.toolResult.meta === "object" && message.toolResult.meta ? message.toolResult.meta as Record<string, unknown> : undefined,
-            data: typeof message.toolResult.data === "object" && message.toolResult.data ? message.toolResult.data as Record<string, unknown> : undefined,
+            data: typeof message.toolResult.data === "object" && message.toolResult.data ? compactToolData(message.toolResult.data as Record<string, unknown>) : undefined,
           },
         }],
       });
@@ -118,7 +144,7 @@ export const appendToolResults = (messages: WebDevProviderMessage[], results: We
       type: "function_response" as const,
       id: result.id,
       name: result.name,
-      response: result.response,
+      response: compactToolResponse(result.response),
     }],
   })),
 ];
