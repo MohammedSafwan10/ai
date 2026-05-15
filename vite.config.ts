@@ -1696,8 +1696,10 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
               ...(groundingMetadata.imageSearchQueries || []),
               ...(groundingMetadata.retrievalQueries || []),
             ];
-            webSearchEvents += 1;
-            res.write(`${JSON.stringify({type: 'webSearch', status: 'searched', queries})}\n`);
+            if (queries.length > 0) {
+              webSearchEvents += 1;
+              res.write(JSON.stringify({type: 'webSearch', status: 'searched', queries}) + '\n');
+            }
           }
         }
 
