@@ -14,13 +14,13 @@ import {
   validateOpenRouterAttachments,
   type Attachment,
 } from "../../../lib/attachments";
-import type { WebDevFileRecord, WebDevMessageRecord, WebDevProjectRecord } from "../../../lib/db";
+import type { WebDevFileRecord, WebDevMessageRecord, WebDevProjectRecord, WebDevThreadRecord } from "../../../lib/db";
 import { getModelOption } from "../../../lib/models";
 import { appLogger } from "../../../lib/logger";
 import { useToast } from "../../ui/ToastProvider";
 import { useTextareaAutosize } from "../../../hooks/useTextareaAutosize";
 import { useWebDevGeneration } from "../hooks/useWebDevGeneration";
-import { loadWebDevFiles, loadWebDevMessages, updateWebDevProject, upsertWebDevFile } from "../lib/storage";
+import { loadWebDevFiles, loadWebDevMessages, settleStreamingWebDevFiles, updateWebDevProject, upsertWebDevFile } from "../lib/storage";
 import { deleteWebDevPath, renameWebDevPath } from "../lib/storage";
 import { normalizeWebDevPath } from "../lib/files";
 import { WebDevChatPanel } from "./WebDevChatPanel";
@@ -35,7 +35,9 @@ type FileActionDialog =
 
 export function WebDevWorkspace({
   projects,
+  threads,
   currentProjectId,
+  currentThreadId,
   isDarkMode,
   selectedModel,
   isThinkingEnabled,
@@ -49,7 +51,9 @@ export function WebDevWorkspace({
   onPreviewAttachment,
 }: {
   projects: WebDevProjectRecord[];
+  threads: WebDevThreadRecord[];
   currentProjectId: string | null;
+  currentThreadId: string | null;
   isDarkMode: boolean;
   selectedModel: string;
   isThinkingEnabled: boolean;
@@ -75,6 +79,8 @@ export function WebDevWorkspace({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const project = useMemo(() => projects.find(item => item.id === currentProjectId), [currentProjectId, projects]);
+  const thread = useMemo(() => threads.find(item => item.id === currentThreadId), [currentThreadId, threads]);
+  const activeThreadId = thread?.projectId === currentProjectId ? thread.id : null;
   const activeFilePath = project?.activeFilePath || files.find(file => file.path === "src/App.tsx")?.path || files[0]?.path;
   useTextareaAutosize(textareaRef, input);
 
@@ -83,11 +89,15 @@ export function WebDevWorkspace({
     setPatchPreviewDiff(null);
     setFiles([]);
     setMessages([]);
-    if (!currentProjectId) {
+    if (!currentProjectId || !activeThreadId) {
       return;
     }
     let cancelled = false;
-    Promise.all([loadWebDevFiles(currentProjectId), loadWebDevMessages(currentProjectId)]).then(([nextFiles, nextMessages]) => {
+    Promise.all([
+      project?.status === "generating" ? Promise.resolve([]) : settleStreamingWebDevFiles(currentProjectId),
+      loadWebDevFiles(currentProjectId),
+      loadWebDevMessages(currentProjectId, activeThreadId),
+    ]).then(([, nextFiles, nextMessages]) => {
       if (cancelled) return;
       setFiles(nextFiles);
       setMessages(nextMessages);
@@ -95,10 +105,11 @@ export function WebDevWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [currentProjectId]);
+  }, [currentProjectId, activeThreadId, project?.status]);
 
   const { sendWebDevMessage, stopWebDevGeneration } = useWebDevGeneration({
     project,
+    threadId: activeThreadId || undefined,
     files,
     messages,
     selectedModel,
@@ -240,7 +251,7 @@ export function WebDevWorkspace({
 
   const handleSubmit = () => {
     const value = input.trim();
-    if ((!value && attachments.length === 0) || !project) return;
+    if ((!value && attachments.length === 0) || !project || !activeThreadId) return;
     const pendingAttachments = attachments;
     setInput("");
     setAttachments([]);
@@ -376,6 +387,7 @@ export function WebDevWorkspace({
     <div className="flex h-full min-w-0 flex-1 overflow-hidden bg-[var(--privora-bg)]">
       <WebDevChatPanel
         messages={messages}
+        threadTitle={thread?.title}
         input={input}
         isGenerating={isGenerating}
         selectedModel={selectedModel}

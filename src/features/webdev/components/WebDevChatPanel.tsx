@@ -207,7 +207,7 @@ const mergeActivityMessages = (messages: WebDevMessage[]) => {
     merged.set(message.filePath, {
       ...fallback,
       ...base,
-      activityStatus: existing.activityStatus === "running" || message.activityStatus === "running" ? "running" : base.activityStatus,
+      activityStatus: base.activityStatus,
       additions: delta.additions,
       deletions: delta.deletions,
       beforeContent: netDelta ? netDelta.beforeContent : deltaSource.beforeContent,
@@ -284,8 +284,8 @@ function WebDevActivityGroup({
   onOpenFileDiff?: (diff: WebDevFileDiff) => void;
 }) {
   const visibleMessages = removeStalePrefixActivities(messages);
-  const hasCurrentRunning = isGenerating && messages.some(message => isCurrentRunActivity(message, activeRunStartedAt));
-  const hasAnyRunning = messages.some(message => message.activityStatus === "running");
+  const hasCurrentRunning = isGenerating && visibleMessages.some(message => isCurrentRunActivity(message, activeRunStartedAt));
+  const hasAnyRunning = visibleMessages.some(message => message.activityStatus === "running");
   const [isOpen, setIsOpen] = useState(hasCurrentRunning);
   const isRunning = hasCurrentRunning;
   const runningMessage = visibleMessages.find(message => isCurrentRunActivity(message, activeRunStartedAt));
@@ -610,6 +610,7 @@ function WebDevAssistantMessage({
 
 export function WebDevChatPanel({
   messages,
+  threadTitle,
   input,
   isGenerating,
   selectedModel,
@@ -633,6 +634,7 @@ export function WebDevChatPanel({
   onRemoveAttachment,
 }: {
   messages: WebDevMessage[];
+  threadTitle?: string;
   input: string;
   isGenerating: boolean;
   selectedModel: string;
@@ -757,6 +759,11 @@ export function WebDevChatPanel({
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto px-4 py-6">
           <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-5">
+            {threadTitle && (
+              <div className="text-center text-xs font-medium uppercase tracking-[0.18em] text-[var(--privora-muted)]">
+                {threadTitle}
+              </div>
+            )}
             {visibleMessages.length === 0 && (
               <div className="py-24 text-center">
                 <h1 className="font-display text-3xl font-medium text-[var(--privora-text)]">Build a web app</h1>

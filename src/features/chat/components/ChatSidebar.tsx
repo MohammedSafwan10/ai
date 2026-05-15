@@ -1,7 +1,7 @@
 import type { ComponentType, KeyboardEvent, MouseEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Code2, MessageCircle, Moon, MoreHorizontal, PanelLeft, Pencil, Plus, Search, Star, Sun, Trash2 } from "lucide-react";
-import type { CharacterRecord, CharacterSessionRecord, ChatRecord, WebDevProjectRecord } from "../../../lib/db";
+import type { CharacterRecord, CharacterSessionRecord, ChatRecord, WebDevProjectRecord, WebDevThreadRecord } from "../../../lib/db";
 
 type WorkspaceMode = "chat" | "web-dev" | "characters";
 
@@ -59,10 +59,12 @@ interface ChatSidebarProps {
   workspaceMode: WorkspaceMode;
   chats: ChatRecord[];
   webDevProjects: WebDevProjectRecord[];
+  webDevThreads: WebDevThreadRecord[];
   characters: CharacterRecord[];
   characterSessions: CharacterSessionRecord[];
   currentChatId: string | null;
   currentWebDevProjectId: string | null;
+  currentWebDevThreadId: string | null;
   currentCharacterSessionId: string | null;
   isTyping: boolean;
   isDarkMode: boolean;
@@ -71,10 +73,13 @@ interface ChatSidebarProps {
   onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   onNewChat: () => void;
   onNewWebDevProject: () => void;
+  onNewWebDevThread: (projectId: string) => void;
+  onDeleteWebDevThread: (event: MouseEvent, projectId: string, threadId: string) => void;
   onNewCharacterSession: () => void;
   onSearchOpen: () => void;
   onSelectChat: (chatId: string) => void;
   onSelectWebDevProject: (projectId: string) => void;
+  onSelectWebDevThread: (projectId: string, threadId: string) => void;
   onSelectCharacterSession: (sessionId: string) => void;
   onChatRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chatId: string) => void;
   onActiveMenuChange: (chatId: string | null) => void;
@@ -211,17 +216,22 @@ function ChatSection({
   "workspaceMode" |
   "isDarkMode" |
   "webDevProjects" |
+  "webDevThreads" |
   "characters" |
   "characterSessions" |
   "currentWebDevProjectId" |
+  "currentWebDevThreadId" |
   "currentCharacterSessionId" |
   "onOpenChange" |
   "onWorkspaceModeChange" |
   "onNewChat" |
   "onNewWebDevProject" |
+  "onNewWebDevThread" |
+  "onDeleteWebDevThread" |
   "onNewCharacterSession" |
   "onSearchOpen" |
   "onSelectWebDevProject" |
+  "onSelectWebDevThread" |
   "onSelectCharacterSession" |
   "onToggleDarkMode" |
   "chats"
@@ -354,18 +364,28 @@ function CharacterSection({
 
 function WebDevSection({
   projects,
+  threads,
   currentWebDevProjectId,
+  currentWebDevThreadId,
   activeMenuId,
   onSelectWebDevProject,
+  onSelectWebDevThread,
+  onNewWebDevThread,
+  onDeleteWebDevThread,
   onActiveMenuChange,
   onRenameWebDevProject,
   onDeleteWebDevProject,
   onToggleStarWebDevProject,
 }: {
   projects: WebDevProjectRecord[];
+  threads: WebDevThreadRecord[];
   currentWebDevProjectId: string | null;
+  currentWebDevThreadId: string | null;
   activeMenuId: string | null;
   onSelectWebDevProject: (projectId: string) => void;
+  onSelectWebDevThread: (projectId: string, threadId: string) => void;
+  onNewWebDevThread: (projectId: string) => void;
+  onDeleteWebDevThread: (event: MouseEvent, projectId: string, threadId: string) => void;
   onActiveMenuChange: (projectId: string | null) => void;
   onRenameWebDevProject: (event: MouseEvent, projectId: string) => void;
   onDeleteWebDevProject: (event: MouseEvent, projectId: string) => void;
@@ -381,81 +401,91 @@ function WebDevSection({
       {projects.map(project => {
         const isActive = currentWebDevProjectId === project.id;
         const isMenuOpen = activeMenuId === project.id;
+        const projectThreads = isActive ? threads.filter(thread => thread.projectId === project.id) : [];
         return (
-          <div
-            key={project.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onSelectWebDevProject(project.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onSelectWebDevProject(project.id);
-              }
-            }}
-            className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 text-left text-sm transition ${
-              isActive
-                ? "bg-[var(--privora-text)]/10 font-medium text-[var(--privora-text)]"
-                : "text-[var(--privora-text)]/70 hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
-            }`}
-          >
-            <Code2 className="h-4 w-4 shrink-0 text-[var(--privora-muted)]" />
-            <span className="min-w-0 flex-1 truncate pr-7">{project.title}</span>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onActiveMenuChange(isMenuOpen ? null : project.id);
+          <div key={project.id}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectWebDevProject(project.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectWebDevProject(project.id);
+                }
               }}
-              className={`absolute right-1.5 rounded-md p-1.5 text-[var(--privora-muted)] opacity-100 transition hover:bg-[var(--privora-text)]/10 hover:text-[var(--privora-text)] sm:opacity-0 sm:group-hover:opacity-100 ${isMenuOpen ? "bg-[var(--privora-text)]/10 text-[var(--privora-text)] opacity-100" : ""}`}
-              title="Web app options"
+              className={`group relative flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 text-left text-sm transition ${
+                isActive
+                  ? "bg-[var(--privora-text)]/10 font-medium text-[var(--privora-text)]"
+                  : "text-[var(--privora-text)]/70 hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
+              }`}
             >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
-            <AnimatePresence>
-              {isMenuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onActiveMenuChange(null);
-                    }}
-                  />
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="absolute right-2 top-8 z-50 w-40 overflow-hidden rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] py-1 shadow-xl"
+              <Code2 className="h-4 w-4 shrink-0 text-[var(--privora-muted)]" />
+              <span className="min-w-0 flex-1 truncate pr-7">{project.title}</span>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onActiveMenuChange(isMenuOpen ? null : project.id);
+                }}
+                className={`absolute right-1.5 rounded-md p-1.5 text-[var(--privora-muted)] opacity-100 transition hover:bg-[var(--privora-text)]/10 hover:text-[var(--privora-text)] sm:opacity-0 sm:group-hover:opacity-100 ${isMenuOpen ? "bg-[var(--privora-text)]/10 text-[var(--privora-text)] opacity-100" : ""}`}
+                title="Web app options"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+              <AnimatePresence>
+                {isMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={(event) => { event.stopPropagation(); onActiveMenuChange(null); }} />
+                    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="absolute right-2 top-8 z-50 w-44 overflow-hidden rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] py-1 shadow-xl">
+                      <button type="button" onClick={(event) => onToggleStarWebDevProject(event, project.id)} className="flex w-full items-center gap-3 px-3 py-2 text-sm text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/5">
+                        <Star className="h-4 w-4" /> {project.isStarred ? "Unstar" : "Star"}
+                      </button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); onNewWebDevThread(project.id); onActiveMenuChange(null); }} className="flex w-full items-center gap-3 px-3 py-2 text-sm text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/5">
+                        <MessageCircle className="h-4 w-4" /> New thread
+                      </button>
+                      <button type="button" onClick={(event) => onRenameWebDevProject(event, project.id)} className="flex w-full items-center gap-3 px-3 py-2 text-sm text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/5">
+                        <Pencil className="h-4 w-4" /> Rename
+                      </button>
+                      <button type="button" onClick={(event) => onDeleteWebDevProject(event, project.id)} className="flex w-full items-center gap-3 px-3 py-2 text-sm text-red-500 transition-colors hover:bg-red-500/10">
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </button>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
+            {isActive && (
+              <div className="ml-6 mt-1 space-y-1 border-l border-[var(--privora-border)]/70 pl-2">
+                {projectThreads.map(thread => (
+                  <button
+                    key={thread.id}
+                    type="button"
+                    onClick={() => onSelectWebDevThread(project.id, thread.id)}
+                    className={`group/thread flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition ${
+                      currentWebDevThreadId === thread.id
+                        ? "bg-[var(--privora-text)]/10 font-medium text-[var(--privora-text)]"
+                        : "text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
+                    }`}
                   >
-                    <button
-                      type="button"
-                      onClick={(event) => onToggleStarWebDevProject(event, project.id)}
-                      className="flex w-full items-center gap-3 px-3 py-2 text-sm text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/5"
+                    <MessageCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={(event) => onDeleteWebDevThread(event, project.id, thread.id)}
+                      className="rounded p-1 text-[var(--privora-muted)] opacity-0 transition hover:bg-red-500/10 hover:text-red-500 group-hover/thread:opacity-100"
+                      title="Delete thread"
                     >
-                      <Star className="h-4 w-4" />
-                      {project.isStarred ? "Unstar" : "Star"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => onRenameWebDevProject(event, project.id)}
-                      className="flex w-full items-center gap-3 px-3 py-2 text-sm text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/5"
-                    >
-                      <Pencil className="h-4 w-4" />
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => onDeleteWebDevProject(event, project.id)}
-                      className="flex w-full items-center gap-3 px-3 py-2 text-sm text-red-500 transition-colors hover:bg-red-500/10"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </button>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </span>
+                  </button>
+                ))}
+                <button type="button" onClick={() => onNewWebDevThread(project.id)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-[var(--privora-muted)] transition hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]">
+                  <Plus className="h-3.5 w-3.5" /> New thread
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
@@ -468,10 +498,12 @@ export function ChatSidebar({
   workspaceMode,
   chats,
   webDevProjects,
+  webDevThreads,
   characters,
   characterSessions,
   currentChatId,
   currentWebDevProjectId,
+  currentWebDevThreadId,
   currentCharacterSessionId,
   isTyping,
   isDarkMode,
@@ -480,10 +512,13 @@ export function ChatSidebar({
   onWorkspaceModeChange,
   onNewChat,
   onNewWebDevProject,
+  onNewWebDevThread,
+  onDeleteWebDevThread,
   onNewCharacterSession,
   onSearchOpen,
   onSelectChat,
   onSelectWebDevProject,
+  onSelectWebDevThread,
   onSelectCharacterSession,
   onChatRowKeyDown,
   onActiveMenuChange,
@@ -665,9 +700,14 @@ export function ChatSidebar({
             {workspaceMode === "web-dev" ? (
               <WebDevSection
                 projects={webDevProjects}
+                threads={webDevThreads}
                 currentWebDevProjectId={currentWebDevProjectId}
+                currentWebDevThreadId={currentWebDevThreadId}
                 activeMenuId={activeMenuId}
                 onSelectWebDevProject={onSelectWebDevProject}
+                onSelectWebDevThread={onSelectWebDevThread}
+                onNewWebDevThread={onNewWebDevThread}
+                onDeleteWebDevThread={onDeleteWebDevThread}
                 onActiveMenuChange={onActiveMenuChange}
                 onRenameWebDevProject={onRenameWebDevProject}
                 onDeleteWebDevProject={onDeleteWebDevProject}
