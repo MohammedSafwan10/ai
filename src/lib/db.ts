@@ -107,6 +107,15 @@ export interface WebDevProjectRecord {
   updatedAt: number;
 }
 
+export interface WebDevThreadRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  isStarred?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface WebDevFileRecord {
   id: string;
   projectId: string;
@@ -121,6 +130,7 @@ export interface WebDevFileRecord {
 export interface WebDevMessageRecord {
   id: string;
   projectId: string;
+  threadId?: string;
   role: WebDevMessageRole;
   content: string;
   thought?: string;
@@ -339,6 +349,7 @@ class PrivoraDatabase extends Dexie {
   messages!: Table<ChatMessageRecord, string>;
   artifacts!: Table<ArtifactRecord, string>;
   webDevProjects!: Table<WebDevProjectRecord, string>;
+  webDevThreads!: Table<WebDevThreadRecord, string>;
   webDevFiles!: Table<WebDevFileRecord, string>;
   webDevMessages!: Table<WebDevMessageRecord, string>;
   characters!: Table<CharacterRecord, string>;
@@ -380,6 +391,20 @@ class PrivoraDatabase extends Dexie {
       webDevProjects: "&id, updatedAt, status",
       webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
       webDevMessages: "&id, projectId, createdAt",
+      characters: "&id, updatedAt, category, isStarred",
+      characterSessions: "&id, characterId, updatedAt, isStarred",
+      characterMessages: "&id, sessionId, createdAt",
+      characterMemories: "&id, characterId, sessionId, pinned, updatedAt",
+      userPersonas: "&id, isDefault, updatedAt",
+    });
+    this.version(6).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      webDevProjects: "&id, updatedAt, status",
+      webDevThreads: "&id, projectId, updatedAt, [projectId+updatedAt]",
+      webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
+      webDevMessages: "&id, projectId, threadId, createdAt, [projectId+threadId]",
       characters: "&id, updatedAt, category, isStarred",
       characterSessions: "&id, characterId, updatedAt, isStarred",
       characterMessages: "&id, sessionId, createdAt",
