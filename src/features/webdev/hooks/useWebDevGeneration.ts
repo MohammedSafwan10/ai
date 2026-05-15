@@ -33,6 +33,7 @@ type WebDevContentPart = NonNullable<WebDevMessageRecord["contentParts"]>[number
 
 interface UseWebDevGenerationOptions {
   project: WebDevProjectRecord | undefined;
+  threadId?: string;
   files: WebDevFileRecord[];
   messages: WebDevMessageRecord[];
   selectedModel: string;
@@ -134,6 +135,11 @@ const MUTATING_TOOL_NAMES = new Set([
   "webdev_create_project",
 ]);
 
+const STREAMING_DRAFT_TOOL_NAMES = new Set([
+  "webdev_write_file",
+  "webdev_patch_file",
+]);
+
 const hasSuccessfulMutation = (results: ToolExecutionResult[]) =>
   results.some(result => MUTATING_TOOL_NAMES.has(result.name) && result.response.success);
 
@@ -202,6 +208,7 @@ const getToolCallSignature = (call: WebDevToolCall) => {
 
 export function useWebDevGeneration({
   project,
+  threadId,
   files,
   messages,
   selectedModel,
@@ -276,6 +283,24 @@ export function useWebDevGeneration({
     return next;
   };
 
+  const clearOtherStreamingFiles = async (projectId: string, activePath?: string) => {
+    const streamingFiles = filesRef.current.filter(file => file.projectId === projectId && file.status === "streaming" && file.path !== activePath);
+    if (streamingFiles.length === 0) return;
+    const nextFiles = filesRef.current.map(file =>
+      streamingFiles.some(streaming => streaming.id === file.id)
+        ? { ...file, status: "ready" as const, updatedAt: Date.now() }
+        : file
+    );
+    setFileRef(nextFiles);
+    setFiles(nextFiles);
+    await Promise.allSettled(streamingFiles.map(file => upsertWebDevFile(projectId, {
+      path: file.path,
+      content: file.content,
+      status: "ready",
+      summary: file.summary,
+    })));
+  };
+
   const addActivity = async (projectId: string, content: string, filePath?: string, key = `${content}:${filePath || ""}`, patch: WebDevActivityPatch = {}) => {
     const existing = activityByKeyRef.current.get(key);
     if (existing) {
@@ -294,7 +319,7 @@ export function useWebDevGeneration({
       void updateWebDevMessage(created.id, { content, filePath, ...patch });
       return next;
     }
-    const createPromise = appendWebDevMessage(projectId, "activity", content, { activityType: "tool", filePath, activityStatus: "running", ...patch });
+    const createPromise = appendWebDevMessage(projectId, threadId, "activity", content, { activityType: "tool", filePath, activityStatus: "running", ...patch });
     pendingActivityByKeyRef.current.set(key, createPromise);
     const message = await createPromise;
     pendingActivityByKeyRef.current.delete(key);
@@ -320,6 +345,26 @@ export function useWebDevGeneration({
     });
     activityByKeyRef.current.forEach((message, key) => {
       if (message.activityStatus !== "running") return;
+      const next = { ...message, activityStatus: status };
+      activityByKeyRef.current.set(key, next);
+      upsertMessageRef(next);
+      updates.push(updateWebDevMessage(message.id, { activityStatus: status }));
+    });
+    if (updates.length > 0) await Promise.allSettled(updates);
+  };
+
+  const finalizeRunningActivitiesForPath = async (projectId: string, path: string, status: "done" | "error" = "done") => {
+    await settlePendingActivities();
+    const updates: Promise<void>[] = [];
+    messagesRef.current
+      .filter(message => message.projectId === projectId && message.role === "activity" && message.filePath === path && message.activityStatus === "running")
+      .forEach(message => {
+        const next = { ...message, activityStatus: status };
+        upsertMessageRef(next);
+        updates.push(updateWebDevMessage(message.id, { activityStatus: status }));
+      });
+    activityByKeyRef.current.forEach((message, key) => {
+      if (message.filePath !== path || message.activityStatus !== "running") return;
       const next = { ...message, activityStatus: status };
       activityByKeyRef.current.set(key, next);
       upsertMessageRef(next);
@@ -396,11 +441,24 @@ export function useWebDevGeneration({
     const path = typeof draft.arguments.path === "string" ? draft.arguments.path : "";
     const content = typeof draft.arguments.content === "string" ? draft.arguments.content : "";
     if (!isLikelyCompleteWebDevPath(path)) return;
+    await clearOtherStreamingFiles(projectId, path);
+    const beforeContent = baselineFilesRef.current.get(path) ?? filesRef.current.find(file => file.path === path && file.status !== "deleted")?.content ?? "";
+    const nextContent = normalizeGeneratedContent(path, content);
+    const delta = getLineDelta(beforeContent, nextContent);
     if (!streamedPathActivityRef.current.has(path)) {
       streamedPathActivityRef.current.add(path);
       patchProject(projectId, { activeFilePath: path });
     }
-    const file = await upsertWebDevFile(projectId, { path, content, status: "streaming", summary: "Streaming" });
+    const activity = await addActivity(projectId, `Writing ${path}`, path, `write:${path}`, {
+      activityOperation: beforeContent ? "updated" : "created",
+      activityStatus: "running",
+      additions: delta.additions,
+      deletions: delta.deletions,
+      beforeContent,
+      afterContent: nextContent,
+    });
+    onActivity?.(activity, `write:${path}`);
+    const file = await upsertWebDevFile(projectId, { path, content: nextContent, status: "streaming", summary: "Streaming" });
     upsertFileRef(file);
     setFiles(prev => {
       const exists = prev.some(item => item.id === file.id);
@@ -414,7 +472,7 @@ export function useWebDevGeneration({
     response: WebDevFunctionResponse,
     iteration: number
   ) => {
-    const message = await appendWebDevMessage(projectId, "tool", response.output || response.error || "", {
+    const message = await appendWebDevMessage(projectId, threadId, "tool", response.output || response.error || "", {
       hiddenFromChat: true,
       toolCallId: call.id,
       toolName: call.name,
@@ -431,7 +489,7 @@ export function useWebDevGeneration({
     call: Required<Pick<WebDevToolCall, "id">> & WebDevToolCall,
     iteration: number
   ) => {
-    const message = await appendWebDevMessage(projectId, "assistant", "", {
+    const message = await appendWebDevMessage(projectId, threadId, "assistant", "", {
       hiddenFromChat: true,
       toolCallId: call.id,
       toolName: call.name,
@@ -555,8 +613,8 @@ export function useWebDevGeneration({
       const path = String(args.path || "");
       const nextContent = normalizeGeneratedContent(path, String(args.content || ""));
       const current = filesRef.current.find(item => item.path === path);
-      const before = current?.content || "";
-      const existed = Boolean(current);
+      const existed = baselineFilesRef.current.has(path) || Boolean(current && current.status !== "streaming");
+      const before = baselineFilesRef.current.has(path) ? baselineFilesRef.current.get(path)! : current?.status === "streaming" ? "" : current?.content || "";
       const delta = existed ? getLineDelta(before, nextContent) : { additions: countLines(nextContent), deletions: 0 };
       const file = await upsertWebDevFile(projectId, {
         path,
@@ -564,12 +622,14 @@ export function useWebDevGeneration({
         status: "ready",
         summary: typeof args.summary === "string" ? args.summary : undefined,
       });
+      await clearOtherStreamingFiles(projectId, file.path);
       upsertFileRef(file);
       setFiles(prev => {
         const exists = prev.some(item => item.id === file.id);
         return exists ? prev.map(item => item.id === file.id ? file : item) : [...prev, file].sort((a, b) => a.path.localeCompare(b.path));
       });
       changedPaths.add(file.path);
+      await finalizeRunningActivitiesForPath(projectId, file.path, "done");
       await addActivity(projectId, `${existed ? "Edited" : "Created"} ${file.path}`, file.path, `write:${file.path}`, {
         activityOperation: existed ? "updated" : "created",
         activityStatus: "done",
@@ -615,6 +675,7 @@ export function useWebDevGeneration({
         upsertFileRef(file);
         setFiles(prev => prev.map(item => item.id === file.id ? file : item));
         changedPaths.add(file.path);
+        await finalizeRunningActivitiesForPath(projectId, file.path, "done");
         await addActivity(projectId, `Patched ${file.path}`, file.path, `webdev_patch_file:${file.path}::`, {
           activityOperation: "patched",
           activityStatus: "done",
@@ -848,8 +909,13 @@ export function useWebDevGeneration({
       const args = call.arguments || {};
       const path = String(args.path || "");
       const content = normalizeGeneratedContent(path, String(args.content || ""));
-      const before = beforeByPath.get(path) || "";
-      const existed = beforeByPath.has(path);
+      const existingFile = filesRef.current.find(file => file.path === path);
+      const existed = baselineFilesRef.current.has(path) || Boolean(existingFile && existingFile.status !== "streaming");
+      const before = baselineFilesRef.current.has(path)
+        ? baselineFilesRef.current.get(path)!
+        : existingFile?.status === "streaming"
+          ? ""
+          : beforeByPath.get(path) || "";
       const delta = existed ? getLineDelta(before, content) : { additions: countLines(content), deletions: 0 };
       return {
         call,
@@ -868,6 +934,8 @@ export function useWebDevGeneration({
       await persistAssistantToolCall(projectId, item.call, iteration);
     }
 
+    const writtenPaths = new Set(normalized.map(item => item.path));
+    await clearOtherStreamingFiles(projectId);
     const records = await bulkUpsertWebDevFiles(projectId, normalized.map(item => ({
       path: item.path,
       content: item.content,
@@ -875,7 +943,9 @@ export function useWebDevGeneration({
       summary: item.summary,
     })));
     const recordByPath = new Map(records.map(record => [record.path, record]));
-    const nextById = new Map(filesRef.current.map(file => [file.id, file]));
+    const nextById = new Map(filesRef.current
+      .filter(file => !writtenPaths.has(file.path))
+      .map(file => [file.id, file]));
     records.forEach(record => nextById.set(record.id, record));
     const nextFiles = [...nextById.values()].sort((a, b) => a.path.localeCompare(b.path));
     setFileRef(nextFiles);
@@ -897,6 +967,7 @@ export function useWebDevGeneration({
         },
       });
       if (file) changedPaths.add(file.path);
+      if (file) await finalizeRunningActivitiesForPath(projectId, file.path, "done");
       await addActivity(projectId, `${item.existed ? "Edited" : "Created"} ${file?.path || item.path}`, file?.path || item.path, `write:${file?.path || item.path}`, {
         activityOperation: item.existed ? "updated" : "created",
         activityStatus: "done",
@@ -953,12 +1024,12 @@ export function useWebDevGeneration({
   };
 
   const sendWebDevMessage = async (prompt: string, attachments: Attachment[] = []) => {
-    if (!project || !prompt.trim()) return;
+    if (!project || !threadId || !prompt.trim()) return;
     const projectId = project.id;
     const provider = getModelOption(selectedModel)?.provider;
     const supportsThinking = getModelRuntimeLimits(selectedModel).supportsThinking;
     const abortController = new AbortController();
-    const staleActivities = await settleRunningWebDevActivities(projectId, "done");
+    const staleActivities = await settleRunningWebDevActivities(projectId, threadId, "done");
     if (staleActivities.length > 0) {
       staleActivities.forEach(message => upsertMessageRef(message));
     }
@@ -973,7 +1044,7 @@ export function useWebDevGeneration({
     pendingActivityByKeyRef.current = new Map();
     inlineActivityKeysRef.current = new Set();
     const scopedFiles = filesRef.current.filter(file => file.projectId === projectId);
-    const scopedMessages = messagesRef.current.filter(message => message.projectId === projectId);
+    const scopedMessages = messagesRef.current.filter(message => message.projectId === projectId && message.threadId === threadId);
     filesRef.current = scopedFiles;
     messagesRef.current = scopedMessages;
     setFiles(scopedFiles);
@@ -983,9 +1054,9 @@ export function useWebDevGeneration({
     patchProject(projectId, { status: "generating", selectedModel });
     await updateWebDevProject(projectId, { status: "generating", selectedModel });
 
-    const userMessage = await appendWebDevMessage(projectId, "user", prompt.trim() || "Please use the attached files.", { attachments });
-    const assistantMessage = await appendWebDevMessage(projectId, "assistant", "");
-    const historyBeforeTurn = messagesRef.current.filter(message => message.projectId === projectId);
+    const userMessage = await appendWebDevMessage(projectId, threadId, "user", prompt.trim() || "Please use the attached files.", { attachments });
+    const assistantMessage = await appendWebDevMessage(projectId, threadId, "assistant", "");
+    const historyBeforeTurn = messagesRef.current.filter(message => message.projectId === projectId && message.threadId === threadId);
     appendMessagesRef([userMessage, assistantMessage]);
 
     let assistantText = "";
@@ -1135,7 +1206,7 @@ export function useWebDevGeneration({
 
       await settleDraftActivities();
       syncAssistantMessage({ content: assistantText, isThinking: false, hiddenFromChat: !hasAssistantLead() });
-      const finalMessage = await appendWebDevMessage(projectId, "assistant", cleanSummary);
+      const finalMessage = await appendWebDevMessage(projectId, threadId, "assistant", cleanSummary);
       appendMessagesRef([finalMessage]);
     };
     const draftActivityPromises = new Set<Promise<void>>();
@@ -1206,6 +1277,7 @@ export function useWebDevGeneration({
           },
           onToolDelta: (draft) => {
             endActiveThinkingPart();
+            if (!STREAMING_DRAFT_TOOL_NAMES.has(draft.name)) return;
             trackDraftActivity(applyDraft(projectId, draft, appendToolActivityPart));
           },
           onToolCall: (call) => {
@@ -1216,7 +1288,6 @@ export function useWebDevGeneration({
             if (seenToolCalls.has(signature) || seenToolCalls.has(argsSignature)) return;
             seenToolCalls.add(signature);
             seenToolCalls.add(argsSignature);
-            trackDraftActivity(showToolDraftActivity(projectId, normalized, appendToolActivityPart));
             toolCalls.push(normalized);
           },
         });
@@ -1357,6 +1428,7 @@ export function useWebDevGeneration({
       patchProject(projectId, { status: isStopped ? "idle" : "error", error: isStopped ? undefined : content });
       await updateWebDevProject(projectId, { status: isStopped ? "idle" : "error", error: isStopped ? undefined : content });
     } finally {
+      await clearOtherStreamingFiles(projectId);
       if (thoughtFlushTimerRef.current !== null) {
         window.clearTimeout(thoughtFlushTimerRef.current);
         thoughtFlushTimerRef.current = null;
