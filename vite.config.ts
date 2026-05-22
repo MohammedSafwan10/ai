@@ -7,12 +7,22 @@ import pino, {type Logger} from 'pino';
 import {randomUUID} from 'node:crypto';
 import {defineConfig, loadEnv, type Plugin} from 'vite';
 import {geminiArtifactFunctionDeclaration} from './src/lib/artifacts';
-import {getOpenRouterModelCapabilities, modelSupportsOpenRouterParameter} from './src/lib/openrouter/models';
+import {getOpenRouterModelCapabilities, getOpenRouterReasoningEffort, modelSupportsOpenRouterParameter} from './src/lib/openrouter/models';
 
-const readJsonBody = async (req: IncomingMessage) => {
+const DEFAULT_JSON_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+const SMALL_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+
+const readJsonBody = async (req: IncomingMessage, maxBytes = DEFAULT_JSON_BODY_LIMIT_BYTES) => {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (totalBytes > maxBytes) {
+      req.destroy();
+      throw Object.assign(new Error('Request body too large.'), {statusCode: 413});
+    }
+    chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
 };
@@ -21,6 +31,11 @@ const sendJson = (res: ServerResponse, statusCode: number, body: unknown) => {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(body));
+};
+
+const getErrorStatusCode = (error: unknown, fallback = 500) => {
+  const statusCode = (error as {statusCode?: unknown})?.statusCode;
+  return typeof statusCode === 'number' && statusCode >= 400 && statusCode < 600 ? statusCode : fallback;
 };
 
 const extractGeminiInlineImages = (response: any) => {
@@ -864,7 +879,7 @@ const createProviderResearchRuntime = ({
           ? [{type: 'openrouter:web_search', parameters: {max_results: 5, max_total_results: 12}}]
           : undefined;
         const openRouterReasoning = capabilities?.supportsReasoning
-          ? {reasoning: {effort: 'medium', exclude: false}, include_reasoning: true}
+          ? {reasoning: {effort: getOpenRouterReasoningEffort(body.model), exclude: false}, include_reasoning: true}
           : {};
         let text = '';
         let didEnterSynthesis = false;
@@ -1319,6 +1334,9 @@ const createResearchApiPlugin = ({
   logger: Logger;
 }): Plugin => {
   const jobs = new Map<string, ResearchJob>();
+  const jobCleanupTimers = new Map<string, NodeJS.Timeout>();
+  const RESEARCH_JOB_TTL_MS = 5 * 60 * 1000;
+  const MAX_RESEARCH_EVENTS = 500;
   const runtime = createProviderResearchRuntime({ai, cliproxyBaseUrl, openrouterApiKey});
 
   const writeEvent = (res: ServerResponse, event: ResearchEvent) => {
@@ -1337,6 +1355,9 @@ const createResearchApiPlugin = ({
     }
 
     job.events.push(event);
+    if (job.events.length > MAX_RESEARCH_EVENTS) {
+      job.events.splice(0, job.events.length - MAX_RESEARCH_EVENTS);
+    }
     if (event.type === 'status') {
       logger.debug({jobId: job.id, status: event.status, message: event.message}, 'Research status event');
     } else if (event.type === 'activity') {
@@ -1361,6 +1382,13 @@ const createResearchApiPlugin = ({
     if (job.completed) {
       job.subscribers.forEach(res => res.end());
       job.subscribers.clear();
+      if (!jobCleanupTimers.has(job.id)) {
+        const timer = setTimeout(() => {
+          jobs.delete(job.id);
+          jobCleanupTimers.delete(job.id);
+        }, RESEARCH_JOB_TTL_MS);
+        jobCleanupTimers.set(job.id, timer);
+      }
     }
   };
 
@@ -1370,7 +1398,7 @@ const createResearchApiPlugin = ({
 
     if (req.method === 'POST' && requestPath === '/preflight') {
       try {
-        const body = await readJsonBody(req);
+        const body = await readJsonBody(req, SMALL_JSON_BODY_LIMIT_BYTES);
         const input = buildPreflightInput(body);
         let text = '';
 
@@ -1433,7 +1461,7 @@ const createResearchApiPlugin = ({
 
         sendJson(res, 200, normalizePreflightResult(extractJsonObject(text)));
       } catch (error) {
-        sendJson(res, 500, {error: error instanceof Error ? error.message : 'Could not run research preflight.'});
+        sendJson(res, getErrorStatusCode(error), {error: error instanceof Error ? error.message : 'Could not run research preflight.'});
       }
       return;
     }
@@ -1459,7 +1487,7 @@ const createResearchApiPlugin = ({
         logger.info({jobId: job.id, provider: body.provider, model: body.model, timeBudgetMs: body.timeBudgetMs}, 'Research job started');
         void runtime.run(job, event => emitJobEvent(job, event));
       } catch (error) {
-        sendJson(res, 500, {error: error instanceof Error ? error.message : 'Could not start research job.'});
+        sendJson(res, getErrorStatusCode(error), {error: error instanceof Error ? error.message : 'Could not start research job.'});
       }
       return;
     }
@@ -1724,8 +1752,8 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Gemini request failed.';
       requestLogger.error({err: error, durationMs: Date.now() - startedAt}, 'Gemini request failed');
-      if (!res.headersSent) {
-        sendJson(res, 500, {error: message});
+      if (!res.headersSent && !res.destroyed) {
+        sendJson(res, getErrorStatusCode(error), {error: message});
       } else {
         res.write(`${JSON.stringify({type: 'error', error: message})}\n`);
         res.end();
@@ -1766,6 +1794,14 @@ const createOpenRouterApiPlugin = (apiKey: string | undefined, appUrl: string | 
       return;
     }
 
+    const upstreamController = new AbortController();
+    let responseFinished = false;
+    const abortUpstream = () => {
+      if (!responseFinished) upstreamController.abort();
+    };
+    req.on('aborted', abortUpstream);
+    res.on('close', abortUpstream);
+
     try {
       const body = await readJsonBody(req);
       requestLogger.debug(
@@ -1787,6 +1823,7 @@ const createOpenRouterApiPlugin = (apiKey: string | undefined, appUrl: string | 
           'X-Title': 'Privora',
         },
         body: JSON.stringify(body),
+        signal: upstreamController.signal,
       });
 
       if (!upstream.ok) {
@@ -1807,28 +1844,40 @@ const createOpenRouterApiPlugin = (apiKey: string | undefined, appUrl: string | 
         res.socket?.setNoDelay(true);
 
         const reader = upstream.body.getReader();
-        while (true) {
-          const {done, value} = await reader.read();
-          if (done || res.destroyed) break;
-          res.write(Buffer.from(value));
+        try {
+          while (true) {
+            const {done, value} = await reader.read();
+            if (done || res.destroyed || upstreamController.signal.aborted) break;
+            res.write(Buffer.from(value));
+          }
+        } finally {
+          await reader.cancel().catch(() => undefined);
         }
+        responseFinished = true;
         res.end();
         requestLogger.info({durationMs: Date.now() - startedAt, clientClosed: res.destroyed && !res.writableEnded}, 'OpenRouter stream completed');
         return;
       }
 
       const data = await upstream.json();
+      responseFinished = true;
       requestLogger.info({durationMs: Date.now() - startedAt}, 'OpenRouter request completed');
       sendJson(res, 200, data);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'OpenRouter request failed.';
       requestLogger.error({err: error, durationMs: Date.now() - startedAt}, 'OpenRouter request failed');
-      if (!res.headersSent) {
-        sendJson(res, 500, {error: message});
+      if (!res.headersSent && !res.destroyed) {
+        sendJson(res, getErrorStatusCode(error), {error: message});
       } else {
-        res.write(`data: ${JSON.stringify({error: {message}})}\n\n`);
-        res.end();
+        if (!res.destroyed) {
+          res.write(`data: ${JSON.stringify({error: {message}})}\n\n`);
+          res.end();
+        }
       }
+    } finally {
+      responseFinished = true;
+      req.off('aborted', abortUpstream);
+      res.off('close', abortUpstream);
     }
   };
 
@@ -1860,6 +1909,22 @@ export default defineConfig(({mode}) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('monaco-editor') || id.includes('@monaco-editor')) {
+                return 'vendor-monaco';
+              }
+              if (id.includes('mermaid')) {
+                return 'vendor-mermaid';
+              }
+            }
+          },
+        },
       },
     },
     server: {
