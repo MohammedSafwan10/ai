@@ -1,5 +1,5 @@
 import { artifactToolDefinition, parseArtifactToolArguments, parsePartialArtifactToolArguments, type ArtifactDraftPayload, type ArtifactPayload } from "../artifacts";
-import { getOpenRouterModelCapabilities, modelSupportsOpenRouterParameter } from "./models";
+import { getOpenRouterModelCapabilities, getOpenRouterReasoningEffort, modelSupportsOpenRouterParameter } from "./models";
 
 export interface OpenRouterMessage {
   role: "user" | "model";
@@ -192,7 +192,7 @@ const buildOpenRouterBody = ({
   }
 
   if (capabilities?.supportsReasoning && reasoningEnabled) {
-    body.reasoning = { effort: "medium", exclude: false };
+    body.reasoning = { effort: getOpenRouterReasoningEffort(model), exclude: false };
     if (reasoningEnabled && modelSupportsOpenRouterParameter(model, "include_reasoning")) {
       body.include_reasoning = true;
     }

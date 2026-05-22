@@ -111,7 +111,14 @@ export const appendUserContextMessage = (messages: WebDevProviderMessage[], cont
   const parts: WebDevProviderMessage["parts"] = [{ type: "text", text: contextText }];
   for (const attachment of attachments) {
     if (attachment.mimeType.startsWith("image/")) {
-      parts.push({ type: "image", mimeType: attachment.mimeType, data: attachment.base64 });
+      parts.push({ type: "image", mimeType: attachment.mimeType, data: attachment.base64 || "" });
+    } else if (attachment.base64) {
+      parts.push({
+        type: "file",
+        name: attachment.name,
+        mimeType: attachment.mimeType || "application/octet-stream",
+        data: attachment.base64,
+      });
     }
   }
   return [...messages, { role: "user" as const, content: contextText, parts }];

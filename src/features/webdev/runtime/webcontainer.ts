@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { WebContainer, type WebContainerProcess } from "@webcontainer/api";
-import { getPackageHash, normalizeWebDevPath, toWebContainerTree } from "../lib/files";
+import { canonicalizeWebDevPath, getPackageHash, toWebContainerTree } from "../lib/files";
 import type { WebDevFile, WebDevRuntimeState } from "../lib/types";
 
 declare global {
@@ -36,7 +36,7 @@ const configureApiKey = () => {
   configuredApiKey = true;
 };
 
-const canUseWebContainer = () =>
+export const canUseWebContainer = () =>
   typeof window !== "undefined" &&
   typeof SharedArrayBuffer !== "undefined" &&
   window.crossOriginIsolated;
@@ -53,7 +53,7 @@ const previewRuntimeErrors = () => (window.__privoraWebContainerPreviewErrors ||
   .filter(Boolean)
   .slice(-12);
 
-const bootWebContainer = async () => {
+export const bootWebContainer = async () => {
   configureApiKey();
   window.__privoraWebContainerBootPromise ||= WebContainer.boot({
     coep: "require-corp",
@@ -65,7 +65,7 @@ const bootWebContainer = async () => {
 export const canUseWebDevCommands = canUseWebContainer;
 
 const hasRunnableViteProject = (files: WebDevFile[]) => {
-  const packageFile = files.find(file => normalizeWebDevPath(file.path) === "package.json");
+  const packageFile = files.find(file => canonicalizeWebDevPath(file.path) === "package.json");
   if (!packageFile) return false;
   try {
     const packageJson = JSON.parse(packageFile.content);
@@ -76,19 +76,22 @@ const hasRunnableViteProject = (files: WebDevFile[]) => {
 };
 
 const getRuntimeRestartSignature = (files: WebDevFile[]) => {
-  const byPath = new Map(files.map(file => [normalizeWebDevPath(file.path), file.content]));
+  const byPath = new Map(files.flatMap(file => {
+    const path = canonicalizeWebDevPath(file.path);
+    return path ? [[path, file.content] as const] : [];
+  }));
   return RUNTIME_RESTART_PATHS
     .map(path => `${path}:${byPath.get(path) || ""}`)
     .join("\n---privora-runtime-config---\n");
 };
 
 const ensureRuntimeFiles = (files: WebDevFile[]): WebDevFile[] => {
-  const normalizedPaths = new Set(files.map(file => normalizeWebDevPath(file.path)));
+  const normalizedPaths = new Set(files.map(file => canonicalizeWebDevPath(file.path)).filter(Boolean));
   if (normalizedPaths.has("vite.config.ts") || normalizedPaths.has("vite.config.js")) {
     return files;
   }
 
-  const packageFile = files.find(file => normalizeWebDevPath(file.path) === "package.json");
+  const packageFile = files.find(file => canonicalizeWebDevPath(file.path) === "package.json");
   const isReactProject = packageFile?.content.includes('"react"') || files.some(file => file.path.endsWith(".tsx") || file.path.endsWith(".jsx"));
   if (!isReactProject) return files;
 
@@ -178,7 +181,10 @@ const mountFilesForCommand = async (files: WebDevFile[], onLine: (line: string) 
   } else {
     onLine("Mounting project files...");
     await webcontainer.mount(toWebContainerTree(activeFiles));
-    window.__privoraWebContainerSyncedFiles = new Map(activeFiles.map(file => [normalizeWebDevPath(file.path), file.content]));
+    window.__privoraWebContainerSyncedFiles = new Map(activeFiles.flatMap(file => {
+      const path = canonicalizeWebDevPath(file.path);
+      return path ? [[path, file.content] as const] : [];
+    }));
   }
   return { webcontainer, activeFiles };
 };
@@ -194,7 +200,10 @@ async function syncWebContainerFiles({
   previous: Map<string, string>;
   onLine: (line: string) => void;
 }) {
-  const next = new Map(files.map(file => [normalizeWebDevPath(file.path), file.content]));
+  const next = new Map(files.flatMap(file => {
+    const path = canonicalizeWebDevPath(file.path);
+    return path ? [[path, file.content] as const] : [];
+  }));
   for (const [path, previousContent] of previous.entries()) {
     const fsPath = `/${path}`;
     if (!next.has(path)) {
@@ -219,7 +228,7 @@ async function syncWebContainerFiles({
 }
 
 const getPackageJson = (files: WebDevFile[]) => {
-  const packageFile = files.find(file => normalizeWebDevPath(file.path) === "package.json");
+  const packageFile = files.find(file => canonicalizeWebDevPath(file.path) === "package.json");
   if (!packageFile) return null;
   try {
     return JSON.parse(packageFile.content) as { scripts?: Record<string, string> };
@@ -424,7 +433,10 @@ export function useWebContainerRuntime(projectId: string | null, files: WebDevFi
       });
 
       await webcontainer.mount(toWebContainerTree(activeFiles));
-      syncedFilesRef.current = new Map(activeFiles.map(file => [normalizeWebDevPath(file.path), file.content]));
+      syncedFilesRef.current = new Map(activeFiles.flatMap(file => {
+        const path = canonicalizeWebDevPath(file.path);
+        return path ? [[path, file.content] as const] : [];
+      }));
       window.__privoraWebContainerSyncedFiles = syncedFilesRef.current;
       mountedProjectRef.current = projectId;
       packageHashRef.current = packageHash;

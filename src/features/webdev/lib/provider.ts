@@ -1,4 +1,4 @@
-import { getOpenRouterModelCapabilities, modelSupportsOpenRouterParameter } from "../../../lib/openrouter/models";
+import { getOpenRouterModelCapabilities, getOpenRouterReasoningEffort, modelSupportsOpenRouterParameter } from "../../../lib/openrouter/models";
 import {
   geminiWebDevFunctionDeclarations,
   openRouterWebDevTools,
@@ -36,7 +36,7 @@ const toCliproxyInput = (messages: WebDevProviderMessage[], attachments: Attachm
     const parts = message.parts || [];
     const functionCalls = parts.filter(part => part.type === "function_call");
     const functionResponses = parts.filter(part => part.type === "function_response");
-    const textParts = parts.filter(part => part.type === "text" || part.type === "image");
+    const textParts = parts.filter(part => part.type === "text" || part.type === "image" || part.type === "file");
 
     if (message.content || textParts.length > 0) {
       const content: Array<Record<string, unknown>> = [];
@@ -52,6 +52,9 @@ const toCliproxyInput = (messages: WebDevProviderMessage[], attachments: Attachm
         }
         if (part.type === "image") {
           content.push({ type: "input_image", image_url: `data:${part.mimeType};base64,${part.data}`, detail: "auto" });
+        }
+        if (part.type === "file") {
+          content.push({ type: "input_file", filename: part.name, file_data: `data:${part.mimeType};base64,${part.data}` });
         }
       });
       input.push({
@@ -136,7 +139,7 @@ const toGeminiContents = (messages: WebDevProviderMessage[]) =>
       const parts: Array<Record<string, unknown>> = [];
       message.parts?.forEach(part => {
         if (part.type === "text") parts.push({ text: part.text });
-        if (part.type === "image") parts.push({ inlineData: { data: part.data, mimeType: part.mimeType } });
+        if (part.type === "image" || part.type === "file") parts.push({ inlineData: { data: part.data, mimeType: part.mimeType } });
         if (part.type === "function_call") parts.push({ functionCall: { name: part.name, args: part.arguments || {} } });
         if (part.type === "function_response") parts.push({ functionResponse: { name: part.name, response: part.response || {} } });
       });
@@ -204,6 +207,23 @@ const extractCliproxyThoughtDelta = (event: string | undefined, data: any) => {
   }
   if (typeof data?.text === "string" && data?.type === "summary_text") {
     return data.text;
+  }
+  if (typeof data?.part?.text === "string" && data?.part?.type === "summary_text") {
+    return data.part.text;
+  }
+  const summaryCandidates = [
+    data?.summary,
+    data?.item?.summary,
+    data?.output_item?.summary,
+    ...(Array.isArray(data?.response?.output) ? data.response.output.map((item: any) => item?.summary) : []),
+  ];
+  for (const summary of summaryCandidates) {
+    if (!Array.isArray(summary)) continue;
+    const text = summary
+      .map((item: any) => item?.text || item?.content)
+      .filter(Boolean)
+      .join("");
+    if (text) return text;
   }
   return "";
 };
@@ -378,7 +398,7 @@ async function streamOpenRouterWebDevResponse({
       tools: openRouterWebDevTools,
       ...(maxOutputTokens && modelSupportsOpenRouterParameter(model, "max_tokens") ? { max_tokens: maxOutputTokens } : {}),
       ...(capabilities.supportsToolChoice ? { tool_choice: "auto" } : {}),
-      ...(capabilities.supportsReasoning && reasoningEnabled ? { reasoning: { effort: "medium", exclude: false } } : {}),
+      ...(capabilities.supportsReasoning && reasoningEnabled ? { reasoning: { effort: getOpenRouterReasoningEffort(model), exclude: false } } : {}),
       ...(reasoningEnabled && modelSupportsOpenRouterParameter(model, "include_reasoning") ? { include_reasoning: true } : {}),
       ...(modelSupportsOpenRouterParameter(model, "temperature") ? { temperature: 0.45 } : {}),
       stream: true,

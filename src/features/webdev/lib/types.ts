@@ -47,6 +47,7 @@ export interface WebDevFunctionResponse {
 export type WebDevProviderContentPart =
   | { type: "text"; text: string }
   | { type: "image"; mimeType: string; data: string }
+  | { type: "file"; name: string; mimeType: string; data: string }
   | { type: "function_call"; id: string; name: string; arguments: Record<string, unknown>; thoughtSignature?: string }
   | { type: "function_response"; id: string; name: string; response: WebDevFunctionResponse };
 

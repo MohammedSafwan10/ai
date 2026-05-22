@@ -6,6 +6,7 @@ export interface OpenRouterModelCapabilities {
   maxCompletionTokens?: number;
   inputModalities: Array<"text" | "image" | "file" | "audio" | "video">;
   supportsReasoning: boolean;
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh";
   supportsTools: boolean;
   supportsToolChoice: boolean;
   supportsStructuredOutputs: boolean;
@@ -15,32 +16,19 @@ export interface OpenRouterModelCapabilities {
 
 export const openRouterModelCapabilities: OpenRouterModelCapabilities[] = [
   {
-    id: "inclusionai/ring-2.6-1t:free",
-    label: "Ring 2.6 1T",
-    description: "Free OpenRouter 1T-scale thinking model for coding agents and multi-step workflows.",
-    contextLength: 262144,
-    maxCompletionTokens: 65536,
+    id: "deepseek/deepseek-v4-flash:free",
+    label: "DeepSeek V4 Flash",
+    description: "Free fast DeepSeek MoE model with 1M context for coding, chat, and agent workflows.",
+    contextLength: 1048576,
+    maxCompletionTokens: 384000,
     inputModalities: ["text"],
     supportsReasoning: true,
+    reasoningEffort: "high",
     supportsTools: true,
     supportsToolChoice: true,
     supportsStructuredOutputs: false,
-    supportedParameters: [
-      "frequency_penalty",
-      "include_reasoning",
-      "max_tokens",
-      "presence_penalty",
-      "reasoning",
-      "repetition_penalty",
-      "seed",
-      "stop",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_k",
-      "top_p",
-    ],
-    notes: "Text-only thinking model. Good candidate for reasoning, web-search server tool, and Canvas tool calls.",
+    supportedParameters: ["include_reasoning", "reasoning", "tool_choice", "tools"],
+    notes: "Text-only free model. Supports high/xhigh reasoning on OpenRouter and is optimized for fast, high-throughput long-context use.",
   },
   {
     id: "baidu/cobuddy:free",
@@ -85,6 +73,9 @@ export const openRouterModelCapabilities: OpenRouterModelCapabilities[] = [
 
 export const getOpenRouterModelCapabilities = (modelId: string) =>
   openRouterModelCapabilities.find(model => model.id === modelId);
+
+export const getOpenRouterReasoningEffort = (modelId: string) =>
+  getOpenRouterModelCapabilities(modelId)?.reasoningEffort || "medium";
 
 export const modelSupportsOpenRouterParameter = (modelId: string, parameter: string) =>
   getOpenRouterModelCapabilities(modelId)?.supportedParameters.includes(parameter) ?? false;

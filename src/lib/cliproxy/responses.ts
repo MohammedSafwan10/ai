@@ -125,9 +125,30 @@ const extractThoughtDelta = (event: string | undefined, data: any): ExtractedTho
     return { text: data.part.text, mode: "snapshot" };
   }
 
-  if (Array.isArray(data?.summary)) {
-    const text = data.summary
-      .map((item: any) => item?.text)
+  const summaryCandidates = [
+    data?.summary,
+    data?.item?.summary,
+    data?.output_item?.summary,
+    ...(Array.isArray(data?.response?.output) ? data.response.output.map((item: any) => item?.summary) : []),
+  ];
+  for (const summary of summaryCandidates) {
+    if (!Array.isArray(summary)) continue;
+    const text = summary
+      .map((item: any) => item?.text || item?.content)
+      .filter(Boolean)
+      .join("");
+    if (text) return { text, mode: "snapshot" };
+  }
+
+  const reasoningItems = [
+    data?.item,
+    data?.output_item,
+    ...(Array.isArray(data?.response?.output) ? data.response.output : []),
+  ];
+  for (const item of reasoningItems) {
+    if (item?.type !== "reasoning" || !Array.isArray(item?.content)) continue;
+    const text = item.content
+      .map((part: any) => part?.text || part?.content)
       .filter(Boolean)
       .join("");
     return text ? { text, mode: "snapshot" } : null;
