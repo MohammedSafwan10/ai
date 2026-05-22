@@ -3,18 +3,41 @@ import type { WebDevFile } from "./types";
 
 export const normalizeWebDevPath = (path: string) =>
   path
+    .normalize("NFKC")
     .replace(/\\/g, "/")
     .replace(/^\/+/, "")
-    .replace(/\/+/g, "/")
-    .trim();
+    .replace(/\/+/g, "/");
+
+export const canonicalizeWebDevPath = (path: string) => {
+  const raw = String(path ?? "");
+  if (!raw || /^\s|\s$/.test(raw)) return null;
+  if (/%(?:2e|2f|5c)/i.test(raw)) return null;
+  if (raw.replace(/\\/g, "/").startsWith("//")) return null;
+
+  const normalized = normalizeWebDevPath(raw);
+  if (!normalized || normalized.length > 240) return null;
+  if (/^[a-zA-Z]:/.test(normalized) || normalized.startsWith("//")) return null;
+
+  const parts = normalized.split("/");
+  const safeParts: string[] = [];
+  for (const part of parts) {
+    if (!part || part === "." || part === "..") return null;
+    if (part.startsWith(".")) return null;
+    if (/[<>:"|?*\x00-\x1f]/.test(part)) return null;
+    if (/[. ]$/.test(part)) return null;
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part)) return null;
+    safeParts.push(part);
+  }
+
+  return safeParts.join("/");
+};
 
 export const isSafeWebDevPath = (path: string) => {
-  const normalized = normalizeWebDevPath(path);
-  return Boolean(normalized) && !normalized.startsWith(".") && !normalized.includes("../") && !/^[a-zA-Z]:/.test(normalized);
+  return canonicalizeWebDevPath(path) !== null;
 };
 
 export const getWebDevFileId = (projectId: string, path: string) =>
-  `${projectId}::${normalizeWebDevPath(path)}`;
+  `${projectId}::${canonicalizeWebDevPath(path) || normalizeWebDevPath(path)}`;
 
 export const getLanguageForWebDevPath = (path: string) => {
   const lower = path.toLowerCase();
@@ -76,7 +99,9 @@ export const toWebContainerTree = (files: WebDevFile[]): FileSystemTree => {
   const root: FileSystemTree = {};
 
   for (const file of files.filter(item => item.status !== "deleted")) {
-    const pathParts = normalizeWebDevPath(file.path).split("/").filter(Boolean);
+    const safePath = canonicalizeWebDevPath(file.path);
+    if (!safePath) continue;
+    const pathParts = safePath.split("/");
     let cursor = root;
     pathParts.forEach((part, index) => {
       const isFile = index === pathParts.length - 1;
@@ -96,4 +121,4 @@ export const toWebContainerTree = (files: WebDevFile[]): FileSystemTree => {
 };
 
 export const getPackageHash = (files: WebDevFile[]) =>
-  files.find(file => normalizeWebDevPath(file.path) === "package.json")?.content || "";
+  files.find(file => canonicalizeWebDevPath(file.path) === "package.json")?.content || "";

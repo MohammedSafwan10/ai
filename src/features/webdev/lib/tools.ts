@@ -1,4 +1,4 @@
-import { isSafeWebDevPath, normalizeWebDevPath } from "./files";
+import { canonicalizeWebDevPath, isSafeWebDevPath } from "./files";
 import type { WebDevToolCall, WebDevToolDraft } from "./types";
 
 const fileObjectSchema = {
@@ -335,21 +335,21 @@ export const parsePartialWebDevToolCall = (name: string | undefined, rawArgument
 export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | null => {
   const args = call.arguments || {};
   if (call.name === "webdev_write_file" || call.name === "webdev_patch_file" || call.name === "webdev_delete_path") {
-    const path = typeof args.path === "string" ? normalizeWebDevPath(args.path) : "";
-    if (!isSafeWebDevPath(path)) return null;
+    const path = typeof args.path === "string" ? canonicalizeWebDevPath(args.path) : null;
+    if (!path) return null;
     return { ...call, arguments: { ...args, path } };
   }
   if (call.name === "webdev_rename_path") {
-    const from = typeof args.from === "string" ? normalizeWebDevPath(args.from) : "";
-    const to = typeof args.to === "string" ? normalizeWebDevPath(args.to) : "";
-    if (!isSafeWebDevPath(from) || !isSafeWebDevPath(to)) return null;
+    const from = typeof args.from === "string" ? canonicalizeWebDevPath(args.from) : null;
+    const to = typeof args.to === "string" ? canonicalizeWebDevPath(args.to) : null;
+    if (!from || !to) return null;
     return { ...call, arguments: { ...args, from, to } };
   }
   if (call.name === "webdev_create_project") {
     const files = Array.isArray(args.files)
       ? args.files
           .map((file: any) => ({
-            path: typeof file?.path === "string" ? normalizeWebDevPath(file.path) : "",
+            path: typeof file?.path === "string" ? canonicalizeWebDevPath(file.path) || "" : "",
             content: typeof file?.content === "string" ? file.content : "",
           }))
           .filter(file => isSafeWebDevPath(file.path))
@@ -373,7 +373,7 @@ export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | 
         : [];
     const pages = cleanStringList(args.pages);
     const primaryScreens = cleanStringList(args.primaryScreens);
-    const keyFiles = cleanStringList(args.keyFiles).map(normalizeWebDevPath).filter(isSafeWebDevPath);
+    const keyFiles = cleanStringList(args.keyFiles).map(path => canonicalizeWebDevPath(path)).filter((path): path is string => Boolean(path));
     const routingStrategy = ["browser-router", "hash-router", "state-screens", "none"].includes(String(args.routingStrategy))
       ? String(args.routingStrategy)
       : Boolean(args.routingRequired)
@@ -401,8 +401,8 @@ export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | 
     };
   }
   if (call.name === "webdev_read_file") {
-    const path = typeof args.path === "string" ? normalizeWebDevPath(args.path) : "";
-    if (!isSafeWebDevPath(path)) return null;
+    const path = typeof args.path === "string" ? canonicalizeWebDevPath(args.path) : null;
+    if (!path) return null;
     return { ...call, arguments: { path } };
   }
   if (call.name === "webdev_search_files") {
@@ -416,16 +416,16 @@ export const normalizeWebDevToolCall = (call: WebDevToolCall): WebDevToolCall | 
     };
   }
   if (call.name === "webdev_file_outline") {
-    const path = typeof args.path === "string" ? normalizeWebDevPath(args.path) : "";
-    if (!isSafeWebDevPath(path)) return null;
+    const path = typeof args.path === "string" ? canonicalizeWebDevPath(args.path) : null;
+    if (!path) return null;
     return { ...call, arguments: { path } };
   }
   if (call.name === "webdev_get_diagnostics") {
     const paths = Array.isArray(args.paths)
       ? args.paths
           .filter((path): path is string => typeof path === "string")
-          .map(normalizeWebDevPath)
-          .filter(isSafeWebDevPath)
+          .map(path => canonicalizeWebDevPath(path))
+          .filter((path): path is string => Boolean(path))
       : undefined;
     return { ...call, arguments: paths?.length ? { paths } : {} };
   }

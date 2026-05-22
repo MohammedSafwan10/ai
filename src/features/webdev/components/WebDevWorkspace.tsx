@@ -22,7 +22,7 @@ import { useTextareaAutosize } from "../../../hooks/useTextareaAutosize";
 import { useWebDevGeneration } from "../hooks/useWebDevGeneration";
 import { loadWebDevFiles, loadWebDevMessages, settleStreamingWebDevFiles, updateWebDevProject, upsertWebDevFile } from "../lib/storage";
 import { deleteWebDevPath, renameWebDevPath } from "../lib/storage";
-import { normalizeWebDevPath } from "../lib/files";
+import { canonicalizeWebDevPath } from "../lib/files";
 import { WebDevChatPanel } from "./WebDevChatPanel";
 import { WebDevIdePanel } from "./WebDevIdePanel";
 import type { WebDevFileDiff } from "../lib/types";
@@ -326,8 +326,11 @@ export function WebDevWorkspace({
       return;
     }
 
-    const path = normalizeWebDevPath(fileActionDialog.value);
-    if (!path) return;
+    const path = canonicalizeWebDevPath(fileActionDialog.value);
+    if (!path) {
+      notify({ title: "Unsafe path", description: "Use a normal project-relative path without dot segments, drive letters, reserved names, or special characters.", variant: "error" });
+      return;
+    }
 
     if (fileActionDialog.type === "create-file") {
       const file = await upsertWebDevFile(project.id, { path, content: "", status: "created", summary: "Manual file" });
@@ -338,7 +341,7 @@ export function WebDevWorkspace({
     }
 
     if (fileActionDialog.type === "create-folder") {
-      const markerPath = `${path}/.gitkeep`;
+      const markerPath = `${path}/privora-folder`;
       const file = await upsertWebDevFile(project.id, { path: markerPath, content: "", status: "created", summary: "Manual folder" });
       setFiles(prev => [...prev.filter(item => item.id !== file.id), file].sort((a, b) => a.path.localeCompare(b.path)));
       handleSelectFile(markerPath);

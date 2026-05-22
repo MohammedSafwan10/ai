@@ -6,7 +6,13 @@ import {
   type WebDevProjectRecord,
   type WebDevThreadRecord,
 } from "../../../lib/db";
-import { getWebDevFileId, normalizeWebDevPath } from "./files";
+import { canonicalizeWebDevPath, getWebDevFileId } from "./files";
+
+const requireWebDevPath = (path: string) => {
+  const normalized = canonicalizeWebDevPath(path);
+  if (!normalized) throw new Error(`Unsafe Web Dev path: ${path}`);
+  return normalized;
+};
 
 export const loadWebDevProjects = async () =>
   db.webDevProjects.orderBy("updatedAt").reverse().toArray()
@@ -165,7 +171,7 @@ export const upsertWebDevFile = async (
   file: Pick<WebDevFileRecord, "path" | "content"> & Partial<Pick<WebDevFileRecord, "status" | "summary">>
 ) => {
   const now = Date.now();
-  const path = normalizeWebDevPath(file.path);
+  const path = requireWebDevPath(file.path);
   const existing = await db.webDevFiles.get(getWebDevFileId(projectId, path));
   const record: WebDevFileRecord = {
     id: getWebDevFileId(projectId, path),
@@ -189,7 +195,7 @@ export const bulkUpsertWebDevFiles = async (
   const now = Date.now();
   const normalized = files.map(file => ({
     ...file,
-    path: normalizeWebDevPath(file.path),
+    path: requireWebDevPath(file.path),
   }));
   const existing = await db.webDevFiles.bulkGet(normalized.map(file => getWebDevFileId(projectId, file.path)));
   const records: WebDevFileRecord[] = normalized.map((file, index) => {
@@ -216,7 +222,7 @@ export const bulkUpsertWebDevFiles = async (
 };
 
 export const deleteWebDevPath = async (projectId: string, path: string) => {
-  const normalized = normalizeWebDevPath(path);
+  const normalized = requireWebDevPath(path);
   const files = await db.webDevFiles.where("projectId").equals(projectId).toArray();
   const targets = files.filter(file => file.path === normalized || file.path.startsWith(`${normalized}/`));
   await db.webDevFiles.bulkDelete(targets.map(file => file.id));
@@ -225,8 +231,8 @@ export const deleteWebDevPath = async (projectId: string, path: string) => {
 };
 
 export const renameWebDevPath = async (projectId: string, from: string, to: string) => {
-  const fromPath = normalizeWebDevPath(from);
-  const toPath = normalizeWebDevPath(to);
+  const fromPath = requireWebDevPath(from);
+  const toPath = requireWebDevPath(to);
   const files = await db.webDevFiles.where("projectId").equals(projectId).toArray();
   const targets = files.filter(file => file.path === fromPath || file.path.startsWith(`${fromPath}/`));
   const renamed = targets.map(file => {
@@ -253,7 +259,7 @@ export const replaceWebDevProjectFiles = async (
 ) => {
   const now = Date.now();
   const records: WebDevFileRecord[] = files.map((file, index) => {
-    const path = normalizeWebDevPath(file.path);
+    const path = requireWebDevPath(file.path);
     return {
       id: getWebDevFileId(projectId, path),
       projectId,

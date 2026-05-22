@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { canonicalizeWebDevPath } from "./files";
 import type { WebDevFile } from "./types";
 
 const sanitizeName = (value: string) =>
@@ -14,7 +15,8 @@ export const downloadWebDevProject = async (title: string, files: WebDevFile[]) 
   files
     .filter(file => file.status !== "deleted")
     .forEach(file => {
-      zip.file(file.path, file.content);
+      const path = canonicalizeWebDevPath(file.path);
+      if (path) zip.file(path, file.content);
     });
   const blob = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(blob);
