@@ -1,6 +1,6 @@
 import { useRef, type Dispatch, type SetStateAction } from "react";
 import { getModelOption } from "../../../lib/models";
-import type { Attachment } from "../../../lib/attachments";
+import { ensureAttachmentsHaveBase64, type Attachment } from "../../../lib/attachments";
 import type { WebDevBuildPlanRecord, WebDevFileRecord, WebDevMessageRecord, WebDevProjectRecord } from "../../../lib/db";
 import { buildWebDevSystemInstruction } from "../prompts/system";
 import { streamWebDevResponse } from "../lib/provider";
@@ -1225,6 +1225,7 @@ export function useWebDevGeneration({
     };
 
     try {
+      const requestAttachments = attachments.length > 0 ? await ensureAttachmentsHaveBase64(attachments) : attachments;
       let providerMessages: WebDevProviderMessage[] = messagesToProviderHistory([
         ...historyBeforeTurn.filter(message => message.projectId === projectId),
         userMessage,
@@ -1233,11 +1234,11 @@ export function useWebDevGeneration({
         projectTitle: project.title,
         userPrompt: prompt.trim(),
         files: filesRef.current.filter(file => file.projectId === projectId),
-        attachments,
+        attachments: requestAttachments,
         model: selectedModel,
         buildPlan: project.buildPlan,
       });
-      providerMessages = appendUserContextMessage(providerMessages, context.text, attachments);
+      providerMessages = appendUserContextMessage(providerMessages, context.text, requestAttachments);
 
       const runStartedAt = Date.now();
       let completed = false;
@@ -1263,7 +1264,7 @@ export function useWebDevGeneration({
           ),
           files: filesRef.current,
           messages: messagesRef.current,
-          attachments,
+          attachments: requestAttachments,
           reasoningEnabled: isThinkingEnabled && supportsThinking,
           signal: abortController.signal,
           onTextDelta: (delta) => {

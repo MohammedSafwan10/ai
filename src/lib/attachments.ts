@@ -64,7 +64,7 @@ const GEMINI_ATTACHMENT_EXTENSIONS = new Set([
 ]);
 
 export const GEMINI_ATTACHMENT_ACCEPT =
-  "image/*,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv,.json,.ts,.tsx,.js,.jsx,.py,.java,.cs,.cpp,.c,.html,.css";
+  ".png,.jpg,.jpeg,.webp,.heic,.heif,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv,.json,.ts,.tsx,.js,.jsx,.py,.java,.cs,.cpp,.c,.html,.css";
 export const CLIPROXY_ATTACHMENT_ACCEPT =
   ".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.markdown,.json,.html,.htm,.xml,.csv,.tsv,.doc,.docx,.rtf,.odt,.ppt,.pptx,.xls,.xlsx,.js,.jsx,.ts,.tsx,.py,.java,.cs,.cpp,.c,.css,.sql,.log,.yml,.yaml,.toml,.ini,.sh,.bat,.ps1,.dart,.go,.rs";
 
@@ -73,7 +73,12 @@ export const getAttachmentDataUrl = (attachment: Pick<Attachment, "mimeType" | "
 
 export const normalizeAttachmentUrl = (attachment: Attachment): Attachment => {
   if (!attachment.url || attachment.url.startsWith("blob:")) {
-    return { ...attachment, url: getAttachmentDataUrl(attachment) };
+    if (attachment.blob) {
+      return { ...attachment, url: attachment.url || URL.createObjectURL(attachment.blob) };
+    }
+    if (attachment.base64) {
+      return { ...attachment, url: getAttachmentDataUrl(attachment) };
+    }
   }
 
   return attachment;
@@ -90,14 +95,16 @@ export const normalizeChatAttachmentUrls = (chat: ChatWithAttachments): ChatWith
 });
 
 export const revokeAttachmentUrl = (attachment: Attachment) => {
-  if (attachment.url.startsWith("blob:")) {
+  if (attachment.url && attachment.url.startsWith("blob:")) {
     URL.revokeObjectURL(attachment.url);
   }
 };
 
 export const getAttachmentSize = (attachment: Attachment) => {
   if (typeof attachment.size === "number") return attachment.size;
-  return Math.ceil((attachment.base64.length * 3) / 4);
+  if (attachment.blob) return attachment.blob.size;
+  if (attachment.base64) return Math.ceil((attachment.base64.length * 3) / 4);
+  return 0;
 };
 
 export const getAttachmentTotalSize = (items: Attachment[]) =>
@@ -111,7 +118,6 @@ export const isCliproxySupportedAttachment = (attachment: Pick<Attachment, "mime
   CLIPROXY_FILE_EXTENSIONS.has(getAttachmentExtension(attachment.name));
 
 export const isGeminiSupportedAttachment = (attachment: Pick<Attachment, "mimeType" | "name">) =>
-  attachment.mimeType.startsWith("image/") ||
   GEMINI_ATTACHMENT_MIME_TYPES.has(attachment.mimeType) ||
   GEMINI_ATTACHMENT_EXTENSIONS.has(getAttachmentExtension(attachment.name));
 
@@ -149,27 +155,35 @@ export const validateOpenRouterAttachments = (items: Attachment[]) => {
   return null;
 };
 
-export const readFileAsAttachment = (file: File) =>
-  new Promise<Attachment>((resolve, reject) => {
+export const readFileAsAttachment = (file: File): Promise<Attachment> => {
+  return Promise.resolve({
+    blob: file,
+    mimeType: file.type || "application/octet-stream",
+    name: file.name,
+    size: file.size,
+    url: URL.createObjectURL(file),
+  });
+};
+
+export const ensureAttachmentBase64 = async (attachment: Attachment): Promise<Attachment> => {
+  if (attachment.base64) return attachment;
+  const { blob } = attachment;
+  if (!blob) throw new Error(`Attachment "${attachment.name}" has no readable data.`);
+  return new Promise<Attachment>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-    reader.onload = (event) => {
-      const result = event.target?.result;
-      if (typeof result !== "string") {
-        reject(new Error(`Could not read ${file.name}.`));
+    reader.onloadend = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const base64 = result.split(",")[1] || "";
+      if (!base64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+        reject(new Error(`Attachment "${attachment.name}" could not be encoded.`));
         return;
       }
-
-      const attachment = {
-        base64: result.split(",")[1] || "",
-        mimeType: file.type || "application/octet-stream",
-        name: file.name,
-        size: file.size,
-      };
-      resolve({
-        ...attachment,
-        url: getAttachmentDataUrl(attachment),
-      });
+      resolve({ ...attachment, base64 });
     };
-    reader.readAsDataURL(file);
+    reader.onerror = () => reject(new Error(`Attachment "${attachment.name}" could not be read.`));
+    reader.readAsDataURL(blob);
   });
+};
+
+export const ensureAttachmentsHaveBase64 = (attachments: Attachment[]): Promise<Attachment[]> =>
+  Promise.all(attachments.map(ensureAttachmentBase64));

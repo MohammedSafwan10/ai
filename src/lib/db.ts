@@ -3,7 +3,8 @@ import { appLogger } from "./logger";
 
 export interface AttachmentRecord {
   url: string;
-  base64: string;
+  base64?: string;
+  blob?: Blob | File;
   mimeType: string;
   name: string;
   size?: number;
@@ -553,6 +554,9 @@ export const upsertArtifact = async (artifact: ArtifactRecord) => {
   appLogger.debug("IndexedDB artifact upserted", { artifactId: artifact.id, chatId: artifact.chatId });
 };
 
+export const getArtifactById = async (artifactId: string) =>
+  db.artifacts.get(artifactId);
+
 export const migrateLocalStorageChats = async () => {
   const migrated = localStorage.getItem("privora-indexeddb-migrated");
   if (migrated) {
@@ -607,9 +611,8 @@ export const migrateLocalStorageChats = async () => {
       }
     });
     appLogger.info("Legacy localStorage chats migrated", { chatCount: parsedChats.length });
+    localStorage.setItem("privora-indexeddb-migrated", "true");
   } catch (error) {
     appLogger.error("Failed to migrate localStorage chats", { err: error });
-  } finally {
-    localStorage.setItem("privora-indexeddb-migrated", "true");
   }
 };

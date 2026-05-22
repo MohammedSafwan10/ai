@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "motion/react";
 import type { Attachment } from "../../../lib/attachments";
+import { useAttachmentUrl } from "../hooks/useAttachmentUrl";
 import { useToast } from "../../ui/ToastProvider";
 
 interface AttachmentPreviewModalProps {
@@ -9,6 +10,7 @@ interface AttachmentPreviewModalProps {
 
 export function AttachmentPreviewModal({ attachment, onClose }: AttachmentPreviewModalProps) {
   const { notify } = useToast();
+  const url = useAttachmentUrl(attachment);
 
   return (
     <AnimatePresence>
@@ -37,7 +39,7 @@ export function AttachmentPreviewModal({ attachment, onClose }: AttachmentPrevie
           >
             {attachment.mimeType.startsWith("image/") ? (
               <img
-                src={attachment.url}
+                src={url}
                 alt={attachment.name}
                 className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
                 referrerPolicy="no-referrer"
@@ -49,7 +51,7 @@ export function AttachmentPreviewModal({ attachment, onClose }: AttachmentPrevie
                 </div>
                 <span className="font-medium text-[var(--privora-text)] break-all line-clamp-3">{attachment.name}</span>
                 <a
-                  href={attachment.url}
+                  href={url}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => notify({ title: "Download started", description: "Attachment file is being downloaded.", variant: "success" })}
