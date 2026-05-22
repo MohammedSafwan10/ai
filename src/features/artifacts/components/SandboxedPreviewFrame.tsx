@@ -138,7 +138,12 @@ const buildPreviewSrcDoc = (id: string, title: string, content: string, mode: Pr
     return `<!doctype html><html class="${theme === "dark" ? "dark" : ""}"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${previewBaseStyles}html,body{width:100%;height:100%;overflow:hidden}body{display:grid;place-items:start center}svg{display:block;max-width:100%;max-height:100%;width:auto;height:auto}</style></head><body>${content}${bridge}</body></html>`;
   }
 
-  const headContent = `<meta charset="utf-8"><title>${escapeHtml(title)}</title><style id="privora-preview-base">${previewBaseStyles}</style>`;
+  const isTailwind = hasLikelyUncompiledTailwind(content);
+  const tailwindScript = isTailwind 
+    ? `<style id="privora-fouc-shield">body{visibility:hidden !important;}</style><script src="/libs/tailwindcss-browser.js"></script><script>window.addEventListener('load', () => { setTimeout(() => { document.body.style.setProperty('visibility', 'visible', 'important'); }, 40); });</script>` 
+    : '';
+
+  const headContent = `<meta charset="utf-8"><title>${escapeHtml(title)}</title><style id="privora-preview-base">${previewBaseStyles}</style>${tailwindScript}`;
   return injectIntoHead(applyHtmlThemeClass(content, theme), `${headContent}${bridge}`);
 };
 
@@ -208,7 +213,6 @@ export function SandboxedPreviewFrame({
         referrerPolicy="no-referrer"
         srcDoc={srcDoc}
         className={cn("block w-full bg-transparent", className)}
-        allowTransparency
         style={{
           height: mode === "html" ? iframeHeight ? `${iframeHeight}px` : style?.height || "calc(100vh - 8.5rem)" : style?.height,
           ...style,
