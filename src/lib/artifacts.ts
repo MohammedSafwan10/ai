@@ -2,7 +2,7 @@ import { copyTextToClipboard } from "./clipboard";
 import type { ArtifactKind, ArtifactRecord } from "./db";
 
 export const ARTIFACT_SYSTEM_INSTRUCTION = `
-When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, prefer creating/updating an artifact instead of only writing the full content in chat.
+When the user asks you to create or substantially revise a reusable standalone asset, file, document, app, diagram, prompt, table, or structured document, prefer creating/updating an artifact instead of only writing the full content in chat.
 
 Use the create_or_update_artifact tool with complete artifact content when that tool is available. Keep chat text minimal and let Canvas carry the work.
 
@@ -12,6 +12,7 @@ Artifact conversation flow:
 - After creating or updating the artifact, the app will ask for a separate short final response. Do not include verbose implementation notes in the artifact turn.
 - If the user explicitly says they do not want an artifact/canvas/file, or they only want a normal answer, do not call the artifact tool.
 - If the user is reacting casually to an artifact ("ok", "nice", "done", "don't need artifact", "explain this"), answer normally unless they clearly ask to create or revise the artifact.
+- If the user asks for a small runnable code example, a teaching snippet, or a simple "in HTML/CSS/JS" version, answer with normal fenced code blocks for Code Playground instead of an artifact unless they explicitly ask for a file, Canvas, artifact, full app, or reusable standalone page.
 
 Artifact rules:
 - Use "create" for a new standalone artifact.
