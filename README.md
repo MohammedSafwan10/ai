@@ -1,36 +1,31 @@
 # Privora
 
-Privora is a polished local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It supports Gemini models directly, GPT-5.5 through CLIProxyAPI, and selected OpenRouter free text models, with streaming chat, Canvas artifacts, an embedded Web Dev workspace, image generation/editing, web search, async Deep Research, local chat history, markdown/math rendering, and multimodal attachments.
+Privora is a local-first AI workspace built with React, TypeScript, Vite, and Tailwind CSS. It combines chat, Canvas artifacts, a browser Web Dev workspace, a chat Code Playground, image generation, Deep Research, character chats, and local IndexedDB persistence.
 
-## Features
+The app currently supports Gemini models through `@google/genai`, GPT-5.5 through CLIProxyAPI, and selected free OpenRouter text models through local Vite middleware.
 
-- Canvas artifacts for substantial generated work: Markdown, code, HTML, SVG, Mermaid, JSON, YAML, SQL, tables, text, and prompts.
-- Live artifact creation/update cards that open automatically in Canvas while generation streams.
-- Split Canvas with preview/code modes, Monaco editing, copy/download/open-tab controls, custom line numbers, transparent editor styling, sandboxed HTML/SVG previews, iframe runtime error display, and Tailwind-preview warnings.
-- Embedded Web Dev workspace with project chat, file tree, Monaco editor, live WebContainer previews, terminal output, attachment support, and local project persistence.
-- Smart artifact routing for Gemini and OpenRouter: artifacts stream through a private output marker so Canvas can update progressively even when provider-native function calls arrive atomically.
-- Guardrails that keep ordinary informational Markdown answers in chat instead of incorrectly turning them into Canvas artifacts.
-- Image generation and image editing through CLIProxy image endpoints, including multiple images, partial-image streaming, retry, download, and edit-from-result flows.
-- Async Deep Research with preflight planning, editable plans, live progress, activity/source panels, cancellation, reconnect support, and elapsed timing.
-- OpenRouter free text models with capability-aware streaming, reasoning, web search server tools, streamed Canvas routing, and conservative fallback artifact detection.
-- Web search support for Gemini grounding, CLIProxy/OpenAI-compatible search events, and OpenRouter server search, with Auto/discretion by default and a forced-search toggle for the next response.
-- Dynamic current date/time context injected into the system prompt on every request, including local time, local time zone, and UTC ISO timestamp.
-- Calm beige/light and high-contrast dark themes.
-- Claude-style sidebar with a compact collapsed icon rail.
-- Local chat history stored in IndexedDB through Dexie.
-- Gemini 3.1/3 model options through `@google/genai`.
-- GPT-5.5 through CLIProxyAPI using an OpenAI Responses-compatible endpoint.
-- Instant and Medium reasoning modes.
-- Live reasoning/thought UI with a collapsible thought process panel.
-- Image, PDF, document, text, and code attachments with model-aware validation.
-- Rich markdown with GitHub-flavored markdown, KaTeX math, Shiki syntax highlighting, copy buttons, collapsed long code blocks, responsive tables, and external links that open in a new tab.
-- Responsive composer, mobile long-press actions, native share support, retry, edit, copy, rename, and delete chat controls.
+## Highlights
 
-## Tech Stack
+- Multi-provider streaming chat with Gemini, GPT-5.5/CLIProxy, and OpenRouter free text models.
+- Response styles: Normal, Human, Learning, Concise, Explanatory, Formal, and Creative.
+- Thinking/reasoning UI with collapsible thought summaries where supported.
+- Web search in Auto or forced mode, with provider-specific search support.
+- Async Deep Research with preflight planning, editable research plans, progress tracking, source/activity panels, cancellation, and reconnect support while the Vite process is alive.
+- Canvas artifacts for reusable generated work such as Markdown, code, HTML, SVG, Mermaid, JSON, YAML, SQL, tables, and prompts.
+- Chat Code Playground for small runnable examples, with Code/Preview/Console tabs and support for JavaScript, TypeScript, JSX, TSX, HTML, CSS, and JSON snippets.
+- Web Dev workspace for generating and iterating on small web apps with a file tree, Monaco editor, WebContainer preview, terminal output, project chat, and IndexedDB persistence.
+- Character workspace with starter character categories, custom character creation, character sessions, memories, personas, and per-session chat history.
+- Image generation and editing through CLIProxy GPT Image and Gemini Nano Banana 2.
+- Debate mode with two model agents and a judge configuration.
+- Multimodal attachments with model-aware validation and local persistence.
+- Local-first chat/project storage in IndexedDB through Dexie.
+- Beige/light and dark themes, responsive layout, compact sidebar, search modal, retry/edit/copy/share controls, and mobile-friendly actions.
+
+## Tech stack
 
 - React 19
 - TypeScript
-- Vite
+- Vite 6
 - Tailwind CSS 4
 - Motion
 - Lucide React
@@ -38,11 +33,12 @@ Privora is a polished local-first AI workspace built with React, TypeScript, Vit
 - `@google/genai`
 - Monaco Editor
 - WebContainer API
+- Sucrase for playground snippet transpilation
 - Mermaid
 - React Markdown, remark-gfm, remark-math, rehype-katex
 - KaTeX
 - Shiki via `react-shiki`
-- CLIProxyAPI for local GPT-5.5 routing
+- CLIProxyAPI for local GPT-5.5 and GPT Image routing
 - OpenRouter Chat Completions API for selected free text models
 
 ## Setup
@@ -53,15 +49,15 @@ Install dependencies:
 npm install
 ```
 
-Create `.env`:
+Create `.env` from `.env.example` and fill in the values you need:
 
 ```env
-GEMINI_API_KEY=your_gemini_api_key
-CLIPROXY_BASE_URL=http://127.0.0.1:8317
-VITE_CLIPROXY_API_KEY=sk-dummy
-OPENROUTER_API_KEY=your_openrouter_api_key
-APP_URL=http://127.0.0.1:3000
-VITE_WEBCONTAINER_API_KEY=
+GEMINI_API_KEY="MY_GEMINI_API_KEY"
+APP_URL="http://127.0.0.1:3000"
+CLIPROXY_BASE_URL="http://127.0.0.1:8317"
+VITE_CLIPROXY_API_KEY="dummy-key"
+OPENROUTER_API_KEY="MY_OPENROUTER_API_KEY"
+VITE_WEBCONTAINER_API_KEY=""
 ```
 
 Run the dev server:
@@ -70,154 +66,202 @@ Run the dev server:
 npm run dev
 ```
 
-The app runs on:
+The dev server runs on:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-## CLIProxy / GPT-5.5
+## Scripts
 
-Privora calls CLIProxy through Vite:
-
-```text
-Browser -> /cliproxy/v1/responses -> http://127.0.0.1:8317/v1/responses
+```bash
+npm run dev      # Start Vite on port 3000
+npm run lint     # TypeScript validation with tsc --noEmit
+npm run build    # Production Vite build
+npm run preview  # Preview the production build
+npm run clean    # Remove dist
 ```
 
-Start CLIProxy in another terminal before using GPT-5.5:
+## Model providers
+
+### Gemini
+
+Gemini models are called directly through `@google/genai`.
+
+Current Gemini chat models:
+
+- `gemini-3.1-flash-lite-preview` - default fast model.
+- `gemini-3-flash-preview` - balanced Gemini model with native tools.
+- `gemini-3.1-pro-preview` - stronger Gemini model for harder prompts.
+
+Gemini supports native attachments, Google Search grounding, thinking mode, streamed content, and Gemini image generation through Nano Banana 2.
+
+### GPT / CLIProxy
+
+GPT-5.5 is routed through a local CLIProxyAPI server via Vite middleware:
+
+```text
+Browser -> /cliproxy/v1/responses -> CLIPROXY_BASE_URL/v1/responses
+```
+
+Start CLIProxy separately before using GPT-5.5:
 
 ```powershell
 cliproxy --config C:\Users\Thumbeja\config.yaml
 ```
 
-GPT modes in the app:
+Reasoning modes:
 
-- `Instant`: no `reasoning` object is sent.
-- `Medium`: sends `reasoning: { effort: "medium", summary: "auto" }`.
+- `Instant`: no reasoning object is sent.
+- `Medium`: sends reasoning settings where supported by the provider route.
 
-This avoids the CLIProxy warning about zero thinking budgets for instant GPT requests.
-
-## Gemini
-
-Gemini requests use `@google/genai` with streaming:
-
-- Instant mode sends normal streaming content.
-- Medium mode enables `thinkingConfig` with `ThinkingLevel.MEDIUM` and `includeThoughts: true`.
-- Web search defaults to Auto: Gemini can use `googleSearch` when the answer needs current information. Turning Web search on for a turn instructs the model to search before answering.
-- Artifact-capable Gemini turns use streamed text with a private artifact marker instead of relying on native function-call argument streaming. Gemini native function calls are supported by the SDK, but they arrive as complete calls, so Privora uses output routing when it needs Canvas to update progressively.
-
-## OpenRouter
-
-Privora routes selected OpenRouter free models through local Vite middleware:
-
-```text
-Browser -> /api/openrouter/chat -> https://openrouter.ai/api/v1/chat/completions
-```
-
-`OPENROUTER_API_KEY` is required. `APP_URL` is optional and is sent as `HTTP-Referer` for OpenRouter attribution.
-
-The model list is intentionally capability-driven from OpenRouter's Models API metadata, not prompt guessing:
-
-| Model | Context | Max output | Input/output | Tools | Reasoning | Structured output | Notes |
-| --- | ---: | ---: | --- | --- | --- | --- | --- |
-| `inclusionai/ring-2.6-1t:free` | 262,144 | 65,536 | Text -> text | Yes | Yes | No | Thinking-capable model with tools and long context. |
-| `baidu/cobuddy:free` | 131,072 | 65,536 | Text -> text | Yes | Yes | No | Tools and reasoning are advertised; temperature/tool_choice are not. |
-| `nvidia/nemotron-3-super-120b-a12b:free` | 262,144 | 262,144 | Text -> text | Yes | Yes | Yes | Broadest advertised mix here: tools, reasoning, structured output, long output. |
-
-Current OpenRouter behavior:
-
-- Chat streams over OpenRouter Chat Completions SSE.
-- Reasoning is sent only when the selected model advertises the `reasoning` parameter.
-- Web search is available in Auto mode through `openrouter:web_search` when the model advertises `tools`. Turning Web search on requires search first; models with `tool_choice` also receive `tool_choice: "required"`.
-- OpenRouter server search can consume OpenRouter credits even with `:free` model IDs, depending on the search engine/provider path.
-- Canvas uses a private streamed artifact marker for progressive OpenRouter artifact creation instead of depending on provider-specific tool-call argument chunking.
-- Raw/fenced artifact fallback detection is conservative so normal Markdown answers stay in chat.
-- All configured free OpenRouter models are text-only in current OpenRouter metadata, so Privora disables attachments, file input, and vision for them.
-- OpenRouter Deep Research uses direct source gathering first, then OpenRouter server search when available, then a streamed synthesis response.
-
-## Canvas Artifacts
-
-Artifacts are used when the user asks for substantial reusable content rather than a normal chat answer. The app can create or update:
-
-- Markdown documents, reports, prompts, and tables.
-- Code, JSON, YAML, SQL, and other structured text.
-- Static HTML previews in a sandboxed iframe.
-- SVG previews in a transparent iframe.
-- Mermaid diagrams rendered through Mermaid.
-
-Current Canvas behavior:
-
-- GPT/CLIProxy can use the `create_or_update_artifact` tool.
-- Gemini and OpenRouter use a private streamed artifact marker so the client can route output into Canvas while text arrives.
-- GPT/CLIProxy and provider-native tool paths are still parsed when available, but progressive Canvas streaming does not depend on tool-call argument chunking.
-- The client normalizes common malformed artifact wrappers and extracts raw SVG/HTML when models include extra metadata.
-- The editor uses Monaco with transparent app-integrated themes and custom line numbers.
-- HTML/SVG previews report iframe height and runtime errors back to the parent panel.
-- Copy, download, and open-tab actions are available from Canvas.
-
-The router intentionally rejects ambiguous artifact markers for ordinary Q&A, summaries, schedules, explanations, and Markdown-formatted chat answers unless the user clearly asked for a reusable artifact/file/document/Canvas item.
-
-## Web Dev Workspace
-
-Privora includes a separate `Web Dev` workspace for generating and iterating on small web apps without leaving the browser.
-
-Current Web Dev behavior:
-
-- Projects, files, messages, tool activity, attachments, and preview state are persisted in IndexedDB.
-- The sidebar can switch between normal chats and Web Dev projects.
-- The workspace includes a chat panel, file tree, Monaco editor, preview panel, terminal output, and manual file/folder actions.
-- Generated projects run in WebContainer when the browser supports cross-origin isolation and `SharedArrayBuffer`.
-- The Vite dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` so WebContainer can boot locally.
-- If a generated React project is missing a Vite config, Privora injects a runtime-only Vite config for preview bootstrapping.
-
-`VITE_WEBCONTAINER_API_KEY` is optional. It is a frontend-exposed `VITE_*` value, so only use a key/token that is safe to expose to the browser.
-
-## Image Generation
-
-Image generation runs through CLIProxy image endpoints:
+CLIProxy is also used for GPT Image generation/editing through:
 
 ```text
 POST /cliproxy/v1/images/generations
 POST /cliproxy/v1/images/edits
 ```
 
-Current image model constant:
+### OpenRouter
+
+OpenRouter models are routed through local Vite middleware:
 
 ```text
-gpt-image-2
+Browser -> /api/openrouter/chat -> https://openrouter.ai/api/v1/chat/completions
 ```
+
+`OPENROUTER_API_KEY` is required. `APP_URL` is sent as `HTTP-Referer` when available.
+
+Current configured OpenRouter free models:
+
+| Model | Context | Max output | Input | Tools | Reasoning | Structured output | Notes |
+| --- | ---: | ---: | --- | --- | --- | --- | --- |
+| `deepseek/deepseek-v4-flash:free` | 1,048,576 | 384,000 | Text | Yes | High | No | Fast long-context DeepSeek MoE model. |
+| `baidu/cobuddy:free` | 131,072 | 65,536 | Text | Yes | Yes | No | Code-generation model with advertised tools/reasoning. |
+| `nvidia/nemotron-3-super-120b-a12b:free` | 262,144 | 262,144 | Text | Yes | Yes | Yes | Strongest advertised capability mix in the configured free set. |
+
+Current OpenRouter behavior:
+
+- Streams over Chat Completions SSE.
+- Sends reasoning only when the selected model advertises reasoning support.
+- Uses model-specific reasoning effort where needed, including `high` for DeepSeek V4 Flash.
+- Supports OpenRouter server search for tool-capable models.
+- Blocks attachments because the configured free models are text-only.
+- Uses conservative artifact routing so normal Markdown answers stay in chat.
+
+## Response styles
+
+Privora includes seven selectable response styles:
+
+- `Normal`: balanced, adaptive, and conversational.
+- `Human`: natural, grounded, and less template-like.
+- `Learning`: simple teaching with examples and useful practice.
+- `Concise`: brief, direct, and complete.
+- `Explanatory`: clear reasoning that explains why and how things work.
+- `Formal`: professional plain English for business-safe communication.
+- `Creative`: useful originality with taste, range, and practical shape.
+
+The selected style is added to the system prompt alongside live date/time context and optional web-search/deep-research instructions.
+
+## Canvas artifacts
+
+Canvas is used when the user asks for substantial reusable output, not for ordinary chat answers. Supported artifact types include:
+
+- Markdown documents, reports, prompts, and tables.
+- Code, JSON, YAML, SQL, and structured text.
+- Static HTML previews in a sandboxed iframe.
+- SVG previews.
+- Mermaid diagrams.
+
+Canvas behavior:
+
+- GPT/CLIProxy can use the `create_or_update_artifact` tool.
+- Gemini and OpenRouter use a private streamed artifact marker for progressive Canvas updates.
+- Teaching snippets and normal Markdown answers remain in chat unless the user asks for a durable artifact, file, document, or Canvas item.
+- Monaco powers the editor with app-themed transparent styling and custom line numbers.
+- HTML/SVG previews are sandboxed and can report runtime errors to the parent panel.
+- Copy, download, and open-tab actions are available.
+
+## Chat Code Playground
+
+The Code Playground is a right-side panel for small snippets during normal chat. It is separate from Canvas and Web Dev.
+
+Current behavior:
+
+- Open it from the composer menu or from supported code blocks in chat.
+- Code/Preview/Console tabs use a Web Dev-like toggle layout.
+- JavaScript and TypeScript snippets can run in Console mode.
+- JSX, TSX, HTML, and CSS snippets can render in Preview mode.
+- JSON snippets can be validated.
+- Browser snippets run in a sandboxed iframe.
+- Node-style JavaScript/TypeScript snippets can use WebContainer when available.
+- The editor owns its high-frequency draft state locally so typing does not re-render the chat layout.
+- Supported code-block languages for `Open in Playground`: JS, TS, JSX, TSX, HTML, CSS, and JSON.
+
+## Web Dev workspace
+
+The Web Dev workspace is for multi-file web app generation and iteration.
+
+Current behavior:
+
+- Projects, files, project chat messages, tool activity, attachments, and UI state persist in IndexedDB.
+- The workspace includes chat, file tree, Monaco editor, Code/Preview tabs, WebContainer preview, terminal output, and manual file/folder actions.
+- Generated projects run in WebContainer when the browser supports cross-origin isolation and `SharedArrayBuffer`.
+- Vite dev/preview responses include COOP/COEP headers for local WebContainer support.
+- Privora can inject a runtime-only Vite config when generated React projects need one for preview bootstrapping.
+- Project ZIP download is available from the Web Dev panel.
+
+`VITE_WEBCONTAINER_API_KEY` is optional. It is a frontend-exposed `VITE_*` value, so only use a token that is safe to expose to browser code.
+
+## Character workspace
+
+The Characters workspace supports persona-style chats separate from normal chat.
+
+Current behavior:
+
+- Starter library grouped by categories such as Companions, Historical Minds, Cinema & Manga, Games, Story Worlds, Creative, Mentors, Travel, Productivity, Wellness-lite, Debate, and Originals.
+- Create, edit, star, delete, and browse characters.
+- Character definitions include name, avatar, color, tagline, category, greeting, personality, speaking style, boundaries, example dialogue, and visibility.
+- Sessions, messages, memories, and user personas are persisted in IndexedDB.
+- Character chats use the selected model, response style, thinking, web-search, deep-research, image settings, and attachments where supported.
+
+## Image generation and editing
+
+Image mode is available from the composer.
+
+Current image models:
+
+| Model | Provider | Notes |
+| --- | --- | --- |
+| `gpt-image-2` | CLIProxy | Supports partial image streaming through local image endpoints. |
+| `gemini-3.1-flash-image-preview` | Gemini | Shown as Nano Banana 2 in the UI. |
 
 Current image behavior:
 
 - Generate new images from prompts.
 - Edit images from attachments or generated results.
-- Stream partial image updates when the upstream endpoint provides them.
+- Choose size preset, quality, count, and model.
 - Generate 1-4 images depending on selected options.
+- Stream partial image updates when supported by the selected backend.
 - Download generated images from the result card.
-- Retry stopped or failed image generations.
+- Retry stopped or failed generations.
 
-If the local proxy returns `404`, Privora shows a friendly message telling the user image generation is disabled or unavailable in CLIProxy.
+If CLIProxy image endpoints return `404`, Privora shows a friendly unavailable/disabled message.
 
 ## Deep Research
 
-Deep Research is a manually enabled async chat mode. It is separate from response styles: the selected style can shape tone, but research accuracy, citations, source comparison, and uncertainty handling take priority.
+Deep Research is a manually enabled async mode.
 
 Current flow:
 
-1. Turn on `Deep Research` from the composer `+` menu.
-2. Privora automatically enables web search.
-3. A preflight step decides whether the user message is normal chat, needs clarification, or is ready for research.
+1. Turn on Deep Research from the composer menu.
+2. Privora enables web search for the turn.
+3. A preflight step decides whether the message is normal chat, needs clarification, or is ready for research.
 4. Ready prompts create an editable research plan card.
-5. Press `Start` to run the backend research job.
-6. The chat shows checklist progress, elapsed time, source count, and a compact activity panel.
-7. Final answers show citations plus a compact source list.
+5. Start the job to stream progress, elapsed time, source count, and activity.
+6. Final answers include citations and a source list.
 
-Current runtime:
-
-- Gemini models use Gemini streaming with Google Search grounding.
-- GPT/CLIProxy models use the OpenAI Responses-compatible CLIProxy route with `web_search_preview`.
-- OpenRouter models use OpenRouter Chat Completions. Tool-capable models can add `openrouter:web_search`; non-tool models rely on direct source gathering.
-- Research jobs are exposed through local Vite middleware:
+Local Vite endpoints:
 
 ```text
 POST /api/research/preflight
@@ -227,78 +271,65 @@ GET  /api/research/jobs/:id/stream
 POST /api/research/jobs/:id/cancel
 ```
 
-The browser persists the `researchJobId`, plan, progress, activity, sources, start time, completion time, and time budget with the chat message. Reloading the page can reconnect to a still-running in-memory job while the Vite process is alive.
+Research jobs are stored in memory in the Vite process. A production deployment should move this to durable backend storage and a worker/queue.
 
-Production note: the local Vite job store is in memory. A public/SaaS deployment should move research jobs to a durable backend with database-backed job state and a worker/queue so jobs survive server restarts.
+## Debate mode
+
+Debate mode lets a prompt be answered by two model agents and a judge. Agent A, Agent B, and the judge can be configured through persisted UI settings. Debate mode is disabled while Deep Research or image mode is active.
 
 ## Attachments
 
-Privora uses native provider payloads:
+Privora uses native provider payloads where available:
 
-- Gemini: sends attachments as `inlineData`.
-- GPT-5.5/CLIProxy: sends images as `input_image` and files as `input_file`.
-- OpenRouter free models configured here: text-only, so attachments are blocked in the app.
+- Gemini sends attachments as `inlineData`.
+- GPT-5.5/CLIProxy sends images as `input_image` and files as `input_file`.
+- Configured OpenRouter free models are text-only, so attachments are blocked for them.
 
 Current in-app limits:
 
 - Max attachments per message: `15`.
-- Gemini inline payload limit in this app: `20 MB` total.
-- GPT/CLIProxy attachment payload limit in this app: `50 MB` total.
+- Gemini inline payload limit: `20 MB` total.
+- GPT/CLIProxy attachment payload limit: `50 MB` total.
 
-Supported attachment types in the UI:
+Supported attachment types include common images, PDFs, text/doc files, structured data, and common code formats. Attachments are persisted locally as base64 in IndexedDB chat history, so avoid storing private documents in shared browser profiles.
 
-- Images: PNG, JPG/JPEG, WEBP, GIF; Gemini also accepts HEIC/HEIF when supported by the browser/file type.
-- Documents: PDF, TXT, Markdown, CSV, JSON, HTML/XML.
-- Code/text files: JS, JSX, TS, TSX, Python, Java, C#, C/C++, CSS, SQL, YAML, TOML, shell scripts, Dart, Go, Rust, logs, and similar text formats.
-- GPT/CLIProxy also allows common Office-style documents through `input_file` when supported by the upstream provider.
+## Local data
 
-For large or reusable files, the better production architecture is a small backend that uploads through each provider's Files API and stores file IDs instead of base64 data in the browser.
-
-## Local Data
-
-Chats are stored in the browser's IndexedDB database:
+Privora stores local data in IndexedDB:
 
 ```text
 privora-local-db
 ```
 
-This is local to the current browser profile. Attachments are also persisted as base64 in local chat history, so avoid storing private documents in shared browser profiles.
+Persisted data includes:
 
-Persisted chat records include message content, attachments, reasoning text, web-search status, artifacts, image-generation metadata, research plans, research activity, research sources, and research timing metadata.
+- Chat records, messages, attachments, reasoning, web-search status, debate metadata, image-generation metadata, artifact references, research plans/activity/sources/timing.
+- Web Dev projects, generated files, project chat messages, and workspace state.
+- Characters, character sessions, character messages, character memories, and user personas.
+- UI settings in localStorage under `privora-ui-settings`.
 
-Web Dev projects use the same IndexedDB database for project metadata, generated files, project chat messages, and workspace UI state.
+## Prompt context
 
-## Prompt Context
+Every request includes:
 
-Every request includes the base system instruction, the selected response style, optional web-search/deep-research instructions, and live date/time context.
+- Base system instruction.
+- Current local date/time, local time zone, and UTC timestamp.
+- Selected response style.
+- Voice calibration context when available.
+- Optional Deep Research instruction.
+- Optional web-search instruction.
 
-The date/time context includes:
-
-- Local human-readable date and time.
-- Local time zone from the browser/runtime.
-- UTC ISO timestamp.
-- An instruction to use that context for relative dates such as today, tomorrow, yesterday, next week, and current.
-
-## Security Notes
+## Security notes
 
 - `.env` files are ignored by git.
 - `.env.example` is safe to commit.
-- This app currently injects `GEMINI_API_KEY` into the frontend build for local/private use.
-- Any `VITE_*` value, including `VITE_WEBCONTAINER_API_KEY`, is exposed to browser code and must not contain private server-side secrets.
-- Vite middleware keeps local research and proxy routes convenient for development, but production deployment needs equivalent backend routes.
-- For public deployment, move Gemini, CLIProxy, and research job calls behind a real backend so provider keys never ship to browsers and research jobs are durable.
-- Do not commit local CLIProxy auth files, personal configs, `.env`, or generated `dist` output.
+- `GEMINI_API_KEY` is currently used by frontend/local dev code and should be treated as local/private only.
+- Any `VITE_*` value, including `VITE_CLIPROXY_API_KEY` and `VITE_WEBCONTAINER_API_KEY`, is exposed to browser code.
+- Vite middleware keeps local proxy/research routes convenient for development, but production deployment needs equivalent backend routes.
+- For public deployment, move Gemini, CLIProxy, OpenRouter, image, and research calls behind a real backend so provider keys never ship to browsers and research jobs survive server restarts.
+- Do not commit local CLIProxy auth files, personal configs, `.env`, generated `dist`, or private attachments.
 
-## Scripts
-
-```bash
-npm run dev
-npm run lint
-npm run build
-npm run preview
-```
-
-## Project Structure
+## Project structure
 
 ```text
 src/
@@ -307,9 +338,19 @@ src/
       components/
     attachments/
       components/
+      hooks/
+    characters/
+      components/
+      hooks/
+      lib/
+      prompts/
     chat/
       components/
       hooks/
+    code-playground/
+      components/
+      lib/
+    ui/
     webdev/
       components/
       hooks/
@@ -321,21 +362,15 @@ src/
     attachments.ts
     artifacts.ts
     cliproxy/
-      images.ts
-      responses.ts
     gemini/
-      client.ts
     openrouter/
-      models.ts
-      responses.ts
     prompt/
-      deepResearch.ts
       styles/
     research/
-      client.ts
-    settings.ts
     db.ts
+    imageModels.ts
     models.ts
+    settings.ts
   App.tsx
   index.css
 vite.config.ts
