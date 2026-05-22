@@ -21,6 +21,7 @@ interface ChatViewportProps {
   onStopResearchPlan: () => void;
   onOpenResearchActivity: () => void;
   onOpenArtifact: (artifactId: string) => void;
+  onOpenCodePlayground: (code: string, language: string) => void;
   onEditGeneratedImage: (attachment: Attachment) => void;
   onPreviewAttachment: (attachment: Attachment) => void;
 }
@@ -41,6 +42,7 @@ export function ChatViewport({
   onStopResearchPlan,
   onOpenResearchActivity,
   onOpenArtifact,
+  onOpenCodePlayground,
   onEditGeneratedImage,
   onPreviewAttachment,
 }: ChatViewportProps) {
@@ -83,6 +85,7 @@ export function ChatViewport({
                   onStopResearchPlan={onStopResearchPlan}
                   onOpenResearchActivity={onOpenResearchActivity}
                   onOpenArtifact={() => message.artifact && onOpenArtifact(message.artifact.artifactId)}
+                  onOpenCodePlayground={onOpenCodePlayground}
                   onEditGeneratedImage={onEditGeneratedImage}
                   attachments={message.attachments}
                   onPreviewAttachment={onPreviewAttachment}

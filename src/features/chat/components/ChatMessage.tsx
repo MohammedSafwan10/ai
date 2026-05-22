@@ -11,12 +11,19 @@ import { ArtifactCard } from "../../artifacts/components/ArtifactCard";
 import type { ArtifactReferenceRecord, DebateRecord, ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useToast } from "../../ui/ToastProvider";
+import { useAttachmentUrl } from "../../attachments/hooks/useAttachmentUrl";
 
 interface Attachment {
   url: string;
-  base64: string; 
+  base64?: string;
+  blob?: Blob | File;
   mimeType: string;
   name: string;
+}
+
+function AttachmentImage({ attachment, alt, className }: { attachment: Attachment; alt?: string; className?: string }) {
+  const url = useAttachmentUrl(attachment);
+  return <img src={url} alt={alt} className={className} referrerPolicy="no-referrer" />;
 }
 
 interface ChatMessageProps {
@@ -51,6 +58,7 @@ interface ChatMessageProps {
   onStopResearchPlan?: () => void;
   onOpenResearchActivity?: () => void;
   onOpenArtifact?: () => void;
+  onOpenCodePlayground?: (code: string, language: string) => void;
   onEditGeneratedImage?: (attachment: Attachment) => void;
   attachments?: Attachment[];
   onPreviewAttachment?: (att: Attachment) => void;
@@ -145,7 +153,7 @@ function DebateCard({
   );
 }
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onOpenCodePlayground, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -342,7 +350,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
             {attachments.map((att, i) => (
               att.mimeType.startsWith("image/") ? (
                 <div key={i} className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border border-[var(--privora-border)]/50 overflow-hidden flex-shrink-0 shadow-sm cursor-pointer" onClick={() => onPreviewAttachment?.(att)}>
-                  <img src={att.url} alt={att.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <AttachmentImage attachment={att} alt={att.name} className="w-full h-full object-cover" />
                 </div>
               ) : (
                 <div key={i} className="flex flex-col items-center justify-center gap-1.5 bg-[var(--privora-surface)] px-4 py-3 border border-[var(--privora-border)]/50 rounded-xl text-[var(--privora-text)] shadow-sm max-w-[140px] sm:max-w-[160px] text-center cursor-pointer" onClick={() => onPreviewAttachment?.(att)}>
@@ -487,7 +495,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
              <>
                {shouldRenderContent && !isCompletedResearchReport && (
                  <div ref={contentRef}>
-                   <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)}>{content}</MarkdownRenderer>
+                   <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)} onOpenCodePlayground={onOpenCodePlayground}>{content}</MarkdownRenderer>
                  </div>
                )}
                  {!isUser && artifact && (
@@ -585,6 +593,7 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.artifact === next.artifact &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
     prev.onOpenArtifact === next.onOpenArtifact &&
+    prev.onOpenCodePlayground === next.onOpenCodePlayground &&
     prev.isTyping === next.isTyping &&
     prev.messageIndex === next.messageIndex &&
     prev.messageCount === next.messageCount &&

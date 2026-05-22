@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type KeyboardEvent, type RefObject } from "react";
-import { Blocks, Brain, Camera, Check, ChevronDown, CornerDownRight, Feather, FolderPlus, GitCompare, Globe, ImagePlus, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
+import { Blocks, Brain, Camera, Check, ChevronDown, Code2, CornerDownRight, Feather, FolderPlus, GitCompare, Globe, ImagePlus, Microscope, Paperclip, Plus, Square, Trash2, Workflow, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   CLIPROXY_ATTACHMENT_ACCEPT,
@@ -52,6 +52,7 @@ interface ChatComposerProps {
   onToggleWebSearch: () => void;
   onToggleDeepResearch: () => void;
   onToggleDebateMode: () => void;
+  onOpenCodePlayground?: () => void;
   onSelectComposerMode: (mode: "chat" | "image") => void;
   onDebateSettingsChange: (settings: DebateSettings) => void;
   onImageSettingsChange: (settings: ImageSettings) => void;
@@ -91,6 +92,7 @@ export function ChatComposer({
   onToggleWebSearch,
   onToggleDeepResearch,
   onToggleDebateMode,
+  onOpenCodePlayground,
   onSelectComposerMode,
   onDebateSettingsChange,
   onImageSettingsChange,
@@ -385,6 +387,17 @@ export function ChatComposer({
                       {!isImageMode && (
                       <>
                         <div className="my-1.5 border-t border-[var(--privora-border)]/50" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAddMenuOpen(false);
+                            onOpenCodePlayground?.();
+                          }}
+                          className="w-full text-left px-3 py-2 flex items-center gap-3 text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors text-[var(--privora-text)]"
+                        >
+                          <Code2 className="w-4 h-4 opacity-70" />
+                          <span className="font-medium leading-none">Code Playground</span>
+                        </button>
                         <button
                           type="button"
                           onClick={onToggleWebSearch}

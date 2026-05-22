@@ -1,6 +1,6 @@
 // @refresh reset
 import { setupConnect } from "@webcontainer/api/connect";
-import { useState, useRef, useEffect, useMemo, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
+import { useCallback, useState, useRef, useEffect, useMemo, type ChangeEvent, type ClipboardEvent, type CSSProperties } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { PanelLeft } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -8,6 +8,7 @@ import { AttachmentPreviewModal } from "./features/attachments/components/Attach
 import { ChatComposer } from "./features/chat/components/ChatComposer";
 import { ResearchActivityPanel } from "./features/chat/components/ResearchActivityPanel";
 import { CanvasPanel } from "./features/artifacts/components/CanvasPanel";
+import { ChatCodePlaygroundPanel, type CodePlaygroundPayload } from "./features/code-playground/components/ChatCodePlaygroundPanel";
 import { ChatSidebar } from "./features/chat/components/ChatSidebar";
 import { ChatViewport } from "./features/chat/components/ChatViewport";
 import { RenameChatModal } from "./features/chat/components/RenameChatModal";
@@ -189,6 +190,9 @@ export default function App() {
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(600);
+  const [isChatPlaygroundOpen, setIsChatPlaygroundOpen] = useState(false);
+  const [chatPlaygroundWidth, setChatPlaygroundWidth] = useState(560);
+  const [chatPlaygroundPayload, setChatPlaygroundPayload] = useState<CodePlaygroundPayload>({ version: 0 });
   const [webDevPanelWidth, setWebDevPanelWidth] = useState(720);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -662,6 +666,22 @@ export default function App() {
   const activeArtifact = activeArtifactId
     ? artifacts.find(artifact => artifact.id === activeArtifactId)
     : undefined;
+  const openChatPlayground = useCallback((payload: CodePlaygroundPayload = {}) => {
+    if (payload.code !== undefined || payload.language) {
+      setChatPlaygroundPayload(prev => ({
+        code: payload.code ?? prev.code,
+        language: payload.language ?? prev.language,
+        version: (prev.version || 0) + 1,
+      }));
+    }
+    setActiveArtifactId(null);
+    setIsChatPlaygroundOpen(true);
+  }, []);
+  const openEmptyChatPlayground = useCallback(() => openChatPlayground(), [openChatPlayground]);
+  const openCodeInChatPlayground = useCallback((code: string, language?: string) => {
+    openChatPlayground({ code, language });
+  }, [openChatPlayground]);
+  const closeChatPlayground = useCallback(() => setIsChatPlaygroundOpen(false), []);
 
   const upsertArtifactInState = (artifact: ArtifactRecord) => {
     setArtifacts(prev => {
@@ -1083,6 +1103,13 @@ export default function App() {
   const isLandingChat = messages.length === 0;
   const activeResearchMessage = [...messages].reverse().find(message => message.researchPlan || message.researchActivity?.length);
   const editingResearchPlanMessage = [...messages].reverse().find(message => message.researchPlan?.status === "editing");
+  const chatSidePanelOffset = workspaceMode === "chat"
+    ? activeArtifact
+      ? canvasWidth
+      : isChatPlaygroundOpen
+        ? chatPlaygroundWidth
+        : 0
+    : 0;
 
   useEffect(() => {
     if (activeResearchMessage?.researchPlan && activeResearchMessage.researchPlan.status !== "completed" && activeResearchMessage.researchPlan.status !== "cancelled") {
@@ -1134,6 +1161,7 @@ export default function App() {
       onToggleWebSearch={toggleWebSearchForNextMessage}
       onToggleDeepResearch={toggleDeepResearchForNextMessage}
       onToggleDebateMode={toggleDebateModeForNextMessage}
+      onOpenCodePlayground={openEmptyChatPlayground}
       onSelectComposerMode={selectComposerMode}
       onDebateSettingsChange={setDebateSettings}
       onImageSettingsChange={setImageSettings}
@@ -1204,7 +1232,7 @@ export default function App() {
       {/* Main Content Area */}
       <div
         className="flex-1 relative flex flex-col min-w-0 h-full overflow-hidden transition-[margin] duration-200 ease-out lg:mr-[var(--privora-canvas-offset)]"
-        style={{ "--privora-canvas-offset": workspaceMode === "chat" && activeArtifact ? `${canvasWidth}px` : "0px" } as CSSProperties}
+        style={{ "--privora-canvas-offset": chatSidePanelOffset ? `${chatSidePanelOffset}px` : "0px" } as CSSProperties}
       >
         {!isSidebarOpen && (
           <button
@@ -1321,7 +1349,11 @@ export default function App() {
                 onStopResearchPlan={stopGeneration}
                 onEditGeneratedImage={handleEditGeneratedImage}
                 onOpenResearchActivity={() => setIsResearchActivityOpen(true)}
-                onOpenArtifact={setActiveArtifactId}
+                onOpenArtifact={(artifactId) => {
+                  setIsChatPlaygroundOpen(false);
+                  setActiveArtifactId(artifactId);
+                }}
+                onOpenCodePlayground={openCodeInChatPlayground}
                 onPreviewAttachment={setPreviewAttachment}
               />
               {renderComposer("footer")}
@@ -1363,6 +1395,15 @@ export default function App() {
         plan={activeResearchMessage?.researchPlan}
         activity={activeResearchMessage?.researchActivity}
         onClose={() => setIsResearchActivityOpen(false)}
+      />
+
+      <ChatCodePlaygroundPanel
+        isOpen={workspaceMode === "chat" && isChatPlaygroundOpen}
+        isDarkMode={isDarkMode}
+        width={chatPlaygroundWidth}
+        payload={chatPlaygroundPayload}
+        onWidthChange={setChatPlaygroundWidth}
+        onClose={closeChatPlayground}
       />
 
       <CanvasPanel

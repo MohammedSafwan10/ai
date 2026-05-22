@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import ShikiHighlighter, { createJavaScriptRegexEngine, isInlineCode } from "react-shiki";
-import { Check, ChevronDown, Copy } from "lucide-react";
+import { Check, ChevronDown, Code2, Copy } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { slugifyHeading } from "../../../lib/research/report";
 import { copyTextToClipboard } from "../../../lib/clipboard";
@@ -17,6 +17,7 @@ interface MarkdownRendererProps {
   withHeadingIds?: boolean;
   headingIds?: string[];
   tableMode?: "chat" | "report" | "preview";
+  onOpenCodePlayground?: (code: string, language: string) => void;
 }
 
 const shikiEngine = createJavaScriptRegexEngine({ forgiving: true });
@@ -108,10 +109,12 @@ function CodeBlock({
   code,
   language,
   isStreaming = false,
+  onOpenCodePlayground,
 }: {
   code: string;
   language: string;
   isStreaming?: boolean;
+  onOpenCodePlayground?: (code: string, language: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -120,6 +123,7 @@ function CodeBlock({
   const lineCount = code.split("\n").length;
   const shouldCollapse = lineCount > COLLAPSED_CODE_LINES;
   const isCollapsed = shouldCollapse && !isExpanded;
+  const canOpenInPlayground = Boolean(onOpenCodePlayground && !isStreaming && ["javascript", "typescript", "jsx", "tsx", "html", "css", "json", "js", "ts"].includes(language || ""));
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -154,15 +158,28 @@ function CodeBlock({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--privora-muted)]">
           {language || "code"}
         </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--privora-muted)] opacity-80 transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45 group-hover/code:opacity-100"
-          title="Copy code"
-        >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {canOpenInPlayground && (
+            <button
+              type="button"
+              onClick={() => onOpenCodePlayground?.(code, language || "javascript")}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--privora-muted)] opacity-80 transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45 group-hover/code:opacity-100"
+              title="Open in Code Playground"
+              aria-label="Open in Code Playground"
+            >
+              <Code2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--privora-muted)] opacity-80 transition hover:bg-[var(--privora-text)]/[0.06] hover:text-[var(--privora-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--privora-accent)]/45 group-hover/code:opacity-100"
+            title={copied ? "Copied" : "Copy code"}
+            aria-label={copied ? "Copied" : "Copy code"}
+          >
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
       <div className="relative">
       {isStreaming ? (
@@ -333,6 +350,7 @@ function MarkdownRendererComponent({
   withHeadingIds = false,
   headingIds: providedHeadingIds,
   tableMode = "chat",
+  onOpenCodePlayground,
 }: MarkdownRendererProps) {
   const normalizedMarkdown = normalizeMathDelimiters(children);
   const generatedHeadingIds = new Map<string, number>();
@@ -399,7 +417,7 @@ function MarkdownRendererComponent({
             );
           }
 
-          return <CodeBlock code={code} language={language} isStreaming={isStreaming} />;
+          return <CodeBlock code={code} language={language} isStreaming={isStreaming} onOpenCodePlayground={onOpenCodePlayground} />;
         },
       }}
     >

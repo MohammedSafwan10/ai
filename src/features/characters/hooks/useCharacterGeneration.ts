@@ -14,7 +14,7 @@ import {
 } from "../../../lib/db";
 import { appLogger } from "../../../lib/logger";
 import type { ResponseStyleId } from "../../../lib/prompt";
-import type { Attachment } from "../../../lib/attachments";
+import { ensureAttachmentsHaveBase64, type Attachment } from "../../../lib/attachments";
 import { compileCharacterPrompt } from "../prompts/system";
 import { replaceCharacterMessages, updateCharacterSession } from "../lib/storage";
 
@@ -146,11 +146,17 @@ export function useCharacterGeneration({
     });
 
     try {
+      const userMessageEnriched = {
+        ...userMessage,
+        attachments: userMessage.attachments ? await ensureAttachmentsHaveBase64(userMessage.attachments as Attachment[]) : undefined,
+      };
+      const apiMessages = [...baseMessages, userMessageEnriched, assistantMessage];
+
       if (provider === "cliproxy") {
         await streamCliproxyResponse({
           model,
           instructions,
-          history: toProviderHistory(pendingMessages.slice(0, -1)),
+          history: toProviderHistory(apiMessages.slice(0, -1)),
           reasoningEffort: isThinkingEnabled ? "medium" : "none",
           webSearchEnabled: isWebSearchEnabled,
           artifactToolsEnabled: false,
@@ -169,7 +175,7 @@ export function useCharacterGeneration({
         await streamOpenRouterResponse({
           model,
           instructions,
-          history: pendingMessages.slice(0, -1).map(message => ({ role: message.role, content: message.content })),
+          history: apiMessages.slice(0, -1).map(message => ({ role: message.role, content: message.content })),
           reasoningEnabled: isThinkingEnabled,
           webSearchEnabled: isWebSearchEnabled,
           artifactToolsEnabled: false,
@@ -187,7 +193,7 @@ export function useCharacterGeneration({
       } else {
         await streamGeminiResponse({
           model,
-          contents: toGeminiContents(toChatMessages(pendingMessages.slice(0, -1))),
+          contents: toGeminiContents(toChatMessages(apiMessages.slice(0, -1))),
           systemInstruction: instructions,
           thinkingEnabled: isThinkingEnabled,
           webSearchEnabled: isWebSearchEnabled,

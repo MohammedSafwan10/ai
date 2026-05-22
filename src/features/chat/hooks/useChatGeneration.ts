@@ -23,6 +23,7 @@ import {
   validateCliproxyAttachments,
   validateGeminiAttachments,
   validateOpenRouterAttachments,
+  ensureAttachmentsHaveBase64,
   type Attachment,
 } from "../../../lib/attachments";
 import { DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, getSystemInstruction, type ResponseStyleId, type WebSearchMode } from "../../../lib/prompt";
@@ -32,6 +33,7 @@ import { useToast } from "../../ui/ToastProvider";
 import {
   normalizeMessage,
   createId,
+  getArtifactById,
   replaceChatMessages,
   updateChatMeta,
   upsertArtifact,
@@ -84,6 +86,89 @@ interface UseChatGenerationOptions {
   isNearChatBottom: () => boolean;
   onArtifactUpsert?: (artifact: ArtifactRecord) => void;
   onArtifactOpen?: (artifactId: string) => void;
+}
+
+async function runResilientResearchStream({
+  jobId,
+  signal,
+  onEvent,
+}: {
+  jobId: string;
+  signal: AbortSignal;
+  onEvent: (event: ResearchStreamEvent) => void;
+}) {
+  let attempts = 0;
+  const maxAttempts = 5;
+  let delayMs = 1000;
+  let appliedEventCount = 0;
+
+  while (attempts < maxAttempts) {
+    if (signal.aborted) break;
+
+    try {
+      let replayIndex = 0;
+      await streamResearchJob({
+        jobId,
+        signal,
+        onEvent: (event) => {
+          if (replayIndex++ < appliedEventCount) return;
+          appliedEventCount += 1;
+          onEvent(event);
+        },
+      });
+
+      // Confirm final status
+      const snapshot = await getResearchJobSnapshot(jobId);
+      if (snapshot.completed || snapshot.cancelled) {
+        break;
+      }
+      throw new Error("Stream disconnected prematurely");
+    } catch (error: any) {
+      if (signal.aborted || error?.name === "AbortError") {
+        break;
+      }
+
+      attempts += 1;
+      appLogger.warn("Deep Research stream disconnected. Polling snapshot for sync...", {
+        jobId,
+        attempt: attempts,
+        err: error,
+      });
+
+      try {
+        const snapshot = await getResearchJobSnapshot(jobId);
+
+        if (snapshot.events && snapshot.events.length > 0) {
+          snapshot.events.slice(appliedEventCount).forEach((event) => {
+            appliedEventCount += 1;
+            onEvent(event);
+          });
+        }
+
+        if (snapshot.completed) {
+          if (!snapshot.events?.some(event => event.type === "completed")) {
+            onEvent({ type: "completed", text: snapshot.text, sources: snapshot.sources });
+          }
+          break;
+        }
+        if (snapshot.cancelled) {
+          if (!snapshot.events?.some(event => event.type === "stopped")) {
+            onEvent({ type: "stopped", text: snapshot.text, sources: snapshot.sources });
+          }
+          break;
+        }
+      } catch (pollError) {
+        appLogger.error("Failed to sync snapshot during stream recovery", { jobId, err: pollError });
+      }
+
+      if (attempts >= maxAttempts) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 8000);
+    }
+  }
 }
 
 export function useChatGeneration({
@@ -195,9 +280,13 @@ export function useChatGeneration({
     payload: ArtifactPayload
   ): Promise<ArtifactReferenceRecord | null> => {
     const now = Date.now();
-    const artifactId = payload.operation === "create" && payload.targetArtifactId
-      ? payload.targetArtifactId
-      : createId("artifact");
+    const existingArtifact = payload.operation === "update" && payload.targetArtifactId
+      ? await getArtifactById(payload.targetArtifactId)
+      : undefined;
+    if (payload.operation === "update" && (!payload.targetArtifactId || !existingArtifact || existingArtifact.chatId !== chatId)) {
+      throw new Error("Artifact update target not found.");
+    }
+    const artifactId = existingArtifact?.id || createId("artifact");
     const artifact: ArtifactRecord = {
       id: artifactId,
       chatId,
@@ -207,7 +296,7 @@ export function useChatGeneration({
       language: payload.language,
       content: payload.content,
       status: "ready",
-      createdAt: now,
+      createdAt: existingArtifact?.createdAt || now,
       updatedAt: now,
     };
     await upsertArtifact(artifact);
@@ -433,20 +522,23 @@ export function useChatGeneration({
     const useArtifactOutputRouter =
       artifactRuntimeEnabled && (requestProvider === "gemini" || (requestProvider === "openrouter" && userAskedForDurableArtifact));
     const artifactToolsEnabled =
-      artifactRuntimeEnabled && !useArtifactOutputRouter && (!requestIsOpenRouter || (userAskedForDurableArtifact && Boolean(openRouterCapabilities?.supportsTools)));
+      artifactRuntimeEnabled && userAskedForDurableArtifact && !useArtifactOutputRouter && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsTools));
     const baseSystemInstruction = getSystemInstruction({
       styleId: requestStyle,
       provider: requestProvider,
       webSearchMode: requestWebSearchMode,
       deepResearchEnabled: requestIsImageMode ? false : requestDeepResearchEnabled,
+      latestUserMessage: text,
+      recentMessages: currentHistory,
     });
     const artifactStreamMarker = ":::privora-artifact";
     const artifactStreamInstruction = `
 Canvas artifact streaming:
 - For normal answers, respond normally and do not use the private marker.
-- When the user asks you to create or substantially revise code, documents, JSON, YAML, SQL, SVG, Mermaid diagrams, prompts, static HTML, or comparison tables, stream a Canvas artifact instead of pasting it in chat.
+- When the user asks you to create or substantially revise a reusable standalone asset, file, document, app, diagram, prompt, table, or structured document, stream a Canvas artifact instead of pasting it in chat.
 - Never use the private marker for ordinary informational answers, summaries, explanations, Q&A, schedules, recommendations, or answers that merely contain headings, bullets, or Markdown formatting.
 - Only use the private marker when the output should be a reusable standalone asset, file, document, diagram, code artifact, or Canvas item.
+- Do not stream a Canvas artifact for small runnable code examples, teaching snippets, or simple "in HTML/CSS/JS" versions. Use normal fenced code blocks so Code Playground can run or preview them, unless the user explicitly asks for a file, Canvas, artifact, full app, or reusable standalone page.
 - To stream a Canvas artifact, the first output must be exactly one private header line:
 ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title","language":"svg"}
 - After that header line, stream only the complete artifact content. Do not include explanations, markdown fences, JSON wrappers, XML wrapper metadata, or tool-call text around the content.
@@ -486,6 +578,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         return;
       }
 
+      const enrichedImageAttachments = await ensureAttachmentsHaveBase64(imageAttachments);
       const imageMode: "generate" | "edit" = imageAttachments.length > 0 ? "edit" : "generate";
       const startedAt = Date.now();
       const imageOptions = getImageGenerationOptions();
@@ -585,7 +678,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         await streamCliproxyImage({
           mode: imageMode,
           prompt: text,
-          images: imageAttachments,
+          images: enrichedImageAttachments,
           options: requestOptions,
           signal: abortControllerRef.current!.signal,
           onPartialImage: (image, imageIndex) => {
@@ -617,7 +710,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         await generateGeminiImage({
           model: requestImageModel,
           prompt: text,
-          images: imageAttachments,
+          images: enrichedImageAttachments,
           options: {
             aspectRatio: getGeminiAspectRatioForPreset(imageOptions.sizePreset || "square"),
             imageSize: getGeminiImageSizeForPreset(imageOptions.sizePreset || "square"),
@@ -849,6 +942,15 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       chatId
     );
     const newHistory = [...currentHistory, userMessage];
+    const apiHistory = await Promise.all(
+      newHistory.map(async (msg) => {
+        if (msg.role === "user" && msg.attachments && msg.attachments.length > 0) {
+          const enrichedAttachments = await ensureAttachmentsHaveBase64(msg.attachments);
+          return { ...msg, attachments: enrichedAttachments };
+        }
+        return msg;
+      })
+    );
     const debateSettings = debateSettingsRef.current;
     const getDebateModel = (modelId?: string) => getModelOption(modelId || "")?.id || requestModel;
     const debateAgentAModel = getDebateModel(debateSettings.agentAModel);
@@ -924,6 +1026,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           provider,
           webSearchMode,
           deepResearchEnabled: false,
+          latestUserMessage: text,
+          recentMessages: history,
         });
         const signal = abortControllerRef.current!.signal;
 
@@ -981,7 +1085,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         await streamDebateModel({
           model,
           instruction: agentInstruction,
-          history: newHistory,
+          history: apiHistory,
           webSearchEnabled: requestWebSearchEnabled,
           onTextDelta: (delta) => {
             content += delta;
@@ -1005,7 +1109,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           `Agent B argument:\n${compactDebateContext(agentB)}`,
           "Compare both arguments. Identify strongest points, weaknesses, hidden risks, and give one clear recommendation with practical next steps.",
         ].join("\n\n");
-        const judgeHistory = [...currentHistory, normalizeMessage({ role: "user", content: judgePrompt }, chatId)];
+        const apiCurrentHistory = apiHistory.slice(0, apiHistory.length - 1);
+        const judgeHistory = [...apiCurrentHistory, normalizeMessage({ role: "user", content: judgePrompt }, chatId)];
         updateDebateAgent("judge", { status: "streaming" });
         await streamDebateModel({
           model: debateJudgeModel,
@@ -1067,6 +1172,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
 
     const upsertStreamingArtifactFromDraft = (draftPayload: ArtifactDraftPayload) => {
       if (!draftPayload.content.trim()) return;
+      if (draftPayload.operation === "update") return;
       const now = Date.now();
       const newlyStreamedContent = draftPayload.content.slice(lastStreamingArtifactLength);
       const shouldUpdate =
@@ -1110,10 +1216,10 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     };
 
     const promoteStreamingArtifactPayload = (payload: ArtifactPayload): ArtifactPayload => {
-      if (!streamingArtifactRef) return payload;
+      if (!streamingArtifactRef || payload.operation !== "create") return payload;
       return {
         ...payload,
-        operation: "create",
+        operation: "update",
         targetArtifactId: streamingArtifactRef.artifactId,
       };
     };
@@ -1124,8 +1230,10 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       operation: "create" | "update" = "create"
     ) => {
       if (operation === "update") return true;
-      if (["svg", "html", "mermaid"].includes(kind)) return true;
-      if (/^\s*(?:<svg\b|<!doctype html\b|<html\b)/i.test(content)) return true;
+      if (["svg", "mermaid"].includes(kind)) return true;
+      if (kind === "html") return userAskedForDurableArtifact;
+      if (/^\s*<svg\b/i.test(content)) return true;
+      if (/^\s*(?:<!doctype html\b|<html\b)/i.test(content)) return userAskedForDurableArtifact;
       return userAskedForDurableArtifact;
     };
 
@@ -1245,10 +1353,10 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     };
 
     const getArtifactCompletionText = (value: string, artifact?: ArtifactReferenceRecord) => {
+      if (!artifact) return value.trim();
       const cleaned = removeArtifactBlocksFromChatText(value);
       if (cleaned) return cleaned;
-      if (artifact) return getFallbackArtifactSummary("create");
-      return value;
+      return getFallbackArtifactSummary("create");
     };
 
     const generateArtifactFinalText = async (
@@ -1288,7 +1396,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           model: requestModel,
           provider: requestProvider,
           styleId: requestStyle,
-          history: newHistory,
+          history: apiHistory,
           pendingIntent,
           instruction: DEEP_RESEARCH_PREFLIGHT_INSTRUCTION,
         });
@@ -1410,7 +1518,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         await streamCliproxyResponse({
           model: requestModel,
           instructions: systemInstruction,
-          history: newHistory,
+          history: apiHistory,
           reasoningEffort: requestThinkingEnabled ? "medium" : "none",
           webSearchEnabled: requestWebSearchEnabled,
           artifactToolsEnabled,
@@ -1435,7 +1543,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             if (!artifactToolsEnabled) return;
             if (payload.operation === "update") currentArtifactOperation = "update";
             upsertStreamingArtifactFromDraft(payload);
-            updateLastModelMessage({ content: "" });
+            updateLastModelMessage({ content: currentText });
           },
           onArtifactToolCall: (payload) => {
             if (!artifactToolsEnabled) return;
@@ -1443,7 +1551,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             const task = persistArtifactFromPayload(chatId, pendingModelMessage.id, promoteStreamingArtifactPayload(payload)).then((artifactRef) => {
               if (!artifactRef) return;
               currentArtifact = artifactRef;
-              updateLastModelMessage({ artifact: artifactRef, content: "" });
+              updateLastModelMessage({ artifact: artifactRef, content: currentText });
             });
             artifactTasks.push(task);
           },
@@ -1462,8 +1570,9 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           }
         }
 
+        const preservedChatText = currentArtifact ? getArtifactCompletionText(currentText, currentArtifact) : "";
         const finalArtifactText = currentArtifact
-          ? await generateArtifactFinalText(currentArtifact, currentArtifactOperation)
+          ? preservedChatText || await generateArtifactFinalText(currentArtifact, currentArtifactOperation)
           : getArtifactCompletionText(currentText);
         updateLastModelMessage({ isThinking: false });
 
@@ -1634,7 +1743,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         await streamOpenRouterResponse({
           model: requestModel,
           instructions: systemInstruction,
-          history: newHistory,
+          history: apiHistory,
           reasoningEnabled: requestThinkingEnabled && Boolean(openRouterCapabilities?.supportsReasoning),
           webSearchEnabled: requestWebSearchEnabled && Boolean(openRouterCapabilities?.supportsTools),
           webSearchRequired: requestForcedWebSearch && Boolean(openRouterCapabilities?.supportsToolChoice),
@@ -1657,7 +1766,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             if (!artifactToolsEnabled) return;
             if (payload.operation === "update") currentArtifactOperation = "update";
             upsertStreamingArtifactFromDraft(payload);
-            updateLastModelMessage({ content: "" });
+            updateLastModelMessage({ content: currentText });
           },
           onArtifactToolCall: (payload) => {
             if (!artifactToolsEnabled) return;
@@ -1665,7 +1774,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             const task = persistArtifactFromPayload(chatId, pendingModelMessage.id, promoteStreamingArtifactPayload(payload)).then((artifactRef) => {
               if (!artifactRef) return;
               currentArtifact = artifactRef;
-              updateLastModelMessage({ artifact: artifactRef, content: "" });
+              updateLastModelMessage({ artifact: artifactRef, content: currentText });
             });
             artifactTasks.push(task);
           },
@@ -1715,8 +1824,9 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
           }
         }
 
+        const preservedChatText = currentArtifact ? getArtifactCompletionText(currentText, currentArtifact) : "";
         const finalArtifactText = currentArtifact
-          ? await generateOpenRouterArtifactSummary({
+          ? preservedChatText || await generateOpenRouterArtifactSummary({
               model: requestModel,
               userRequest: text,
               artifact: currentArtifact,
@@ -1827,7 +1937,14 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         }
 
         displayText = displayText.replace(/<thought>([\s\S]*?)(?:<\/thought>|$)/g, "").trim();
-        displayText = removeArtifactBlocksFromChatText(displayText);
+        if (
+          streamingArtifactRef ||
+          currentArtifact ||
+          displayText.trimStart().toLowerCase().startsWith(artifactStreamMarker) ||
+          /<artifact\b/i.test(displayText)
+        ) {
+          displayText = removeArtifactBlocksFromChatText(displayText);
+        }
 
         if (displayText || displayThought) {
           setMessages((prev) => {
@@ -1927,7 +2044,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
 
       await streamGeminiResponse({
         model: requestModel,
-        contents: toGeminiContents(newHistory),
+        contents: toGeminiContents(apiHistory),
         systemInstruction,
         thinkingEnabled: requestThinkingEnabled,
         webSearchEnabled: requestWebSearchEnabled,
@@ -2151,6 +2268,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       provider: requestProvider,
       webSearchMode: "forced",
       deepResearchEnabled: true,
+      latestUserMessage: userMessage.content,
+      recentMessages: currentMessages.slice(0, planIndex),
     });
     const startedAt = Date.now();
     let currentText = "";
@@ -2264,7 +2383,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
         ),
         { pendingResearchIntent: undefined }
       );
-      await streamResearchJob({
+      await runResilientResearchStream({
         jobId,
         signal: abortControllerRef.current.signal,
         onEvent: (event) => {
@@ -2568,7 +2687,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     abortControllerRef.current = new AbortController();
 
     try {
-      await streamResearchJob({
+      await runResilientResearchStream({
         jobId,
         signal: abortControllerRef.current.signal,
         onEvent: handleResearchEvent,
@@ -2706,11 +2825,20 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
 
     try {
       const adjustmentMessage = normalizeMessage({ role: "user", content: `Update this research plan: ${text}` }, chatId);
+      const enrichedHistory = await Promise.all(
+        [...currentMessages.slice(0, planIndex), adjustmentMessage].map(async (msg) => {
+          if (msg.role === "user" && msg.attachments && msg.attachments.length > 0) {
+            const enrichedAttachments = await ensureAttachmentsHaveBase64(msg.attachments);
+            return { ...msg, attachments: enrichedAttachments };
+          }
+          return msg;
+        })
+      );
       const preflight = await runResearchPreflight({
         model: requestModel,
         provider: requestProvider,
         styleId: selectedStyleRef.current,
-        history: [...currentMessages.slice(0, planIndex), adjustmentMessage],
+        history: enrichedHistory,
         pendingIntent: {
           status: "awaiting_clarification",
           originalGoal: userMessage.content,
