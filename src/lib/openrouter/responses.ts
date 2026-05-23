@@ -1,4 +1,5 @@
 import { artifactToolDefinition, parseArtifactToolArguments, parsePartialArtifactToolArguments, type ArtifactDraftPayload, type ArtifactPayload } from "../artifacts";
+import { appLogger } from "../logger";
 import { getOpenRouterModelCapabilities, getOpenRouterReasoningEffort, modelSupportsOpenRouterParameter } from "./models";
 
 export interface OpenRouterMessage {
@@ -236,26 +237,60 @@ export async function streamOpenRouterResponse({
   onArtifactToolDelta,
   onArtifactToolCall,
 }: StreamOpenRouterResponseOptions) {
+  const startedAt = Date.now();
+  let chunkCount = 0;
+  let eventCount = 0;
+  let textDeltaCount = 0;
+  let thoughtDeltaCount = 0;
+  let webSearchEventCount = 0;
+  let toolDeltaCount = 0;
+  let toolCallCount = 0;
+  let firstChunkMs: number | undefined;
+  const requestBody = buildOpenRouterBody({
+    model,
+    instructions,
+    history,
+    reasoningEnabled,
+    webSearchEnabled,
+    webSearchRequired,
+    artifactToolsEnabled,
+    stream: true,
+  });
+
+  appLogger.debug("OpenRouter stream request started", {
+    model,
+    historyLength: history.length,
+    reasoningEnabled,
+    webSearchEnabled,
+    webSearchRequired,
+    artifactToolsEnabled,
+    toolCount: Array.isArray(requestBody.tools) ? requestBody.tools.length : 0,
+  });
+
   const response = await fetch("/api/openrouter/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildOpenRouterBody({
-      model,
-      instructions,
-      history,
-      reasoningEnabled,
-      webSearchEnabled,
-      webSearchRequired,
-      artifactToolsEnabled,
-      stream: true,
-    })),
+    body: JSON.stringify(requestBody),
     signal,
   });
 
   if (!response.ok || !response.body) {
     const errorText = await response.text().catch(() => "");
+    appLogger.error("OpenRouter stream request rejected", {
+      model,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      errorText,
+    });
     throw new Error(extractOpenRouterErrorMessage(errorText) || `OpenRouter request failed with ${response.status}`);
   }
+
+  appLogger.debug("OpenRouter stream response opened", {
+    model,
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    durationMs: Date.now() - startedAt,
+  });
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -267,7 +302,10 @@ export async function streamOpenRouterResponse({
     for (const value of toolBuffers.values()) {
       if (value.name !== artifactToolDefinition.name) continue;
       const parsed = parseArtifactToolArguments(value.argumentsText);
-      if (parsed) onArtifactToolCall?.(parsed);
+      if (parsed) {
+        toolCallCount += 1;
+        onArtifactToolCall?.(parsed);
+      }
     }
     toolBuffers.clear();
   };
@@ -280,12 +318,14 @@ export async function streamOpenRouterResponse({
     toolBuffers.set(index, { name, argumentsText: nextArguments });
 
     if (name === artifactToolDefinition.name) {
+      toolDeltaCount += 1;
       const partialArtifact = parsePartialArtifactToolArguments(nextArguments);
       if (partialArtifact) onArtifactToolDelta?.(partialArtifact);
     }
   };
 
   const flushEvent = (rawEvent: string) => {
+    eventCount += 1;
     const dataLines = rawEvent
       .split("\n")
       .map(line => line.trim())
@@ -318,11 +358,18 @@ export async function streamOpenRouterResponse({
         toolCalls.forEach(handleToolCallDelta);
       }
 
-      if (thoughtDelta) onThoughtDelta(thoughtDelta);
-      if (textDelta) onTextDelta(textDelta);
+      if (thoughtDelta) {
+        thoughtDeltaCount += 1;
+        onThoughtDelta(thoughtDelta);
+      }
+      if (textDelta) {
+        textDeltaCount += 1;
+        onTextDelta(textDelta);
+      }
 
       if (webSearchEnabled && !didReportWebSearch && hasOpenRouterWebSearchSignal(data)) {
         didReportWebSearch = true;
+        webSearchEventCount += 1;
         onWebSearch?.({ status: "searched" });
       }
 
@@ -336,6 +383,8 @@ export async function streamOpenRouterResponse({
     const { done, value } = await reader.read();
     if (done) break;
 
+    chunkCount += 1;
+    firstChunkMs ??= Date.now() - startedAt;
     buffer += decoder.decode(value, { stream: true });
     const split = splitSseEvents(buffer);
     const events = split.events;
@@ -353,6 +402,19 @@ export async function streamOpenRouterResponse({
   if (toolBuffers.size > 0) {
     flushCompletedToolCalls();
   }
+
+  appLogger.debug("OpenRouter stream completed", {
+    model,
+    durationMs: Date.now() - startedAt,
+    firstChunkMs,
+    chunkCount,
+    eventCount,
+    textDeltaCount,
+    thoughtDeltaCount,
+    webSearchEventCount,
+    toolDeltaCount,
+    toolCallCount,
+  });
 }
 
 export async function generateOpenRouterArtifactSummary({

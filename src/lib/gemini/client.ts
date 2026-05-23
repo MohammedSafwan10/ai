@@ -1,5 +1,6 @@
 import type { ChatMessageRecord } from "../db";
 import { normalizeArtifactPayload, type ArtifactPayload } from "../artifacts";
+import { appLogger } from "../logger";
 
 interface StreamGeminiResponseOptions {
   model: string;
@@ -58,6 +59,23 @@ export async function streamGeminiResponse({
   onWebSearch,
   onArtifactToolCall,
 }: StreamGeminiResponseOptions) {
+  const startedAt = Date.now();
+  let chunkCount = 0;
+  let eventCount = 0;
+  let textEventCount = 0;
+  let thoughtEventCount = 0;
+  let webSearchEventCount = 0;
+  let artifactToolEventCount = 0;
+  let firstChunkMs: number | undefined;
+
+  appLogger.debug("Gemini stream request started", {
+    model,
+    contentTurns: contents.length,
+    thinkingEnabled,
+    webSearchEnabled,
+    artifactToolsEnabled,
+  });
+
   const response = await fetch("/api/gemini/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -75,8 +93,21 @@ export async function streamGeminiResponse({
 
   if (!response.ok || !response.body) {
     const errorBody = await response.json().catch(() => null);
+    appLogger.error("Gemini stream request rejected", {
+      model,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      error: errorBody?.error,
+    });
     throw new Error(errorBody?.error || `Gemini request failed with ${response.status}`);
   }
+
+  appLogger.debug("Gemini stream response opened", {
+    model,
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    durationMs: Date.now() - startedAt,
+  });
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -84,6 +115,7 @@ export async function streamGeminiResponse({
 
   const flushLine = (line: string) => {
     if (!line.trim()) return;
+    eventCount += 1;
     const event = JSON.parse(line) as
       | { type: "text"; text: string }
       | { type: "thought"; text: string }
@@ -91,10 +123,20 @@ export async function streamGeminiResponse({
       | { type: "artifactToolCall"; payload: unknown }
       | { type: "error"; error: string };
 
-    if (event.type === "text") onTextDelta(event.text);
-    if (event.type === "thought") onThoughtDelta(event.text);
-    if (event.type === "webSearch") onWebSearch({ status: event.status, queries: event.queries });
+    if (event.type === "text") {
+      textEventCount += 1;
+      onTextDelta(event.text);
+    }
+    if (event.type === "thought") {
+      thoughtEventCount += 1;
+      onThoughtDelta(event.text);
+    }
+    if (event.type === "webSearch") {
+      webSearchEventCount += 1;
+      onWebSearch({ status: event.status, queries: event.queries });
+    }
     if (event.type === "artifactToolCall") {
+      artifactToolEventCount += 1;
       const payload = normalizeArtifactPayload(event.payload);
       if (payload) onArtifactToolCall(payload);
     }
@@ -105,6 +147,8 @@ export async function streamGeminiResponse({
     const { done, value } = await reader.read();
     if (done) break;
 
+    chunkCount += 1;
+    firstChunkMs ??= Date.now() - startedAt;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
@@ -114,6 +158,18 @@ export async function streamGeminiResponse({
   if (buffer.trim()) {
     flushLine(buffer);
   }
+
+  appLogger.debug("Gemini stream completed", {
+    model,
+    durationMs: Date.now() - startedAt,
+    firstChunkMs,
+    chunkCount,
+    eventCount,
+    textEventCount,
+    thoughtEventCount,
+    webSearchEventCount,
+    artifactToolEventCount,
+  });
 }
 
 export async function generateGeminiTitle(model: string, contents: string) {

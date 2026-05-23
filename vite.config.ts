@@ -1844,10 +1844,16 @@ const createOpenRouterApiPlugin = (apiKey: string | undefined, appUrl: string | 
         res.socket?.setNoDelay(true);
 
         const reader = upstream.body.getReader();
+        let chunkCount = 0;
+        let byteCount = 0;
+        let firstChunkMs: number | undefined;
         try {
           while (true) {
             const {done, value} = await reader.read();
             if (done || res.destroyed || upstreamController.signal.aborted) break;
+            chunkCount += 1;
+            byteCount += value.byteLength;
+            firstChunkMs ??= Date.now() - startedAt;
             res.write(Buffer.from(value));
           }
         } finally {
@@ -1855,7 +1861,17 @@ const createOpenRouterApiPlugin = (apiKey: string | undefined, appUrl: string | 
         }
         responseFinished = true;
         res.end();
-        requestLogger.info({durationMs: Date.now() - startedAt, clientClosed: res.destroyed && !res.writableEnded}, 'OpenRouter stream completed');
+        requestLogger.info(
+          {
+            durationMs: Date.now() - startedAt,
+            firstChunkMs,
+            chunkCount,
+            byteCount,
+            clientClosed: res.destroyed && !res.writableEnded,
+            upstreamAborted: upstreamController.signal.aborted,
+          },
+          'OpenRouter stream completed',
+        );
         return;
       }
 
@@ -1961,12 +1977,61 @@ export default defineConfig(({mode}) => {
                 path: meta?.path || req.url?.split('?')[0] || 'unknown',
                 service: 'cliproxy',
               });
-              requestLogger.info(
+              let chunkCount = 0;
+              let byteCount = 0;
+              let firstChunkMs: number | undefined;
+              let completed = false;
+
+              proxyRes.on('data', (chunk: Buffer) => {
+                chunkCount += 1;
+                byteCount += chunk.length;
+                firstChunkMs ??= meta ? Date.now() - meta.startedAt : undefined;
+              });
+              proxyRes.on('end', () => {
+                completed = true;
+                requestLogger.info(
+                  {
+                    statusCode: proxyRes.statusCode,
+                    durationMs: meta ? Date.now() - meta.startedAt : undefined,
+                    firstChunkMs,
+                    chunkCount,
+                    byteCount,
+                  },
+                  'CLIProxy response stream completed',
+                );
+              });
+              proxyRes.on('close', () => {
+                if (completed) return;
+                requestLogger.warn(
+                  {
+                    statusCode: proxyRes.statusCode,
+                    durationMs: meta ? Date.now() - meta.startedAt : undefined,
+                    firstChunkMs,
+                    chunkCount,
+                    byteCount,
+                  },
+                  'CLIProxy response stream closed before end',
+                );
+              });
+              proxyRes.on('error', (error) => {
+                requestLogger.error(
+                  {
+                    err: error,
+                    statusCode: proxyRes.statusCode,
+                    durationMs: meta ? Date.now() - meta.startedAt : undefined,
+                    firstChunkMs,
+                    chunkCount,
+                    byteCount,
+                  },
+                  'CLIProxy response stream failed',
+                );
+              });
+              requestLogger.debug(
                 {
                   statusCode: proxyRes.statusCode,
                   durationMs: meta ? Date.now() - meta.startedAt : undefined,
                 },
-                'CLIProxy response completed',
+                'CLIProxy response headers received',
               );
             });
             proxy.on('error', (error, req: IncomingMessage) => {

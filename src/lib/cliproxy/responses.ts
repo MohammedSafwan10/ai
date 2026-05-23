@@ -1,5 +1,6 @@
 import type { Attachment } from "../attachments";
 import { artifactToolDefinition, parseArtifactToolArguments, parsePartialArtifactToolArguments, type ArtifactDraftPayload, type ArtifactPayload } from "../artifacts";
+import { appLogger } from "../logger";
 
 export interface CliproxyMessage {
   role: "user" | "model";
@@ -270,6 +271,25 @@ export async function streamCliproxyResponse({
     body.tools = tools;
   }
 
+  const startedAt = Date.now();
+  let chunkCount = 0;
+  let eventCount = 0;
+  let textDeltaCount = 0;
+  let thoughtDeltaCount = 0;
+  let webSearchEventCount = 0;
+  let artifactDeltaCount = 0;
+  let artifactCallCount = 0;
+  let firstChunkMs: number | undefined;
+
+  appLogger.debug("CLIProxy stream request started", {
+    model,
+    historyLength: history.length,
+    reasoningEffort,
+    webSearchEnabled,
+    artifactToolsEnabled,
+    toolCount: tools.length,
+  });
+
   const response = await fetch("/cliproxy/v1/responses", {
     method: "POST",
     headers: {
@@ -282,8 +302,21 @@ export async function streamCliproxyResponse({
 
   if (!response.ok || !response.body) {
     const errorText = await response.text().catch(() => "");
+    appLogger.error("CLIProxy stream request rejected", {
+      model,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      errorText,
+    });
     throw new Error(errorText || `CLIProxy request failed with ${response.status}`);
   }
+
+  appLogger.debug("CLIProxy stream response opened", {
+    model,
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    durationMs: Date.now() - startedAt,
+  });
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -293,6 +326,7 @@ export async function streamCliproxyResponse({
   let hasEmittedThoughtSnapshot = false;
 
   const flushEvent = (rawEvent: string) => {
+    eventCount += 1;
     const lines = rawEvent.split("\n");
     const event = lines
       .find((line) => line.startsWith("event:"))
@@ -313,32 +347,46 @@ export async function streamCliproxyResponse({
         const functionDelta = extractFunctionCallDelta(event, data);
         const completedFunctionCall = extractCompletedFunctionCall(event, data);
 
-        if (webSearchEvent) onWebSearch?.(webSearchEvent);
+        if (webSearchEvent) {
+          webSearchEventCount += 1;
+          onWebSearch?.(webSearchEvent);
+        }
         if (functionDelta) {
+          artifactDeltaCount += 1;
           functionArgumentBuffer += functionDelta;
           const partialArtifact = parsePartialArtifactToolArguments(functionArgumentBuffer);
           if (partialArtifact) onArtifactToolDelta?.(partialArtifact);
         }
         if (completedFunctionCall) {
+          artifactCallCount += 1;
           onArtifactToolCall?.(completedFunctionCall);
           functionArgumentBuffer = "";
         } else if (functionArgumentBuffer && `${event || ""} ${data?.type || ""}`.includes("function_call_arguments.done")) {
           const parsed = parseArtifactToolArguments(functionArgumentBuffer);
-          if (parsed) onArtifactToolCall?.(parsed);
+          if (parsed) {
+            artifactCallCount += 1;
+            onArtifactToolCall?.(parsed);
+          }
           functionArgumentBuffer = "";
         }
         if (thoughtDelta?.text) {
           if (thoughtDelta.mode === "delta") {
             hasStreamedThoughtDelta = true;
+            thoughtDeltaCount += 1;
             onThoughtDelta(thoughtDelta.text);
           } else if (!hasStreamedThoughtDelta && !hasEmittedThoughtSnapshot) {
             hasEmittedThoughtSnapshot = true;
+            thoughtDeltaCount += 1;
             onThoughtDelta(thoughtDelta.text);
           }
         }
-        if (textDelta) onTextDelta(textDelta);
+        if (textDelta) {
+          textDeltaCount += 1;
+          onTextDelta(textDelta);
+        }
       } catch {
         if (!event || event.includes("output_text")) {
+          textDeltaCount += 1;
           onTextDelta(dataLine);
         }
       }
@@ -349,6 +397,8 @@ export async function streamCliproxyResponse({
     const { done, value } = await reader.read();
     if (done) break;
 
+    chunkCount += 1;
+    firstChunkMs ??= Date.now() - startedAt;
     buffer += decoder.decode(value, { stream: true });
     const events = buffer.split("\n\n");
     buffer = events.pop() ?? "";
@@ -358,6 +408,19 @@ export async function streamCliproxyResponse({
   if (buffer.trim()) {
     flushEvent(buffer);
   }
+
+  appLogger.debug("CLIProxy stream completed", {
+    model,
+    durationMs: Date.now() - startedAt,
+    firstChunkMs,
+    chunkCount,
+    eventCount,
+    textDeltaCount,
+    thoughtDeltaCount,
+    webSearchEventCount,
+    artifactDeltaCount,
+    artifactCallCount,
+  });
 }
 
 export async function generateCliproxyArtifactSummary({
