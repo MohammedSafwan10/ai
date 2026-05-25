@@ -18,6 +18,12 @@ export interface ModelProviderGroup {
 
 export type ReasoningMode = "instant" | "thinking";
 
+export const GEMINI_35_FLASH_MODEL_ID = "gemini-3.5-flash";
+
+const legacyModelReplacements: Record<string, string> = {
+  "gemini-3-flash-preview": GEMINI_35_FLASH_MODEL_ID,
+};
+
 export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   {
     id: "gemini",
@@ -44,10 +50,10 @@ export const modelOptions: ModelOption[] = [
     description: "Fast Gemini model through Google GenAI.",
   },
   {
-    id: "gemini-3-flash-preview",
-    label: "Gemini 3 Flash",
+    id: GEMINI_35_FLASH_MODEL_ID,
+    label: "Gemini 3.5 Flash",
     provider: "gemini",
-    description: "Balanced Gemini model with native Gemini tools.",
+    description: "Stable Gemini model for fast agentic, coding, and multimodal tasks.",
   },
   {
     id: "gemini-3.1-pro-preview",
@@ -95,4 +101,11 @@ export const isOpenRouterModel = (modelId: string) =>
 export const getReasoningModeLabel = (provider: ProviderId | undefined, mode: ReasoningMode) => {
   if (mode === "instant") return "Instant";
   return "Medium";
+};
+
+export const normalizeModelId = (modelId: string | undefined) => {
+  const normalizedId = modelId ? legacyModelReplacements[modelId] ?? modelId : undefined;
+  return normalizedId && modelOptions.some((option) => option.id === normalizedId)
+    ? normalizedId
+    : undefined;
 };

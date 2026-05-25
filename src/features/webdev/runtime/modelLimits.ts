@@ -25,7 +25,7 @@ const staticLimits: Record<string, ModelRuntimeLimits> = {
     supportsThinking: true,
     supportsImages: true,
   },
-  "gemini-3-flash-preview": {
+  "gemini-3.5-flash": {
     contextWindow: 1000000,
     maxOutputTokens: 65536,
     supportsTools: true,
