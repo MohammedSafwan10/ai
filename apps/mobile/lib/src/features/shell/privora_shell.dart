@@ -29,6 +29,7 @@ part 'chat_image_generation.dart';
 part 'chat_artifacts.dart';
 part 'chat_research.dart';
 part 'chat_debate.dart';
+part 'chat_clash.dart';
 part 'chat_thinking.dart';
 part 'chat_composer.dart';
 part 'chat_composer_sheets.dart';

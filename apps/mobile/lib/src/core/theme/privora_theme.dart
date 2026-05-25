@@ -118,6 +118,7 @@ class PrivoraTheme {
     final base = ThemeData(
       useMaterial3: true,
       brightness: brightness,
+      splashFactory: InkRipple.splashFactory,
       scaffoldBackgroundColor: colors.background,
       colorScheme: ColorScheme.fromSeed(
         seedColor: colors.accent,

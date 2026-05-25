@@ -406,6 +406,74 @@ void _showDebateOptionsSheet(BuildContext context, WidgetRef ref) {
   );
 }
 
+void _showClashOptionsSheet(BuildContext context, WidgetRef ref) {
+  final colors = context.colors;
+  final app = ref.read(appControllerProvider.notifier);
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: colors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Consumer(
+        builder: (context, ref, _) {
+          final state = ref.watch(appControllerProvider).requireValue;
+          final settings = state.settings.clashSettings;
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.72,
+            ),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+              children: [
+                Row(
+                  children: [
+                    _ClashGlyph(color: colors.text),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Clash models',
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Each agent can use the current chat model or an override.',
+                  style: TextStyle(color: colors.muted, fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+                _DebateModelField(
+                  label: 'Agent A',
+                  value: settings.agentAModel,
+                  currentModel: state.settings.selectedModel,
+                  onChanged: (value) => app.updateClashSettings(
+                    settings.copyWith(agentAModel: value),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _DebateModelField(
+                  label: 'Agent B',
+                  value: settings.agentBModel,
+                  currentModel: state.settings.selectedModel,
+                  onChanged: (value) => app.updateClashSettings(
+                    settings.copyWith(agentBModel: value),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    ),
+  );
+}
+
 class _DebateModelField extends StatelessWidget {
   const _DebateModelField({
     required this.label,

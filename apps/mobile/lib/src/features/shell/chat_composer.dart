@@ -115,6 +115,18 @@ class _Composer extends ConsumerWidget {
                       onPressed: () => _showDebateOptionsSheet(context, ref),
                       icon: const Icon(LucideIcons.gitCompare, size: 17),
                     ),
+                  if (state.settings.isClashModeEnabled)
+                    IconButton(
+                      tooltip: 'Clash model settings',
+                      visualDensity: VisualDensity.compact,
+                      style: IconButton.styleFrom(
+                        backgroundColor: colors.userBubble,
+                      ),
+                      onPressed: () => _showClashOptionsSheet(context, ref),
+                      icon: _ClashGlyph(
+                        color: colors.text.withValues(alpha: 0.9),
+                      ),
+                    ),
                 ],
                 const SizedBox(width: 4),
                 const Spacer(),

@@ -119,6 +119,21 @@ void _showAddSheet(
               },
             ),
             _SheetAction(
+              leading: _ClashGlyph(color: colors.muted),
+              label: settings.isClashModeEnabled
+                  ? 'Disable Clash'
+                  : 'Clash mode',
+              onTap: () {
+                app.toggleClash();
+                Navigator.pop(context);
+                if (!settings.isClashModeEnabled) {
+                  WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => _showClashOptionsSheet(context, ref),
+                  );
+                }
+              },
+            ),
+            _SheetAction(
               icon: LucideIcons.code2,
               label: 'Code Playground',
               onTap: () {
@@ -242,11 +257,13 @@ class _ConnectionsFormState extends State<_ConnectionsForm> {
 
 class _SheetAction extends StatelessWidget {
   const _SheetAction({
-    required this.icon,
+    this.icon,
+    this.leading,
     required this.label,
     required this.onTap,
-  });
-  final IconData icon;
+  }) : assert(icon != null || leading != null);
+  final IconData? icon;
+  final Widget? leading;
   final String label;
   final VoidCallback onTap;
 
@@ -254,7 +271,7 @@ class _SheetAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
     return ListTile(
-      leading: Icon(icon, color: colors.muted),
+      leading: leading ?? Icon(icon, color: colors.muted),
       title: Text(
         label,
         style: TextStyle(color: colors.text, fontWeight: FontWeight.w600),

@@ -144,7 +144,9 @@ class _MessageBubble extends ConsumerWidget {
         state?.isGenerating == true &&
         state?.currentChat?.messages.lastOrNull?.id == message.id;
     final showsThinkingSurface =
-        !isUser && (message.thought != null || message.isThinking == true);
+        !isUser &&
+        message.clash == null &&
+        (message.thought != null || message.isThinking == true);
     final hasResearchPlan = !isUser && message.researchPlan != null;
     final isResearchReport =
         hasResearchPlan &&
@@ -155,6 +157,7 @@ class _MessageBubble extends ConsumerWidget {
         message.content.isEmpty &&
         message.imageGeneration == null &&
         message.debate == null &&
+        message.clash == null &&
         !hasResearchPlan &&
         !showsThinkingSurface;
     final codeBlock = !isUser ? _firstCodeBlock(message.content) : null;
@@ -231,6 +234,11 @@ class _MessageBubble extends ConsumerWidget {
                     debate: message.debate!,
                     onRetry: () => app.retryMessage(message.id),
                   ),
+                if (message.clash != null)
+                  _ClashCard(
+                    clash: message.clash!,
+                    onRetry: () => app.retryMessage(message.id),
+                  ),
                 if (message.artifact != null)
                   _ArtifactCard(
                     artifact: message.artifact!,
@@ -238,6 +246,7 @@ class _MessageBubble extends ConsumerWidget {
                   ),
                 if (message.imageGeneration == null &&
                     message.debate == null &&
+                    message.clash == null &&
                     message.attachments.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
@@ -271,9 +280,15 @@ class _MessageBubble extends ConsumerWidget {
                             ),
                           ),
                     ),
-                if (!isUser && !hasResearchPlan && message.content.isNotEmpty)
+                if (!isUser &&
+                    !hasResearchPlan &&
+                    message.clash == null &&
+                    message.content.isNotEmpty)
                   const SizedBox(height: 6),
-                if (!isUser && !hasResearchPlan && message.content.isNotEmpty)
+                if (!isUser &&
+                    !hasResearchPlan &&
+                    message.clash == null &&
+                    message.content.isNotEmpty)
                   Wrap(
                     spacing: 2,
                     children: [
