@@ -1,6 +1,6 @@
 import { appLogger } from "./logger";
 import { DEFAULT_IMAGE_MODEL_ID, getImageModelOption, type ImageModelId } from "./imageModels";
-import { modelOptions } from "./models";
+import { normalizeModelId } from "./models";
 import { DEFAULT_RESPONSE_STYLE_ID, getResponseStyle, type ResponseStyleId } from "./prompt";
 
 export const SETTINGS_STORAGE_KEY = "privora-ui-settings";
@@ -14,9 +14,11 @@ export interface UiSettings {
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
   isDebateModeEnabled: boolean;
+  isClashModeEnabled: boolean;
   isDarkMode: boolean;
   composerMode: "chat" | "image";
   debateSettings: DebateSettings;
+  clashSettings: ClashSettings;
   imageSettings: ImageSettings;
 }
 
@@ -24,6 +26,11 @@ export interface DebateSettings {
   agentAModel?: string;
   agentBModel?: string;
   judgeModel?: string;
+}
+
+export interface ClashSettings {
+  agentAModel?: string;
+  agentBModel?: string;
 }
 
 export type ImageSizePreset =
@@ -55,9 +62,11 @@ export const defaultUiSettings: UiSettings = {
   isWebSearchEnabled: false,
   isDeepResearchEnabled: false,
   isDebateModeEnabled: false,
+  isClashModeEnabled: false,
   isDarkMode: false,
   composerMode: "chat",
   debateSettings: {},
+  clashSettings: {},
   imageSettings: {
     model: DEFAULT_IMAGE_MODEL_ID,
     sizePreset: "square",
@@ -69,12 +78,17 @@ export const defaultUiSettings: UiSettings = {
 };
 
 const normalizeDebateSettings = (settings?: Partial<DebateSettings>): DebateSettings => {
-  const normalizeModel = (modelId?: string) =>
-    modelId && modelOptions.some(option => option.id === modelId) ? modelId : undefined;
   return {
-    agentAModel: normalizeModel(settings?.agentAModel),
-    agentBModel: normalizeModel(settings?.agentBModel),
-    judgeModel: normalizeModel(settings?.judgeModel),
+    agentAModel: normalizeModelId(settings?.agentAModel),
+    agentBModel: normalizeModelId(settings?.agentBModel),
+    judgeModel: normalizeModelId(settings?.judgeModel),
+  };
+};
+
+const normalizeClashSettings = (settings?: Partial<ClashSettings>): ClashSettings => {
+  return {
+    agentAModel: normalizeModelId(settings?.agentAModel),
+    agentBModel: normalizeModelId(settings?.agentBModel),
   };
 };
 
@@ -121,12 +135,11 @@ export const loadUiSettings = (): UiSettings => {
     if (!rawSettings) return defaultUiSettings;
 
     const parsedSettings = JSON.parse(rawSettings) as Partial<UiSettings>;
-    const selectedModel = modelOptions.some(option => option.id === parsedSettings.selectedModel)
-      ? parsedSettings.selectedModel!
-      : DEFAULT_MODEL_ID;
+    const selectedModel = normalizeModelId(parsedSettings.selectedModel) || DEFAULT_MODEL_ID;
     const selectedStyle = getResponseStyle(parsedSettings.selectedStyle).id;
 
     const isDeepResearchEnabled = Boolean(parsedSettings.isDeepResearchEnabled);
+    const isClashModeEnabled = Boolean((parsedSettings as Partial<UiSettings>).isClashModeEnabled) && !isDeepResearchEnabled;
 
     return {
       workspaceMode: parsedSettings.workspaceMode === "web-dev" || parsedSettings.workspaceMode === "characters"
@@ -137,10 +150,12 @@ export const loadUiSettings = (): UiSettings => {
       isThinkingEnabled: Boolean(parsedSettings.isThinkingEnabled),
       isWebSearchEnabled: Boolean(parsedSettings.isWebSearchEnabled) || isDeepResearchEnabled,
       isDeepResearchEnabled,
-      isDebateModeEnabled: Boolean(parsedSettings.isDebateModeEnabled) && !isDeepResearchEnabled,
+      isDebateModeEnabled: Boolean(parsedSettings.isDebateModeEnabled) && !isDeepResearchEnabled && !isClashModeEnabled,
+      isClashModeEnabled,
       isDarkMode: Boolean(parsedSettings.isDarkMode),
       composerMode: parsedSettings.composerMode === "image" ? "image" : "chat",
       debateSettings: normalizeDebateSettings(parsedSettings.debateSettings),
+      clashSettings: normalizeClashSettings((parsedSettings as Partial<UiSettings>).clashSettings),
       imageSettings: normalizeImageSettings(parsedSettings.imageSettings),
     };
   } catch {

@@ -71,6 +71,41 @@ export interface DebateRecord {
   completedAt?: number;
 }
 
+export type ClashAgentId = "a" | "b";
+export type ClashAgentStatus = "queued" | "streaming" | "done" | "error" | "stopped";
+export type ClashStatus = "streaming" | "converged" | "capped" | "stopped" | "error";
+export type ClashTurnAction = "opening" | "challenge" | "refine" | "accept";
+
+export interface ClashAgentRecord {
+  id: ClashAgentId;
+  label: string;
+  model: string;
+  status: ClashAgentStatus;
+  error?: string;
+}
+
+export interface ClashTurnRecord {
+  id: string;
+  round: number;
+  speaker: ClashAgentId;
+  action: ClashTurnAction;
+  content: string;
+  thought?: string;
+  status: ClashAgentStatus;
+  createdAt: number;
+}
+
+export interface ClashRecord {
+  status: ClashStatus;
+  prompt: string;
+  agents: ClashAgentRecord[];
+  turns: ClashTurnRecord[];
+  conclusion?: string;
+  maxRounds: number;
+  startedAt: number;
+  completedAt?: number;
+}
+
 export type ArtifactKind = "markdown" | "code" | "html" | "svg" | "mermaid" | "json" | "yaml" | "sql" | "text" | "table" | "prompt";
 export type ArtifactStatus = "streaming" | "ready" | "failed";
 
@@ -349,6 +384,7 @@ export interface ChatMessageRecord {
   researchTimeBudgetMs?: number;
   imageGeneration?: ImageGenerationRecord;
   debate?: DebateRecord;
+  clash?: ClashRecord;
   artifact?: ArtifactReferenceRecord;
   attachments?: AttachmentRecord[];
   createdAt: number;
@@ -472,6 +508,7 @@ export const normalizeMessage = (
   researchTimeBudgetMs: message.researchTimeBudgetMs,
   imageGeneration: message.imageGeneration,
   debate: message.debate,
+  clash: message.clash,
   artifact: message.artifact,
   attachments: message.attachments,
   createdAt: message.createdAt || fallbackCreatedAt,
