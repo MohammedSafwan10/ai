@@ -66,7 +66,7 @@ void main() {
         'Choose A.',
       ]);
       expect(debate.agents.first.model, 'gpt-5.5');
-      expect(debate.agents.last.model, 'gemini-3-flash-preview');
+      expect(debate.agents.last.model, gemini35FlashModelId);
 
       final persisted = await PrivoraLocalRepository(database).loadSnapshot();
       expect(

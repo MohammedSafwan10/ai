@@ -19,9 +19,14 @@ void main() {
           isThinkingEnabled: true,
           selectedModel: 'gpt-5.5',
           composerMode: ComposerMode.image,
+          isClashModeEnabled: true,
           debateSettings: DebateSettings(
             agentAModel: 'gpt-5.5',
             judgeModel: 'gemini-3-flash-preview',
+          ),
+          clashSettings: ClashSettings(
+            agentAModel: 'gpt-5.5',
+            agentBModel: 'gemini-3-flash-preview',
           ),
         ),
       );
@@ -83,6 +88,50 @@ void main() {
                     content: 'Use the first option.',
                   ),
                 ],
+                startedAt: now,
+                completedAt: now,
+              ),
+              clash: ClashRecord(
+                status: ClashStatus.converged,
+                prompt: 'Pick a default',
+                agents: [
+                  ClashAgentRecord(
+                    id: 'a',
+                    label: 'Agent A',
+                    model: 'gpt-5.5',
+                    status: ClashAgentStatus.done,
+                  ),
+                  ClashAgentRecord(
+                    id: 'b',
+                    label: 'Agent B',
+                    model: 'gemini-3-flash-preview',
+                    status: ClashAgentStatus.done,
+                  ),
+                ],
+                turns: [
+                  ClashTurnRecord(
+                    id: 'turn_1',
+                    round: 1,
+                    speaker: 'a',
+                    action: ClashTurnAction.opening,
+                    status: ClashAgentStatus.done,
+                    content: 'Opening: Use A.',
+                    startedAt: now,
+                    completedAt: now,
+                  ),
+                  ClashTurnRecord(
+                    id: 'turn_2',
+                    round: 1,
+                    speaker: 'b',
+                    action: ClashTurnAction.accept,
+                    status: ClashAgentStatus.done,
+                    content:
+                        'Accept: Agreed.\nShared conclusion: Use A carefully.',
+                    startedAt: now,
+                    completedAt: now,
+                  ),
+                ],
+                conclusion: 'Use A carefully.',
                 startedAt: now,
                 completedAt: now,
               ),
@@ -151,10 +200,10 @@ void main() {
       expect(snapshot.settings.selectedModel, 'gpt-5.5');
       expect(snapshot.settings.composerMode, ComposerMode.image);
       expect(snapshot.settings.debateSettings.agentAModel, 'gpt-5.5');
-      expect(
-        snapshot.settings.debateSettings.judgeModel,
-        'gemini-3-flash-preview',
-      );
+      expect(snapshot.settings.debateSettings.judgeModel, gemini35FlashModelId);
+      expect(snapshot.settings.isClashModeEnabled, isTrue);
+      expect(snapshot.settings.clashSettings.agentAModel, 'gpt-5.5');
+      expect(snapshot.settings.clashSettings.agentBModel, gemini35FlashModelId);
       expect(snapshot.chats, hasLength(1));
       expect(snapshot.chats.single.isStarred, isTrue);
       expect(
@@ -188,6 +237,18 @@ void main() {
       expect(
         snapshot.chats.single.messages.last.debate?.agents.single.content,
         'Use the first option.',
+      );
+      expect(
+        snapshot.chats.single.messages.last.clash?.status,
+        ClashStatus.converged,
+      );
+      expect(
+        snapshot.chats.single.messages.last.clash?.agents.last.model,
+        gemini35FlashModelId,
+      );
+      expect(
+        snapshot.chats.single.messages.last.clash?.conclusion,
+        'Use A carefully.',
       );
       expect(
         snapshot.chats.single.messages.last.researchPlan?.status,

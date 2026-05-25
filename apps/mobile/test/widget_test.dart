@@ -114,8 +114,8 @@ void main() {
 
     await tester.tap(find.text('Gemini 3.1 Flash Lite'));
     await tester.pumpAndSettle();
-    expect(find.text('Gemini 3 Flash'), findsOneWidget);
-    await tester.tap(find.text('Gemini 3 Flash'));
+    expect(find.text('Gemini 3.5 Flash'), findsOneWidget);
+    await tester.tap(find.text('Gemini 3.5 Flash'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add files or options'));
