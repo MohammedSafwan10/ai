@@ -948,8 +948,10 @@ export function CharacterWorkspace({
               isWebSearchEnabled={isWebSearchEnabled}
               isDeepResearchEnabled={isDeepResearchEnabled}
               isDebateModeEnabled={false}
+              isClashModeEnabled={false}
               composerMode="chat"
               debateSettings={{}}
+              clashSettings={{}}
               imageSettings={imageSettings}
               textareaRef={textareaRef}
               fileInputRef={fileInputRef}
@@ -975,8 +977,10 @@ export function CharacterWorkspace({
               onToggleWebSearch={onToggleWebSearch}
               onToggleDeepResearch={onToggleDeepResearch}
               onToggleDebateMode={() => undefined}
+              onToggleClashMode={() => undefined}
               onSelectComposerMode={() => undefined}
               onDebateSettingsChange={() => undefined}
+              onClashSettingsChange={() => undefined}
               onImageSettingsChange={onImageSettingsChange}
               onSelectModel={onSelectModel}
               onSelectStyle={onSelectStyle}

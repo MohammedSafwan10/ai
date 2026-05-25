@@ -91,7 +91,7 @@ Gemini models are called directly through `@google/genai`.
 Current Gemini chat models:
 
 - `gemini-3.1-flash-lite-preview` - default fast model.
-- `gemini-3-flash-preview` - balanced Gemini model with native tools.
+- `gemini-3.5-flash` - stable Gemini model for fast agentic, coding, and multimodal tasks.
 - `gemini-3.1-pro-preview` - stronger Gemini model for harder prompts.
 
 Gemini supports native attachments, Google Search grounding, thinking mode, streamed content, and Gemini image generation through Nano Banana 2.
