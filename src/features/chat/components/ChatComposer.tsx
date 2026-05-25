@@ -18,7 +18,8 @@ import {
 } from "../../../lib/models";
 import { getImageModelOption, imageModelOptions, type ImageModelId } from "../../../lib/imageModels";
 import { getResponseStyle, responseStyleOptions, type ResponseStyleId } from "../../../lib/prompt";
-import type { DebateSettings, ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
+import type { ClashSettings, DebateSettings, ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
+import { ClashIcon } from "./ClashIcon";
 
 
 
@@ -32,8 +33,10 @@ interface ChatComposerProps {
   isWebSearchEnabled: boolean;
   isDeepResearchEnabled: boolean;
   isDebateModeEnabled: boolean;
+  isClashModeEnabled: boolean;
   composerMode: "chat" | "image";
   debateSettings: DebateSettings;
+  clashSettings: ClashSettings;
   imageSettings: ImageSettings;
   researchEditContext?: {
     title: string;
@@ -52,9 +55,11 @@ interface ChatComposerProps {
   onToggleWebSearch: () => void;
   onToggleDeepResearch: () => void;
   onToggleDebateMode: () => void;
+  onToggleClashMode: () => void;
   onOpenCodePlayground?: () => void;
   onSelectComposerMode: (mode: "chat" | "image") => void;
   onDebateSettingsChange: (settings: DebateSettings) => void;
+  onClashSettingsChange: (settings: ClashSettings) => void;
   onImageSettingsChange: (settings: ImageSettings) => void;
   onSelectModel: (modelId: string) => void;
   onSelectStyle: (styleId: ResponseStyleId) => void;
@@ -74,8 +79,10 @@ export function ChatComposer({
   isWebSearchEnabled,
   isDeepResearchEnabled,
   isDebateModeEnabled,
+  isClashModeEnabled,
   composerMode,
   debateSettings,
+  clashSettings,
   imageSettings,
   researchEditContext,
   textareaRef,
@@ -92,9 +99,11 @@ export function ChatComposer({
   onToggleWebSearch,
   onToggleDeepResearch,
   onToggleDebateMode,
+  onToggleClashMode,
   onOpenCodePlayground,
   onSelectComposerMode,
   onDebateSettingsChange,
+  onClashSettingsChange,
   onImageSettingsChange,
   onSelectModel,
   onSelectStyle,
@@ -109,6 +118,7 @@ export function ChatComposer({
   const [isStyleDropdownOpen, setIsStyleDropdownOpen] = useState(false);
   const [isImageOptionsOpen, setIsImageOptionsOpen] = useState(false);
   const [isDebateOptionsOpen, setIsDebateOptionsOpen] = useState(false);
+  const [isClashOptionsOpen, setIsClashOptionsOpen] = useState(false);
   const selectedModelOption = getModelOption(selectedModel);
   const selectedModelLabel = getModelLabel(selectedModel);
   const modelProviderGroups = getModelProviderGroups();
@@ -138,6 +148,7 @@ export function ChatComposer({
     setIsStyleDropdownOpen(false);
     setIsImageOptionsOpen(false);
     setIsDebateOptionsOpen(false);
+    setIsClashOptionsOpen(false);
   }, [settingsDisabled]);
 
   const handleSelectModel = (modelId: string) => {
@@ -189,10 +200,17 @@ export function ChatComposer({
   const updateDebateSettings = (patch: Partial<DebateSettings>) => {
     onDebateSettingsChange({ ...debateSettings, ...patch });
   };
+  const updateClashSettings = (patch: Partial<ClashSettings>) => {
+    onClashSettingsChange({ ...clashSettings, ...patch });
+  };
   const debateModelRows: Array<{ key: keyof DebateSettings; label: string }> = [
     { key: "agentAModel", label: "Agent A" },
     { key: "agentBModel", label: "Agent B" },
     { key: "judgeModel", label: "Judge" },
+  ];
+  const clashModelRows: Array<{ key: keyof ClashSettings; label: string }> = [
+    { key: "agentAModel", label: "Agent A" },
+    { key: "agentBModel", label: "Agent B" },
   ];
 
   return (
@@ -283,7 +301,7 @@ export function ChatComposer({
                   ? "Follow up with questions or adjustments"
                   : "How can I help you today?"
             }
-            className={`w-full max-h-[min(16rem,42vh)] text-[15px] bg-transparent text-[var(--privora-text)] placeholder-[var(--privora-muted)] px-4 pb-3 pt-4 outline-none resize-none leading-relaxed transition-[color,min-height] duration-200 [overflow-wrap:anywhere] ${
+            className={`w-full max-h-[min(16rem,42vh)] text-[15px] bg-transparent text-[var(--privora-text)] placeholder-[var(--privora-muted)] px-4 pb-3 pt-4 outline-none resize-none leading-relaxed transition-colors duration-200 [overflow-wrap:anywhere] ${
               hasExpandedInput ? "min-h-[8.5rem] sm:min-h-[9.5rem]" : "min-h-[52px] sm:min-h-[56px]"
             }`}
             rows={1}
@@ -432,6 +450,17 @@ export function ChatComposer({
                           </div>
                           {isDebateModeEnabled && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polyline points="20 6 9 17 4 12"></polyline></svg>}
                         </button>
+                        <button
+                          type="button"
+                          onClick={onToggleClashMode}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isClashModeEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <ClashIcon className={`w-4 h-4 ${isClashModeEnabled ? "opacity-100" : "opacity-70"}`} />
+                            <span className="font-medium leading-none">Clash mode</span>
+                          </div>
+                          {isClashModeEnabled && <Check className="h-3.5 w-3.5 opacity-70" />}
+                        </button>
                       </>
                       )}
                       {!isImageMode && (
@@ -549,6 +578,50 @@ export function ChatComposer({
                                 <DebateModelSelect
                                   value={debateSettings[row.key]}
                                   onChange={(val) => updateDebateSettings({ [row.key]: val })}
+                                  selectedModelLabel={selectedModelLabel}
+                                  modelProviderGroups={modelProviderGroups}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+              {isClashModeEnabled && !isImageMode && (
+                <div className="relative hidden sm:block">
+                  <button
+                    type="button"
+                    disabled={settingsDisabled}
+                    onClick={() => setIsClashOptionsOpen(!isClashOptionsOpen)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-user-bubble)] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/10 disabled:opacity-45"
+                    title="Clash model settings"
+                  >
+                    <ClashIcon className="h-3.5 w-3.5" />
+                    Clash
+                    <ChevronDown className={`h-3 w-3 opacity-50 transition-transform ${isClashOptionsOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  <AnimatePresence>
+                    {isClashOptionsOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsClashOptionsOpen(false)} />
+                        <motion.div
+                          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                          transition={{ duration: 0.14 }}
+                          className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-[var(--privora-border)] bg-[var(--privora-surface)] p-2 shadow-xl"
+                        >
+                          <div className="mb-1 px-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--privora-muted)]">Clash Models</div>
+                          <div className="flex flex-col gap-0.5">
+                            {clashModelRows.map(row => (
+                              <div key={row.key} className="flex flex-col gap-1.5 rounded-lg p-1.5 transition-colors hover:bg-[var(--privora-bg)]/80">
+                                <span className="px-0.5 text-[12px] font-medium text-[var(--privora-text)] opacity-80">{row.label}</span>
+                                <DebateModelSelect
+                                  value={clashSettings[row.key]}
+                                  onChange={(val) => updateClashSettings({ [row.key]: val })}
                                   selectedModelLabel={selectedModelLabel}
                                   modelProviderGroups={modelProviderGroups}
                                 />

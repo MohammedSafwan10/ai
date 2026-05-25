@@ -7,8 +7,9 @@ import { ImageGenerationCard } from "./ImageGenerationCard";
 import { ResearchPlanCard } from "./ResearchPlanCard";
 import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
+import { ClashIcon } from "./ClashIcon";
 import { ArtifactCard } from "../../artifacts/components/ArtifactCard";
-import type { ArtifactReferenceRecord, DebateRecord, ImageGenerationRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
+import type { ArtifactReferenceRecord, ClashRecord, ImageGenerationRecord, DebateRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useToast } from "../../ui/ToastProvider";
 import { useAttachmentUrl } from "../../attachments/hooks/useAttachmentUrl";
@@ -46,6 +47,7 @@ interface ChatMessageProps {
   researchTimeBudgetMs?: number;
   imageGeneration?: ImageGenerationRecord;
   debate?: DebateRecord;
+  clash?: ClashRecord;
   artifact?: ArtifactReferenceRecord;
   isTyping?: boolean;
   messageIndex?: number;
@@ -153,7 +155,233 @@ function DebateCard({
   );
 }
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onOpenCodePlayground, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
+const getClashActionLabel = (action: string) => action.charAt(0).toUpperCase() + action.slice(1);
+const getClashStatusLabel = (clash: ClashRecord) => {
+  if (clash.status === "streaming") {
+    const currentRound = Math.min(clash.maxRounds, Math.ceil(clash.turns.length / 2));
+    return `${currentRound}/${clash.maxRounds} rounds`;
+  }
+  if (clash.status === "capped") return "cap reached";
+  return clash.status;
+};
+
+function ClashCard({
+  clash,
+  onCopyText,
+  onRetry,
+  onShareText,
+}: {
+  clash: ClashRecord;
+  onCopyText: (text: string, description?: string) => void;
+  onRetry?: () => void;
+  onShareText: (text: string) => void;
+}) {
+  const [activeMobileAgent, setActiveMobileAgent] = useState<"a" | "b">("a");
+  const [openThoughtTurnId, setOpenThoughtTurnId] = useState<string | null>(null);
+  const [clashTick, setClashTick] = useState(() => Date.now());
+  const activeSpeaker = [...clash.turns].reverse().find(turn => turn.status === "streaming")?.speaker;
+  const turnsByAgent = (agentId: "a" | "b") => clash.turns.filter(turn => turn.speaker === agentId);
+  const lastContentForAgent = (agentId: "a" | "b") =>
+    [...turnsByAgent(agentId)].reverse().find(turn => turn.content.trim())?.content.trim();
+
+  useEffect(() => {
+    if (!clash.turns.some(turn => turn.status === "streaming")) return;
+    const interval = window.setInterval(() => setClashTick(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [clash.turns]);
+
+  const fullClashText = [
+    `Prompt:\n${clash.prompt}`,
+    ...clash.turns.map(turn => `${turn.speaker === "a" ? "Agent A" : "Agent B"} - round ${turn.round} (${turn.action}):\n${turn.content}`),
+    clash.conclusion ? `Shared conclusion:\n${clash.conclusion}` : "",
+  ].filter(Boolean).join("\n\n");
+  const splitOutcomeText = [
+    "No full agreement.",
+    lastContentForAgent("a") ? `Agent A final position:\n${lastContentForAgent("a")}` : "",
+    lastContentForAgent("b") ? `Agent B final position:\n${lastContentForAgent("b")}` : "",
+  ].filter(Boolean).join("\n\n");
+  const verdictText = clash.conclusion || splitOutcomeText || fullClashText;
+
+  const renderAgentPanel = (agentId: "a" | "b") => {
+    const agent = clash.agents.find(item => item.id === agentId);
+    const agentTurns = turnsByAgent(agentId);
+    const isActive = activeSpeaker === agentId;
+    return (
+      <section
+        key={agentId}
+        className={cn(
+          "min-w-0 border-t border-[var(--privora-border)]/55 pt-3 transition-colors lg:border-t-0 lg:pt-0",
+          agentId === "b" ? "lg:border-l lg:border-[var(--privora-border)]/55 lg:pl-5" : "lg:pr-2",
+          activeMobileAgent !== agentId && "hidden lg:block"
+        )}
+      >
+        <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--privora-text)]">
+              {isActive && <span className="h-2 w-2 rounded-full bg-[var(--privora-accent)] animate-pulse" />}
+              <span>{agent?.label || (agentId === "a" ? "Agent A" : "Agent B")}</span>
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-[var(--privora-muted)]">{agent?.model}</div>
+          </div>
+          <span className={cn(
+            "shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em]",
+            isActive ? "text-[var(--privora-accent)]" : "text-[var(--privora-muted)]"
+          )}>
+            {agent?.status || "queued"}
+          </span>
+        </div>
+        <div className="space-y-4">
+          {agentTurns.length === 0 ? (
+            <div className="flex min-h-20 items-center border-l border-dashed border-[var(--privora-border)]/70 pl-3 text-[var(--privora-muted)]">
+              <TypingIndicator size={18} isAnimating={clash.status === "streaming"} />
+            </div>
+          ) : agentTurns.map(turn => (
+            <article
+              key={turn.id}
+              className={cn(
+                "border-l py-0.5 pl-3",
+                turn.status === "streaming" ? "border-[var(--privora-accent)]/70" : "border-[var(--privora-border)]/70"
+              )}
+            >
+              <div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--privora-muted)]">
+                <span>Round {turn.round}</span>
+                <span>{getClashActionLabel(turn.action)}</span>
+              </div>
+              {(turn.thought || (turn.status === "streaming" && !turn.content)) && (
+                <div className="mb-2">
+                  <button
+                    type="button"
+                    disabled={!turn.thought}
+                    onClick={() => setOpenThoughtTurnId(openThoughtTurnId === turn.id ? null : turn.id)}
+                    className={cn(
+                      "inline-flex items-center gap-2 py-1 text-[12px] font-medium transition-colors",
+                      turn.status === "streaming" ? "text-[var(--privora-accent)]" : "text-[var(--privora-muted)]",
+                      turn.thought ? "hover:text-[var(--privora-text)]" : "cursor-default"
+                    )}
+                  >
+                    <TypingIndicator
+                      size={16}
+                      className="shrink-0 text-current"
+                      isAnimating={turn.status === "streaming"}
+                    />
+                    <span className={cn(turn.status === "streaming" && "animate-text-shimmer")}>
+                      {turn.status === "streaming" ? `Thinking ${formatElapsed(clashTick - turn.createdAt)}` : "Thought process"}
+                    </span>
+                    {turn.thought && (
+                      <ChevronDown
+                        className={cn(
+                          "h-3 w-3 transition-transform",
+                          openThoughtTurnId === turn.id || turn.status === "streaming" ? "rotate-0" : "-rotate-90"
+                        )}
+                      />
+                    )}
+                  </button>
+                  {turn.thought && (openThoughtTurnId === turn.id || turn.status === "streaming") && (
+                    <div className="mt-1 border-l border-[var(--privora-border)]/70 pl-3 text-[12.5px] leading-6 text-[var(--privora-muted)]">
+                      <MarkdownRenderer compact isStreaming={turn.status === "streaming"}>{turn.thought}</MarkdownRenderer>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="markdown-body max-w-none text-[13.5px] leading-6 text-[var(--privora-text)]">
+                {turn.content ? (
+                  <MarkdownRenderer compact isStreaming={turn.status === "streaming"}>{turn.content}</MarkdownRenderer>
+                ) : (
+                  <TypingIndicator size={18} isAnimating={turn.status === "streaming" || turn.status === "queued"} />
+                )}
+                {turn.status === "error" && <div className="mt-2 text-red-500">This turn failed.</div>}
+              </div>
+            </article>
+          ))}
+          {agent?.error && <div className="text-[13px] text-red-500">{agent.error}</div>}
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <div className="w-full">
+      <div className="mb-5 flex items-center justify-between gap-3 border-b border-[var(--privora-border)]/45 pb-2">
+        <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-[var(--privora-text)]">
+          <ClashIcon className="h-4 w-4 shrink-0 text-[var(--privora-accent)]" />
+          <span>Clash</span>
+        </div>
+        <span className="shrink-0 text-[11px] font-medium text-[var(--privora-muted)]">
+          {getClashStatusLabel(clash)}
+        </span>
+      </div>
+
+      <div className="mb-4 flex border-b border-[var(--privora-border)]/55 lg:hidden">
+        {(["a", "b"] as const).map(agentId => (
+          <button
+            key={agentId}
+            type="button"
+            onClick={() => setActiveMobileAgent(agentId)}
+            className={cn(
+              "-mb-px flex-1 border-b-2 px-3 py-2 text-[12px] font-semibold transition-colors",
+              activeMobileAgent === agentId
+                ? "border-[var(--privora-accent)] text-[var(--privora-text)]"
+                : "border-transparent text-[var(--privora-muted)] hover:text-[var(--privora-text)]"
+            )}
+          >
+            {agentId === "a" ? "Agent A" : "Agent B"}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid w-full gap-4 lg:grid-cols-2">
+        {renderAgentPanel("a")}
+        {renderAgentPanel("b")}
+      </div>
+
+      {clash.conclusion && (
+        <section className="mt-5 border-t border-[var(--privora-border)]/55 pt-4">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--privora-muted)]">Shared conclusion</div>
+          <div className="markdown-body max-w-none border-l-2 border-[var(--privora-accent)]/60 pl-3 text-[14px] leading-7 text-[var(--privora-text)]">
+            <MarkdownRenderer>{clash.conclusion}</MarkdownRenderer>
+          </div>
+        </section>
+      )}
+
+      {clash.status === "capped" && !clash.conclusion && (
+        <section className="mt-5 border-t border-[var(--privora-border)]/55 pt-4">
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--privora-muted)]">No full agreement</div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {(["a", "b"] as const).map(agentId => (
+              <div key={agentId} className="min-w-0 border-l border-[var(--privora-border)]/70 pl-3">
+                <div className="mb-1 text-[13px] font-semibold text-[var(--privora-text)]">{agentId === "a" ? "Agent A" : "Agent B"}</div>
+                <div className="markdown-body max-w-none text-[13px] leading-6 text-[var(--privora-text)]">
+                  <MarkdownRenderer compact>{lastContentForAgent(agentId) || "No final position."}</MarkdownRenderer>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {clash.status !== "streaming" && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--privora-border)]/35 pt-3 text-[var(--privora-muted)]">
+          <button type="button" onClick={() => onCopyText(verdictText, "Clash result copied.")} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Copy result" aria-label="Copy result">
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+          <button type="button" onClick={() => onCopyText(fullClashText, "Full clash copied.")} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Copy full clash" aria-label="Copy full clash">
+            <Files className="h-3.5 w-3.5" />
+          </button>
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Retry clash" aria-label="Retry clash">
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button type="button" onClick={() => onShareText(verdictText)} className="p-1 -m-1 transition hover:text-[var(--privora-text)]" title="Share result" aria-label="Share result">
+            <Share2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, clash, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onOpenCodePlayground, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -165,8 +393,10 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
   const isResearchRunning = !isUser && researchPlan?.status === "running";
   const isImageGenerationMessage = !isUser && Boolean(imageGeneration);
   const isDebateMessage = !isUser && Boolean(debate);
+  const isClashMessage = !isUser && Boolean(clash);
   const isCompletedResearchReport = !isUser && Boolean(content) && researchStatus === "completed" && Boolean(researchPlan);
-  const shouldRenderContent = !isResearchRunning && !isImageGenerationMessage && !isDebateMessage && (content || (!isUser && isTyping && !isThinking));
+  const shouldRenderContent = !isResearchRunning && !isImageGenerationMessage && !isDebateMessage && !isClashMessage && (content || (!isUser && isTyping && !isThinking));
+  const shouldRenderThoughtPanel = !isUser && !isDebateMessage && !isClashMessage && (thought || isThinking);
   const researchElapsedMs = researchStartedAt && researchCompletedAt ? researchCompletedAt - researchStartedAt : undefined;
 
   const handleCopy = async () => {
@@ -382,6 +612,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
           )}
 
           {!isUser && debate && <DebateCard debate={debate} onCopyText={copyCustomText} onRetry={onRetry} onShareText={shareCustomText} />}
+          {!isUser && clash && <ClashCard clash={clash} onCopyText={copyCustomText} onRetry={onRetry} onShareText={shareCustomText} />}
 
           {!isUser && researchPlan && !isCompletedResearchReport && (
             <ResearchPlanCard
@@ -440,7 +671,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
             </div>
           )}
 
-          {!isUser && (thought || isThinking) && (
+          {shouldRenderThoughtPanel && (
             <div className="w-full flex flex-col items-start max-w-[100%] mb-1.5">
                <button
                   onClick={() => setIsThoughtOpen(!isThoughtOpen)}
@@ -590,6 +821,7 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.researchTimeBudgetMs === next.researchTimeBudgetMs &&
     prev.imageGeneration === next.imageGeneration &&
     prev.debate === next.debate &&
+    prev.clash === next.clash &&
     prev.artifact === next.artifact &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
     prev.onOpenArtifact === next.onOpenArtifact &&

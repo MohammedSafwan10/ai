@@ -26,7 +26,7 @@ import {
   ensureAttachmentsHaveBase64,
   type Attachment,
 } from "../../../lib/attachments";
-import { DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, getSystemInstruction, type ResponseStyleId, type WebSearchMode } from "../../../lib/prompt";
+import { DEEP_RESEARCH_PREFLIGHT_INSTRUCTION, getResponseStyle, getSystemInstruction, type ResponseStyleId, type WebSearchMode } from "../../../lib/prompt";
 import { DEEP_RESEARCH_TIME_BUDGET_MS } from "../../../lib/prompt";
 import { cancelResearchJob, getResearchJobSnapshot, runResearchPreflight, startResearchJob, streamResearchJob, type ResearchStreamEvent } from "../../../lib/research/client";
 import { useToast } from "../../ui/ToastProvider";
@@ -41,6 +41,10 @@ import {
   type ArtifactReferenceRecord,
   type ChatMessageRecord,
   type ChatRecord,
+  type ClashAgentRecord,
+  type ClashAgentStatus,
+  type ClashTurnAction,
+  type ClashTurnRecord,
   type DebateAgentRecord,
   type DebateAgentStatus,
   type ImageGenerationItemRecord,
@@ -50,12 +54,48 @@ import {
   type ResearchPlanRecord,
   type ResearchPlanStepStatus,
 } from "../../../lib/db";
-import type { DebateSettings, ImageSettings } from "../../../lib/settings";
+import type { ClashSettings, DebateSettings, ImageSettings } from "../../../lib/settings";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
 type CurrentRef<T> = MutableRefObject<T> | { current: T };
 type GeneratedImageResult = CliproxyImageResult | GeminiImageResult;
+const CLASH_MAX_ROUNDS = 6;
+const CLASH_TURNS_PER_ROUND = 2;
+
+const parseClashTurnAction = (content: string, fallback: ClashTurnAction): ClashTurnAction => {
+  const match = content.match(/^\s*(?:#+\s*)?(?:\*\*)?(?:Action\s*:\s*)?(opening|challenge|refine|accept)\b/i);
+  const value = match?.[1]?.toLowerCase();
+  if (value === "opening" || value === "challenge" || value === "refine" || value === "accept") return value;
+  return fallback;
+};
+
+const extractClashConclusion = (content: string) => {
+  const match = content.match(/(?:shared conclusion|final shared answer)\s*:\s*([\s\S]+)$/i);
+  return match?.[1]?.trim();
+};
+
+const CLASH_STYLE_DIRECTIONS: Record<ResponseStyleId, string> = {
+  normal: "- Sound like two clear, useful thinkers in conversation. Keep the clash natural, not theatrical.",
+  human: "- Sound like two sharp humans pushing each other in a real chat: direct, specific, lightly conversational, and never like a canned debate essay.",
+  learning: "- Make the clash teach as it argues. Each turn should expose the reasoning, catch misunderstandings, and leave the user smarter.",
+  concise: "- Keep the clash tight. Short turns, no throat-clearing, and only the strongest objections or refinements.",
+  explanatory: "- Use the clash to unpack the issue carefully. Challenge gaps, define terms, and explain why a correction matters.",
+  formal: "- Keep the clash polished, precise, and professional. Disagree firmly without casual banter.",
+  creative: "- Let the clash feel more alive and inventive, with fresher angles and memorable framing, while staying useful and accurate.",
+};
+
+const buildClashStyleInstruction = (styleId: ResponseStyleId) => {
+  const style = getResponseStyle(styleId);
+
+  return [
+    `Clash voice: the selected response style is ${style.label}.`,
+    "- Apply the selected style to every visible turn, including openings, challenges, refinements, and acceptance.",
+    "- The style changes rhythm, warmth, density, and expressiveness; it must not weaken correctness or the converge-or-cap rules.",
+    "- Keep the required turn prefix exactly as requested, then write the rest of the turn in the selected style.",
+    CLASH_STYLE_DIRECTIONS[style.id],
+  ].join("\n");
+};
 
 interface UseChatGenerationOptions {
   input: string;
@@ -76,7 +116,9 @@ interface UseChatGenerationOptions {
   isWebSearchEnabledRef: CurrentRef<boolean>;
   isDeepResearchEnabledRef: CurrentRef<boolean>;
   isDebateModeEnabledRef: CurrentRef<boolean>;
+  isClashModeEnabledRef: CurrentRef<boolean>;
   debateSettingsRef: CurrentRef<DebateSettings>;
+  clashSettingsRef: CurrentRef<ClashSettings>;
   imageSettingsRef: CurrentRef<ImageSettings>;
   messagesRef: CurrentRef<Message[]>;
   chatsRef: CurrentRef<Chat[]>;
@@ -190,7 +232,9 @@ export function useChatGeneration({
   isWebSearchEnabledRef,
   isDeepResearchEnabledRef,
   isDebateModeEnabledRef,
+  isClashModeEnabledRef,
   debateSettingsRef,
+  clashSettingsRef,
   imageSettingsRef,
   messagesRef,
   chatsRef,
@@ -509,6 +553,7 @@ export function useChatGeneration({
     const requestThinkingEnabled = isThinkingEnabledRef.current;
     const requestDeepResearchEnabled = isDeepResearchEnabledRef.current;
     const requestDebateModeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && isDebateModeEnabledRef.current;
+    const requestClashModeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !requestDebateModeEnabled && isClashModeEnabledRef.current;
     const requestForcedWebSearch = !requestIsImageMode && (isWebSearchEnabledRef.current || requestDeepResearchEnabled);
     const requestWebSearchMode: WebSearchMode = requestIsImageMode ? "off" : requestForcedWebSearch ? "forced" : "auto";
     const requestWebSearchEnabled = requestWebSearchMode !== "off";
@@ -518,7 +563,7 @@ export function useChatGeneration({
       /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/i.test(text) ||
       /\b(?:write|draft|create|make|build|generate|draw|design|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,100}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt|svg|html|page|app|component|code|function|script|program|class|json|yaml|sql|diagram|mermaid)\b/i.test(text) ||
       /\b(?:svg|html|mermaid|json|yaml|sql)\b[\s\S]{0,80}\b(?:for|of|with|that|which|about)\b/i.test(text);
-    const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !userDeclinedArtifacts;
+    const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !requestDebateModeEnabled && !requestClashModeEnabled && !userDeclinedArtifacts;
     const useArtifactOutputRouter =
       artifactRuntimeEnabled && (requestProvider === "gemini" || (requestProvider === "openrouter" && userAskedForDurableArtifact));
     const artifactToolsEnabled =
@@ -925,6 +970,8 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       webSearchEnabled: requestWebSearchEnabled,
       webSearchMode: requestWebSearchMode,
       deepResearchEnabled: requestDeepResearchEnabled,
+      debateModeEnabled: requestDebateModeEnabled,
+      clashModeEnabled: requestClashModeEnabled,
       responseStyle: requestStyle,
       historyLength: currentHistory.length,
     });
@@ -956,21 +1003,37 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     const debateAgentAModel = getDebateModel(debateSettings.agentAModel);
     const debateAgentBModel = getDebateModel(debateSettings.agentBModel);
     const debateJudgeModel = getDebateModel(debateSettings.judgeModel);
+    const clashSettings = clashSettingsRef.current;
+    const getClashModel = (modelId?: string) => getModelOption(modelId || "")?.id || requestModel;
+    const clashAgentAModel = getClashModel(clashSettings.agentAModel);
+    const clashAgentBModel = getClashModel(clashSettings.agentBModel);
     const debateAgents: DebateAgentRecord[] = [
       { id: "a", label: "Agent A", model: debateAgentAModel, status: "queued", content: "" },
       { id: "b", label: "Agent B", model: debateAgentBModel, status: "queued", content: "" },
       { id: "judge", label: "Judge", model: debateJudgeModel, status: "queued", content: "" },
     ];
+    const clashAgents: ClashAgentRecord[] = [
+      { id: "a", label: "Agent A", model: clashAgentAModel, status: "queued" },
+      { id: "b", label: "Agent B", model: clashAgentBModel, status: "queued" },
+    ];
     const pendingModelMessage = normalizeMessage(
       {
         role: "model",
         content: "",
-        isThinking: requestDeepResearchEnabled || requestDebateModeEnabled ? true : requestThinkingEnabled,
+        isThinking: requestDeepResearchEnabled || requestDebateModeEnabled || requestClashModeEnabled ? true : requestThinkingEnabled,
         webSearchStatus: requestForcedWebSearch && !requestDeepResearchEnabled ? "searching" : undefined,
         debate: requestDebateModeEnabled ? {
           status: "streaming",
           prompt: text,
           agents: debateAgents,
+          startedAt,
+        } : undefined,
+        clash: requestClashModeEnabled ? {
+          status: "streaming",
+          prompt: text,
+          agents: clashAgents,
+          turns: [],
+          maxRounds: CLASH_MAX_ROUNDS,
           startedAt,
         } : undefined,
       },
@@ -983,6 +1046,330 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       void syncChatMessages(chatId, pendingMessages).catch((error) => {
         appLogger.error("Pending chat save failed", { err: error, chatId });
       });
+    }
+
+    if (requestClashModeEnabled) {
+      let clashMessage = pendingModelMessage;
+      let latestTurns: ClashTurnRecord[] = [];
+      let pendingConclusion: { speaker: "a" | "b"; text: string } | null = null;
+      const clashStyle = getResponseStyle(requestStyle);
+      const clashStyleInstruction = buildClashStyleInstruction(requestStyle);
+      let lastPaintAt = 0;
+      let paintTimer: number | null = null;
+      let lastPersistAt = 0;
+
+      const publishClashMessage = (options: { forcePaint?: boolean; forcePersist?: boolean } = {}) => {
+        const now = Date.now();
+        const paint = () => {
+          lastPaintAt = Date.now();
+          setMessages([...newHistory, clashMessage]);
+        };
+
+        if (options.forcePaint || now - lastPaintAt > 110) {
+          if (paintTimer !== null) {
+            window.clearTimeout(paintTimer);
+            paintTimer = null;
+          }
+          paint();
+        } else if (paintTimer === null) {
+          paintTimer = window.setTimeout(() => {
+            paintTimer = null;
+            paint();
+          }, 110);
+        }
+
+        if (options.forcePersist || now - lastPersistAt > 1600) {
+          lastPersistAt = now;
+          const snapshot = [...newHistory, clashMessage];
+          void syncChatMessages(chatId, snapshot, { model: requestModel }).catch((error) => {
+            appLogger.warn("Clash checkpoint save failed", { err: error, chatId });
+          });
+        }
+      };
+
+      const patchClashMessage = (
+        updater: (message: Message) => Message,
+        options: { forcePaint?: boolean; forcePersist?: boolean } = {}
+      ) => {
+        clashMessage = updater(clashMessage);
+        publishClashMessage(options);
+      };
+
+      const setClashAgentStatus = (agentId: "a" | "b", status: ClashAgentStatus, error?: string) => {
+        patchClashMessage(message => ({
+          ...message,
+          isThinking: status === "streaming",
+          clash: message.clash ? {
+            ...message.clash,
+            agents: message.clash.agents.map(agent =>
+              agent.id === agentId ? { ...agent, status, error } : agent
+            ),
+          } : undefined,
+        }), { forcePaint: true, forcePersist: status !== "streaming" });
+      };
+
+      const formatClashTranscript = (turns: ClashTurnRecord[]) =>
+        turns
+          .filter(turn => turn.content.trim())
+          .map(turn => {
+            const agent = turn.speaker === "a" ? "Agent A" : "Agent B";
+            return `Round ${turn.round} - ${agent} (${turn.action}):\n${turn.content.trim()}`;
+          })
+          .join("\n\n---\n\n");
+
+      const buildClashPrompt = (speaker: "a" | "b", turnIndex: number) => {
+        const speakerLabel = speaker === "a" ? "Agent A" : "Agent B";
+        const opponentLabel = speaker === "a" ? "Agent B" : "Agent A";
+        const transcript = formatClashTranscript(latestTurns);
+        if (turnIndex === 0) {
+          return [
+            `Original user request:\n${text}`,
+            "",
+            `You are ${speakerLabel} in Clash Mode. Give the independent opening position.`,
+            `Use the selected ${clashStyle.label} style so this feels like a real Clash turn, not a generic debate block.`,
+            "Start your response with exactly `Opening:`.",
+            "Be specific, surface assumptions, and name the strongest risks. Do not claim consensus yet.",
+            "Keep it under 260 words.",
+          ].join("\n");
+        }
+        return [
+          `Original user request:\n${text}`,
+          transcript ? `Clash transcript so far:\n${transcript}` : "",
+          "",
+          `You are ${speakerLabel}. Read ${opponentLabel}'s latest completed turn and respond.`,
+          `Use the selected ${clashStyle.label} style while directly engaging ${opponentLabel}'s last point.`,
+          "Start with exactly one of: `Challenge:`, `Refine:`, or `Accept:`.",
+          "- Challenge when a material claim, assumption, or conclusion is wrong or weak.",
+          "- Refine when the opponent is partly right but needs correction, narrowing, or stronger evidence.",
+          "- Accept only after the strongest objections have been tested, the remaining disagreement is small, and ending now would genuinely help the user.",
+          "Do not accept just because the other agent sounds reasonable. A good Clash should reveal tradeoffs before it resolves them.",
+          "If you think the clash can end, include a final line beginning `Shared conclusion:`. The other agent must confirm before the app marks consensus.",
+          "Make one sharp move: attack, refine, or resolve the most important point. Keep it under 220 words and avoid repeating earlier points unless you are resolving them.",
+        ].filter(Boolean).join("\n");
+      };
+
+      const streamClashModel = async ({
+        model,
+        instruction,
+        history,
+        webSearchEnabled,
+        onTextDelta,
+        onThoughtDelta,
+      }: {
+        model: string;
+        instruction: string;
+        history: Message[];
+        webSearchEnabled: boolean;
+        onTextDelta: (delta: string) => void;
+        onThoughtDelta: (delta: string) => void;
+      }) => {
+        const provider = getModelOption(model)?.provider;
+        const webSearchMode: WebSearchMode = webSearchEnabled ? "forced" : "off";
+        const instructionBase = getSystemInstruction({
+          styleId: requestStyle,
+          provider,
+          webSearchMode,
+          deepResearchEnabled: false,
+          latestUserMessage: text,
+          recentMessages: history,
+        });
+        const signal = abortControllerRef.current!.signal;
+        const clashInstruction = `${instructionBase}\n\nClash Mode rules:\n- You are one visible debater in a two-agent argument loop.\n- This is adversarial collaboration, not a rush to consensus. Your job is to pressure-test the answer for the user.\n- You must respond to the other agent's completed text, not to an imagined hidden judge.\n- Prefer Challenge or Refine while there is any meaningful assumption, missing tradeoff, vague claim, weak evidence, or unresolved user-impact risk.\n- Use Accept only when the strongest objections have been answered and your next useful move would mostly repeat the same point.\n- Be rigorous but civil. Do not invent sources.\n- Do not claim mutual agreement unless you are using Accept.\n\n${clashStyleInstruction}\n\n${instruction}`;
+
+        if (provider === "cliproxy") {
+          await streamCliproxyResponse({
+            model,
+            instructions: clashInstruction,
+            history,
+            reasoningEffort: requestThinkingEnabled ? "medium" : "none",
+            webSearchEnabled,
+            artifactToolsEnabled: false,
+            signal,
+            onTextDelta,
+            onThoughtDelta,
+          });
+          return;
+        }
+
+        if (provider === "openrouter") {
+          const capabilities = getOpenRouterModelCapabilities(model);
+          await streamOpenRouterResponse({
+            model,
+            instructions: clashInstruction,
+            history,
+            reasoningEnabled: requestThinkingEnabled && Boolean(capabilities?.supportsReasoning),
+            webSearchEnabled: webSearchEnabled && Boolean(capabilities?.supportsTools),
+            webSearchRequired: false,
+            artifactToolsEnabled: false,
+            signal,
+            onTextDelta,
+            onThoughtDelta,
+          });
+          return;
+        }
+
+        await streamGeminiResponse({
+          model,
+          contents: toGeminiContents(history),
+          systemInstruction: clashInstruction,
+          thinkingEnabled: requestThinkingEnabled,
+          webSearchEnabled,
+          artifactToolsEnabled: false,
+          signal,
+          onTextDelta,
+          onThoughtDelta,
+          onWebSearch: () => undefined,
+          onArtifactToolCall: () => undefined,
+        });
+      };
+
+      const runClashTurn = async (speaker: "a" | "b", model: string, turnIndex: number) => {
+        const round = Math.floor(turnIndex / 2) + 1;
+        const fallbackAction: ClashTurnAction = turnIndex === 0 ? "opening" : turnIndex === 1 ? "challenge" : "refine";
+        let turn: ClashTurnRecord = {
+          id: createId("clash_turn"),
+          round,
+          speaker,
+          action: fallbackAction,
+          content: "",
+          thought: "",
+          status: "streaming",
+          createdAt: Date.now(),
+        };
+        latestTurns = [...latestTurns, turn];
+        setClashAgentStatus(speaker, "streaming");
+        patchClashMessage(message => ({
+          ...message,
+          isThinking: true,
+          clash: message.clash ? {
+            ...message.clash,
+            turns: latestTurns,
+          } : undefined,
+        }), { forcePaint: true, forcePersist: true });
+
+        const patchTurn = (patch: Partial<ClashTurnRecord>, options: { forcePaint?: boolean; forcePersist?: boolean } = {}) => {
+          turn = { ...turn, ...patch };
+          latestTurns = latestTurns.map(item => item.id === turn.id ? turn : item);
+          patchClashMessage(message => ({
+            ...message,
+            clash: message.clash ? {
+              ...message.clash,
+              turns: latestTurns,
+            } : undefined,
+          }), options);
+        };
+
+        const turnPrompt = buildClashPrompt(speaker, turnIndex);
+        const clashHistory = [
+          ...apiHistory.slice(0, apiHistory.length - 1),
+          normalizeMessage({ role: "user", content: turnPrompt }, chatId),
+        ];
+
+        await streamClashModel({
+          model,
+          instruction: `You are ${speaker === "a" ? "Agent A" : "Agent B"}.`,
+          history: clashHistory,
+          webSearchEnabled: requestWebSearchEnabled && turnIndex === 0,
+          onTextDelta: (delta) => {
+            patchTurn({ content: `${turn.content}${delta}` });
+          },
+          onThoughtDelta: (delta) => {
+            patchTurn({ thought: `${turn.thought || ""}${delta}` });
+          },
+        });
+
+        const action = parseClashTurnAction(turn.content, fallbackAction);
+        const conclusion = extractClashConclusion(turn.content);
+        patchTurn({ action, status: "done" }, { forcePaint: true, forcePersist: true });
+        setClashAgentStatus(speaker, "done");
+
+        let acceptedConclusion: string | undefined;
+        const previousTurn = latestTurns[latestTurns.length - 2];
+        if (action === "accept") {
+          if (pendingConclusion && pendingConclusion.speaker !== speaker) {
+            acceptedConclusion = conclusion || pendingConclusion.text;
+          } else if (previousTurn && previousTurn.speaker !== speaker) {
+            acceptedConclusion = conclusion || extractClashConclusion(previousTurn.content) || previousTurn.content.trim();
+          } else if (conclusion) {
+            pendingConclusion = { speaker, text: conclusion };
+          }
+        } else if (conclusion) {
+          pendingConclusion = { speaker, text: conclusion };
+        }
+
+        return acceptedConclusion;
+      };
+
+      try {
+        let acceptedConclusion: string | undefined;
+        for (let turnIndex = 0; turnIndex < CLASH_MAX_ROUNDS * CLASH_TURNS_PER_ROUND && !acceptedConclusion; turnIndex += 1) {
+          if (abortControllerRef.current?.signal.aborted) break;
+          const speaker = turnIndex % 2 === 0 ? "a" : "b";
+          const model = speaker === "a" ? clashAgentAModel : clashAgentBModel;
+          acceptedConclusion = await runClashTurn(speaker, model, turnIndex);
+        }
+
+        if (acceptedConclusion && !abortControllerRef.current?.signal.aborted) {
+          clashMessage = {
+            ...clashMessage,
+            isThinking: false,
+            clash: clashMessage.clash ? {
+              ...clashMessage.clash,
+              status: "converged",
+              conclusion: acceptedConclusion,
+              completedAt: Date.now(),
+              agents: clashMessage.clash.agents.map(agent => ({ ...agent, status: "done" as const })),
+            } : undefined,
+          };
+        } else {
+          clashMessage = {
+            ...clashMessage,
+            isThinking: false,
+            clash: clashMessage.clash ? {
+              ...clashMessage.clash,
+              status: abortControllerRef.current?.signal.aborted ? "stopped" : "capped",
+              completedAt: Date.now(),
+              agents: clashMessage.clash.agents.map(agent =>
+                agent.status === "streaming" || agent.status === "queued"
+                  ? { ...agent, status: abortControllerRef.current?.signal.aborted ? "stopped" as const : "done" as const }
+                  : agent
+              ),
+            } : undefined,
+          };
+        }
+        publishClashMessage({ forcePaint: true, forcePersist: true });
+        await persistFinalGeneration(chatId, [...newHistory, clashMessage], { model: requestModel });
+      } catch (error: any) {
+        const stopped = error?.name === "AbortError" || abortControllerRef.current?.signal.aborted;
+        const status = stopped ? "stopped" : "error";
+        const errorMessage = stopped ? undefined : getOpenRouterFailureMessage(error);
+        clashMessage = {
+          ...clashMessage,
+          isThinking: false,
+          clash: clashMessage.clash ? {
+            ...clashMessage.clash,
+            status,
+            completedAt: Date.now(),
+            turns: clashMessage.clash.turns.map(turn =>
+              turn.status === "streaming" || turn.status === "queued"
+                ? { ...turn, status }
+                : turn
+            ),
+            agents: clashMessage.clash.agents.map(agent =>
+              agent.status === "streaming" || agent.status === "queued"
+                ? { ...agent, status, error: errorMessage }
+                : agent
+            ),
+          } : undefined,
+        };
+        await persistFinalGeneration(chatId, [...newHistory, clashMessage], { model: requestModel });
+      } finally {
+        if (paintTimer !== null) window.clearTimeout(paintTimer);
+        isTypingRef.current = false;
+        setIsTyping(false);
+        abortControllerRef.current = null;
+      }
+      return;
     }
 
     if (requestDebateModeEnabled) {

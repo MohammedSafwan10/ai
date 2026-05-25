@@ -46,7 +46,7 @@ export function ChatViewport({
   onEditGeneratedImage,
   onPreviewAttachment,
 }: ChatViewportProps) {
-  const hasWideMessage = messages.some(message => message.debate);
+  const hasWideMessage = messages.some(message => message.debate || message.clash);
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -73,6 +73,7 @@ export function ChatViewport({
                   researchTimeBudgetMs={message.researchTimeBudgetMs}
                   imageGeneration={message.imageGeneration}
                   debate={message.debate}
+                  clash={message.clash}
                   artifact={message.artifact}
                   isTyping={isTyping && index === messages.length - 1}
                   messageIndex={index}

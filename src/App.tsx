@@ -15,7 +15,7 @@ import { RenameChatModal } from "./features/chat/components/RenameChatModal";
 import { SearchModal } from "./features/chat/components/SearchModal";
 import { WebDevWorkspace } from "./features/webdev/components/WebDevWorkspace";
 import { CharacterWorkspace } from "./features/characters/components/CharacterWorkspace";
-import { getModelOption } from "./lib/models";
+import { getModelOption, normalizeModelId } from "./lib/models";
 import { appLogger } from "./lib/logger";
 import { useChatStorage } from "./features/chat/hooks/useChatStorage";
 import { useLatestRef } from "./hooks/useLatestRef";
@@ -38,7 +38,7 @@ import {
   validateOpenRouterAttachments,
   type Attachment,
 } from "./lib/attachments";
-import { DEFAULT_MODEL_ID, loadUiSettings, saveUiSettings, type DebateSettings, type ImageSettings } from "./lib/settings";
+import { DEFAULT_MODEL_ID, loadUiSettings, saveUiSettings, type ClashSettings, type DebateSettings, type ImageSettings } from "./lib/settings";
 import type { ResponseStyleId } from "./lib/prompt";
 import {
   createChat,
@@ -205,8 +205,10 @@ export default function App() {
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(initialUiSettingsRef.current.isWebSearchEnabled);
   const [isDeepResearchEnabled, setIsDeepResearchEnabled] = useState(initialUiSettingsRef.current.isDeepResearchEnabled);
   const [isDebateModeEnabled, setIsDebateModeEnabled] = useState(initialUiSettingsRef.current.isDebateModeEnabled);
+  const [isClashModeEnabled, setIsClashModeEnabled] = useState(initialUiSettingsRef.current.isClashModeEnabled);
   const [composerMode, setComposerMode] = useState<"chat" | "image">(initialUiSettingsRef.current.composerMode);
   const [debateSettings, setDebateSettings] = useState<DebateSettings>(initialUiSettingsRef.current.debateSettings);
+  const [clashSettings, setClashSettings] = useState<ClashSettings>(initialUiSettingsRef.current.clashSettings);
   const [imageSettings, setImageSettings] = useState<ImageSettings>(initialUiSettingsRef.current.imageSettings);
   const [isResearchActivityOpen, setIsResearchActivityOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -235,7 +237,9 @@ export default function App() {
   const isWebSearchEnabledRef = useLatestRef(isWebSearchEnabled);
   const isDeepResearchEnabledRef = useLatestRef(isDeepResearchEnabled);
   const isDebateModeEnabledRef = useLatestRef(isDebateModeEnabled);
+  const isClashModeEnabledRef = useLatestRef(isClashModeEnabled);
   const debateSettingsRef = useLatestRef(debateSettings);
+  const clashSettingsRef = useLatestRef(clashSettings);
   const imageSettingsRef = useLatestRef(imageSettings);
 
   useEffect(() => {
@@ -248,9 +252,10 @@ export default function App() {
   }, [renameTarget]);
 
   useEffect(() => {
-    if (getModelOption(selectedModel)) return;
-    selectedModelRef.current = DEFAULT_MODEL_ID;
-    setSelectedModel(DEFAULT_MODEL_ID);
+    const normalizedModel = normalizeModelId(selectedModel) || DEFAULT_MODEL_ID;
+    if (normalizedModel === selectedModel && getModelOption(selectedModel)) return;
+    selectedModelRef.current = normalizedModel;
+    setSelectedModel(normalizedModel);
   }, [selectedModel, selectedModelRef]);
 
   useEffect(() => {
@@ -262,12 +267,14 @@ export default function App() {
       isWebSearchEnabled,
       isDeepResearchEnabled,
       isDebateModeEnabled,
+      isClashModeEnabled,
       isDarkMode,
       composerMode,
       debateSettings,
+      clashSettings,
       imageSettings,
     });
-  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDebateModeEnabled, isDarkMode, composerMode, debateSettings, imageSettings]);
+  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDebateModeEnabled, isClashModeEnabled, isDarkMode, composerMode, debateSettings, clashSettings, imageSettings]);
 
   const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste" | "screenshot") => {
     const files = Array.from(fileList);
@@ -584,6 +591,8 @@ export default function App() {
     if (nextValue) {
       isDebateModeEnabledRef.current = false;
       setIsDebateModeEnabled(false);
+      isClashModeEnabledRef.current = false;
+      setIsClashModeEnabled(false);
       isWebSearchEnabledRef.current = true;
       setIsWebSearchEnabled(true);
     } else {
@@ -599,6 +608,22 @@ export default function App() {
     if (nextValue) {
       isDeepResearchEnabledRef.current = false;
       setIsDeepResearchEnabled(false);
+      isClashModeEnabledRef.current = false;
+      setIsClashModeEnabled(false);
+      clearCurrentPendingResearchIntent();
+    }
+  };
+
+  const toggleClashModeForNextMessage = () => {
+    const nextValue = !isClashModeEnabledRef.current;
+    setComposerMode("chat");
+    isClashModeEnabledRef.current = nextValue;
+    setIsClashModeEnabled(nextValue);
+    if (nextValue) {
+      isDeepResearchEnabledRef.current = false;
+      isDebateModeEnabledRef.current = false;
+      setIsDeepResearchEnabled(false);
+      setIsDebateModeEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -609,9 +634,11 @@ export default function App() {
       isWebSearchEnabledRef.current = false;
       isDeepResearchEnabledRef.current = false;
       isDebateModeEnabledRef.current = false;
+      isClashModeEnabledRef.current = false;
       setIsWebSearchEnabled(false);
       setIsDeepResearchEnabled(false);
       setIsDebateModeEnabled(false);
+      setIsClashModeEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -1088,7 +1115,9 @@ export default function App() {
     isWebSearchEnabledRef,
     isDeepResearchEnabledRef,
     isDebateModeEnabledRef,
+    isClashModeEnabledRef,
     debateSettingsRef,
+    clashSettingsRef,
     imageSettingsRef,
     messagesRef,
     chatsRef,
@@ -1141,8 +1170,10 @@ export default function App() {
       isWebSearchEnabled={isWebSearchEnabled}
       isDeepResearchEnabled={isDeepResearchEnabled}
       isDebateModeEnabled={isDebateModeEnabled}
+      isClashModeEnabled={isClashModeEnabled}
       composerMode={composerMode}
       debateSettings={debateSettings}
+      clashSettings={clashSettings}
       imageSettings={imageSettings}
       researchEditContext={editingResearchPlanMessage?.researchPlan ? {
         title: editingResearchPlanMessage.researchPlan.title,
@@ -1161,9 +1192,11 @@ export default function App() {
       onToggleWebSearch={toggleWebSearchForNextMessage}
       onToggleDeepResearch={toggleDeepResearchForNextMessage}
       onToggleDebateMode={toggleDebateModeForNextMessage}
+      onToggleClashMode={toggleClashModeForNextMessage}
       onOpenCodePlayground={openEmptyChatPlayground}
       onSelectComposerMode={selectComposerMode}
       onDebateSettingsChange={setDebateSettings}
+      onClashSettingsChange={setClashSettings}
       onImageSettingsChange={setImageSettings}
       onSelectModel={selectModelForNextMessage}
       onSelectStyle={selectStyleForNextMessage}
