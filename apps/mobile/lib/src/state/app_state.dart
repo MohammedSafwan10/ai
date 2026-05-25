@@ -10,6 +10,10 @@ import '../features/chat/data/research_client.dart';
 import '../models/privora_models.dart';
 
 const _unset = Object();
+const _clashMaxRounds = 6;
+const _clashTurnsPerRound = 2;
+const _clashUiThrottle = Duration(milliseconds: 80);
+const _clashPersistThrottle = Duration(milliseconds: 700);
 
 class PrivoraState {
   const PrivoraState({
@@ -350,6 +354,9 @@ class AppController extends AsyncNotifier<PrivoraState> {
           isDebateModeEnabled: next
               ? false
               : current.settings.isDebateModeEnabled,
+          isClashModeEnabled: next
+              ? false
+              : current.settings.isClashModeEnabled,
         ),
       ),
     );
@@ -364,6 +371,27 @@ class AppController extends AsyncNotifier<PrivoraState> {
         settings: current.settings.copyWith(
           isDebateModeEnabled: next,
           isDeepResearchEnabled: false,
+          isClashModeEnabled: next
+              ? false
+              : current.settings.isClashModeEnabled,
+        ),
+      ),
+    );
+    _persistSettings();
+  }
+
+  void toggleClash() {
+    final current = state.requireValue;
+    final next = !current.settings.isClashModeEnabled;
+    state = AsyncData(
+      current.copyWith(
+        settings: current.settings.copyWith(
+          isClashModeEnabled: next,
+          isDebateModeEnabled: next
+              ? false
+              : current.settings.isDebateModeEnabled,
+          isDeepResearchEnabled: false,
+          composerMode: ComposerMode.chat,
         ),
       ),
     );
@@ -386,6 +414,9 @@ class AppController extends AsyncNotifier<PrivoraState> {
           isDebateModeEnabled: imageMode
               ? false
               : current.settings.isDebateModeEnabled,
+          isClashModeEnabled: imageMode
+              ? false
+              : current.settings.isClashModeEnabled,
         ),
       ),
     );
@@ -426,9 +457,28 @@ class AppController extends AsyncNotifier<PrivoraState> {
 
   void updateDebateSettings(DebateSettings settings) {
     final current = state.requireValue;
+    final normalized = DebateSettings(
+      agentAModel: normalizeOptionalModelId(settings.agentAModel),
+      agentBModel: normalizeOptionalModelId(settings.agentBModel),
+      judgeModel: normalizeOptionalModelId(settings.judgeModel),
+    );
     state = AsyncData(
       current.copyWith(
-        settings: current.settings.copyWith(debateSettings: settings),
+        settings: current.settings.copyWith(debateSettings: normalized),
+      ),
+    );
+    _persistSettings();
+  }
+
+  void updateClashSettings(ClashSettings settings) {
+    final current = state.requireValue;
+    final normalized = ClashSettings(
+      agentAModel: normalizeOptionalModelId(settings.agentAModel),
+      agentBModel: normalizeOptionalModelId(settings.agentBModel),
+    );
+    state = AsyncData(
+      current.copyWith(
+        settings: current.settings.copyWith(clashSettings: normalized),
       ),
     );
     _persistSettings();
@@ -642,6 +692,10 @@ class AppController extends AsyncNotifier<PrivoraState> {
     }
     if (current.settings.isDeepResearchEnabled) {
       await _sendResearchRequest(content.trim(), attachments);
+      return;
+    }
+    if (current.settings.isClashModeEnabled) {
+      await _sendClashMessage(content.trim(), attachments);
       return;
     }
     if (current.settings.isDebateModeEnabled &&
@@ -880,6 +934,33 @@ class AppController extends AsyncNotifier<PrivoraState> {
                       agent.copyWith(status: DebateAgentStatus.stopped)
                     else
                       agent,
+                ],
+              ),
+            )
+          else if (message.clash?.status == ClashStatus.streaming)
+            message.copyWith(
+              isThinking: false,
+              clash: message.clash!.copyWith(
+                status: ClashStatus.stopped,
+                completedAt: DateTime.now(),
+                agents: [
+                  for (final agent in message.clash!.agents)
+                    if (agent.status == ClashAgentStatus.streaming ||
+                        agent.status == ClashAgentStatus.queued)
+                      agent.copyWith(status: ClashAgentStatus.stopped)
+                    else
+                      agent,
+                ],
+                turns: [
+                  for (final turn in message.clash!.turns)
+                    if (turn.status == ClashAgentStatus.streaming ||
+                        turn.status == ClashAgentStatus.queued)
+                      turn.copyWith(
+                        status: ClashAgentStatus.stopped,
+                        completedAt: DateTime.now(),
+                      )
+                    else
+                      turn,
                 ],
               ),
             )
@@ -1755,6 +1836,516 @@ class AppController extends AsyncNotifier<PrivoraState> {
     }
   }
 
+  Future<void> _sendClashMessage(
+    String prompt,
+    List<AttachmentRecord> attachments,
+  ) async {
+    final current = state.requireValue;
+    final chat = current.currentChat;
+    if (chat == null || prompt.isEmpty) return;
+    final now = DateTime.now();
+    final selectedModel = normalizeModelId(current.settings.selectedModel);
+    final settings = current.settings.clashSettings;
+    final agentAModel = normalizeModelId(settings.agentAModel ?? selectedModel);
+    final agentBModel = normalizeModelId(settings.agentBModel ?? selectedModel);
+    final userMessage = ChatMessageRecord(
+      id: _id('msg'),
+      chatId: chat.id,
+      role: 'user',
+      content: prompt,
+      attachments: attachments,
+      createdAt: now,
+    );
+    final modelMessage = ChatMessageRecord(
+      id: _id('msg'),
+      chatId: chat.id,
+      role: 'model',
+      content: '',
+      isThinking: true,
+      createdAt: now.add(const Duration(milliseconds: 1)),
+      clash: ClashRecord(
+        status: ClashStatus.streaming,
+        prompt: prompt,
+        maxRounds: _clashMaxRounds,
+        startedAt: now,
+        agents: [
+          ClashAgentRecord(
+            id: 'a',
+            label: 'Agent A',
+            model: agentAModel,
+            status: ClashAgentStatus.queued,
+          ),
+          ClashAgentRecord(
+            id: 'b',
+            label: 'Agent B',
+            model: agentBModel,
+            status: ClashAgentStatus.queued,
+          ),
+        ],
+        turns: const [],
+      ),
+    );
+    final history = [...chat.messages, userMessage];
+    final updated = chat.copyWith(
+      title: chat.messages.isEmpty ? _titleFrom(prompt) : chat.title,
+      messages: [...history, modelMessage],
+      updatedAt: now,
+      model: selectedModel,
+    );
+    state = AsyncData(
+      current.copyWith(
+        chats: [updated, ...current.chats.where((item) => item.id != chat.id)],
+        isGenerating: true,
+      ),
+    );
+    await _repository.upsertChat(updated);
+    _stopRequested = false;
+
+    String? pendingConclusion;
+    String? pendingConclusionSpeaker;
+    try {
+      final maxTurns = _clashMaxRounds * _clashTurnsPerRound;
+      for (var turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
+        if (_stopRequested) return;
+        final speaker = turnIndex.isEven ? 'a' : 'b';
+        final model = speaker == 'a' ? agentAModel : agentBModel;
+        final round = (turnIndex ~/ _clashTurnsPerRound) + 1;
+        final fallbackAction = turnIndex == 0
+            ? ClashTurnAction.opening
+            : turnIndex == 1
+            ? ClashTurnAction.challenge
+            : ClashTurnAction.refine;
+        final clash = _currentClash(chat.id, modelMessage.id);
+        final priorTurns = clash?.turns ?? const <ClashTurnRecord>[];
+        final output = await _streamClashTurn(
+          chatId: chat.id,
+          messageId: modelMessage.id,
+          speaker: speaker,
+          model: model,
+          round: round,
+          fallbackAction: fallbackAction,
+          prompt: prompt,
+          priorTurns: priorTurns,
+          history: history,
+          settings: current.settings,
+        );
+        if (_stopRequested) return;
+        final action = _clashActionFromContent(output, fallbackAction);
+        final conclusion = _extractClashConclusion(output);
+        final completedTurn = _currentClash(
+          chat.id,
+          modelMessage.id,
+        )?.turns.lastWhere((turn) => turn.speaker == speaker);
+        if (completedTurn != null) {
+          _updateClashTurn(
+            chat.id,
+            modelMessage.id,
+            completedTurn.id,
+            (turn) => turn.copyWith(action: action),
+            persist: true,
+          );
+        }
+        if (action == ClashTurnAction.accept) {
+          final accepted = conclusion ?? pendingConclusion;
+          if (accepted != null &&
+              pendingConclusionSpeaker != null &&
+              pendingConclusionSpeaker != speaker) {
+            _completeClash(chat.id, modelMessage.id, accepted);
+            return;
+          }
+        }
+        if (conclusion != null && conclusion.isNotEmpty) {
+          pendingConclusion = conclusion;
+          pendingConclusionSpeaker = speaker;
+        }
+      }
+      if (!_stopRequested) _capClash(chat.id, modelMessage.id);
+    } catch (error) {
+      if (!_stopRequested) _failClash(chat.id, modelMessage.id, '$error');
+    } finally {
+      final active = state.value;
+      if (active != null) {
+        state = AsyncData(active.copyWith(isGenerating: false));
+        final finalChat = active.chats
+            .where((item) => item.id == chat.id)
+            .firstOrNull;
+        if (finalChat != null) await _repository.upsertChat(finalChat);
+      }
+    }
+  }
+
+  Future<String> _streamClashTurn({
+    required String chatId,
+    required String messageId,
+    required String speaker,
+    required String model,
+    required int round,
+    required ClashTurnAction fallbackAction,
+    required String prompt,
+    required List<ClashTurnRecord> priorTurns,
+    required List<ChatMessageRecord> history,
+    required UiSettings settings,
+  }) async {
+    var content = '';
+    var thought = '';
+    var lastUiFlush = DateTime.fromMillisecondsSinceEpoch(0);
+    var lastPersist = DateTime.fromMillisecondsSinceEpoch(0);
+    final turnId = _id('clash_turn');
+    final turn = ClashTurnRecord(
+      id: turnId,
+      round: round,
+      speaker: speaker,
+      action: fallbackAction,
+      status: ClashAgentStatus.streaming,
+      startedAt: DateTime.now(),
+    );
+    _updateClashRecord(
+      chatId,
+      messageId,
+      (clash) => clash.copyWith(
+        agents: [
+          for (final agent in clash.agents)
+            if (agent.id == speaker)
+              agent.copyWith(status: ClashAgentStatus.streaming)
+            else
+              agent,
+        ],
+        turns: [...clash.turns, turn],
+      ),
+      persist: true,
+    );
+
+    void flush({
+      bool persist = false,
+      ClashAgentStatus? status,
+      String? error,
+    }) {
+      final now = DateTime.now();
+      _updateClashTurn(
+        chatId,
+        messageId,
+        turnId,
+        (turn) => turn.copyWith(
+          content: content,
+          thought: thought,
+          status: status ?? turn.status,
+          completedAt:
+              status == ClashAgentStatus.done ||
+                  status == ClashAgentStatus.error
+              ? now
+              : null,
+          error: error,
+        ),
+        persist: persist,
+      );
+      if (status != null) {
+        _updateClashAgent(
+          chatId,
+          messageId,
+          speaker,
+          (agent) => agent.copyWith(status: status, error: error),
+          persist: persist,
+        );
+      }
+    }
+
+    try {
+      await for (final event in _generationClient.stream(
+        ChatGenerationRequest(
+          model: model,
+          styleId: settings.selectedStyle,
+          history: [
+            ...history,
+            ChatMessageRecord(
+              id: _id('msg'),
+              chatId: chatId,
+              role: 'user',
+              content: _clashTurnPrompt(
+                prompt: prompt,
+                speaker: speaker,
+                fallbackAction: fallbackAction,
+                priorTurns: priorTurns,
+              ),
+              createdAt: DateTime.now(),
+            ),
+          ],
+          thinkingEnabled: settings.isThinkingEnabled,
+          webSearchEnabled: settings.isWebSearchEnabled,
+          webSearchForced: settings.isWebSearchEnabled,
+          deepResearchEnabled: false,
+          instructionSuffix: _clashInstruction(
+            speaker: speaker,
+            characterInstruction: _characterInstruction(),
+          ),
+        ),
+      )) {
+        if (_stopRequested) break;
+        if (event.type == ChatStreamEventType.text) content += event.text;
+        if (event.type == ChatStreamEventType.thought) thought += event.text;
+        final now = DateTime.now();
+        final shouldFlush = now.difference(lastUiFlush) >= _clashUiThrottle;
+        final shouldPersist =
+            now.difference(lastPersist) >= _clashPersistThrottle;
+        if (shouldFlush || shouldPersist) {
+          flush(persist: shouldPersist);
+          lastUiFlush = now;
+          if (shouldPersist) lastPersist = now;
+        }
+      }
+      if (!_stopRequested) {
+        flush(persist: true, status: ClashAgentStatus.done);
+      }
+      return content;
+    } catch (error) {
+      flush(persist: true, status: ClashAgentStatus.error, error: '$error');
+      rethrow;
+    }
+  }
+
+  String _clashInstruction({
+    required String speaker,
+    required String? characterInstruction,
+  }) {
+    final label = speaker == 'a' ? 'Agent A' : 'Agent B';
+    final opponent = speaker == 'a' ? 'Agent B' : 'Agent A';
+    return [
+      ?characterInstruction,
+      '# Clash Mode',
+      'You are $label in a visible two-agent argument. $opponent will read your completed turn before replying.',
+      'Your job is adversarial collaboration: test assumptions, correct mistakes, refine weak claims, and only accept when the strongest objections have been answered.',
+      'There is no hidden judge. Do not produce a verdict unless you are accepting a genuinely shared conclusion.',
+      'Every turn must begin with exactly one label: Opening:, Challenge:, Refine:, or Accept:.',
+      'Use Challenge when the opponent is wrong, incomplete, overconfident, or missing a tradeoff.',
+      'Use Refine when the opponent is partly right but the answer needs sharper constraints, exceptions, or synthesis.',
+      'Use Accept only when you can confirm the opponent has resolved the important objections. If accepting, include a line beginning with "Shared conclusion:".',
+      'Keep the visible turn focused: one strong move, under 220 words after the opening.',
+    ].join('\n');
+  }
+
+  String _clashTurnPrompt({
+    required String prompt,
+    required String speaker,
+    required ClashTurnAction fallbackAction,
+    required List<ClashTurnRecord> priorTurns,
+  }) {
+    final label = speaker == 'a' ? 'Agent A' : 'Agent B';
+    final transcript = _formatClashTranscript(priorTurns);
+    if (priorTurns.isEmpty) {
+      return [
+        'Original user request:\n$prompt',
+        'You are $label. Open the clash with your best answer and the assumptions behind it.',
+        'Start with "Opening:". Keep it under 260 words. Do not claim final agreement.',
+      ].join('\n\n');
+    }
+    final expected = switch (fallbackAction) {
+      ClashTurnAction.challenge => 'Challenge',
+      ClashTurnAction.refine => 'Refine',
+      ClashTurnAction.accept => 'Accept',
+      ClashTurnAction.opening => 'Opening',
+    };
+    return [
+      'Original user request:\n$prompt',
+      if (transcript.isNotEmpty) 'Completed clash transcript:\n$transcript',
+      'You are $label. Reply to the opponent\'s completed turn.',
+      'Choose the honest move: Challenge, Refine, or Accept. The expected move is $expected, but correctness matters more than the expected label.',
+      'If accepting, include "Shared conclusion:" and make it specific enough for the user to act on.',
+    ].join('\n\n');
+  }
+
+  String _formatClashTranscript(List<ClashTurnRecord> turns) {
+    final recent = turns.length > 8 ? turns.sublist(turns.length - 8) : turns;
+    return [
+      for (final turn in recent)
+        '${turn.speaker == 'a' ? 'Agent A' : 'Agent B'} round ${turn.round} ${turn.action.name}:\n${_compactClashText(turn.content)}',
+    ].join('\n\n');
+  }
+
+  String _compactClashText(String content) => content.length > 1800
+      ? '${content.substring(0, 1800)}\n[Truncated for clash context.]'
+      : content;
+
+  ClashTurnAction _clashActionFromContent(
+    String content,
+    ClashTurnAction fallback,
+  ) {
+    final normalized = content.trimLeft().toLowerCase();
+    if (normalized.startsWith('opening:')) return ClashTurnAction.opening;
+    if (normalized.startsWith('challenge:')) return ClashTurnAction.challenge;
+    if (normalized.startsWith('refine:')) return ClashTurnAction.refine;
+    if (normalized.startsWith('accept:')) return ClashTurnAction.accept;
+    return fallback;
+  }
+
+  String? _extractClashConclusion(String content) {
+    final match = RegExp(
+      r'^shared conclusion\s*:\s*([\s\S]+)$',
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(content);
+    final conclusion = match?.group(1)?.trim();
+    return conclusion == null || conclusion.isEmpty ? null : conclusion;
+  }
+
+  ClashRecord? _currentClash(String chatId, String messageId) {
+    final chat = state.value?.chats
+        .where((item) => item.id == chatId)
+        .firstOrNull;
+    return chat?.messages
+        .where((message) => message.id == messageId)
+        .firstOrNull
+        ?.clash;
+  }
+
+  void _updateClashRecord(
+    String chatId,
+    String messageId,
+    ClashRecord Function(ClashRecord clash) update, {
+    bool persist = false,
+  }) {
+    final chat = state.value?.chats
+        .where((item) => item.id == chatId)
+        .firstOrNull;
+    final message = chat?.messages
+        .where((item) => item.id == messageId)
+        .firstOrNull;
+    final clash = message?.clash;
+    if (chat == null || message == null || clash == null) return;
+    _replaceChat(
+      chat.copyWith(
+        messages: [
+          for (final item in chat.messages)
+            if (item.id == messageId)
+              item.copyWith(clash: update(clash))
+            else
+              item,
+        ],
+        updatedAt: DateTime.now(),
+      ),
+      persist: persist,
+    );
+  }
+
+  void _updateClashAgent(
+    String chatId,
+    String messageId,
+    String agentId,
+    ClashAgentRecord Function(ClashAgentRecord agent) update, {
+    bool persist = false,
+  }) {
+    _updateClashRecord(
+      chatId,
+      messageId,
+      (clash) => clash.copyWith(
+        agents: [
+          for (final agent in clash.agents)
+            if (agent.id == agentId) update(agent) else agent,
+        ],
+      ),
+      persist: persist,
+    );
+  }
+
+  void _updateClashTurn(
+    String chatId,
+    String messageId,
+    String turnId,
+    ClashTurnRecord Function(ClashTurnRecord turn) update, {
+    bool persist = false,
+  }) {
+    _updateClashRecord(
+      chatId,
+      messageId,
+      (clash) => clash.copyWith(
+        turns: [
+          for (final turn in clash.turns)
+            if (turn.id == turnId) update(turn) else turn,
+        ],
+      ),
+      persist: persist,
+    );
+  }
+
+  void _completeClash(String chatId, String messageId, String conclusion) {
+    _updateClashRecord(
+      chatId,
+      messageId,
+      (clash) => clash.copyWith(
+        status: ClashStatus.converged,
+        conclusion: conclusion,
+        completedAt: DateTime.now(),
+      ),
+      persist: true,
+    );
+    _finishClashThinking(chatId, messageId);
+  }
+
+  void _capClash(String chatId, String messageId) {
+    _updateClashRecord(
+      chatId,
+      messageId,
+      (clash) => clash.copyWith(
+        status: ClashStatus.capped,
+        completedAt: DateTime.now(),
+      ),
+      persist: true,
+    );
+    _finishClashThinking(chatId, messageId);
+  }
+
+  void _failClash(String chatId, String messageId, String error) {
+    _updateClashRecord(
+      chatId,
+      messageId,
+      (clash) => clash.copyWith(
+        status: ClashStatus.error,
+        error: error,
+        completedAt: DateTime.now(),
+        agents: [
+          for (final agent in clash.agents)
+            if (agent.status == ClashAgentStatus.streaming ||
+                agent.status == ClashAgentStatus.queued)
+              agent.copyWith(status: ClashAgentStatus.error, error: error)
+            else
+              agent,
+        ],
+        turns: [
+          for (final turn in clash.turns)
+            if (turn.status == ClashAgentStatus.streaming ||
+                turn.status == ClashAgentStatus.queued)
+              turn.copyWith(
+                status: ClashAgentStatus.error,
+                completedAt: DateTime.now(),
+                error: error,
+              )
+            else
+              turn,
+        ],
+      ),
+      persist: true,
+    );
+    _finishClashThinking(chatId, messageId);
+  }
+
+  void _finishClashThinking(String chatId, String messageId) {
+    final chat = state.value?.chats
+        .where((item) => item.id == chatId)
+        .firstOrNull;
+    if (chat == null) return;
+    _replaceChat(
+      chat.copyWith(
+        messages: [
+          for (final message in chat.messages)
+            if (message.id == messageId)
+              message.copyWith(isThinking: false)
+            else
+              message,
+        ],
+        updatedAt: DateTime.now(),
+      ),
+      persist: true,
+    );
+  }
+
   Future<void> _sendDebateMessage(
     String prompt,
     List<AttachmentRecord> attachments,
@@ -1763,11 +2354,11 @@ class AppController extends AsyncNotifier<PrivoraState> {
     final chat = current.currentChat;
     if (chat == null || prompt.isEmpty) return;
     final now = DateTime.now();
-    final selectedModel = current.settings.selectedModel;
+    final selectedModel = normalizeModelId(current.settings.selectedModel);
     final settings = current.settings.debateSettings;
-    final agentAModel = settings.agentAModel ?? selectedModel;
-    final agentBModel = settings.agentBModel ?? selectedModel;
-    final judgeModel = settings.judgeModel ?? selectedModel;
+    final agentAModel = normalizeModelId(settings.agentAModel ?? selectedModel);
+    final agentBModel = normalizeModelId(settings.agentBModel ?? selectedModel);
+    final judgeModel = normalizeModelId(settings.judgeModel ?? selectedModel);
     final userMessage = ChatMessageRecord(
       id: _id('msg'),
       chatId: chat.id,
@@ -2200,7 +2791,7 @@ class AppController extends AsyncNotifier<PrivoraState> {
     _repository.upsertChat(chat);
   }
 
-  void _replaceChat(ChatRecord chat) {
+  void _replaceChat(ChatRecord chat, {bool persist = true}) {
     final current = state.value;
     if (current == null) return;
     state = AsyncData(
@@ -2208,7 +2799,7 @@ class AppController extends AsyncNotifier<PrivoraState> {
         chats: [chat, ...current.chats.where((item) => item.id != chat.id)],
       ),
     );
-    _persistChat(chat);
+    if (persist) _persistChat(chat);
   }
 
   void _upsertArtifact(ArtifactRecord artifact) {

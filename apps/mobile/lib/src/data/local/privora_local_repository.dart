@@ -189,18 +189,23 @@ class PrivoraLocalRepository {
 
   UiSettings _settingsFromRow(UiSettingsRow row) => UiSettings(
     workspaceMode: workspaceModeFromStorage(row.workspaceMode),
-    selectedModel: row.selectedModel,
+    selectedModel: normalizeModelId(row.selectedModel),
     selectedStyle: row.selectedStyle,
     isThinkingEnabled: row.isThinkingEnabled,
     isWebSearchEnabled: row.isWebSearchEnabled,
     isDeepResearchEnabled: row.isDeepResearchEnabled,
     isDebateModeEnabled: row.isDebateModeEnabled,
+    isClashModeEnabled: row.isClashModeEnabled,
     isDarkMode: row.isDarkMode,
     composerMode: composerModeFromStorage(row.composerMode),
     debateSettings: DebateSettings(
-      agentAModel: row.debateAgentAModel,
-      agentBModel: row.debateAgentBModel,
-      judgeModel: row.debateJudgeModel,
+      agentAModel: normalizeOptionalModelId(row.debateAgentAModel),
+      agentBModel: normalizeOptionalModelId(row.debateAgentBModel),
+      judgeModel: normalizeOptionalModelId(row.debateJudgeModel),
+    ),
+    clashSettings: ClashSettings(
+      agentAModel: normalizeOptionalModelId(row.clashAgentAModel),
+      agentBModel: normalizeOptionalModelId(row.clashAgentBModel),
     ),
     imageSettings: ImageSettings(
       model: row.imageModel,
@@ -216,12 +221,13 @@ class PrivoraLocalRepository {
       UiSettingsRowsCompanion(
         id: const Value(settingsId),
         workspaceMode: Value(settings.workspaceMode.storageValue),
-        selectedModel: Value(settings.selectedModel),
+        selectedModel: Value(normalizeModelId(settings.selectedModel)),
         selectedStyle: Value(settings.selectedStyle),
         isThinkingEnabled: Value(settings.isThinkingEnabled),
         isWebSearchEnabled: Value(settings.isWebSearchEnabled),
         isDeepResearchEnabled: Value(settings.isDeepResearchEnabled),
         isDebateModeEnabled: Value(settings.isDebateModeEnabled),
+        isClashModeEnabled: Value(settings.isClashModeEnabled),
         isDarkMode: Value(settings.isDarkMode),
         composerMode: Value(settings.composerMode.storageValue),
         imageModel: Value(settings.imageSettings.model),
@@ -230,9 +236,21 @@ class PrivoraLocalRepository {
         imageCount: Value(settings.imageSettings.count),
         imagePartialImages: Value(settings.imageSettings.partialImages),
         imageOutputFormat: Value(settings.imageSettings.outputFormat),
-        debateAgentAModel: Value(settings.debateSettings.agentAModel),
-        debateAgentBModel: Value(settings.debateSettings.agentBModel),
-        debateJudgeModel: Value(settings.debateSettings.judgeModel),
+        debateAgentAModel: Value(
+          normalizeOptionalModelId(settings.debateSettings.agentAModel),
+        ),
+        debateAgentBModel: Value(
+          normalizeOptionalModelId(settings.debateSettings.agentBModel),
+        ),
+        debateJudgeModel: Value(
+          normalizeOptionalModelId(settings.debateSettings.judgeModel),
+        ),
+        clashAgentAModel: Value(
+          normalizeOptionalModelId(settings.clashSettings.agentAModel),
+        ),
+        clashAgentBModel: Value(
+          normalizeOptionalModelId(settings.clashSettings.agentBModel),
+        ),
       );
 
   ChatRecord _chatFromRow(ChatRow row, List<ChatMessageRecord> messages) =>
@@ -243,7 +261,7 @@ class PrivoraLocalRepository {
         isStarred: row.isStarred,
         createdAt: _date(row.createdAt),
         updatedAt: _date(row.updatedAt),
-        model: row.model,
+        model: normalizeOptionalModelId(row.model),
         pendingResearchIntent: row.pendingResearchIntentJson == null
             ? null
             : _decodePendingResearchIntent(row.pendingResearchIntentJson!),
@@ -255,7 +273,7 @@ class PrivoraLocalRepository {
     isStarred: Value(chat.isStarred),
     createdAt: Value(_millis(chat.createdAt)),
     updatedAt: Value(_millis(chat.updatedAt)),
-    model: Value(chat.model),
+    model: Value(normalizeOptionalModelId(chat.model)),
     pendingResearchIntentJson: Value(
       chat.pendingResearchIntent == null
           ? null
@@ -297,6 +315,7 @@ class PrivoraLocalRepository {
           ? null
           : _decodeImageGeneration(row.imageGenerationJson!),
       debate: row.debateJson == null ? null : _decodeDebate(row.debateJson!),
+      clash: row.clashJson == null ? null : _decodeClash(row.clashJson!),
       createdAt: _date(row.createdAt),
     );
   }
@@ -329,6 +348,11 @@ class PrivoraLocalRepository {
           message.debate == null
               ? null
               : jsonEncode(_debateToJson(message.debate!)),
+        ),
+        clashJson: Value(
+          message.clash == null
+              ? null
+              : jsonEncode(_clashToJson(message.clash!)),
         ),
         researchJson: Value(
           message.researchStatus == null &&
@@ -688,7 +712,7 @@ class PrivoraLocalRepository {
         {
           'id': agent.id,
           'label': agent.label,
-          'model': agent.model,
+          'model': normalizeModelId(agent.model),
           'status': agent.status.name,
           'content': agent.content,
           'thought': agent.thought,
@@ -710,13 +734,100 @@ class PrivoraLocalRepository {
             DebateAgentRecord(
               id: '${agent['id']}',
               label: '${agent['label']}',
-              model: '${agent['model']}',
+              model: normalizeModelId('${agent['model']}'),
               status: DebateAgentStatus.values.byName(
                 '${agent['status'] ?? 'error'}',
               ),
               content: '${agent['content'] ?? ''}',
               thought: agent['thought'] as String?,
               error: agent['error'] as String?,
+            ),
+      ],
+      startedAt: DateTime.fromMillisecondsSinceEpoch(
+        (map['startedAt'] as num?)?.toInt() ?? 0,
+      ),
+      completedAt: map['completedAt'] == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(
+              (map['completedAt'] as num).toInt(),
+            ),
+    );
+  }
+
+  Map<String, Object?> _clashToJson(ClashRecord record) => {
+    'status': record.status.name,
+    'prompt': record.prompt,
+    'maxRounds': record.maxRounds,
+    'conclusion': record.conclusion,
+    'error': record.error,
+    'agents': [
+      for (final agent in record.agents)
+        {
+          'id': agent.id,
+          'label': agent.label,
+          'model': normalizeModelId(agent.model),
+          'status': agent.status.name,
+          'error': agent.error,
+        },
+    ],
+    'turns': [
+      for (final turn in record.turns)
+        {
+          'id': turn.id,
+          'round': turn.round,
+          'speaker': turn.speaker,
+          'action': turn.action.name,
+          'status': turn.status.name,
+          'content': turn.content,
+          'thought': turn.thought,
+          'startedAt': turn.startedAt.millisecondsSinceEpoch,
+          'completedAt': turn.completedAt?.millisecondsSinceEpoch,
+          'error': turn.error,
+        },
+    ],
+    'startedAt': record.startedAt.millisecondsSinceEpoch,
+    'completedAt': record.completedAt?.millisecondsSinceEpoch,
+  };
+
+  ClashRecord _decodeClash(String source) {
+    final map = jsonDecode(source) as Map<String, dynamic>;
+    return ClashRecord(
+      status: clashStatusFromStorage(map['status'] as String?),
+      prompt: '${map['prompt'] ?? ''}',
+      maxRounds: (map['maxRounds'] as num?)?.toInt() ?? 6,
+      conclusion: map['conclusion'] as String?,
+      error: map['error'] as String?,
+      agents: [
+        for (final agent in map['agents'] as List? ?? const [])
+          if (agent is Map<String, dynamic>)
+            ClashAgentRecord(
+              id: '${agent['id']}',
+              label: '${agent['label']}',
+              model: normalizeModelId('${agent['model']}'),
+              status: clashAgentStatusFromStorage(agent['status'] as String?),
+              error: agent['error'] as String?,
+            ),
+      ],
+      turns: [
+        for (final turn in map['turns'] as List? ?? const [])
+          if (turn is Map<String, dynamic>)
+            ClashTurnRecord(
+              id: '${turn['id']}',
+              round: (turn['round'] as num?)?.toInt() ?? 1,
+              speaker: '${turn['speaker'] ?? 'a'}',
+              action: clashTurnActionFromStorage(turn['action'] as String?),
+              status: clashAgentStatusFromStorage(turn['status'] as String?),
+              content: '${turn['content'] ?? ''}',
+              thought: turn['thought'] as String?,
+              startedAt: DateTime.fromMillisecondsSinceEpoch(
+                (turn['startedAt'] as num?)?.toInt() ?? 0,
+              ),
+              completedAt: turn['completedAt'] == null
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(
+                      (turn['completedAt'] as num).toInt(),
+                    ),
+              error: turn['error'] as String?,
             ),
       ],
       startedAt: DateTime.fromMillisecondsSinceEpoch(

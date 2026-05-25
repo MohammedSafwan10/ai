@@ -53,6 +53,12 @@ enum ImageGenerationItemStatus {
 
 enum DebateAgentStatus { queued, streaming, done, error, stopped }
 
+enum ClashStatus { streaming, converged, capped, stopped, error }
+
+enum ClashAgentStatus { queued, streaming, done, error, stopped }
+
+enum ClashTurnAction { opening, challenge, refine, accept }
+
 enum WebDevProjectStatus { idle, generating, installing, running, error }
 
 enum WebDevFileStatus { ready, streaming, created, updated, deleted, error }
@@ -180,6 +186,8 @@ class ImageModelOption {
   final bool supportsPartialImages;
 }
 
+const gemini35FlashModelId = 'gemini-3.5-flash';
+const _legacyModelAliases = {'gemini-3-flash-preview': gemini35FlashModelId};
 const defaultModelId = 'gemini-3.1-flash-lite-preview';
 const modelProviderOrder = [
   ModelProviderGroup(
@@ -206,8 +214,8 @@ const modelOptions = [
     description: 'Fast Gemini model through Google GenAI.',
   ),
   ModelOption(
-    id: 'gemini-3-flash-preview',
-    label: 'Gemini 3 Flash',
+    id: gemini35FlashModelId,
+    label: 'Gemini 3.5 Flash',
     provider: ProviderId.gemini,
     description: 'Balanced Gemini model with native Gemini tools.',
   ),
@@ -249,8 +257,20 @@ const modelOptions = [
 List<ModelOption> modelsForProvider(ProviderId provider) =>
     modelOptions.where((model) => model.provider == provider).toList();
 
+String normalizeModelId(String? modelId) {
+  final normalized = _legacyModelAliases[modelId] ?? modelId;
+  if (normalized != null &&
+      modelOptions.any((model) => model.id == normalized)) {
+    return normalized;
+  }
+  return defaultModelId;
+}
+
+String? normalizeOptionalModelId(String? modelId) =>
+    modelId == null ? null : normalizeModelId(modelId);
+
 ModelOption modelOptionFor(String modelId) => modelOptions.firstWhere(
-  (model) => model.id == modelId,
+  (model) => model.id == normalizeModelId(modelId),
   orElse: () => modelOptions.first,
 );
 
@@ -325,9 +345,11 @@ class UiSettings {
     this.isWebSearchEnabled = false,
     this.isDeepResearchEnabled = false,
     this.isDebateModeEnabled = false,
+    this.isClashModeEnabled = false,
     this.isDarkMode = false,
     this.composerMode = ComposerMode.chat,
     this.debateSettings = const DebateSettings(),
+    this.clashSettings = const ClashSettings(),
     this.imageSettings = const ImageSettings(),
   });
 
@@ -338,9 +360,11 @@ class UiSettings {
   final bool isWebSearchEnabled;
   final bool isDeepResearchEnabled;
   final bool isDebateModeEnabled;
+  final bool isClashModeEnabled;
   final bool isDarkMode;
   final ComposerMode composerMode;
   final DebateSettings debateSettings;
+  final ClashSettings clashSettings;
   final ImageSettings imageSettings;
 
   UiSettings copyWith({
@@ -351,21 +375,25 @@ class UiSettings {
     bool? isWebSearchEnabled,
     bool? isDeepResearchEnabled,
     bool? isDebateModeEnabled,
+    bool? isClashModeEnabled,
     bool? isDarkMode,
     ComposerMode? composerMode,
     DebateSettings? debateSettings,
+    ClashSettings? clashSettings,
     ImageSettings? imageSettings,
   }) => UiSettings(
     workspaceMode: workspaceMode ?? this.workspaceMode,
-    selectedModel: selectedModel ?? this.selectedModel,
+    selectedModel: normalizeModelId(selectedModel ?? this.selectedModel),
     selectedStyle: selectedStyle ?? this.selectedStyle,
     isThinkingEnabled: isThinkingEnabled ?? this.isThinkingEnabled,
     isWebSearchEnabled: isWebSearchEnabled ?? this.isWebSearchEnabled,
     isDeepResearchEnabled: isDeepResearchEnabled ?? this.isDeepResearchEnabled,
     isDebateModeEnabled: isDebateModeEnabled ?? this.isDebateModeEnabled,
+    isClashModeEnabled: isClashModeEnabled ?? this.isClashModeEnabled,
     isDarkMode: isDarkMode ?? this.isDarkMode,
     composerMode: composerMode ?? this.composerMode,
     debateSettings: debateSettings ?? this.debateSettings,
+    clashSettings: clashSettings ?? this.clashSettings,
     imageSettings: imageSettings ?? this.imageSettings,
   );
 }
@@ -384,15 +412,36 @@ class DebateSettings {
   }) => DebateSettings(
     agentAModel: agentAModel == _notSet
         ? this.agentAModel
-        : agentAModel as String?,
+        : normalizeOptionalModelId(agentAModel as String?),
     agentBModel: agentBModel == _notSet
         ? this.agentBModel
-        : agentBModel as String?,
-    judgeModel: judgeModel == _notSet ? this.judgeModel : judgeModel as String?,
+        : normalizeOptionalModelId(agentBModel as String?),
+    judgeModel: judgeModel == _notSet
+        ? this.judgeModel
+        : normalizeOptionalModelId(judgeModel as String?),
   );
 }
 
 const _notSet = Object();
+
+class ClashSettings {
+  const ClashSettings({this.agentAModel, this.agentBModel});
+
+  final String? agentAModel;
+  final String? agentBModel;
+
+  ClashSettings copyWith({
+    Object? agentAModel = _notSet,
+    Object? agentBModel = _notSet,
+  }) => ClashSettings(
+    agentAModel: agentAModel == _notSet
+        ? this.agentAModel
+        : normalizeOptionalModelId(agentAModel as String?),
+    agentBModel: agentBModel == _notSet
+        ? this.agentBModel
+        : normalizeOptionalModelId(agentBModel as String?),
+  );
+}
 
 class ImageSettings {
   const ImageSettings({
@@ -583,6 +632,142 @@ class DebateRecord {
   );
 }
 
+ClashStatus clashStatusFromStorage(String? value) {
+  for (final status in ClashStatus.values) {
+    if (status.name == value) return status;
+  }
+  return ClashStatus.error;
+}
+
+ClashAgentStatus clashAgentStatusFromStorage(String? value) {
+  for (final status in ClashAgentStatus.values) {
+    if (status.name == value) return status;
+  }
+  return ClashAgentStatus.error;
+}
+
+ClashTurnAction clashTurnActionFromStorage(String? value) {
+  for (final action in ClashTurnAction.values) {
+    if (action.name == value) return action;
+  }
+  return ClashTurnAction.refine;
+}
+
+class ClashAgentRecord {
+  const ClashAgentRecord({
+    required this.id,
+    required this.label,
+    required this.model,
+    required this.status,
+    this.error,
+  });
+
+  final String id;
+  final String label;
+  final String model;
+  final ClashAgentStatus status;
+  final String? error;
+
+  ClashAgentRecord copyWith({ClashAgentStatus? status, String? error}) =>
+      ClashAgentRecord(
+        id: id,
+        label: label,
+        model: normalizeModelId(model),
+        status: status ?? this.status,
+        error: error ?? this.error,
+      );
+}
+
+class ClashTurnRecord {
+  const ClashTurnRecord({
+    required this.id,
+    required this.round,
+    required this.speaker,
+    required this.action,
+    required this.status,
+    required this.startedAt,
+    this.content = '',
+    this.thought,
+    this.completedAt,
+    this.error,
+  });
+
+  final String id;
+  final int round;
+  final String speaker;
+  final ClashTurnAction action;
+  final ClashAgentStatus status;
+  final String content;
+  final String? thought;
+  final DateTime startedAt;
+  final DateTime? completedAt;
+  final String? error;
+
+  ClashTurnRecord copyWith({
+    ClashTurnAction? action,
+    ClashAgentStatus? status,
+    String? content,
+    String? thought,
+    DateTime? completedAt,
+    String? error,
+  }) => ClashTurnRecord(
+    id: id,
+    round: round,
+    speaker: speaker,
+    action: action ?? this.action,
+    status: status ?? this.status,
+    content: content ?? this.content,
+    thought: thought ?? this.thought,
+    startedAt: startedAt,
+    completedAt: completedAt ?? this.completedAt,
+    error: error ?? this.error,
+  );
+}
+
+class ClashRecord {
+  const ClashRecord({
+    required this.status,
+    required this.prompt,
+    required this.agents,
+    required this.turns,
+    required this.startedAt,
+    this.maxRounds = 6,
+    this.conclusion,
+    this.completedAt,
+    this.error,
+  });
+
+  final ClashStatus status;
+  final String prompt;
+  final List<ClashAgentRecord> agents;
+  final List<ClashTurnRecord> turns;
+  final int maxRounds;
+  final String? conclusion;
+  final DateTime startedAt;
+  final DateTime? completedAt;
+  final String? error;
+
+  ClashRecord copyWith({
+    ClashStatus? status,
+    List<ClashAgentRecord>? agents,
+    List<ClashTurnRecord>? turns,
+    int? maxRounds,
+    String? conclusion,
+    DateTime? completedAt,
+    String? error,
+  }) => ClashRecord(
+    status: status ?? this.status,
+    prompt: prompt,
+    agents: agents ?? this.agents,
+    turns: turns ?? this.turns,
+    maxRounds: maxRounds ?? this.maxRounds,
+    conclusion: conclusion ?? this.conclusion,
+    startedAt: startedAt,
+    completedAt: completedAt ?? this.completedAt,
+    error: error ?? this.error,
+  );
+}
+
 class ResearchSourceRecord {
   const ResearchSourceRecord({required this.url, this.title, this.provider});
 
@@ -702,6 +887,7 @@ class ChatMessageRecord {
     this.artifact,
     this.imageGeneration,
     this.debate,
+    this.clash,
   });
 
   final String id;
@@ -726,6 +912,7 @@ class ChatMessageRecord {
   final ArtifactReferenceRecord? artifact;
   final ImageGenerationRecord? imageGeneration;
   final DebateRecord? debate;
+  final ClashRecord? clash;
 
   ChatMessageRecord copyWith({
     String? content,
@@ -746,6 +933,7 @@ class ChatMessageRecord {
     ArtifactReferenceRecord? artifact,
     ImageGenerationRecord? imageGeneration,
     DebateRecord? debate,
+    ClashRecord? clash,
   }) => ChatMessageRecord(
     id: id,
     chatId: chatId,
@@ -770,6 +958,7 @@ class ChatMessageRecord {
     artifact: artifact ?? this.artifact,
     imageGeneration: imageGeneration ?? this.imageGeneration,
     debate: debate ?? this.debate,
+    clash: clash ?? this.clash,
   );
 }
 

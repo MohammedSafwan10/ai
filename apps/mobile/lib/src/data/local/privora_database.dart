@@ -18,6 +18,8 @@ class UiSettingsRows extends Table {
       boolean().withDefault(const Constant(false))();
   BoolColumn get isDebateModeEnabled =>
       boolean().withDefault(const Constant(false))();
+  BoolColumn get isClashModeEnabled =>
+      boolean().withDefault(const Constant(false))();
   BoolColumn get isDarkMode => boolean().withDefault(const Constant(false))();
   TextColumn get composerMode => text().withDefault(const Constant('chat'))();
   TextColumn get imageModel => text()();
@@ -32,6 +34,8 @@ class UiSettingsRows extends Table {
   TextColumn get debateAgentAModel => text().nullable()();
   TextColumn get debateAgentBModel => text().nullable()();
   TextColumn get debateJudgeModel => text().nullable()();
+  TextColumn get clashAgentAModel => text().nullable()();
+  TextColumn get clashAgentBModel => text().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {id};
@@ -66,6 +70,7 @@ class ChatMessageRows extends Table {
   TextColumn get artifactJson => text().nullable()();
   TextColumn get imageGenerationJson => text().nullable()();
   TextColumn get debateJson => text().nullable()();
+  TextColumn get clashJson => text().nullable()();
   TextColumn get researchJson => text().nullable()();
   IntColumn get createdAt => integer()();
 
@@ -169,7 +174,7 @@ class PrivoraDatabase extends _$PrivoraDatabase {
     : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -190,6 +195,12 @@ class PrivoraDatabase extends _$PrivoraDatabase {
       }
       if (from < 5) {
         await m.createTable(artifactRows);
+      }
+      if (from < 6) {
+        await m.addColumn(uiSettingsRows, uiSettingsRows.isClashModeEnabled);
+        await m.addColumn(uiSettingsRows, uiSettingsRows.clashAgentAModel);
+        await m.addColumn(uiSettingsRows, uiSettingsRows.clashAgentBModel);
+        await m.addColumn(chatMessageRows, chatMessageRows.clashJson);
       }
     },
     beforeOpen: (details) async {

@@ -111,6 +111,20 @@ class $UiSettingsRowsTable extends UiSettingsRows
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _isClashModeEnabledMeta =
+      const VerificationMeta('isClashModeEnabled');
+  @override
+  late final GeneratedColumn<bool> isClashModeEnabled = GeneratedColumn<bool>(
+    'is_clash_mode_enabled',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_clash_mode_enabled" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _isDarkModeMeta = const VerificationMeta(
     'isDarkMode',
   );
@@ -244,6 +258,28 @@ class $UiSettingsRowsTable extends UiSettingsRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _clashAgentAModelMeta = const VerificationMeta(
+    'clashAgentAModel',
+  );
+  @override
+  late final GeneratedColumn<String> clashAgentAModel = GeneratedColumn<String>(
+    'clash_agent_a_model',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _clashAgentBModelMeta = const VerificationMeta(
+    'clashAgentBModel',
+  );
+  @override
+  late final GeneratedColumn<String> clashAgentBModel = GeneratedColumn<String>(
+    'clash_agent_b_model',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -254,6 +290,7 @@ class $UiSettingsRowsTable extends UiSettingsRows
     isWebSearchEnabled,
     isDeepResearchEnabled,
     isDebateModeEnabled,
+    isClashModeEnabled,
     isDarkMode,
     composerMode,
     imageModel,
@@ -265,6 +302,8 @@ class $UiSettingsRowsTable extends UiSettingsRows
     debateAgentAModel,
     debateAgentBModel,
     debateJudgeModel,
+    clashAgentAModel,
+    clashAgentBModel,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -345,6 +384,15 @@ class $UiSettingsRowsTable extends UiSettingsRows
         isDebateModeEnabled.isAcceptableOrUnknown(
           data['is_debate_mode_enabled']!,
           _isDebateModeEnabledMeta,
+        ),
+      );
+    }
+    if (data.containsKey('is_clash_mode_enabled')) {
+      context.handle(
+        _isClashModeEnabledMeta,
+        isClashModeEnabled.isAcceptableOrUnknown(
+          data['is_clash_mode_enabled']!,
+          _isClashModeEnabledMeta,
         ),
       );
     }
@@ -443,6 +491,24 @@ class $UiSettingsRowsTable extends UiSettingsRows
         ),
       );
     }
+    if (data.containsKey('clash_agent_a_model')) {
+      context.handle(
+        _clashAgentAModelMeta,
+        clashAgentAModel.isAcceptableOrUnknown(
+          data['clash_agent_a_model']!,
+          _clashAgentAModelMeta,
+        ),
+      );
+    }
+    if (data.containsKey('clash_agent_b_model')) {
+      context.handle(
+        _clashAgentBModelMeta,
+        clashAgentBModel.isAcceptableOrUnknown(
+          data['clash_agent_b_model']!,
+          _clashAgentBModelMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -483,6 +549,10 @@ class $UiSettingsRowsTable extends UiSettingsRows
       isDebateModeEnabled: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_debate_mode_enabled'],
+      )!,
+      isClashModeEnabled: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_clash_mode_enabled'],
       )!,
       isDarkMode: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
@@ -528,6 +598,14 @@ class $UiSettingsRowsTable extends UiSettingsRows
         DriftSqlType.string,
         data['${effectivePrefix}debate_judge_model'],
       ),
+      clashAgentAModel: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}clash_agent_a_model'],
+      ),
+      clashAgentBModel: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}clash_agent_b_model'],
+      ),
     );
   }
 
@@ -546,6 +624,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
   final bool isWebSearchEnabled;
   final bool isDeepResearchEnabled;
   final bool isDebateModeEnabled;
+  final bool isClashModeEnabled;
   final bool isDarkMode;
   final String composerMode;
   final String imageModel;
@@ -557,6 +636,8 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
   final String? debateAgentAModel;
   final String? debateAgentBModel;
   final String? debateJudgeModel;
+  final String? clashAgentAModel;
+  final String? clashAgentBModel;
   const UiSettingsRow({
     required this.id,
     required this.workspaceMode,
@@ -566,6 +647,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     required this.isWebSearchEnabled,
     required this.isDeepResearchEnabled,
     required this.isDebateModeEnabled,
+    required this.isClashModeEnabled,
     required this.isDarkMode,
     required this.composerMode,
     required this.imageModel,
@@ -577,6 +659,8 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     this.debateAgentAModel,
     this.debateAgentBModel,
     this.debateJudgeModel,
+    this.clashAgentAModel,
+    this.clashAgentBModel,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -589,6 +673,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     map['is_web_search_enabled'] = Variable<bool>(isWebSearchEnabled);
     map['is_deep_research_enabled'] = Variable<bool>(isDeepResearchEnabled);
     map['is_debate_mode_enabled'] = Variable<bool>(isDebateModeEnabled);
+    map['is_clash_mode_enabled'] = Variable<bool>(isClashModeEnabled);
     map['is_dark_mode'] = Variable<bool>(isDarkMode);
     map['composer_mode'] = Variable<String>(composerMode);
     map['image_model'] = Variable<String>(imageModel);
@@ -606,6 +691,12 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     if (!nullToAbsent || debateJudgeModel != null) {
       map['debate_judge_model'] = Variable<String>(debateJudgeModel);
     }
+    if (!nullToAbsent || clashAgentAModel != null) {
+      map['clash_agent_a_model'] = Variable<String>(clashAgentAModel);
+    }
+    if (!nullToAbsent || clashAgentBModel != null) {
+      map['clash_agent_b_model'] = Variable<String>(clashAgentBModel);
+    }
     return map;
   }
 
@@ -619,6 +710,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       isWebSearchEnabled: Value(isWebSearchEnabled),
       isDeepResearchEnabled: Value(isDeepResearchEnabled),
       isDebateModeEnabled: Value(isDebateModeEnabled),
+      isClashModeEnabled: Value(isClashModeEnabled),
       isDarkMode: Value(isDarkMode),
       composerMode: Value(composerMode),
       imageModel: Value(imageModel),
@@ -636,6 +728,12 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       debateJudgeModel: debateJudgeModel == null && nullToAbsent
           ? const Value.absent()
           : Value(debateJudgeModel),
+      clashAgentAModel: clashAgentAModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(clashAgentAModel),
+      clashAgentBModel: clashAgentBModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(clashAgentBModel),
     );
   }
 
@@ -657,6 +755,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       isDebateModeEnabled: serializer.fromJson<bool>(
         json['isDebateModeEnabled'],
       ),
+      isClashModeEnabled: serializer.fromJson<bool>(json['isClashModeEnabled']),
       isDarkMode: serializer.fromJson<bool>(json['isDarkMode']),
       composerMode: serializer.fromJson<String>(json['composerMode']),
       imageModel: serializer.fromJson<String>(json['imageModel']),
@@ -672,6 +771,8 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
         json['debateAgentBModel'],
       ),
       debateJudgeModel: serializer.fromJson<String?>(json['debateJudgeModel']),
+      clashAgentAModel: serializer.fromJson<String?>(json['clashAgentAModel']),
+      clashAgentBModel: serializer.fromJson<String?>(json['clashAgentBModel']),
     );
   }
   @override
@@ -686,6 +787,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       'isWebSearchEnabled': serializer.toJson<bool>(isWebSearchEnabled),
       'isDeepResearchEnabled': serializer.toJson<bool>(isDeepResearchEnabled),
       'isDebateModeEnabled': serializer.toJson<bool>(isDebateModeEnabled),
+      'isClashModeEnabled': serializer.toJson<bool>(isClashModeEnabled),
       'isDarkMode': serializer.toJson<bool>(isDarkMode),
       'composerMode': serializer.toJson<String>(composerMode),
       'imageModel': serializer.toJson<String>(imageModel),
@@ -697,6 +799,8 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       'debateAgentAModel': serializer.toJson<String?>(debateAgentAModel),
       'debateAgentBModel': serializer.toJson<String?>(debateAgentBModel),
       'debateJudgeModel': serializer.toJson<String?>(debateJudgeModel),
+      'clashAgentAModel': serializer.toJson<String?>(clashAgentAModel),
+      'clashAgentBModel': serializer.toJson<String?>(clashAgentBModel),
     };
   }
 
@@ -709,6 +813,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     bool? isWebSearchEnabled,
     bool? isDeepResearchEnabled,
     bool? isDebateModeEnabled,
+    bool? isClashModeEnabled,
     bool? isDarkMode,
     String? composerMode,
     String? imageModel,
@@ -720,6 +825,8 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     Value<String?> debateAgentAModel = const Value.absent(),
     Value<String?> debateAgentBModel = const Value.absent(),
     Value<String?> debateJudgeModel = const Value.absent(),
+    Value<String?> clashAgentAModel = const Value.absent(),
+    Value<String?> clashAgentBModel = const Value.absent(),
   }) => UiSettingsRow(
     id: id ?? this.id,
     workspaceMode: workspaceMode ?? this.workspaceMode,
@@ -729,6 +836,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     isWebSearchEnabled: isWebSearchEnabled ?? this.isWebSearchEnabled,
     isDeepResearchEnabled: isDeepResearchEnabled ?? this.isDeepResearchEnabled,
     isDebateModeEnabled: isDebateModeEnabled ?? this.isDebateModeEnabled,
+    isClashModeEnabled: isClashModeEnabled ?? this.isClashModeEnabled,
     isDarkMode: isDarkMode ?? this.isDarkMode,
     composerMode: composerMode ?? this.composerMode,
     imageModel: imageModel ?? this.imageModel,
@@ -746,6 +854,12 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     debateJudgeModel: debateJudgeModel.present
         ? debateJudgeModel.value
         : this.debateJudgeModel,
+    clashAgentAModel: clashAgentAModel.present
+        ? clashAgentAModel.value
+        : this.clashAgentAModel,
+    clashAgentBModel: clashAgentBModel.present
+        ? clashAgentBModel.value
+        : this.clashAgentBModel,
   );
   UiSettingsRow copyWithCompanion(UiSettingsRowsCompanion data) {
     return UiSettingsRow(
@@ -771,6 +885,9 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       isDebateModeEnabled: data.isDebateModeEnabled.present
           ? data.isDebateModeEnabled.value
           : this.isDebateModeEnabled,
+      isClashModeEnabled: data.isClashModeEnabled.present
+          ? data.isClashModeEnabled.value
+          : this.isClashModeEnabled,
       isDarkMode: data.isDarkMode.present
           ? data.isDarkMode.value
           : this.isDarkMode,
@@ -804,6 +921,12 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
       debateJudgeModel: data.debateJudgeModel.present
           ? data.debateJudgeModel.value
           : this.debateJudgeModel,
+      clashAgentAModel: data.clashAgentAModel.present
+          ? data.clashAgentAModel.value
+          : this.clashAgentAModel,
+      clashAgentBModel: data.clashAgentBModel.present
+          ? data.clashAgentBModel.value
+          : this.clashAgentBModel,
     );
   }
 
@@ -818,6 +941,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
           ..write('isWebSearchEnabled: $isWebSearchEnabled, ')
           ..write('isDeepResearchEnabled: $isDeepResearchEnabled, ')
           ..write('isDebateModeEnabled: $isDebateModeEnabled, ')
+          ..write('isClashModeEnabled: $isClashModeEnabled, ')
           ..write('isDarkMode: $isDarkMode, ')
           ..write('composerMode: $composerMode, ')
           ..write('imageModel: $imageModel, ')
@@ -828,13 +952,15 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
           ..write('imageOutputFormat: $imageOutputFormat, ')
           ..write('debateAgentAModel: $debateAgentAModel, ')
           ..write('debateAgentBModel: $debateAgentBModel, ')
-          ..write('debateJudgeModel: $debateJudgeModel')
+          ..write('debateJudgeModel: $debateJudgeModel, ')
+          ..write('clashAgentAModel: $clashAgentAModel, ')
+          ..write('clashAgentBModel: $clashAgentBModel')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     workspaceMode,
     selectedModel,
@@ -843,6 +969,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     isWebSearchEnabled,
     isDeepResearchEnabled,
     isDebateModeEnabled,
+    isClashModeEnabled,
     isDarkMode,
     composerMode,
     imageModel,
@@ -854,7 +981,9 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
     debateAgentAModel,
     debateAgentBModel,
     debateJudgeModel,
-  );
+    clashAgentAModel,
+    clashAgentBModel,
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -867,6 +996,7 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
           other.isWebSearchEnabled == this.isWebSearchEnabled &&
           other.isDeepResearchEnabled == this.isDeepResearchEnabled &&
           other.isDebateModeEnabled == this.isDebateModeEnabled &&
+          other.isClashModeEnabled == this.isClashModeEnabled &&
           other.isDarkMode == this.isDarkMode &&
           other.composerMode == this.composerMode &&
           other.imageModel == this.imageModel &&
@@ -877,7 +1007,9 @@ class UiSettingsRow extends DataClass implements Insertable<UiSettingsRow> {
           other.imageOutputFormat == this.imageOutputFormat &&
           other.debateAgentAModel == this.debateAgentAModel &&
           other.debateAgentBModel == this.debateAgentBModel &&
-          other.debateJudgeModel == this.debateJudgeModel);
+          other.debateJudgeModel == this.debateJudgeModel &&
+          other.clashAgentAModel == this.clashAgentAModel &&
+          other.clashAgentBModel == this.clashAgentBModel);
 }
 
 class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
@@ -889,6 +1021,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
   final Value<bool> isWebSearchEnabled;
   final Value<bool> isDeepResearchEnabled;
   final Value<bool> isDebateModeEnabled;
+  final Value<bool> isClashModeEnabled;
   final Value<bool> isDarkMode;
   final Value<String> composerMode;
   final Value<String> imageModel;
@@ -900,6 +1033,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
   final Value<String?> debateAgentAModel;
   final Value<String?> debateAgentBModel;
   final Value<String?> debateJudgeModel;
+  final Value<String?> clashAgentAModel;
+  final Value<String?> clashAgentBModel;
   final Value<int> rowid;
   const UiSettingsRowsCompanion({
     this.id = const Value.absent(),
@@ -910,6 +1045,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     this.isWebSearchEnabled = const Value.absent(),
     this.isDeepResearchEnabled = const Value.absent(),
     this.isDebateModeEnabled = const Value.absent(),
+    this.isClashModeEnabled = const Value.absent(),
     this.isDarkMode = const Value.absent(),
     this.composerMode = const Value.absent(),
     this.imageModel = const Value.absent(),
@@ -921,6 +1057,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     this.debateAgentAModel = const Value.absent(),
     this.debateAgentBModel = const Value.absent(),
     this.debateJudgeModel = const Value.absent(),
+    this.clashAgentAModel = const Value.absent(),
+    this.clashAgentBModel = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   UiSettingsRowsCompanion.insert({
@@ -932,6 +1070,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     this.isWebSearchEnabled = const Value.absent(),
     this.isDeepResearchEnabled = const Value.absent(),
     this.isDebateModeEnabled = const Value.absent(),
+    this.isClashModeEnabled = const Value.absent(),
     this.isDarkMode = const Value.absent(),
     this.composerMode = const Value.absent(),
     required String imageModel,
@@ -943,6 +1082,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     this.debateAgentAModel = const Value.absent(),
     this.debateAgentBModel = const Value.absent(),
     this.debateJudgeModel = const Value.absent(),
+    this.clashAgentAModel = const Value.absent(),
+    this.clashAgentBModel = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        selectedModel = Value(selectedModel),
@@ -956,6 +1097,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     Expression<bool>? isWebSearchEnabled,
     Expression<bool>? isDeepResearchEnabled,
     Expression<bool>? isDebateModeEnabled,
+    Expression<bool>? isClashModeEnabled,
     Expression<bool>? isDarkMode,
     Expression<String>? composerMode,
     Expression<String>? imageModel,
@@ -967,6 +1109,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     Expression<String>? debateAgentAModel,
     Expression<String>? debateAgentBModel,
     Expression<String>? debateJudgeModel,
+    Expression<String>? clashAgentAModel,
+    Expression<String>? clashAgentBModel,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -981,6 +1125,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
         'is_deep_research_enabled': isDeepResearchEnabled,
       if (isDebateModeEnabled != null)
         'is_debate_mode_enabled': isDebateModeEnabled,
+      if (isClashModeEnabled != null)
+        'is_clash_mode_enabled': isClashModeEnabled,
       if (isDarkMode != null) 'is_dark_mode': isDarkMode,
       if (composerMode != null) 'composer_mode': composerMode,
       if (imageModel != null) 'image_model': imageModel,
@@ -993,6 +1139,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
       if (debateAgentAModel != null) 'debate_agent_a_model': debateAgentAModel,
       if (debateAgentBModel != null) 'debate_agent_b_model': debateAgentBModel,
       if (debateJudgeModel != null) 'debate_judge_model': debateJudgeModel,
+      if (clashAgentAModel != null) 'clash_agent_a_model': clashAgentAModel,
+      if (clashAgentBModel != null) 'clash_agent_b_model': clashAgentBModel,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1006,6 +1154,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     Value<bool>? isWebSearchEnabled,
     Value<bool>? isDeepResearchEnabled,
     Value<bool>? isDebateModeEnabled,
+    Value<bool>? isClashModeEnabled,
     Value<bool>? isDarkMode,
     Value<String>? composerMode,
     Value<String>? imageModel,
@@ -1017,6 +1166,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     Value<String?>? debateAgentAModel,
     Value<String?>? debateAgentBModel,
     Value<String?>? debateJudgeModel,
+    Value<String?>? clashAgentAModel,
+    Value<String?>? clashAgentBModel,
     Value<int>? rowid,
   }) {
     return UiSettingsRowsCompanion(
@@ -1029,6 +1180,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
       isDeepResearchEnabled:
           isDeepResearchEnabled ?? this.isDeepResearchEnabled,
       isDebateModeEnabled: isDebateModeEnabled ?? this.isDebateModeEnabled,
+      isClashModeEnabled: isClashModeEnabled ?? this.isClashModeEnabled,
       isDarkMode: isDarkMode ?? this.isDarkMode,
       composerMode: composerMode ?? this.composerMode,
       imageModel: imageModel ?? this.imageModel,
@@ -1040,6 +1192,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
       debateAgentAModel: debateAgentAModel ?? this.debateAgentAModel,
       debateAgentBModel: debateAgentBModel ?? this.debateAgentBModel,
       debateJudgeModel: debateJudgeModel ?? this.debateJudgeModel,
+      clashAgentAModel: clashAgentAModel ?? this.clashAgentAModel,
+      clashAgentBModel: clashAgentBModel ?? this.clashAgentBModel,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1072,6 +1226,9 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     }
     if (isDebateModeEnabled.present) {
       map['is_debate_mode_enabled'] = Variable<bool>(isDebateModeEnabled.value);
+    }
+    if (isClashModeEnabled.present) {
+      map['is_clash_mode_enabled'] = Variable<bool>(isClashModeEnabled.value);
     }
     if (isDarkMode.present) {
       map['is_dark_mode'] = Variable<bool>(isDarkMode.value);
@@ -1106,6 +1263,12 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
     if (debateJudgeModel.present) {
       map['debate_judge_model'] = Variable<String>(debateJudgeModel.value);
     }
+    if (clashAgentAModel.present) {
+      map['clash_agent_a_model'] = Variable<String>(clashAgentAModel.value);
+    }
+    if (clashAgentBModel.present) {
+      map['clash_agent_b_model'] = Variable<String>(clashAgentBModel.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1123,6 +1286,7 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
           ..write('isWebSearchEnabled: $isWebSearchEnabled, ')
           ..write('isDeepResearchEnabled: $isDeepResearchEnabled, ')
           ..write('isDebateModeEnabled: $isDebateModeEnabled, ')
+          ..write('isClashModeEnabled: $isClashModeEnabled, ')
           ..write('isDarkMode: $isDarkMode, ')
           ..write('composerMode: $composerMode, ')
           ..write('imageModel: $imageModel, ')
@@ -1134,6 +1298,8 @@ class UiSettingsRowsCompanion extends UpdateCompanion<UiSettingsRow> {
           ..write('debateAgentAModel: $debateAgentAModel, ')
           ..write('debateAgentBModel: $debateAgentBModel, ')
           ..write('debateJudgeModel: $debateJudgeModel, ')
+          ..write('clashAgentAModel: $clashAgentAModel, ')
+          ..write('clashAgentBModel: $clashAgentBModel, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1771,6 +1937,17 @@ class $ChatMessageRowsTable extends ChatMessageRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _clashJsonMeta = const VerificationMeta(
+    'clashJson',
+  );
+  @override
+  late final GeneratedColumn<String> clashJson = GeneratedColumn<String>(
+    'clash_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _researchJsonMeta = const VerificationMeta(
     'researchJson',
   );
@@ -1808,6 +1985,7 @@ class $ChatMessageRowsTable extends ChatMessageRows
     artifactJson,
     imageGenerationJson,
     debateJson,
+    clashJson,
     researchJson,
     createdAt,
   ];
@@ -1924,6 +2102,12 @@ class $ChatMessageRowsTable extends ChatMessageRows
         debateJson.isAcceptableOrUnknown(data['debate_json']!, _debateJsonMeta),
       );
     }
+    if (data.containsKey('clash_json')) {
+      context.handle(
+        _clashJsonMeta,
+        clashJson.isAcceptableOrUnknown(data['clash_json']!, _clashJsonMeta),
+      );
+    }
     if (data.containsKey('research_json')) {
       context.handle(
         _researchJsonMeta,
@@ -2002,6 +2186,10 @@ class $ChatMessageRowsTable extends ChatMessageRows
         DriftSqlType.string,
         data['${effectivePrefix}debate_json'],
       ),
+      clashJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}clash_json'],
+      ),
       researchJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}research_json'],
@@ -2033,6 +2221,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
   final String? artifactJson;
   final String? imageGenerationJson;
   final String? debateJson;
+  final String? clashJson;
   final String? researchJson;
   final int createdAt;
   const ChatMessageRow({
@@ -2049,6 +2238,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
     this.artifactJson,
     this.imageGenerationJson,
     this.debateJson,
+    this.clashJson,
     this.researchJson,
     required this.createdAt,
   });
@@ -2081,6 +2271,9 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
     }
     if (!nullToAbsent || debateJson != null) {
       map['debate_json'] = Variable<String>(debateJson);
+    }
+    if (!nullToAbsent || clashJson != null) {
+      map['clash_json'] = Variable<String>(clashJson);
     }
     if (!nullToAbsent || researchJson != null) {
       map['research_json'] = Variable<String>(researchJson);
@@ -2118,6 +2311,9 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
       debateJson: debateJson == null && nullToAbsent
           ? const Value.absent()
           : Value(debateJson),
+      clashJson: clashJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(clashJson),
       researchJson: researchJson == null && nullToAbsent
           ? const Value.absent()
           : Value(researchJson),
@@ -2148,6 +2344,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
         json['imageGenerationJson'],
       ),
       debateJson: serializer.fromJson<String?>(json['debateJson']),
+      clashJson: serializer.fromJson<String?>(json['clashJson']),
       researchJson: serializer.fromJson<String?>(json['researchJson']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
     );
@@ -2169,6 +2366,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
       'artifactJson': serializer.toJson<String?>(artifactJson),
       'imageGenerationJson': serializer.toJson<String?>(imageGenerationJson),
       'debateJson': serializer.toJson<String?>(debateJson),
+      'clashJson': serializer.toJson<String?>(clashJson),
       'researchJson': serializer.toJson<String?>(researchJson),
       'createdAt': serializer.toJson<int>(createdAt),
     };
@@ -2188,6 +2386,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
     Value<String?> artifactJson = const Value.absent(),
     Value<String?> imageGenerationJson = const Value.absent(),
     Value<String?> debateJson = const Value.absent(),
+    Value<String?> clashJson = const Value.absent(),
     Value<String?> researchJson = const Value.absent(),
     int? createdAt,
   }) => ChatMessageRow(
@@ -2210,6 +2409,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
         ? imageGenerationJson.value
         : this.imageGenerationJson,
     debateJson: debateJson.present ? debateJson.value : this.debateJson,
+    clashJson: clashJson.present ? clashJson.value : this.clashJson,
     researchJson: researchJson.present ? researchJson.value : this.researchJson,
     createdAt: createdAt ?? this.createdAt,
   );
@@ -2244,6 +2444,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
       debateJson: data.debateJson.present
           ? data.debateJson.value
           : this.debateJson,
+      clashJson: data.clashJson.present ? data.clashJson.value : this.clashJson,
       researchJson: data.researchJson.present
           ? data.researchJson.value
           : this.researchJson,
@@ -2267,6 +2468,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
           ..write('artifactJson: $artifactJson, ')
           ..write('imageGenerationJson: $imageGenerationJson, ')
           ..write('debateJson: $debateJson, ')
+          ..write('clashJson: $clashJson, ')
           ..write('researchJson: $researchJson, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -2288,6 +2490,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
     artifactJson,
     imageGenerationJson,
     debateJson,
+    clashJson,
     researchJson,
     createdAt,
   );
@@ -2308,6 +2511,7 @@ class ChatMessageRow extends DataClass implements Insertable<ChatMessageRow> {
           other.artifactJson == this.artifactJson &&
           other.imageGenerationJson == this.imageGenerationJson &&
           other.debateJson == this.debateJson &&
+          other.clashJson == this.clashJson &&
           other.researchJson == this.researchJson &&
           other.createdAt == this.createdAt);
 }
@@ -2326,6 +2530,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
   final Value<String?> artifactJson;
   final Value<String?> imageGenerationJson;
   final Value<String?> debateJson;
+  final Value<String?> clashJson;
   final Value<String?> researchJson;
   final Value<int> createdAt;
   final Value<int> rowid;
@@ -2343,6 +2548,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
     this.artifactJson = const Value.absent(),
     this.imageGenerationJson = const Value.absent(),
     this.debateJson = const Value.absent(),
+    this.clashJson = const Value.absent(),
     this.researchJson = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -2361,6 +2567,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
     this.artifactJson = const Value.absent(),
     this.imageGenerationJson = const Value.absent(),
     this.debateJson = const Value.absent(),
+    this.clashJson = const Value.absent(),
     this.researchJson = const Value.absent(),
     required int createdAt,
     this.rowid = const Value.absent(),
@@ -2383,6 +2590,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
     Expression<String>? artifactJson,
     Expression<String>? imageGenerationJson,
     Expression<String>? debateJson,
+    Expression<String>? clashJson,
     Expression<String>? researchJson,
     Expression<int>? createdAt,
     Expression<int>? rowid,
@@ -2403,6 +2611,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
       if (imageGenerationJson != null)
         'image_generation_json': imageGenerationJson,
       if (debateJson != null) 'debate_json': debateJson,
+      if (clashJson != null) 'clash_json': clashJson,
       if (researchJson != null) 'research_json': researchJson,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
@@ -2423,6 +2632,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
     Value<String?>? artifactJson,
     Value<String?>? imageGenerationJson,
     Value<String?>? debateJson,
+    Value<String?>? clashJson,
     Value<String?>? researchJson,
     Value<int>? createdAt,
     Value<int>? rowid,
@@ -2441,6 +2651,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
       artifactJson: artifactJson ?? this.artifactJson,
       imageGenerationJson: imageGenerationJson ?? this.imageGenerationJson,
       debateJson: debateJson ?? this.debateJson,
+      clashJson: clashJson ?? this.clashJson,
       researchJson: researchJson ?? this.researchJson,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
@@ -2493,6 +2704,9 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
     if (debateJson.present) {
       map['debate_json'] = Variable<String>(debateJson.value);
     }
+    if (clashJson.present) {
+      map['clash_json'] = Variable<String>(clashJson.value);
+    }
     if (researchJson.present) {
       map['research_json'] = Variable<String>(researchJson.value);
     }
@@ -2521,6 +2735,7 @@ class ChatMessageRowsCompanion extends UpdateCompanion<ChatMessageRow> {
           ..write('artifactJson: $artifactJson, ')
           ..write('imageGenerationJson: $imageGenerationJson, ')
           ..write('debateJson: $debateJson, ')
+          ..write('clashJson: $clashJson, ')
           ..write('researchJson: $researchJson, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
@@ -5463,6 +5678,7 @@ typedef $$UiSettingsRowsTableCreateCompanionBuilder =
       Value<bool> isWebSearchEnabled,
       Value<bool> isDeepResearchEnabled,
       Value<bool> isDebateModeEnabled,
+      Value<bool> isClashModeEnabled,
       Value<bool> isDarkMode,
       Value<String> composerMode,
       required String imageModel,
@@ -5474,6 +5690,8 @@ typedef $$UiSettingsRowsTableCreateCompanionBuilder =
       Value<String?> debateAgentAModel,
       Value<String?> debateAgentBModel,
       Value<String?> debateJudgeModel,
+      Value<String?> clashAgentAModel,
+      Value<String?> clashAgentBModel,
       Value<int> rowid,
     });
 typedef $$UiSettingsRowsTableUpdateCompanionBuilder =
@@ -5486,6 +5704,7 @@ typedef $$UiSettingsRowsTableUpdateCompanionBuilder =
       Value<bool> isWebSearchEnabled,
       Value<bool> isDeepResearchEnabled,
       Value<bool> isDebateModeEnabled,
+      Value<bool> isClashModeEnabled,
       Value<bool> isDarkMode,
       Value<String> composerMode,
       Value<String> imageModel,
@@ -5497,6 +5716,8 @@ typedef $$UiSettingsRowsTableUpdateCompanionBuilder =
       Value<String?> debateAgentAModel,
       Value<String?> debateAgentBModel,
       Value<String?> debateJudgeModel,
+      Value<String?> clashAgentAModel,
+      Value<String?> clashAgentBModel,
       Value<int> rowid,
     });
 
@@ -5546,6 +5767,11 @@ class $$UiSettingsRowsTableFilterComposer
 
   ColumnFilters<bool> get isDebateModeEnabled => $composableBuilder(
     column: $table.isDebateModeEnabled,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isClashModeEnabled => $composableBuilder(
+    column: $table.isClashModeEnabled,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5603,6 +5829,16 @@ class $$UiSettingsRowsTableFilterComposer
     column: $table.debateJudgeModel,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<String> get clashAgentAModel => $composableBuilder(
+    column: $table.clashAgentAModel,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get clashAgentBModel => $composableBuilder(
+    column: $table.clashAgentBModel,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$UiSettingsRowsTableOrderingComposer
@@ -5651,6 +5887,11 @@ class $$UiSettingsRowsTableOrderingComposer
 
   ColumnOrderings<bool> get isDebateModeEnabled => $composableBuilder(
     column: $table.isDebateModeEnabled,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isClashModeEnabled => $composableBuilder(
+    column: $table.isClashModeEnabled,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -5708,6 +5949,16 @@ class $$UiSettingsRowsTableOrderingComposer
     column: $table.debateJudgeModel,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get clashAgentAModel => $composableBuilder(
+    column: $table.clashAgentAModel,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get clashAgentBModel => $composableBuilder(
+    column: $table.clashAgentBModel,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$UiSettingsRowsTableAnnotationComposer
@@ -5754,6 +6005,11 @@ class $$UiSettingsRowsTableAnnotationComposer
 
   GeneratedColumn<bool> get isDebateModeEnabled => $composableBuilder(
     column: $table.isDebateModeEnabled,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isClashModeEnabled => $composableBuilder(
+    column: $table.isClashModeEnabled,
     builder: (column) => column,
   );
 
@@ -5811,6 +6067,16 @@ class $$UiSettingsRowsTableAnnotationComposer
     column: $table.debateJudgeModel,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get clashAgentAModel => $composableBuilder(
+    column: $table.clashAgentAModel,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get clashAgentBModel => $composableBuilder(
+    column: $table.clashAgentBModel,
+    builder: (column) => column,
+  );
 }
 
 class $$UiSettingsRowsTableTableManager
@@ -5858,6 +6124,7 @@ class $$UiSettingsRowsTableTableManager
                 Value<bool> isWebSearchEnabled = const Value.absent(),
                 Value<bool> isDeepResearchEnabled = const Value.absent(),
                 Value<bool> isDebateModeEnabled = const Value.absent(),
+                Value<bool> isClashModeEnabled = const Value.absent(),
                 Value<bool> isDarkMode = const Value.absent(),
                 Value<String> composerMode = const Value.absent(),
                 Value<String> imageModel = const Value.absent(),
@@ -5869,6 +6136,8 @@ class $$UiSettingsRowsTableTableManager
                 Value<String?> debateAgentAModel = const Value.absent(),
                 Value<String?> debateAgentBModel = const Value.absent(),
                 Value<String?> debateJudgeModel = const Value.absent(),
+                Value<String?> clashAgentAModel = const Value.absent(),
+                Value<String?> clashAgentBModel = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => UiSettingsRowsCompanion(
                 id: id,
@@ -5879,6 +6148,7 @@ class $$UiSettingsRowsTableTableManager
                 isWebSearchEnabled: isWebSearchEnabled,
                 isDeepResearchEnabled: isDeepResearchEnabled,
                 isDebateModeEnabled: isDebateModeEnabled,
+                isClashModeEnabled: isClashModeEnabled,
                 isDarkMode: isDarkMode,
                 composerMode: composerMode,
                 imageModel: imageModel,
@@ -5890,6 +6160,8 @@ class $$UiSettingsRowsTableTableManager
                 debateAgentAModel: debateAgentAModel,
                 debateAgentBModel: debateAgentBModel,
                 debateJudgeModel: debateJudgeModel,
+                clashAgentAModel: clashAgentAModel,
+                clashAgentBModel: clashAgentBModel,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -5902,6 +6174,7 @@ class $$UiSettingsRowsTableTableManager
                 Value<bool> isWebSearchEnabled = const Value.absent(),
                 Value<bool> isDeepResearchEnabled = const Value.absent(),
                 Value<bool> isDebateModeEnabled = const Value.absent(),
+                Value<bool> isClashModeEnabled = const Value.absent(),
                 Value<bool> isDarkMode = const Value.absent(),
                 Value<String> composerMode = const Value.absent(),
                 required String imageModel,
@@ -5913,6 +6186,8 @@ class $$UiSettingsRowsTableTableManager
                 Value<String?> debateAgentAModel = const Value.absent(),
                 Value<String?> debateAgentBModel = const Value.absent(),
                 Value<String?> debateJudgeModel = const Value.absent(),
+                Value<String?> clashAgentAModel = const Value.absent(),
+                Value<String?> clashAgentBModel = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => UiSettingsRowsCompanion.insert(
                 id: id,
@@ -5923,6 +6198,7 @@ class $$UiSettingsRowsTableTableManager
                 isWebSearchEnabled: isWebSearchEnabled,
                 isDeepResearchEnabled: isDeepResearchEnabled,
                 isDebateModeEnabled: isDebateModeEnabled,
+                isClashModeEnabled: isClashModeEnabled,
                 isDarkMode: isDarkMode,
                 composerMode: composerMode,
                 imageModel: imageModel,
@@ -5934,6 +6210,8 @@ class $$UiSettingsRowsTableTableManager
                 debateAgentAModel: debateAgentAModel,
                 debateAgentBModel: debateAgentBModel,
                 debateJudgeModel: debateJudgeModel,
+                clashAgentAModel: clashAgentAModel,
+                clashAgentBModel: clashAgentBModel,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -6421,6 +6699,7 @@ typedef $$ChatMessageRowsTableCreateCompanionBuilder =
       Value<String?> artifactJson,
       Value<String?> imageGenerationJson,
       Value<String?> debateJson,
+      Value<String?> clashJson,
       Value<String?> researchJson,
       required int createdAt,
       Value<int> rowid,
@@ -6440,6 +6719,7 @@ typedef $$ChatMessageRowsTableUpdateCompanionBuilder =
       Value<String?> artifactJson,
       Value<String?> imageGenerationJson,
       Value<String?> debateJson,
+      Value<String?> clashJson,
       Value<String?> researchJson,
       Value<int> createdAt,
       Value<int> rowid,
@@ -6547,6 +6827,11 @@ class $$ChatMessageRowsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<String> get clashJson => $composableBuilder(
+    column: $table.clashJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<String> get researchJson => $composableBuilder(
     column: $table.researchJson,
     builder: (column) => ColumnFilters(column),
@@ -6650,6 +6935,11 @@ class $$ChatMessageRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get clashJson => $composableBuilder(
+    column: $table.clashJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get researchJson => $composableBuilder(
     column: $table.researchJson,
     builder: (column) => ColumnOrderings(column),
@@ -6745,6 +7035,9 @@ class $$ChatMessageRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get clashJson =>
+      $composableBuilder(column: $table.clashJson, builder: (column) => column);
+
   GeneratedColumn<String> get researchJson => $composableBuilder(
     column: $table.researchJson,
     builder: (column) => column,
@@ -6820,6 +7113,7 @@ class $$ChatMessageRowsTableTableManager
                 Value<String?> artifactJson = const Value.absent(),
                 Value<String?> imageGenerationJson = const Value.absent(),
                 Value<String?> debateJson = const Value.absent(),
+                Value<String?> clashJson = const Value.absent(),
                 Value<String?> researchJson = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -6837,6 +7131,7 @@ class $$ChatMessageRowsTableTableManager
                 artifactJson: artifactJson,
                 imageGenerationJson: imageGenerationJson,
                 debateJson: debateJson,
+                clashJson: clashJson,
                 researchJson: researchJson,
                 createdAt: createdAt,
                 rowid: rowid,
@@ -6856,6 +7151,7 @@ class $$ChatMessageRowsTableTableManager
                 Value<String?> artifactJson = const Value.absent(),
                 Value<String?> imageGenerationJson = const Value.absent(),
                 Value<String?> debateJson = const Value.absent(),
+                Value<String?> clashJson = const Value.absent(),
                 Value<String?> researchJson = const Value.absent(),
                 required int createdAt,
                 Value<int> rowid = const Value.absent(),
@@ -6873,6 +7169,7 @@ class $$ChatMessageRowsTableTableManager
                 artifactJson: artifactJson,
                 imageGenerationJson: imageGenerationJson,
                 debateJson: debateJson,
+                clashJson: clashJson,
                 researchJson: researchJson,
                 createdAt: createdAt,
                 rowid: rowid,
