@@ -44,6 +44,21 @@ const charactersRoute = createRoute({
   path: "/characters",
 });
 
+const commandCenterRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/command-center",
+});
+
+const commandCenterSectionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/command-center/$section",
+});
+
+const commandCenterTargetRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/command-center/$section/$itemId",
+});
+
 const charactersLibraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/characters/library",
@@ -72,6 +87,9 @@ const routeTree = rootRoute.addChildren([
   webDevDetailRoute,
   webDevThreadRoute,
   charactersRoute,
+  commandCenterRoute,
+  commandCenterSectionRoute,
+  commandCenterTargetRoute,
   charactersLibraryRoute,
   characterSessionRoute,
   webContainerConnectRoute,

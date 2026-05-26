@@ -106,6 +106,153 @@ export interface ClashRecord {
   completedAt?: number;
 }
 
+export type CommandTaskStatus = "todo" | "doing" | "done" | "archived";
+export type CommandTaskPriority = "low" | "medium" | "high";
+
+export interface CommandTaskRecord {
+  id: string;
+  title: string;
+  description?: string;
+  status: CommandTaskStatus;
+  priority: CommandTaskPriority;
+  dueAt?: number;
+  tags?: string[];
+  sourceChatMessageId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CommandNoteRecord {
+  id: string;
+  title: string;
+  markdown: string;
+  tags?: string[];
+  pinned?: boolean;
+  archived?: boolean;
+  sourceChatMessageId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type FinanceEntryType = "income" | "expense";
+
+export interface FinanceEntryRecord {
+  id: string;
+  type: FinanceEntryType;
+  amount: number;
+  currency: string;
+  category: string;
+  note?: string;
+  occurredAt: number;
+  sourceChatMessageId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CommandScheduleBlockRecord {
+  id: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  allDay: boolean;
+  taskId?: string;
+  notes?: string;
+  sourceChatMessageId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type CommandTargetType = "task" | "schedule" | "note" | "finance";
+export type CommandActivitySource = "manual" | "ai";
+export type CommandActivityAction = "create" | "update" | "complete" | "delete" | "restore" | "search" | "summarize";
+export type CommandActivityStatus = "running" | "done" | "failed" | "pending" | "undone" | "cancelled";
+export type CommandAgentSessionStatus = "running" | "awaiting_confirmation" | "completed" | "stopped" | "failed" | "undone" | "partially_undone" | "partially_redone";
+
+export interface CommandAgentSessionRecord {
+  id: string;
+  chatId: string;
+  userMessageId: string;
+  assistantMessageId: string;
+  prompt: string;
+  status: CommandAgentSessionStatus;
+  actionCount: number;
+  completedCount: number;
+  pendingCount: number;
+  failedCount: number;
+  finalSummary?: string;
+  error?: string;
+  continuation?: {
+    provider?: string;
+    model: string;
+    systemInstruction: string;
+    providerMessages: unknown[];
+    reasoningEnabled: boolean;
+    webSearchEnabled: boolean;
+    completedToolCalls: number;
+  };
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  archivedAt?: number;
+}
+
+export interface CommandActivityRecord {
+  id: string;
+  source: CommandActivitySource;
+  action: CommandActivityAction;
+  targetType: CommandTargetType;
+  targetId?: string;
+  title: string;
+  status: CommandActivityStatus;
+  before?: unknown;
+  after?: unknown;
+  chatId?: string;
+  messageId?: string;
+  sessionId?: string;
+  toolCallId?: string;
+  undoState?: "available" | "used" | "unavailable";
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+}
+
+export interface CommandAgentAction {
+  id: string;
+  toolName: string;
+  action: CommandActivityAction;
+  targetType: CommandTargetType;
+  targetId?: string;
+  targetTitle: string;
+  status: "preparing" | "running" | "done" | "failed" | "pending" | "cancelled" | "undone";
+  detail?: string;
+  error?: string;
+  activityId?: string;
+  sessionId?: string;
+  requiresConfirmation?: boolean;
+  confirmationKind?: "approval" | "duplicate" | "conflict";
+  changePreview?: string;
+  existingTargetId?: string;
+  canUndo?: boolean;
+  pendingCall?: {
+    tool: string;
+    arguments: Record<string, unknown>;
+    resume?: {
+      provider?: string;
+      model: string;
+      systemInstruction: string;
+      providerMessages: unknown[];
+      nativeToolName: string;
+      nativeToolCallId: string;
+      reasoningEnabled: boolean;
+      webSearchEnabled: boolean;
+      completedToolCalls: number;
+    };
+  };
+  createdAt: number;
+  completedAt?: number;
+}
+
 export type ArtifactKind = "markdown" | "code" | "html" | "svg" | "mermaid" | "json" | "yaml" | "sql" | "text" | "table" | "prompt";
 export type ArtifactStatus = "streaming" | "ready" | "failed";
 
@@ -385,6 +532,8 @@ export interface ChatMessageRecord {
   imageGeneration?: ImageGenerationRecord;
   debate?: DebateRecord;
   clash?: ClashRecord;
+  agentActions?: CommandAgentAction[];
+  agentSessionId?: string;
   artifact?: ArtifactReferenceRecord;
   attachments?: AttachmentRecord[];
   createdAt: number;
@@ -416,6 +565,12 @@ class PrivoraDatabase extends Dexie {
   characterMessages!: Table<CharacterMessageRecord, string>;
   characterMemories!: Table<CharacterMemoryRecord, string>;
   userPersonas!: Table<UserPersonaRecord, string>;
+  commandTasks!: Table<CommandTaskRecord, string>;
+  commandNotes!: Table<CommandNoteRecord, string>;
+  financeEntries!: Table<FinanceEntryRecord, string>;
+  commandScheduleBlocks!: Table<CommandScheduleBlockRecord, string>;
+  commandActivity!: Table<CommandActivityRecord, string>;
+  commandSessions!: Table<CommandAgentSessionRecord, string>;
 
   constructor() {
     super("privora-local-db");
@@ -470,6 +625,63 @@ class PrivoraDatabase extends Dexie {
       characterMemories: "&id, characterId, sessionId, pinned, updatedAt",
       userPersonas: "&id, isDefault, updatedAt",
     });
+    this.version(7).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      webDevProjects: "&id, updatedAt, status",
+      webDevThreads: "&id, projectId, updatedAt, [projectId+updatedAt]",
+      webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
+      webDevMessages: "&id, projectId, threadId, createdAt, [projectId+threadId]",
+      characters: "&id, updatedAt, category, isStarred",
+      characterSessions: "&id, characterId, updatedAt, isStarred",
+      characterMessages: "&id, sessionId, createdAt",
+      characterMemories: "&id, characterId, sessionId, pinned, updatedAt",
+      userPersonas: "&id, isDefault, updatedAt",
+      commandTasks: "&id, status, dueAt, updatedAt, sourceChatMessageId",
+      commandNotes: "&id, updatedAt, pinned, archived, sourceChatMessageId",
+      financeEntries: "&id, type, occurredAt, category, updatedAt, sourceChatMessageId",
+      commandActivity: "&id, source, targetType, targetId, status, createdAt, chatId, messageId",
+    });
+    this.version(8).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      webDevProjects: "&id, updatedAt, status",
+      webDevThreads: "&id, projectId, updatedAt, [projectId+updatedAt]",
+      webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
+      webDevMessages: "&id, projectId, threadId, createdAt, [projectId+threadId]",
+      characters: "&id, updatedAt, category, isStarred",
+      characterSessions: "&id, characterId, updatedAt, isStarred",
+      characterMessages: "&id, sessionId, createdAt",
+      characterMemories: "&id, characterId, sessionId, pinned, updatedAt",
+      userPersonas: "&id, isDefault, updatedAt",
+      commandTasks: "&id, status, dueAt, updatedAt, sourceChatMessageId",
+      commandNotes: "&id, updatedAt, pinned, archived, sourceChatMessageId",
+      financeEntries: "&id, type, occurredAt, category, updatedAt, sourceChatMessageId",
+      commandActivity: "&id, source, targetType, targetId, status, createdAt, chatId, messageId, sessionId",
+      commandSessions: "&id, chatId, assistantMessageId, status, updatedAt",
+    });
+    this.version(9).stores({
+      chats: "&id, updatedAt, isStarred",
+      messages: "&id, chatId, createdAt",
+      artifacts: "&id, chatId, messageId, updatedAt",
+      webDevProjects: "&id, updatedAt, status",
+      webDevThreads: "&id, projectId, updatedAt, [projectId+updatedAt]",
+      webDevFiles: "&id, projectId, path, updatedAt, [projectId+path]",
+      webDevMessages: "&id, projectId, threadId, createdAt, [projectId+threadId]",
+      characters: "&id, updatedAt, category, isStarred",
+      characterSessions: "&id, characterId, updatedAt, isStarred",
+      characterMessages: "&id, sessionId, createdAt",
+      characterMemories: "&id, characterId, sessionId, pinned, updatedAt",
+      userPersonas: "&id, isDefault, updatedAt",
+      commandTasks: "&id, status, dueAt, updatedAt, sourceChatMessageId",
+      commandNotes: "&id, updatedAt, pinned, archived, sourceChatMessageId",
+      financeEntries: "&id, type, occurredAt, category, updatedAt, sourceChatMessageId",
+      commandScheduleBlocks: "&id, startAt, endAt, taskId, updatedAt, sourceChatMessageId",
+      commandActivity: "&id, source, targetType, targetId, status, createdAt, chatId, messageId, sessionId",
+      commandSessions: "&id, chatId, assistantMessageId, status, updatedAt",
+    });
   }
 }
 
@@ -509,6 +721,8 @@ export const normalizeMessage = (
   imageGeneration: message.imageGeneration,
   debate: message.debate,
   clash: message.clash,
+  agentActions: message.agentActions,
+  agentSessionId: message.agentSessionId,
   artifact: message.artifact,
   attachments: message.attachments,
   createdAt: message.createdAt || fallbackCreatedAt,
