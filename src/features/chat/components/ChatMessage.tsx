@@ -1,7 +1,7 @@
 import { memo, useState, useEffect, useRef } from "react";
 import { cn } from "../../../lib/utils";
 import { motion, AnimatePresence } from "motion/react";
-import { Copy, Files, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3, CornerDownRight, GitCompare } from "lucide-react";
+import { AlertCircle, CheckCircle2, CircleDashed, Copy, ExternalLink, Files, ThumbsUp, ThumbsDown, RotateCcw, ChevronDown, Check, Pencil, Globe, Share2, Clock3, CornerDownRight, GitCompare, X } from "lucide-react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ImageGenerationCard } from "./ImageGenerationCard";
 import { ResearchPlanCard } from "./ResearchPlanCard";
@@ -9,7 +9,7 @@ import { ResearchReportCard } from "./ResearchReportCard";
 import { TypingIndicator } from "./TypingIndicator";
 import { ClashIcon } from "./ClashIcon";
 import { ArtifactCard } from "../../artifacts/components/ArtifactCard";
-import type { ArtifactReferenceRecord, ClashRecord, ImageGenerationRecord, DebateRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
+import type { ArtifactReferenceRecord, ClashRecord, CommandAgentAction, ImageGenerationRecord, DebateRecord, ResearchPlanRecord, ResearchSourceRecord, ResearchStatus } from "../../../lib/db";
 import { copyTextToClipboard } from "../../../lib/clipboard";
 import { useToast } from "../../ui/ToastProvider";
 import { useAttachmentUrl } from "../../attachments/hooks/useAttachmentUrl";
@@ -28,6 +28,7 @@ function AttachmentImage({ attachment, alt, className }: { attachment: Attachmen
 }
 
 interface ChatMessageProps {
+  id: string;
   role: "user" | "model";
   content: string;
   thought?: string;
@@ -48,6 +49,8 @@ interface ChatMessageProps {
   imageGeneration?: ImageGenerationRecord;
   debate?: DebateRecord;
   clash?: ClashRecord;
+  agentActions?: CommandAgentAction[];
+  agentSessionId?: string;
   artifact?: ArtifactReferenceRecord;
   isTyping?: boolean;
   messageIndex?: number;
@@ -60,6 +63,15 @@ interface ChatMessageProps {
   onStopResearchPlan?: () => void;
   onOpenResearchActivity?: () => void;
   onOpenArtifact?: () => void;
+  onOpenCommandTarget?: (targetType: CommandAgentAction["targetType"], targetId?: string) => void;
+  onUndoCommandAction?: (messageId: string, actionId: string) => void;
+  onUndoCommandSession?: (messageId: string) => void;
+  onRedoCommandSession?: (messageId: string) => void;
+  onConfirmCommandAction?: (messageId: string, actionId: string) => void;
+  onUpdateDuplicateCommandAction?: (messageId: string, actionId: string) => void;
+  onFindAlternativeCommandAction?: (messageId: string, actionId: string) => void;
+  onConfirmAllCommandActions?: (messageId: string) => void;
+  onCancelCommandAction?: (messageId: string, actionId: string) => void;
   onOpenCodePlayground?: (code: string, language: string) => void;
   onEditGeneratedImage?: (attachment: Attachment) => void;
   attachments?: Attachment[];
@@ -381,7 +393,234 @@ function ClashCard({
   );
 }
 
-function ChatMessageComponent({ role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, clash, artifact, isTyping, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onOpenCodePlayground, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
+function AgentActionsStrip({
+  messageId,
+  actions,
+  sessionSummary,
+  isOperationActive,
+  onOpenCommandTarget,
+  onUndoCommandAction,
+  onUndoCommandSession,
+  onRedoCommandSession,
+  onConfirmCommandAction,
+  onUpdateDuplicateCommandAction,
+  onFindAlternativeCommandAction,
+  onConfirmAllCommandActions,
+  onCancelCommandAction,
+}: {
+  messageId: string;
+  actions: CommandAgentAction[];
+  sessionSummary?: string;
+  isOperationActive?: boolean;
+  onOpenCommandTarget?: (targetType: CommandAgentAction["targetType"], targetId?: string) => void;
+  onUndoCommandAction?: (messageId: string, actionId: string) => void;
+  onUndoCommandSession?: (messageId: string) => void;
+  onRedoCommandSession?: (messageId: string) => void;
+  onConfirmCommandAction?: (messageId: string, actionId: string) => void;
+  onUpdateDuplicateCommandAction?: (messageId: string, actionId: string) => void;
+  onFindAlternativeCommandAction?: (messageId: string, actionId: string) => void;
+  onConfirmAllCommandActions?: (messageId: string) => void;
+  onCancelCommandAction?: (messageId: string, actionId: string) => void;
+}) {
+  if (actions.length === 0) return null;
+
+  const hasActiveAction = actions.some(action => action.status === "preparing" || action.status === "running");
+  const hasPendingAction = actions.some(action => action.status === "pending");
+  const failedCount = actions.filter(action => action.status === "failed").length;
+  const completedMutationCount = actions.filter(action => action.action !== "search" && action.status === "done").length;
+  const undoneMutationCount = actions.filter(action => action.action !== "search" && action.status === "undone").length;
+  const reversibleMutationCount = actions.filter(action =>
+    action.action !== "search" && action.status === "done" && action.canUndo && action.activityId
+  ).length;
+  const completedLookupCount = actions.filter(action =>
+    action.action === "search" && (action.status === "done" || action.status === "undone")
+  ).length;
+  const isStoppedSession = Boolean(sessionSummary?.startsWith("Stopped."));
+  const [isOpen, setIsOpen] = useState(Boolean(isOperationActive) || hasActiveAction || hasPendingAction);
+  const [sessionConfirmation, setSessionConfirmation] = useState<"undo" | "redo" | null>(null);
+
+  useEffect(() => {
+    if (isOperationActive || hasActiveAction || hasPendingAction || isStoppedSession) setIsOpen(true);
+    else if (failedCount === 0) setIsOpen(false);
+  }, [isOperationActive, hasActiveAction, hasPendingAction, failedCount, isStoppedSession]);
+
+  const getStatusIcon = (action: CommandAgentAction) => {
+    if (action.status === "preparing" || action.status === "running") return <CircleDashed className="h-3.5 w-3.5 animate-spin" />;
+    if (action.status === "failed") return <AlertCircle className="h-3.5 w-3.5" />;
+    if (action.status === "pending") return <CircleDashed className="h-3.5 w-3.5" />;
+    if (action.status === "cancelled") return <X className="h-3.5 w-3.5" />;
+    return <CheckCircle2 className="h-3.5 w-3.5" />;
+  };
+
+  const getGroupIcon = () => {
+    if (isOperationActive || hasActiveAction) return <CircleDashed className="h-3.5 w-3.5 animate-spin text-[var(--privora-accent)]" />;
+    if (failedCount > 0) return <AlertCircle className="h-3.5 w-3.5 text-red-500" />;
+    if (hasPendingAction) return <CircleDashed className="h-3.5 w-3.5 text-amber-600 dark:text-amber-300" />;
+    return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-300" />;
+  };
+
+  const getGroupLabel = () => {
+    if (hasActiveAction) {
+      const active = actions.find(action => action.status === "running" || action.status === "preparing");
+      return active?.targetTitle ? `Working on ${active.targetTitle}` : "Working in Command Center";
+    }
+    if (hasPendingAction) {
+      const pendingCount = actions.filter(action => action.status === "pending").length;
+      return `${completedMutationCount} changes ready · ${pendingCount} need confirmation`;
+    }
+    if (isOperationActive) {
+      return completedMutationCount > 0
+        ? `Working · ${completedMutationCount} ${completedMutationCount === 1 ? "change" : "changes"} so far`
+        : "Working in Command Center";
+    }
+    if (failedCount > 0) return `${failedCount} failed · ${completedMutationCount} changes complete`;
+    if (undoneMutationCount > 0 && completedMutationCount > 0) {
+      return `${undoneMutationCount} undone · ${completedMutationCount} kept`;
+    }
+    if (undoneMutationCount > 0) {
+      return `${undoneMutationCount} ${undoneMutationCount === 1 ? "change" : "changes"} undone`;
+    }
+    if (isStoppedSession) return `Stopped · ${completedMutationCount} change${completedMutationCount === 1 ? "" : "s"} kept`;
+    if (completedMutationCount > 0) return `${completedMutationCount} ${completedMutationCount === 1 ? "change" : "changes"} complete`;
+    return `${completedLookupCount} ${completedLookupCount === 1 ? "check" : "checks"} complete`;
+  };
+
+  return (
+    <div className="mb-3 w-full max-w-[46rem] py-1 text-[13px] text-[var(--privora-muted)]">
+      <button
+        type="button"
+        onClick={() => setIsOpen(value => !value)}
+        className={cn(
+          "inline-flex max-w-full items-center gap-2 rounded-md border border-transparent px-1.5 py-1 text-left transition hover:border-[var(--privora-border)] hover:bg-[var(--privora-surface)] hover:text-[var(--privora-text)]",
+          isOpen && "border-[var(--privora-border)] bg-[var(--privora-surface)]/45"
+        )}
+      >
+        {getGroupIcon()}
+        <span className={cn("min-w-0 truncate", (isOperationActive || hasActiveAction) && "animate-text-shimmer")}>{getGroupLabel()}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", !isOpen && "-rotate-90")} />
+      </button>
+      {!isOperationActive && !hasActiveAction && !hasPendingAction && reversibleMutationCount > 0 && onUndoCommandSession && (
+        <button type="button" onClick={() => setSessionConfirmation("undo")} className="ml-2 px-1.5 py-1 text-[12px] font-semibold text-[var(--privora-muted)] hover:text-[var(--privora-text)]">
+          Undo session
+        </button>
+      )}
+      {!isOperationActive && !hasActiveAction && !hasPendingAction && undoneMutationCount > 0 && onRedoCommandSession && (
+        <button type="button" onClick={() => setSessionConfirmation("redo")} className="ml-2 px-1.5 py-1 text-[12px] font-semibold text-[var(--privora-muted)] hover:text-[var(--privora-text)]">
+          Redo session
+        </button>
+      )}
+      {hasPendingAction && !actions.some(action => action.status === "pending" && (action.confirmationKind === "duplicate" || action.confirmationKind === "conflict")) && actions.filter(action => action.status === "pending").length > 1 && onConfirmAllCommandActions && (
+        <button type="button" onClick={() => onConfirmAllCommandActions(messageId)} className="ml-2 rounded-md border border-[var(--privora-border)]/55 px-2 py-1 text-[12px] font-semibold text-[var(--privora-text)] hover:bg-[var(--privora-text)]/5">
+          Confirm all
+        </button>
+      )}
+      <AnimatePresence initial={false}>
+        {sessionConfirmation && (
+          <motion.div
+            initial={{ opacity: 0, height: 0, marginTop: 0 }}
+            animate={{ opacity: 1, height: "auto", marginTop: 8 }}
+            exit={{ opacity: 0, height: 0, marginTop: 0 }}
+            className="flex max-w-[35rem] flex-wrap items-center gap-2 overflow-hidden border-l border-[var(--privora-border)]/70 pl-3 text-[12px]"
+          >
+            <span className="mr-1 text-[var(--privora-text)]">
+              {sessionConfirmation === "undo"
+                ? `Undo ${reversibleMutationCount} completed change${reversibleMutationCount === 1 ? "" : "s"}?`
+                : `Redo ${undoneMutationCount} undone change${undoneMutationCount === 1 ? "" : "s"}?`}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (sessionConfirmation === "undo") onUndoCommandSession?.(messageId);
+                else onRedoCommandSession?.(messageId);
+                setSessionConfirmation(null);
+              }}
+              className="rounded-md border border-[var(--privora-border)]/65 px-2 py-1 font-semibold text-[var(--privora-text)] hover:bg-[var(--privora-text)]/5"
+            >
+              Confirm {sessionConfirmation}
+            </button>
+            <button type="button" onClick={() => setSessionConfirmation(null)} className="px-1.5 py-1 font-semibold hover:text-[var(--privora-text)]">
+              Cancel
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.16, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
+            <div className="ml-5 mt-1.5 space-y-0.5 border-l border-[var(--privora-border)]/65 pl-3">
+              {actions.map(action => (
+                <div
+                  key={action.id}
+                  className={cn(
+                    "flex flex-col gap-2 py-1.5 text-[13px] transition-colors sm:flex-row sm:items-center sm:justify-between",
+                    action.status === "failed" ? "text-red-500" : "text-[var(--privora-muted)]"
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenCommandTarget?.(action.targetType, action.targetId)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    <span className={cn(
+                      "shrink-0",
+                      action.status === "done" ? "text-emerald-600 dark:text-emerald-300" :
+                      action.status === "failed" ? "text-red-500" :
+                      action.status === "pending" ? "text-amber-600 dark:text-amber-300" :
+                      action.status === "preparing" ? "text-[var(--privora-muted)]" :
+                      "text-[var(--privora-accent)]"
+                    )}>
+                      {getStatusIcon(action)}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold text-[var(--privora-text)]">
+                        {action.detail || action.action} · {action.targetTitle}
+                      </span>
+                      <span className="block truncate text-[11px] capitalize text-[var(--privora-muted)]">
+                        {action.targetType}{action.status === "done" ? "" : ` · ${action.status}`}{action.changePreview ? ` · ${action.changePreview}` : ""}{action.error ? ` · ${action.error}` : ""}
+                      </span>
+                    </span>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-2 pl-5 sm:pl-0">
+                    {action.status === "pending" && (
+                      <>
+                        {action.confirmationKind === "duplicate" && action.targetType === "task" && (
+                          <button type="button" onClick={() => onUpdateDuplicateCommandAction?.(messageId, action.id)} className="rounded-md border border-[var(--privora-border)]/55 px-2 py-1 text-[12px] font-semibold hover:bg-[var(--privora-text)]/5">Update existing</button>
+                        )}
+                        {action.confirmationKind === "conflict" && (
+                          <button type="button" onClick={() => onFindAlternativeCommandAction?.(messageId, action.id)} className="rounded-md border border-[var(--privora-border)]/55 px-2 py-1 text-[12px] font-semibold hover:bg-[var(--privora-text)]/5">Find another time</button>
+                        )}
+                        <button type="button" onClick={() => onConfirmCommandAction?.(messageId, action.id)} className="rounded-md border border-[var(--privora-border)]/55 px-2 py-1 text-[12px] font-semibold hover:bg-[var(--privora-text)]/5">{action.confirmationKind === "duplicate" ? "Create another" : action.confirmationKind === "conflict" ? "Schedule anyway" : "Confirm"}</button>
+                        <button type="button" onClick={() => onCancelCommandAction?.(messageId, action.id)} className="px-1.5 py-1 text-[12px] font-semibold text-[var(--privora-muted)] hover:text-[var(--privora-text)]">{action.confirmationKind === "duplicate" && action.targetType === "finance" ? "Keep existing" : "Cancel"}</button>
+                      </>
+                    )}
+                    {action.canUndo && (action.status === "done" || action.status === "undone") && (
+                      <button type="button" disabled={action.status === "undone"} onClick={() => onUndoCommandAction?.(messageId, action.id)} className="px-1.5 py-1 text-[12px] font-semibold text-[var(--privora-muted)] hover:text-[var(--privora-text)] disabled:cursor-not-allowed disabled:opacity-40">
+                        Undo
+                      </button>
+                    )}
+                    {action.targetId && (
+                      <button type="button" onClick={() => onOpenCommandTarget?.(action.targetType, action.targetId)} className="p-1.5 text-[var(--privora-muted)] hover:text-[var(--privora-text)]" title="Open in Command Center">
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function ChatMessageComponent({ id, role, content, thought, isThinking, webSearchStatus, webSearchQueries, researchStatus, researchSources, researchPreflight, researchPlan, researchPlanReference, researchStartedAt, researchCompletedAt, researchTimeBudgetMs, imageGeneration, debate, clash, agentActions, artifact, isTyping, messageIndex, onEdit, onRetry, onStartResearchPlan, onEditResearchPlan, onCancelResearchPlan, onStopResearchPlan, onOpenResearchActivity, onOpenArtifact, onOpenCommandTarget, onUndoCommandAction, onUndoCommandSession, onRedoCommandSession, onConfirmCommandAction, onUpdateDuplicateCommandAction, onFindAlternativeCommandAction, onConfirmAllCommandActions, onCancelCommandAction, onOpenCodePlayground, onEditGeneratedImage, attachments, onPreviewAttachment, hideActions }: ChatMessageProps) {
   const isUser = role === "user";
   const [isThoughtOpen, setIsThoughtOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -464,9 +703,14 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
     }
   };
 
+  const isMessageMenuTarget = (target: EventTarget | null) => (
+    target instanceof Element && Boolean(target.closest("[data-message-menu-zone='true']"))
+  );
+
   const handlePointerDown = (event: React.PointerEvent) => {
     if (!isUser) return;
     if (event.pointerType !== "touch") return;
+    if (!isMessageMenuTarget(event.target)) return;
     clearLongPressTimer();
     longPressTimerRef.current = window.setTimeout(() => {
       openMessageMenu(event.clientX, event.clientY);
@@ -483,25 +727,11 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
 
   const handleContextMenu = (event: React.MouseEvent) => {
     if (!isUser) return;
+    if (!isMessageMenuTarget(event.target)) return;
     event.preventDefault();
     openMessageMenu(event.clientX, event.clientY);
   };
   
-  // Auto-close thought when content starts generating
-  // Just a nice UX touch so content is in focus
-  useEffect(() => {
-    if (content && isThoughtOpen && !isThinking) {
-      setIsThoughtOpen(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, isThinking]);
-
-  useEffect(() => {
-    if (thought && isThinking) {
-      setIsThoughtOpen(true);
-    }
-  }, [thought, isThinking]);
-
   useEffect(() => {
     return () => clearLongPressTimer();
   }, []);
@@ -518,7 +748,6 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
-      onContextMenu={handleContextMenu}
     >
       <AnimatePresence>
         {isMenuOpen && (
@@ -594,6 +823,8 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
         
         {(!isUser || content) && (
           <div 
+            data-message-menu-zone={isUser ? "true" : undefined}
+            onContextMenu={handleContextMenu}
             className={cn(
               "flex flex-col gap-2",
               isUser 
@@ -674,7 +905,9 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
           {shouldRenderThoughtPanel && (
             <div className="w-full flex flex-col items-start max-w-[100%] mb-1.5">
                <button
-                  onClick={() => setIsThoughtOpen(!isThoughtOpen)}
+                  onClick={() => {
+                    setIsThoughtOpen(currentValue => !currentValue);
+                  }}
                   disabled={!thought}
                   className={cn(
                     "flex items-center gap-2 text-[14px] font-medium transition-colors py-1.5 rounded",
@@ -728,6 +961,23 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
                  <div ref={contentRef}>
                    <MarkdownRenderer compact={isUser} isStreaming={Boolean(isTyping)} onOpenCodePlayground={onOpenCodePlayground}>{content}</MarkdownRenderer>
                  </div>
+               )}
+               {!isUser && agentActions && agentActions.length > 0 && (
+                 <AgentActionsStrip
+                   messageId={id}
+                   actions={agentActions}
+                   sessionSummary={content}
+                   isOperationActive={Boolean(isTyping)}
+                   onOpenCommandTarget={onOpenCommandTarget}
+                   onUndoCommandAction={onUndoCommandAction}
+                   onUndoCommandSession={onUndoCommandSession}
+                   onRedoCommandSession={onRedoCommandSession}
+                   onConfirmCommandAction={onConfirmCommandAction}
+                   onUpdateDuplicateCommandAction={onUpdateDuplicateCommandAction}
+                   onFindAlternativeCommandAction={onFindAlternativeCommandAction}
+                   onConfirmAllCommandActions={onConfirmAllCommandActions}
+                   onCancelCommandAction={onCancelCommandAction}
+                 />
                )}
                  {!isUser && artifact && (
                    <ArtifactCard artifact={artifact} onOpen={onOpenArtifact || (() => undefined)} />
@@ -806,6 +1056,7 @@ function ChatMessageComponent({ role, content, thought, isThinking, webSearchSta
 export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
   return (
     prev.role === next.role &&
+    prev.id === next.id &&
     prev.content === next.content &&
     prev.thought === next.thought &&
     prev.isThinking === next.isThinking &&
@@ -822,9 +1073,20 @@ export const ChatMessage = memo(ChatMessageComponent, (prev, next) => {
     prev.imageGeneration === next.imageGeneration &&
     prev.debate === next.debate &&
     prev.clash === next.clash &&
+    prev.agentActions === next.agentActions &&
+    prev.agentSessionId === next.agentSessionId &&
     prev.artifact === next.artifact &&
     prev.onOpenResearchActivity === next.onOpenResearchActivity &&
     prev.onOpenArtifact === next.onOpenArtifact &&
+    prev.onOpenCommandTarget === next.onOpenCommandTarget &&
+    prev.onUndoCommandAction === next.onUndoCommandAction &&
+    prev.onUndoCommandSession === next.onUndoCommandSession &&
+    prev.onRedoCommandSession === next.onRedoCommandSession &&
+    prev.onConfirmCommandAction === next.onConfirmCommandAction &&
+    prev.onUpdateDuplicateCommandAction === next.onUpdateDuplicateCommandAction &&
+    prev.onFindAlternativeCommandAction === next.onFindAlternativeCommandAction &&
+    prev.onConfirmAllCommandActions === next.onConfirmAllCommandActions &&
+    prev.onCancelCommandAction === next.onCancelCommandAction &&
     prev.onOpenCodePlayground === next.onOpenCodePlayground &&
     prev.isTyping === next.isTyping &&
     prev.messageIndex === next.messageIndex &&

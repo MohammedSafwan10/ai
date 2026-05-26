@@ -20,6 +20,7 @@ import { getImageModelOption, imageModelOptions, type ImageModelId } from "../..
 import { getResponseStyle, responseStyleOptions, type ResponseStyleId } from "../../../lib/prompt";
 import type { ClashSettings, DebateSettings, ImageCount, ImageSettings, ImageSizePreset } from "../../../lib/settings";
 import { ClashIcon } from "./ClashIcon";
+import { AgentModeIcon } from "./AgentModeIcon";
 
 
 
@@ -27,6 +28,7 @@ interface ChatComposerProps {
   input: string;
   attachments: Attachment[];
   isTyping: boolean;
+  isAwaitingConfirmation?: boolean;
   selectedModel: string;
   selectedStyle: ResponseStyleId;
   isThinkingEnabled: boolean;
@@ -34,6 +36,7 @@ interface ChatComposerProps {
   isDeepResearchEnabled: boolean;
   isDebateModeEnabled: boolean;
   isClashModeEnabled: boolean;
+  isAgentModeEnabled: boolean;
   composerMode: "chat" | "image";
   debateSettings: DebateSettings;
   clashSettings: ClashSettings;
@@ -56,6 +59,7 @@ interface ChatComposerProps {
   onToggleDeepResearch: () => void;
   onToggleDebateMode: () => void;
   onToggleClashMode: () => void;
+  onToggleAgentMode: () => void;
   onOpenCodePlayground?: () => void;
   onSelectComposerMode: (mode: "chat" | "image") => void;
   onDebateSettingsChange: (settings: DebateSettings) => void;
@@ -73,6 +77,7 @@ export function ChatComposer({
   input,
   attachments,
   isTyping,
+  isAwaitingConfirmation = false,
   selectedModel,
   selectedStyle,
   isThinkingEnabled,
@@ -80,6 +85,7 @@ export function ChatComposer({
   isDeepResearchEnabled,
   isDebateModeEnabled,
   isClashModeEnabled,
+  isAgentModeEnabled,
   composerMode,
   debateSettings,
   clashSettings,
@@ -100,6 +106,7 @@ export function ChatComposer({
   onToggleDeepResearch,
   onToggleDebateMode,
   onToggleClashMode,
+  onToggleAgentMode,
   onOpenCodePlayground,
   onSelectComposerMode,
   onDebateSettingsChange,
@@ -131,6 +138,7 @@ export function ChatComposer({
   const selectedModelIsCliproxy = isCliproxyModel(selectedModel);
   const selectedModelIsOpenRouter = isOpenRouterModel(selectedModel);
   const settingsDisabled = isTyping;
+  const showStopButton = isTyping || (isAwaitingConfirmation && !input.trim() && attachments.length === 0);
   const isImageMode = composerMode === "image";
   const selectedImageModel = getImageModelOption(imageSettings.model);
   const hasImageAttachment = attachments.some(attachment => attachment.mimeType.startsWith("image/"));
@@ -430,6 +438,17 @@ export function ChatComposer({
                         </button>
                         <button
                           type="button"
+                          onClick={onToggleAgentMode}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isAgentModeEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <AgentModeIcon className={`w-4 h-4 ${isAgentModeEnabled ? "opacity-100" : "opacity-70"}`} />
+                            <span className="font-medium leading-none">Agent mode</span>
+                          </div>
+                          {isAgentModeEnabled && <Check className="h-3.5 w-3.5 opacity-70" />}
+                        </button>
+                        <button
+                          type="button"
                           onClick={onToggleDeepResearch}
                           className={`w-full text-left px-3 py-2 flex items-center justify-between text-[14px] font-sans hover:bg-[var(--privora-surface)] transition-colors ${isDeepResearchEnabled ? "text-[var(--privora-accent)]" : "text-[var(--privora-text)]"}`}
                         >
@@ -545,6 +564,18 @@ export function ChatComposer({
                   <Microscope className="h-3.5 w-3.5" />
                   Deep Research
                 </span>
+              )}
+              {isAgentModeEnabled && !isImageMode && (
+                <button
+                  type="button"
+                  disabled={settingsDisabled}
+                  onClick={onToggleAgentMode}
+                  className="hidden shrink-0 items-center gap-1.5 rounded-md bg-[var(--privora-user-bubble)] px-2 py-1.5 text-[12px] font-medium text-[var(--privora-text)] transition-colors hover:bg-[var(--privora-text)]/10 disabled:opacity-45 sm:inline-flex"
+                  title="Agent Mode can update Command Center tools"
+                >
+                  <AgentModeIcon className="h-4 w-4" />
+                  Agent
+                </button>
               )}
               {isDebateModeEnabled && !isImageMode && (
                 <div className="relative hidden sm:block">
@@ -893,7 +924,7 @@ export function ChatComposer({
               </div>
 
               <AnimatePresence mode="popLayout">
-                {isTyping ? (
+                {showStopButton ? (
                   <motion.button
                     key="stop"
                     initial={{ scale: 0.5, opacity: 0 }}
@@ -901,7 +932,7 @@ export function ChatComposer({
                     exit={{ scale: 0.5, opacity: 0 }}
                     type="button"
                     onClick={onStopGeneration}
-                    title="Stop generating"
+                    title={isTyping ? "Stop generating" : "Cancel pending action"}
                     className="shrink-0 ml-1 w-8 h-8 rounded-full flex items-center justify-center bg-[var(--privora-text)]/10 text-[var(--privora-text)] hover:bg-[var(--privora-text)]/20 transition-all border border-[var(--privora-text)]/10"
                   >
                     <Square className="w-3.5 h-3.5 fill-current" />

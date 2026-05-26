@@ -1,9 +1,9 @@
 import type { ComponentType, KeyboardEvent, MouseEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Code2, MessageCircle, Moon, MoreHorizontal, PanelLeft, Pencil, Plus, Search, Star, Sun, Trash2 } from "lucide-react";
+import { Code2, LayoutDashboard, MessageCircle, Moon, MoreHorizontal, PanelLeft, Pencil, Plus, Search, Star, Sun, Trash2 } from "lucide-react";
 import type { CharacterRecord, CharacterSessionRecord, ChatRecord, WebDevProjectRecord, WebDevThreadRecord } from "../../../lib/db";
 
-type WorkspaceMode = "chat" | "web-dev" | "characters";
+type WorkspaceMode = "chat" | "web-dev" | "characters" | "command-center";
 
 function CharacterModeIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -51,6 +51,11 @@ const workspaceNavItems: Array<{
     mode: "characters",
     label: "Characters",
     icon: CharacterModeIcon,
+  },
+  {
+    mode: "command-center",
+    label: "Command Center",
+    icon: LayoutDashboard,
   },
 ];
 
@@ -538,6 +543,7 @@ export function ChatSidebar({
   const newItemLabel =
     workspaceMode === "web-dev" ? "New web app" :
     workspaceMode === "characters" ? "New character chat" :
+    workspaceMode === "command-center" ? "Open capture" :
     "New chat";
   const runNewItemAction = () => {
     if (workspaceMode === "web-dev") {
@@ -546,6 +552,10 @@ export function ChatSidebar({
     }
     if (workspaceMode === "characters") {
       onNewCharacterSession();
+      return;
+    }
+    if (workspaceMode === "command-center") {
+      onWorkspaceModeChange("command-center");
       return;
     }
     if (!isTyping) onNewChat();
@@ -697,10 +707,10 @@ export function ChatSidebar({
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-1 pr-2 custom-scrollbar pl-4">
-            {workspaceMode === "web-dev" ? (
-              <WebDevSection
-                projects={webDevProjects}
-                threads={webDevThreads}
+              {workspaceMode === "web-dev" ? (
+                <WebDevSection
+                  projects={webDevProjects}
+                  threads={webDevThreads}
                 currentWebDevProjectId={currentWebDevProjectId}
                 currentWebDevThreadId={currentWebDevThreadId}
                 activeMenuId={activeMenuId}
@@ -713,18 +723,35 @@ export function ChatSidebar({
                 onDeleteWebDevProject={onDeleteWebDevProject}
                 onToggleStarWebDevProject={onToggleStarWebDevProject}
               />
-            ) : workspaceMode === "characters" ? (
-              <CharacterSection
-                sessions={characterSessions}
-                characters={characters}
+              ) : workspaceMode === "characters" ? (
+                <CharacterSection
+                  sessions={characterSessions}
+                  characters={characters}
                 currentCharacterSessionId={currentCharacterSessionId}
                 activeMenuId={activeMenuId}
                 onSelectCharacterSession={onSelectCharacterSession}
-                onActiveMenuChange={onActiveMenuChange}
-                onDeleteCharacterSession={onDeleteCharacterSession}
-              />
-            ) : (
-              <>
+                  onActiveMenuChange={onActiveMenuChange}
+                  onDeleteCharacterSession={onDeleteCharacterSession}
+                />
+              ) : workspaceMode === "command-center" ? (
+                <div className="px-3 py-3 text-sm text-[var(--privora-muted)]">
+                  <div className="mb-2 font-medium text-[var(--privora-text)]">Workspace tools</div>
+                  <div className="space-y-1.5">
+                    {["Tasks", "Notes", "Finance", "Activity"].map(item => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => onWorkspaceModeChange("command-center")}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-[var(--privora-text)]/5 hover:text-[var(--privora-text)]"
+                      >
+                        <LayoutDashboard className="h-3.5 w-3.5" />
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
                 <ChatSection
                   title="Starred"
                   chats={starredChats}
