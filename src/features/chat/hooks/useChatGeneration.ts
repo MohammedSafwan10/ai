@@ -31,6 +31,28 @@ import { DEEP_RESEARCH_TIME_BUDGET_MS } from "../../../lib/prompt";
 import { cancelResearchJob, getResearchJobSnapshot, runResearchPreflight, startResearchJob, streamResearchJob, type ResearchStreamEvent } from "../../../lib/research/client";
 import { useToast } from "../../ui/ToastProvider";
 import {
+  buildCommandCenterRequestContext,
+  executeCommandToolCall,
+  getCommandPendingConfirmationMessage,
+  type CommandToolCall,
+} from "../../command-center/lib/agentTools";
+import {
+  appendCommandAssistantToolCalls,
+  appendCommandToolResults,
+  CommandProviderIdleTimeoutError,
+  messagesToCommandProviderHistory,
+  streamCommandAgentResponse,
+  withCommandNativeToolCallId,
+  type CommandFunctionResponse,
+  type CommandProviderMessage,
+} from "../../command-center/lib/provider";
+import {
+  commandNativeToInternalCall,
+  type CommandNativeToolCall,
+  type CommandNativeToolDraft,
+} from "../../command-center/lib/nativeTools";
+import { createCommandSession, undoCommandActivity, updateCommandSession } from "../../command-center/lib/storage";
+import {
   normalizeMessage,
   createId,
   getArtifactById,
@@ -45,6 +67,9 @@ import {
   type ClashAgentStatus,
   type ClashTurnAction,
   type ClashTurnRecord,
+  type CommandAgentAction,
+  type CommandAgentSessionRecord,
+  type CommandTargetType,
   type DebateAgentRecord,
   type DebateAgentStatus,
   type ImageGenerationItemRecord,
@@ -62,6 +87,8 @@ type CurrentRef<T> = MutableRefObject<T> | { current: T };
 type GeneratedImageResult = CliproxyImageResult | GeminiImageResult;
 const CLASH_MAX_ROUNDS = 6;
 const CLASH_TURNS_PER_ROUND = 2;
+const COMMAND_AGENT_MAX_ITERATIONS = 8;
+const COMMAND_AGENT_MAX_TOOL_CALLS = 24;
 
 const parseClashTurnAction = (content: string, fallback: ClashTurnAction): ClashTurnAction => {
   const match = content.match(/^\s*(?:#+\s*)?(?:\*\*)?(?:Action\s*:\s*)?(opening|challenge|refine|accept)\b/i);
@@ -117,6 +144,7 @@ interface UseChatGenerationOptions {
   isDeepResearchEnabledRef: CurrentRef<boolean>;
   isDebateModeEnabledRef: CurrentRef<boolean>;
   isClashModeEnabledRef: CurrentRef<boolean>;
+  isAgentModeEnabledRef: CurrentRef<boolean>;
   debateSettingsRef: CurrentRef<DebateSettings>;
   clashSettingsRef: CurrentRef<ClashSettings>;
   imageSettingsRef: CurrentRef<ImageSettings>;
@@ -128,6 +156,7 @@ interface UseChatGenerationOptions {
   isNearChatBottom: () => boolean;
   onArtifactUpsert?: (artifact: ArtifactRecord) => void;
   onArtifactOpen?: (artifactId: string) => void;
+  onResolvePendingCommandAction?: (text: string) => Promise<boolean>;
 }
 
 async function runResilientResearchStream({
@@ -233,6 +262,7 @@ export function useChatGeneration({
   isDeepResearchEnabledRef,
   isDebateModeEnabledRef,
   isClashModeEnabledRef,
+  isAgentModeEnabledRef,
   debateSettingsRef,
   clashSettingsRef,
   imageSettingsRef,
@@ -244,6 +274,7 @@ export function useChatGeneration({
   isNearChatBottom,
   onArtifactUpsert,
   onArtifactOpen,
+  onResolvePendingCommandAction,
 }: UseChatGenerationOptions) {
   const { notify } = useToast();
   const researchJobIdRef = useRef<string | null>(null);
@@ -316,6 +347,39 @@ export function useChatGeneration({
   ) => {
     setMessages(finalMessages);
     await syncChatMessages(chatId, finalMessages, metaPatch);
+  };
+
+  const rollbackReplacedCommandActions = async (removedMessages: Message[], reason: "edit" | "retry") => {
+    const reversibleActions = removedMessages
+      .flatMap(message => message.agentActions || [])
+      .filter(action => action.status === "done" && action.canUndo && action.activityId)
+      .sort((a, b) => (b.completedAt || b.createdAt || 0) - (a.completedAt || a.createdAt || 0));
+
+    for (const action of reversibleActions) {
+      try {
+        await undoCommandActivity(action.activityId!);
+      } catch (error) {
+        appLogger.warn("Failed to roll back Command Agent action while replacing chat branch", {
+          err: error,
+          reason,
+          actionId: action.id,
+          activityId: action.activityId,
+          targetType: action.targetType,
+          targetId: action.targetId,
+        });
+      }
+    }
+  };
+
+  const resolveRerunCommandChanges = async (removedMessages: Message[], reason: "edit" | "retry") => {
+    const hasCompletedChanges = removedMessages.some(message =>
+      message.agentActions?.some(action => action.status === "done" && action.canUndo && action.activityId)
+    );
+    if (!hasCompletedChanges) return;
+    const undoBeforeRerun = window.confirm(
+      "This response already changed your Command Center.\n\nChoose OK to undo those reversible changes and rerun, or Cancel to keep them and rerun."
+    );
+    if (undoBeforeRerun) await rollbackReplacedCommandActions(removedMessages, reason);
   };
 
   const persistArtifactFromPayload = async (
@@ -554,6 +618,7 @@ export function useChatGeneration({
     const requestDeepResearchEnabled = isDeepResearchEnabledRef.current;
     const requestDebateModeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && isDebateModeEnabledRef.current;
     const requestClashModeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !requestDebateModeEnabled && isClashModeEnabledRef.current;
+    const requestAgentModeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !requestDebateModeEnabled && !requestClashModeEnabled && isAgentModeEnabledRef.current;
     const requestForcedWebSearch = !requestIsImageMode && (isWebSearchEnabledRef.current || requestDeepResearchEnabled);
     const requestWebSearchMode: WebSearchMode = requestIsImageMode ? "off" : requestForcedWebSearch ? "forced" : "auto";
     const requestWebSearchEnabled = requestWebSearchMode !== "off";
@@ -563,7 +628,7 @@ export function useChatGeneration({
       /\b(?:artifact|canvas|file|document|doc|readme|report|brief|proposal|spec|template|prompt|worksheet|checklist|table|comparison|spreadsheet|csv|markdown)\b/i.test(text) ||
       /\b(?:write|draft|create|make|build|generate|draw|design|compose|turn\s+(?:this|it)\s+into|convert)\b[\s\S]{0,100}\b(?:article|essay|blog|post|guide|manual|plan|table|comparison|prompt|svg|html|page|app|component|code|function|script|program|class|json|yaml|sql|diagram|mermaid)\b/i.test(text) ||
       /\b(?:svg|html|mermaid|json|yaml|sql)\b[\s\S]{0,80}\b(?:for|of|with|that|which|about)\b/i.test(text);
-    const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !requestDebateModeEnabled && !requestClashModeEnabled && !userDeclinedArtifacts;
+    const artifactRuntimeEnabled = !requestIsImageMode && !requestDeepResearchEnabled && !requestDebateModeEnabled && !requestClashModeEnabled && !requestAgentModeEnabled && !userDeclinedArtifacts;
     const useArtifactOutputRouter =
       artifactRuntimeEnabled && (requestProvider === "gemini" || (requestProvider === "openrouter" && userAskedForDurableArtifact));
     const artifactToolsEnabled =
@@ -959,6 +1024,15 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       }
     }
 
+    if (requestAgentModeEnabled && requestIsOpenRouter && !openRouterCapabilities?.supportsTools) {
+      notify({
+        title: "Agent Mode needs tools",
+        description: "This OpenRouter model does not advertise native tool support. Pick GPT, Gemini, or a tool-capable OpenRouter model.",
+        variant: "error",
+      });
+      return;
+    }
+
     const startedAt = Date.now();
     appLogger.info("Generation started", {
       provider: requestProvider || "unknown",
@@ -972,6 +1046,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       deepResearchEnabled: requestDeepResearchEnabled,
       debateModeEnabled: requestDebateModeEnabled,
       clashModeEnabled: requestClashModeEnabled,
+      agentModeEnabled: requestAgentModeEnabled,
       responseStyle: requestStyle,
       historyLength: currentHistory.length,
     });
@@ -1016,12 +1091,15 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       { id: "a", label: "Agent A", model: clashAgentAModel, status: "queued" },
       { id: "b", label: "Agent B", model: clashAgentBModel, status: "queued" },
     ];
+    const commandSessionId = requestAgentModeEnabled ? createId("cmd_session") : undefined;
     const pendingModelMessage = normalizeMessage(
       {
         role: "model",
         content: "",
-        isThinking: requestDeepResearchEnabled || requestDebateModeEnabled || requestClashModeEnabled ? true : requestThinkingEnabled,
+        isThinking: requestDeepResearchEnabled || requestDebateModeEnabled || requestClashModeEnabled || requestAgentModeEnabled ? true : requestThinkingEnabled,
         webSearchStatus: requestForcedWebSearch && !requestDeepResearchEnabled ? "searching" : undefined,
+        agentActions: requestAgentModeEnabled ? [] : undefined,
+        agentSessionId: commandSessionId,
         debate: requestDebateModeEnabled ? {
           status: "streaming",
           prompt: text,
@@ -1046,6 +1124,450 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       void syncChatMessages(chatId, pendingMessages).catch((error) => {
         appLogger.error("Pending chat save failed", { err: error, chatId });
       });
+    }
+
+    if (requestAgentModeEnabled) {
+      await createCommandSession({
+        id: commandSessionId,
+        chatId,
+        userMessageId: userMessage.id,
+        assistantMessageId: pendingModelMessage.id,
+        prompt: text,
+        status: "running",
+        actionCount: 0,
+        completedCount: 0,
+        pendingCount: 0,
+        failedCount: 0,
+      });
+      let currentDisplayText = "";
+      let currentThought = "";
+      let currentAgentActions: CommandAgentAction[] = [];
+      let currentWebSearchStatus: Message["webSearchStatus"] = requestForcedWebSearch ? "searching" : undefined;
+      let currentWebSearchQueries: string[] | undefined;
+      let didCompleteWebSearch = false;
+      let lastCommandCheckpointAt = 0;
+      const countCompletedChanges = () => currentAgentActions.filter(action => action.action !== "search" && action.status === "done").length;
+
+      const getCommandTargetType = (tool: CommandToolCall["tool"]): CommandTargetType => {
+        if (tool.includes("Task")) return "task";
+        if (tool.includes("Schedule") || tool === "findFreeSlots") return "schedule";
+        if (tool.includes("Note")) return "note";
+        return "finance";
+      };
+
+      const getCommandAction = (tool: CommandToolCall["tool"]): CommandAgentAction["action"] =>
+        tool.startsWith("delete") ? "delete" :
+        tool.startsWith("search") || tool === "summarizeFinance" || tool === "findFreeSlots" ? "search" :
+        tool === "completeTask" ? "complete" :
+        tool.startsWith("create") || tool === "addFinanceEntry" ? "create" :
+        "update";
+
+      const getCommandActionTitle = (call: CommandToolCall) => {
+        const args = call.arguments || {};
+        const title =
+          typeof args.title === "string" ? args.title :
+          typeof args.note === "string" ? args.note :
+          typeof args.query === "string" ? args.query :
+          typeof args.category === "string" ? args.category :
+          typeof args.id === "string" ? args.id :
+          call.tool;
+        return title.slice(0, 90);
+      };
+
+      const commandRuntimeNote = (content: string): CommandProviderMessage => ({
+        role: "user",
+        content: `Command Agent runtime note:\n${content}`,
+      });
+
+      const publishAgentMessage = (patch: Partial<Message> = {}) => {
+        updateMessageById(pendingModelMessage.id, message => ({
+          ...message,
+          content: currentDisplayText,
+          thought: currentThought,
+          isThinking: true,
+          webSearchStatus: currentWebSearchStatus,
+          webSearchQueries: currentWebSearchQueries,
+          agentActions: currentAgentActions,
+          ...patch,
+        }));
+      };
+
+      const setAgentActions = (updater: (actions: CommandAgentAction[]) => CommandAgentAction[]) => {
+        currentAgentActions = updater(currentAgentActions);
+        publishAgentMessage();
+      };
+
+      const updateActiveSession = async (status: "running" | "awaiting_confirmation" | "completed" | "stopped" | "failed", patch: Partial<CommandAgentSessionRecord> = {}) => {
+        if (!commandSessionId) return;
+        await updateCommandSession(commandSessionId, {
+          status,
+          actionCount: currentAgentActions.length,
+          completedCount: countCompletedChanges(),
+          pendingCount: currentAgentActions.filter(action => action.status === "pending").length,
+          failedCount: currentAgentActions.filter(action => action.status === "failed").length,
+          ...patch,
+        });
+      };
+
+      const checkpointAgentMessage = async (isThinking = true) => {
+        const snapshotMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            content: currentDisplayText,
+            thought: currentThought,
+            isThinking,
+            agentActions: currentAgentActions,
+            webSearchStatus: didCompleteWebSearch ? "searched" : currentWebSearchStatus,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+          },
+        ];
+        await syncChatMessages(chatId, snapshotMessages, { model: requestModel });
+      };
+
+      const checkpointAgentProgress = async (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastCommandCheckpointAt < 1400) return;
+        lastCommandCheckpointAt = now;
+        await checkpointAgentMessage();
+      };
+
+      const upsertPreparingAction = (draft: CommandNativeToolDraft) => {
+        const call = commandNativeToInternalCall({ id: draft.id, name: draft.name, arguments: draft.arguments });
+        const actionId = draft.id || `draft_${draft.name}`;
+        const nextAction: CommandAgentAction = {
+          id: actionId,
+          toolName: call.tool,
+          action: getCommandAction(call.tool),
+          targetType: getCommandTargetType(call.tool),
+          targetId: typeof call.arguments.id === "string" ? call.arguments.id : undefined,
+          targetTitle: getCommandActionTitle(call),
+          status: "preparing",
+          detail: "Preparing",
+          createdAt: Date.now(),
+        };
+        setAgentActions(actions => {
+          const index = actions.findIndex(action => action.id === actionId || (action.status === "preparing" && action.toolName === call.tool));
+          if (index < 0) return [...actions, nextAction];
+          return actions.map((action, actionIndex) => actionIndex === index ? { ...action, ...nextAction, createdAt: action.createdAt } : action);
+        });
+      };
+
+      const markNativeCallRunning = (nativeCall: Required<Pick<CommandNativeToolCall, "id">> & CommandNativeToolCall) => {
+        const call = commandNativeToInternalCall(nativeCall);
+        const runningAction: CommandAgentAction = {
+          id: nativeCall.id,
+          toolName: call.tool,
+          action: getCommandAction(call.tool),
+          targetType: getCommandTargetType(call.tool),
+          targetId: typeof call.arguments.id === "string" ? call.arguments.id : undefined,
+          targetTitle: getCommandActionTitle(call),
+          status: "running",
+          detail: call.tool,
+          createdAt: Date.now(),
+        };
+        setAgentActions(actions => {
+          const withoutDraft = actions.filter(action =>
+            action.id !== nativeCall.id &&
+            !(action.status === "preparing" && action.toolName === call.tool)
+          );
+          return [...withoutDraft, runningAction];
+        });
+      };
+
+      try {
+        const commandSummary = await buildCommandCenterRequestContext(text);
+        const commandInstruction = [
+          baseSystemInstruction,
+          "",
+          "Command Center Agent Mode:",
+          "You have native tools for Privora Tasks, Schedule, Notes, and Finance. Use these tools whenever the user asks you to create, update, complete, schedule, delete, search, or summarize Command Center data.",
+          "Never simulate tool calls in text. Never output raw JSON plans. The app executes tools and returns tool results to you.",
+          "Creates, searches, summaries, and normal single-item updates can run directly. Schedule moves/resizes/deletes, collisions, deletes, bulk-like edits, and finance amount/date edits may come back as pending confirmation.",
+          "Schedule blocks are separate from task due dates. Link a block to a matching task when useful. Use a 30 minute duration when the user gives an exact start but no duration; state that briefly in your final reply.",
+          "Do not guess a schedule start time. If the user asks to schedule something without giving a time and without asking you to find availability, ask naturally for a time. If they ask you to plan time, use find-free-slots first.",
+          "When the user asks for several independent Command Center changes, batch the needed native tool calls in the same assistant turn instead of waiting for one result at a time. Search first only when you need an id or need to disambiguate.",
+          "Never repeat an identical search or summary tool call after its result is already available in this run. Once the requested mutations are complete or pending approval, immediately give the short final message.",
+          "If a tool result says pending_confirmation, pause naturally: ask for confirmation in one short conversational sentence. The app renders Confirm/Cancel inline, so do not mention tool rows or schemas.",
+          "When you need an id, search first. Keep final replies short: say what changed, what is pending, or what you found.",
+          commandSummary,
+        ].join("\n");
+        let providerMessages = messagesToCommandProviderHistory(apiHistory);
+        let finalText = "";
+        let totalToolCalls = 0;
+        const actionSummaries: string[] = [];
+        let stoppedForConfirmation = false;
+        let pendingConfirmationAction: CommandAgentAction | undefined;
+        let loopCapped = false;
+        let interruptedBeforeSummary = false;
+        const completedCallResults = new Map<string, CommandFunctionResponse>();
+
+        for (let iteration = 1; iteration <= COMMAND_AGENT_MAX_ITERATIONS; iteration += 1) {
+          if (abortControllerRef.current?.signal.aborted) break;
+          const iterationToolCalls: Array<Required<Pick<CommandNativeToolCall, "id">> & CommandNativeToolCall> = [];
+          const seenToolCalls = new Set<string>();
+          let iterationText = "";
+
+          publishAgentMessage();
+
+          try {
+            await streamCommandAgentResponse({
+              provider: requestProvider,
+              model: requestModel,
+              systemInstruction: commandInstruction,
+              providerMessages,
+              reasoningEnabled: requestThinkingEnabled && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsReasoning)),
+              webSearchEnabled: requestWebSearchEnabled && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsTools)),
+              signal: abortControllerRef.current.signal,
+              onTextDelta: (delta) => {
+                iterationText += delta;
+                currentDisplayText = iterationText;
+                publishAgentMessage();
+              },
+              onThoughtDelta: (delta) => {
+                currentThought += delta;
+                publishAgentMessage();
+              },
+              onWebSearch: ({ status, queries }) => {
+                currentWebSearchStatus = status;
+                if (status === "searched") didCompleteWebSearch = true;
+                currentWebSearchQueries = queries || currentWebSearchQueries;
+                publishAgentMessage();
+              },
+              onToolDelta: upsertPreparingAction,
+              onToolCall: (call) => {
+                const normalized = withCommandNativeToolCallId(call);
+                const signature = `${normalized.name}:${JSON.stringify(normalized.arguments)}`;
+                if (seenToolCalls.has(normalized.id) || seenToolCalls.has(signature)) return;
+                seenToolCalls.add(normalized.id);
+                seenToolCalls.add(signature);
+                iterationToolCalls.push(normalized);
+              },
+            });
+          } catch (error) {
+            if (error instanceof CommandProviderIdleTimeoutError && actionSummaries.length > 0) {
+              interruptedBeforeSummary = true;
+              finalText = `Stopped. ${countCompletedChanges()} completed change${countCompletedChanges() === 1 ? " was" : "s were"} kept. The model connection stalled before it could finish the remaining steps.`;
+              break;
+            }
+            throw error;
+          }
+
+          currentAgentActions = currentAgentActions.filter(action => action.status !== "preparing");
+          publishAgentMessage();
+
+          if (iterationToolCalls.length === 0) {
+            finalText = iterationText.trim();
+            if (finalText) break;
+            providerMessages = [...providerMessages, commandRuntimeNote("No text or tool call was produced. Continue with either one useful Command Center tool call or a short final answer.")];
+            continue;
+          }
+
+          const remainingToolBudget = COMMAND_AGENT_MAX_TOOL_CALLS - totalToolCalls;
+          const callsToRun = iterationToolCalls.slice(0, Math.max(0, remainingToolBudget));
+          if (callsToRun.length === 0) {
+            loopCapped = true;
+            break;
+          }
+
+          publishAgentMessage();
+
+          const executedCalls: Array<Required<Pick<CommandNativeToolCall, "id">> & CommandNativeToolCall> = [];
+          const toolResults: Array<{ id: string; name: string; response: CommandFunctionResponse }> = [];
+          for (const nativeCall of callsToRun) {
+            if (abortControllerRef.current?.signal.aborted) break;
+            totalToolCalls += 1;
+            const operationSignature = `${nativeCall.name}:${JSON.stringify(nativeCall.arguments)}`;
+            const priorResponse = completedCallResults.get(operationSignature);
+            if (priorResponse) {
+              executedCalls.push(nativeCall);
+              toolResults.push({
+                id: nativeCall.id,
+                name: nativeCall.name,
+                response: {
+                  ...priorResponse,
+                  output: "This identical action was already completed in this operation. Continue without repeating it.",
+                },
+              });
+              continue;
+            }
+            markNativeCallRunning(nativeCall);
+            const internalCall = commandNativeToInternalCall(nativeCall);
+
+            try {
+              const result = await executeCommandToolCall(
+                { ...internalCall, id: nativeCall.id },
+                { chatId, messageId: pendingModelMessage.id, userMessageId: userMessage.id, sessionId: commandSessionId }
+              );
+              actionSummaries.push(result.summary);
+              executedCalls.push(nativeCall);
+              const toolResult = { id: nativeCall.id, name: nativeCall.name, response: result.response };
+              const nextAction = result.pendingCall
+                ? {
+                    ...result.action,
+                    pendingCall: {
+                      tool: result.pendingCall.tool,
+                      arguments: result.pendingCall.arguments,
+                      resume: {
+                        provider: requestProvider,
+                        model: requestModel,
+                        systemInstruction: commandInstruction,
+                        providerMessages: appendCommandToolResults(
+                          appendCommandAssistantToolCalls(providerMessages, iterationText, executedCalls),
+                          toolResults
+                        ),
+                        nativeToolName: nativeCall.name,
+                        nativeToolCallId: nativeCall.id,
+                        reasoningEnabled: requestThinkingEnabled && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsReasoning)),
+                        webSearchEnabled: requestWebSearchEnabled && (!requestIsOpenRouter || Boolean(openRouterCapabilities?.supportsTools)),
+                        completedToolCalls: totalToolCalls,
+                      },
+                    },
+                    sessionId: commandSessionId,
+                  }
+                : { ...result.action, sessionId: commandSessionId };
+              setAgentActions(actions => actions.map(action => action.id === nativeCall.id ? nextAction : action));
+              toolResults.push(toolResult);
+              if (!result.pendingCall) completedCallResults.set(operationSignature, result.response);
+              if (result.pendingCall) {
+                stoppedForConfirmation = true;
+                pendingConfirmationAction = nextAction;
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Action failed.";
+              actionSummaries.push(`${internalCall.tool} failed: ${message}`);
+              setAgentActions(actions => actions.map(action => action.id === nativeCall.id ? {
+                ...action,
+                status: "failed",
+                error: message,
+                completedAt: Date.now(),
+              } : action));
+              executedCalls.push(nativeCall);
+              toolResults.push({
+                id: nativeCall.id,
+                name: nativeCall.name,
+                response: {
+                  success: false,
+                  status: "failed",
+                  error: message,
+                  output: message,
+                  data: {
+                    tool: internalCall.tool,
+                    targetType: getCommandTargetType(internalCall.tool),
+                    targetId: typeof internalCall.arguments.id === "string" ? internalCall.arguments.id : undefined,
+                  },
+                },
+              });
+            }
+
+            await checkpointAgentProgress(stoppedForConfirmation || totalToolCalls >= COMMAND_AGENT_MAX_TOOL_CALLS);
+            if (totalToolCalls >= COMMAND_AGENT_MAX_TOOL_CALLS) break;
+          }
+
+          if (executedCalls.length > 0) {
+            providerMessages = appendCommandToolResults(
+              appendCommandAssistantToolCalls(providerMessages, iterationText, executedCalls),
+              toolResults
+            );
+          }
+
+          if (stoppedForConfirmation) {
+            finalText = getCommandPendingConfirmationMessage(
+              pendingConfirmationAction || currentAgentActions.find(action => action.status === "pending")
+            );
+            break;
+          }
+          if (totalToolCalls >= COMMAND_AGENT_MAX_TOOL_CALLS) {
+            loopCapped = true;
+            break;
+          }
+          providerMessages = [...providerMessages, commandRuntimeNote("Tool results are available. If more tools are needed, call them now; otherwise give the user a short final summary.")];
+        }
+
+        if (!finalText) {
+          finalText = loopCapped
+            ? `Stopped. ${countCompletedChanges()} completed change${countCompletedChanges() === 1 ? " was" : "s were"} kept because the tool budget was reached.`
+            : actionSummaries.length > 0
+              ? `Done. ${actionSummaries.join("; ")}.`
+              : "Nothing needed changing.";
+        }
+        const currentChat = chatsRef.current.find(c => c.id === chatId);
+        const title =
+          currentChat?.title === "New Conversation"
+            ? text.slice(0, 30) + (text.length > 30 ? "..." : "")
+            : currentChat?.title;
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            content: finalText,
+            thought: currentThought,
+            isThinking: false,
+            webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+            agentActions: currentAgentActions,
+          },
+        ];
+        await updateActiveSession(stoppedForConfirmation ? "awaiting_confirmation" : interruptedBeforeSummary || loopCapped ? "stopped" : "completed", {
+          finalSummary: finalText,
+          completedAt: stoppedForConfirmation || interruptedBeforeSummary || loopCapped ? undefined : Date.now(),
+          continuation: stoppedForConfirmation && pendingConfirmationAction?.pendingCall?.resume
+            ? {
+                provider: pendingConfirmationAction.pendingCall.resume.provider,
+                model: pendingConfirmationAction.pendingCall.resume.model,
+                systemInstruction: pendingConfirmationAction.pendingCall.resume.systemInstruction,
+                providerMessages: pendingConfirmationAction.pendingCall.resume.providerMessages,
+                reasoningEnabled: pendingConfirmationAction.pendingCall.resume.reasoningEnabled,
+                webSearchEnabled: pendingConfirmationAction.pendingCall.resume.webSearchEnabled,
+                completedToolCalls: pendingConfirmationAction.pendingCall.resume.completedToolCalls,
+              }
+            : undefined,
+        });
+        await persistFinalGeneration(chatId, finalMessages, title ? { title, model: requestModel } : { model: requestModel });
+        appLogger.info("Command Agent generation completed", {
+          chatId,
+          model: requestModel,
+          actionCount: currentAgentActions.length,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (error: any) {
+        const isStopped = error?.name === "AbortError" || abortControllerRef.current?.signal.aborted;
+        const errorMessage = error instanceof Error ? error.message : String(error || "Unknown error");
+        const finalMessages: Message[] = [
+          ...newHistory,
+          {
+            ...pendingModelMessage,
+            content: isStopped
+              ? `Stopped. ${countCompletedChanges()} completed change${countCompletedChanges() === 1 ? " was" : "s were"} kept.`
+              : `I could not complete that request: ${errorMessage}`,
+            thought: currentThought,
+            isThinking: false,
+            agentActions: currentAgentActions.map(action =>
+              action.status === "running" || action.status === "preparing"
+                ? { ...action, status: isStopped ? "cancelled" : "failed", error: isStopped ? undefined : errorMessage, completedAt: Date.now() }
+                : action
+            ),
+            webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+            webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+          },
+        ];
+        if (isStopped) {
+          appLogger.info("Command Agent generation stopped", { chatId, model: requestModel, durationMs: Date.now() - startedAt });
+        } else {
+          appLogger.error("Command Agent generation failed", { err: error, chatId, model: requestModel, durationMs: Date.now() - startedAt });
+        }
+        await updateActiveSession(isStopped ? "stopped" : "failed", {
+          finalSummary: isStopped ? `Stopped. ${countCompletedChanges()} completed change${countCompletedChanges() === 1 ? " was" : "s were"} kept.` : undefined,
+          error: isStopped ? undefined : errorMessage,
+        });
+        await persistFinalGeneration(chatId, finalMessages, { model: requestModel });
+      } finally {
+        isTypingRef.current = false;
+        setIsTyping(false);
+        abortControllerRef.current = null;
+      }
+
+      return;
     }
 
     if (requestClashModeEnabled) {
@@ -2540,7 +3062,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
       const isFirstMessage = currentChat?.title === "New Conversation";
       if (isFirstMessage) {
         generateGeminiTitle(
-          "gemini-3.1-flash-lite-preview",
+          "gemini-3.5-flash",
           `Summarize this conversation into a short, punchy title (max 5 words). Return ONLY the title text, no quotes, no extra formatting.\n\nConversation:\n${newHistory.map(m => m.role + ": " + m.content).join("\n")}\nmodel: ${currentText}`
         ).then(titleText => {
           const generatedTitle = titleText.replace(/["']/g, "").trim();
@@ -2550,7 +3072,7 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
             ));
             updateChatMeta(chatId, { title: generatedTitle }).catch(err => appLogger.error("Failed to save generated title", { err, chatId }));
           }
-        }).catch(err => appLogger.error("Failed to generate title", { err, chatId, model: "gemini-3.1-flash-lite-preview" }));
+        }).catch(err => appLogger.error("Failed to generate title", { err, chatId, model: "gemini-3.5-flash" }));
       }
     } catch (error: any) {
       const stoppedMessage = currentText || currentThought ? "" : "Generation stopped.";
@@ -2604,9 +3126,11 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     const msg = currentMessages[idx];
     if (msg.role !== "user") return;
     const trimmedMessages = currentMessages.slice(0, idx);
+    const removedMessages = currentMessages.slice(idx);
 
     setInput(msg.content);
     setAttachments(normalizeAttachmentUrls(msg.attachments || []));
+    await resolveRerunCommandChanges(removedMessages, "edit");
     setMessages(trimmedMessages);
     await syncCurrentChatMessages(trimmedMessages);
     window.setTimeout(() => {
@@ -3284,16 +3808,20 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
     const msg = currentMessages[idx];
     if (msg.role === "user") {
       const previousMessages = currentMessages.slice(0, idx);
+      const removedMessages = currentMessages.slice(idx);
+      await resolveRerunCommandChanges(removedMessages, "retry");
       await syncCurrentChatMessages(previousMessages);
       await sendMessage(msg.content, previousMessages, msg.attachments);
     } else if (msg.role === "model") {
       const prevMsg = currentMessages[idx - 1];
       if (prevMsg && prevMsg.role === "user") {
         const previousMessages = currentMessages.slice(0, idx - 1);
+        const removedMessages = currentMessages.slice(idx);
         if (msg.imageGeneration) {
           composerModeRef.current = "image";
           setComposerMode("image");
         }
+        await resolveRerunCommandChanges(removedMessages, "retry");
         await syncCurrentChatMessages(previousMessages);
         await sendMessage(prevMsg.content, previousMessages, prevMsg.attachments);
       }
@@ -3308,6 +3836,12 @@ ${artifactStreamMarker} {"operation":"create","kind":"svg","title":"Short title"
 
     if (editingResearchPlanMessageIdRef.current && text) {
       await updateResearchPlanFromInput(text);
+      return;
+    }
+
+    if (text && attachments.length === 0 && onResolvePendingCommandAction && await onResolvePendingCommandAction(text)) {
+      setInput("");
+      setAttachments([]);
       return;
     }
 

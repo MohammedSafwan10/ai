@@ -15,6 +15,7 @@ import { RenameChatModal } from "./features/chat/components/RenameChatModal";
 import { SearchModal } from "./features/chat/components/SearchModal";
 import { WebDevWorkspace } from "./features/webdev/components/WebDevWorkspace";
 import { CharacterWorkspace } from "./features/characters/components/CharacterWorkspace";
+import { CommandCenterWorkspace } from "./features/command-center/components/CommandCenterWorkspace";
 import { getModelOption, normalizeModelId } from "./lib/models";
 import { appLogger } from "./lib/logger";
 import { useChatStorage } from "./features/chat/hooks/useChatStorage";
@@ -45,28 +46,52 @@ import {
   createId,
   deleteChatFromDb,
   loadArtifactsForChat,
+  replaceChatMessages,
   updateChatMeta,
   type ArtifactRecord,
   type CharacterRecord,
   type CharacterSessionRecord,
   type ChatMessageRecord,
   type ChatRecord,
+  type CommandAgentAction,
   type WebDevProjectRecord,
   type WebDevThreadRecord,
 } from "./lib/db";
 import { copyArtifactContent, downloadArtifactContent } from "./lib/artifacts";
 import { createWebDevProject, createWebDevThread, deleteWebDevProject, deleteWebDevThread, ensureDefaultWebDevThread, loadWebDevProjects, loadWebDevThreads, updateWebDevProject } from "./features/webdev/lib/storage";
 import { deleteCharacterSession, loadCharacterSessions, loadCharacters } from "./features/characters/lib/storage";
+import type { CommandSection } from "./features/command-center/lib/storage";
+import { redoCommandSession, undoCommandActivity, undoCommandSession, updateCommandActivity, updateCommandSession } from "./features/command-center/lib/storage";
+import {
+  executeCommandToolCall,
+  getCommandCancelledMessage,
+  getCommandPendingConfirmationMessage,
+  type CommandToolCall,
+} from "./features/command-center/lib/agentTools";
+import {
+  appendCommandAssistantToolCalls,
+  appendCommandToolResults,
+  CommandProviderIdleTimeoutError,
+  streamCommandAgentResponse,
+  withCommandNativeToolCallId,
+  type CommandFunctionResponse,
+  type CommandProviderMessage,
+} from "./features/command-center/lib/provider";
+import { commandInternalToNativeName, commandNativeToInternalCall, type CommandNativeToolCall } from "./features/command-center/lib/nativeTools";
+import type { ProviderId } from "./lib/models";
 
 type Message = ChatMessageRecord;
 type Chat = ChatRecord;
-type WorkspaceMode = "chat" | "web-dev" | "characters";
+type WorkspaceMode = "chat" | "web-dev" | "characters" | "command-center";
 type AppRouteState =
   | { mode: "chat"; chatId: string | null }
   | { mode: "web-dev"; projectId: string | null; threadId: string | null }
-  | { mode: "characters"; sessionId: string | null; view: "home" | "library" };
+  | { mode: "characters"; sessionId: string | null; view: "home" | "library" }
+  | { mode: "command-center"; section: CommandSection; itemId: string | null };
 
 const CHAT_BOTTOM_THRESHOLD_PX = 128;
+const COMMAND_AGENT_MAX_RESUME_ITERATIONS = 8;
+const COMMAND_AGENT_MAX_TOOL_CALLS = 24;
 const isWebContainerConnectRoute =
   typeof window !== "undefined" && window.location.pathname.startsWith("/webcontainer/connect/");
 
@@ -84,12 +109,18 @@ const parseAppRoute = (pathname: string, fallbackMode: WorkspaceMode): AppRouteS
     return { mode: "characters", sessionId: idSegment || null, view: "home" };
   }
 
+  if (modeSegment === "command-center") {
+    const section = idSegment === "schedule" || idSegment === "notes" || idSegment === "finance" || idSegment === "activity" ? idSegment : "tasks";
+    return { mode: "command-center", section, itemId: parts[2] || null };
+  }
+
   if (modeSegment === "chat") {
     return { mode: "chat", chatId: idSegment || null };
   }
 
   if (fallbackMode === "web-dev") return { mode: "web-dev", projectId: null, threadId: null };
   if (fallbackMode === "characters") return { mode: "characters", sessionId: null, view: "home" };
+  if (fallbackMode === "command-center") return { mode: "command-center", section: "tasks", itemId: null };
   return { mode: "chat", chatId: null };
 };
 
@@ -206,6 +237,7 @@ export default function App() {
   const [isDeepResearchEnabled, setIsDeepResearchEnabled] = useState(initialUiSettingsRef.current.isDeepResearchEnabled);
   const [isDebateModeEnabled, setIsDebateModeEnabled] = useState(initialUiSettingsRef.current.isDebateModeEnabled);
   const [isClashModeEnabled, setIsClashModeEnabled] = useState(initialUiSettingsRef.current.isClashModeEnabled);
+  const [isAgentModeEnabled, setIsAgentModeEnabled] = useState(initialUiSettingsRef.current.isAgentModeEnabled);
   const [composerMode, setComposerMode] = useState<"chat" | "image">(initialUiSettingsRef.current.composerMode);
   const [debateSettings, setDebateSettings] = useState<DebateSettings>(initialUiSettingsRef.current.debateSettings);
   const [clashSettings, setClashSettings] = useState<ClashSettings>(initialUiSettingsRef.current.clashSettings);
@@ -227,6 +259,8 @@ export default function App() {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const isScrollingToLatestRef = useRef(false);
+  const previousWorkspaceModeRef = useRef<WorkspaceMode>(workspaceMode);
+  const shouldScrollOnChatEntryRef = useRef(false);
   const chatsRef = useLatestRef(chats);
   const messagesRef = useLatestRef(messages);
   const currentChatIdRef = useLatestRef(currentChatId);
@@ -238,6 +272,7 @@ export default function App() {
   const isDeepResearchEnabledRef = useLatestRef(isDeepResearchEnabled);
   const isDebateModeEnabledRef = useLatestRef(isDebateModeEnabled);
   const isClashModeEnabledRef = useLatestRef(isClashModeEnabled);
+  const isAgentModeEnabledRef = useLatestRef(isAgentModeEnabled);
   const debateSettingsRef = useLatestRef(debateSettings);
   const clashSettingsRef = useLatestRef(clashSettings);
   const imageSettingsRef = useLatestRef(imageSettings);
@@ -268,13 +303,14 @@ export default function App() {
       isDeepResearchEnabled,
       isDebateModeEnabled,
       isClashModeEnabled,
+      isAgentModeEnabled,
       isDarkMode,
       composerMode,
       debateSettings,
       clashSettings,
       imageSettings,
     });
-  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDebateModeEnabled, isClashModeEnabled, isDarkMode, composerMode, debateSettings, clashSettings, imageSettings]);
+  }, [workspaceMode, selectedModel, selectedStyle, isThinkingEnabled, isWebSearchEnabled, isDeepResearchEnabled, isDebateModeEnabled, isClashModeEnabled, isAgentModeEnabled, isDarkMode, composerMode, debateSettings, clashSettings, imageSettings]);
 
   const addAttachmentFiles = async (fileList: FileList | File[], source: "select" | "paste" | "screenshot") => {
     const files = Array.from(fileList);
@@ -593,6 +629,8 @@ export default function App() {
       setIsDebateModeEnabled(false);
       isClashModeEnabledRef.current = false;
       setIsClashModeEnabled(false);
+      isAgentModeEnabledRef.current = false;
+      setIsAgentModeEnabled(false);
       isWebSearchEnabledRef.current = true;
       setIsWebSearchEnabled(true);
     } else {
@@ -610,6 +648,8 @@ export default function App() {
       setIsDeepResearchEnabled(false);
       isClashModeEnabledRef.current = false;
       setIsClashModeEnabled(false);
+      isAgentModeEnabledRef.current = false;
+      setIsAgentModeEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -622,8 +662,26 @@ export default function App() {
     if (nextValue) {
       isDeepResearchEnabledRef.current = false;
       isDebateModeEnabledRef.current = false;
+      isAgentModeEnabledRef.current = false;
       setIsDeepResearchEnabled(false);
       setIsDebateModeEnabled(false);
+      setIsAgentModeEnabled(false);
+      clearCurrentPendingResearchIntent();
+    }
+  };
+
+  const toggleAgentModeForNextMessage = () => {
+    const nextValue = !isAgentModeEnabledRef.current;
+    setComposerMode("chat");
+    isAgentModeEnabledRef.current = nextValue;
+    setIsAgentModeEnabled(nextValue);
+    if (nextValue) {
+      isDeepResearchEnabledRef.current = false;
+      isDebateModeEnabledRef.current = false;
+      isClashModeEnabledRef.current = false;
+      setIsDeepResearchEnabled(false);
+      setIsDebateModeEnabled(false);
+      setIsClashModeEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -635,10 +693,12 @@ export default function App() {
       isDeepResearchEnabledRef.current = false;
       isDebateModeEnabledRef.current = false;
       isClashModeEnabledRef.current = false;
+      isAgentModeEnabledRef.current = false;
       setIsWebSearchEnabled(false);
       setIsDeepResearchEnabled(false);
       setIsDebateModeEnabled(false);
       setIsClashModeEnabled(false);
+      setIsAgentModeEnabled(false);
       clearCurrentPendingResearchIntent();
     }
   };
@@ -670,6 +730,17 @@ export default function App() {
     }, behavior === "smooth" ? 420 : 0);
   };
 
+  const scrollToBottomAfterChatMount = () => {
+    shouldAutoScrollRef.current = true;
+    setShowScrollToLatest(false);
+
+    window.requestAnimationFrame(() => {
+      scrollToBottom("auto");
+      window.requestAnimationFrame(() => scrollToBottom("auto"));
+    });
+    window.setTimeout(() => scrollToBottom("auto"), 120);
+  };
+
   const handleChatScroll = () => {
     const isNearBottom = isNearChatBottom();
     if (isScrollingToLatestRef.current && !isNearBottom) return;
@@ -677,6 +748,25 @@ export default function App() {
     shouldAutoScrollRef.current = isNearBottom;
     setShowScrollToLatest(messagesRef.current.length > 0 && !isNearBottom);
   };
+
+  useEffect(() => {
+    const previousWorkspaceMode = previousWorkspaceModeRef.current;
+    if (previousWorkspaceMode !== workspaceMode && workspaceMode === "chat") {
+      shouldScrollOnChatEntryRef.current = true;
+      shouldAutoScrollRef.current = true;
+      setShowScrollToLatest(false);
+    }
+    previousWorkspaceModeRef.current = workspaceMode;
+  }, [workspaceMode]);
+
+  useEffect(() => {
+    if (workspaceMode !== "chat") return;
+    if (!shouldScrollOnChatEntryRef.current) return;
+    if (!currentChatId || messages.length === 0) return;
+
+    shouldScrollOnChatEntryRef.current = false;
+    scrollToBottomAfterChatMount();
+  }, [workspaceMode, currentChatId, messages.length]);
 
   useEffect(() => {
     if (!currentChatId) {
@@ -716,6 +806,760 @@ export default function App() {
       const next = exists ? prev.map(item => item.id === artifact.id ? artifact : item) : [artifact, ...prev];
       return next.sort((a, b) => b.updatedAt - a.updatedAt);
     });
+  };
+
+  const sectionForCommandTarget = (targetType: CommandAgentAction["targetType"]): CommandSection => {
+    if (targetType === "task") return "tasks";
+    if (targetType === "schedule") return "schedule";
+    if (targetType === "note") return "notes";
+    return "finance";
+  };
+
+  const openCommandTarget = (targetType: CommandAgentAction["targetType"], targetId?: string) => {
+    setActiveArtifactId(null);
+    setIsChatPlaygroundOpen(false);
+    navigateToCommandCenter(sectionForCommandTarget(targetType), targetId || null);
+  };
+
+  const persistCurrentChatMessages = async (nextMessages: Message[]) => {
+    const chatId = currentChatIdRef.current;
+    if (!chatId) return;
+    setMessages(nextMessages);
+    setChats(prev => prev.map(chat => chat.id === chatId ? { ...chat, messages: nextMessages, updatedAt: Date.now() } : chat));
+    await replaceChatMessages(chatId, nextMessages, { updatedAt: Date.now() });
+  };
+
+  const patchCommandActionInMessage = async (
+    messageId: string,
+    actionId: string,
+    updater: (action: CommandAgentAction) => CommandAgentAction
+  ) => {
+    const nextMessages = messagesRef.current.map(message => {
+      if (message.id !== messageId || !message.agentActions) return message;
+      return {
+        ...message,
+        agentActions: message.agentActions.map(action => action.id === actionId ? updater(action) : action),
+      };
+    });
+    await persistCurrentChatMessages(nextMessages);
+  };
+
+  const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+  const streamCommandMessageContent = async (messageId: string, text: string, options: { isThinking?: boolean } = {}) => {
+    let partial = "";
+    const chunks = text.match(/.{1,4}/g) || [text];
+    for (const chunk of chunks) {
+      partial += chunk;
+      const nextMessages = messagesRef.current.map(message => message.id === messageId ? {
+        ...message,
+        content: partial,
+        isThinking: options.isThinking ?? message.isThinking,
+      } : message);
+      setMessages(nextMessages);
+      setChats(prev => prev.map(chat => chat.id === currentChatIdRef.current ? { ...chat, messages: nextMessages, updatedAt: Date.now() } : chat));
+      await sleep(16);
+    }
+  };
+
+  const getCommandTargetType = (tool: CommandToolCall["tool"]): CommandAgentAction["targetType"] => {
+    if (tool.includes("Task")) return "task";
+    if (tool.includes("Schedule") || tool === "findFreeSlots") return "schedule";
+    if (tool.includes("Note")) return "note";
+    return "finance";
+  };
+
+  const getCommandActionKind = (tool: CommandToolCall["tool"]): CommandAgentAction["action"] =>
+    tool.startsWith("delete") ? "delete" :
+    tool.startsWith("search") || tool === "summarizeFinance" || tool === "findFreeSlots" ? "search" :
+    tool === "completeTask" ? "complete" :
+    tool.startsWith("create") || tool === "addFinanceEntry" ? "create" :
+    "update";
+
+  const getCommandActionTitle = (call: CommandToolCall) => {
+    const args = call.arguments || {};
+    const title =
+      typeof args.title === "string" ? args.title :
+      typeof args.note === "string" ? args.note :
+      typeof args.query === "string" ? args.query :
+      typeof args.category === "string" ? args.category :
+      typeof args.id === "string" ? args.id :
+      call.tool;
+    return title.slice(0, 90);
+  };
+
+  const undoCommandAction = async (messageId: string, actionId: string) => {
+    const action = messagesRef.current.find(message => message.id === messageId)?.agentActions?.find(item => item.id === actionId);
+    if (!action?.activityId) return;
+    try {
+      await undoCommandActivity(action.activityId);
+      await patchCommandActionInMessage(messageId, actionId, item => ({ ...item, status: "undone", canUndo: false, completedAt: Date.now() }));
+    } catch (error) {
+      appLogger.error("Command action undo failed", { err: error, messageId, actionId });
+    }
+  };
+
+  const undoCommandMessageSession = async (messageId: string) => {
+    const message = messagesRef.current.find(item => item.id === messageId);
+    if (!message?.agentSessionId) return;
+    try {
+      const result = await undoCommandSession(message.agentSessionId);
+      const undoneIds = new Set(result.undone.map(activity => activity.id));
+      const nextMessages = messagesRef.current.map(item => item.id !== messageId || !item.agentActions ? item : ({
+        ...item,
+        agentActions: item.agentActions.map(action => action.activityId && undoneIds.has(action.activityId)
+          ? { ...action, status: "undone" as const, canUndo: false, completedAt: Date.now() }
+          : action),
+      }));
+      await persistCurrentChatMessages(nextMessages);
+      if (result.undone.length === 0 && result.conflicts.length === 0) {
+        notify({
+          title: "Nothing undone",
+          description: "This session has no reversible linked changes. Older action history may not support session undo.",
+          variant: "info",
+        });
+      } else if (result.conflicts.length > 0) {
+        notify({
+          title: "Session partly undone",
+          description: `${result.undone.length} change${result.undone.length === 1 ? "" : "s"} undone. ${result.conflicts.length} newer change${result.conflicts.length === 1 ? " was" : "s were"} kept.`,
+          variant: "info",
+        });
+      } else {
+        notify({
+          title: "Session undone",
+          description: `${result.undone.length} change${result.undone.length === 1 ? "" : "s"} restored.`,
+          variant: "success",
+        });
+      }
+    } catch (error) {
+      appLogger.error("Command session undo failed", { err: error, messageId });
+      notify({
+        title: "Undo failed",
+        description: error instanceof Error ? error.message : "Could not undo this session.",
+        variant: "error",
+      });
+    }
+  };
+
+  const redoCommandMessageSession = async (messageId: string) => {
+    const message = messagesRef.current.find(item => item.id === messageId);
+    if (!message?.agentSessionId) return;
+    try {
+      const result = await redoCommandSession(message.agentSessionId);
+      const redoneIds = new Set(result.redone.map(activity => activity.id));
+      const nextMessages = messagesRef.current.map(item => item.id !== messageId || !item.agentActions ? item : ({
+        ...item,
+        agentActions: item.agentActions.map(action => action.activityId && redoneIds.has(action.activityId)
+          ? { ...action, status: "done" as const, canUndo: true, completedAt: Date.now() }
+          : action),
+      }));
+      await persistCurrentChatMessages(nextMessages);
+      if (result.redone.length === 0 && result.conflicts.length === 0) {
+        notify({ title: "Nothing redone", description: "This session has no undone changes to replay.", variant: "info" });
+      } else if (result.conflicts.length > 0) {
+        notify({
+          title: "Session partly redone",
+          description: `${result.redone.length} change${result.redone.length === 1 ? "" : "s"} replayed. ${result.conflicts.length} newer change${result.conflicts.length === 1 ? " was" : "s were"} kept.`,
+          variant: "info",
+        });
+      } else {
+        notify({
+          title: "Session redone",
+          description: `${result.redone.length} change${result.redone.length === 1 ? "" : "s"} reapplied.`,
+          variant: "success",
+        });
+      }
+    } catch (error) {
+      appLogger.error("Command session redo failed", { err: error, messageId });
+      notify({
+        title: "Redo failed",
+        description: error instanceof Error ? error.message : "Could not redo this session.",
+        variant: "error",
+      });
+    }
+  };
+
+  const cancelCommandAction = async (messageId: string, actionId: string) => {
+    const action = messagesRef.current.find(message => message.id === messageId)?.agentActions?.find(item => item.id === actionId);
+    if (action?.activityId) {
+      await updateCommandActivity(action.activityId, { status: "cancelled" }).catch(err => appLogger.error("Failed to cancel command activity", { err }));
+    }
+    const cancelText = action ? getCommandCancelledMessage(action) : "Okay, I left it unchanged.";
+    await streamCommandMessageContent(messageId, cancelText, { isThinking: false });
+    const nextMessages = messagesRef.current.map(message => {
+      if (message.id !== messageId || !message.agentActions) return message;
+      return {
+        ...message,
+        content: cancelText,
+        isThinking: false,
+        agentActions: message.agentActions.map(item => item.id === actionId ? {
+          ...item,
+          status: "cancelled" as const,
+          requiresConfirmation: false,
+          pendingCall: undefined,
+          completedAt: Date.now(),
+        } : item),
+      };
+    });
+    await persistCurrentChatMessages(nextMessages);
+    const updatedMessage = nextMessages.find(item => item.id === messageId);
+    if (updatedMessage?.agentSessionId) {
+      const remainingPending = updatedMessage.agentActions?.filter(item => item.status === "pending").length || 0;
+      await updateCommandSession(updatedMessage.agentSessionId, {
+        status: remainingPending > 0 ? "awaiting_confirmation" : "completed",
+        pendingCount: remainingPending,
+        completedCount: updatedMessage.agentActions?.filter(item => item.action !== "search" && item.status === "done").length || 0,
+        finalSummary: cancelText,
+        completedAt: remainingPending > 0 ? undefined : Date.now(),
+      });
+    }
+  };
+
+  const confirmCommandAction = async (messageId: string, actionId: string, approvedCall?: CommandToolCall) => {
+    const message = messagesRef.current.find(item => item.id === messageId);
+    const action = message?.agentActions?.find(item => item.id === actionId);
+    if (!message || !action?.pendingCall) return;
+    const resume = action.pendingCall.resume;
+    let resumeController: AbortController | null = null;
+    const runningMessages = messagesRef.current.map(item => {
+      if (item.id !== messageId || !item.agentActions) return item;
+      return {
+        ...item,
+        content: "",
+        isThinking: true,
+        agentActions: item.agentActions.map(commandAction => commandAction.id === actionId ? {
+          ...commandAction,
+          status: "running" as const,
+          detail: action.action === "delete" ? "Deleting" : "Applying",
+          requiresConfirmation: false,
+        } : commandAction),
+      };
+    });
+    isTypingRef.current = true;
+    setIsTyping(true);
+    await persistCurrentChatMessages(runningMessages);
+    try {
+      const previousUser = [...messagesRef.current]
+        .reverse()
+        .find(item => item.role === "user" && item.createdAt <= message.createdAt);
+      const result = await executeCommandToolCall(
+        approvedCall || {
+          id: actionId,
+          tool: action.pendingCall.tool as CommandToolCall["tool"],
+          arguments: action.pendingCall.arguments,
+        },
+        {
+          chatId: message.chatId,
+          messageId,
+          userMessageId: previousUser?.id || messageId,
+          sessionId: message.agentSessionId,
+        },
+        { force: true }
+      );
+      if (approvedCall?.tool === "findFreeSlots") {
+        result.summary = "Alternative times checked";
+        result.response.output = `The user chose to find another time. No schedule block was created. ${result.response.output || "Free-slot results are attached."} Continue by proposing or creating a non-conflicting block from these results.`;
+      }
+      if (action.activityId) {
+        await updateCommandActivity(action.activityId, { status: "cancelled", undoState: "unavailable" }).catch(err =>
+          appLogger.error("Failed to close pending command activity", { err, activityId: action.activityId })
+        );
+      }
+      const completedAction = {
+        ...result.action,
+        id: actionId,
+        sessionId: message.agentSessionId,
+        pendingCall: undefined,
+        requiresConfirmation: false,
+      };
+      const remainingPendingActions = (message.agentActions || []).filter(commandAction =>
+        commandAction.id !== actionId && commandAction.status === "pending" && commandAction.pendingCall
+      );
+      if (remainingPendingActions.length > 0) {
+        const waitingText = `Approved. ${remainingPendingActions.length} more change${remainingPendingActions.length === 1 ? "" : "s"} still need confirmation before I continue.`;
+        const waitingMessages = messagesRef.current.map(item => item.id !== messageId || !item.agentActions ? item : ({
+          ...item,
+          content: waitingText,
+          isThinking: false,
+          agentActions: item.agentActions.map(commandAction => commandAction.id === actionId ? completedAction : commandAction),
+        }));
+        await persistCurrentChatMessages(waitingMessages);
+        if (message.agentSessionId) {
+          await updateCommandSession(message.agentSessionId, {
+            status: "awaiting_confirmation",
+            completedCount: waitingMessages.find(item => item.id === messageId)?.agentActions?.filter(item => item.action !== "search" && item.status === "done").length || 0,
+            pendingCount: remainingPendingActions.length,
+            finalSummary: waitingText,
+          });
+        }
+        return;
+      }
+      let currentDisplayText = "";
+      let currentThought = message.thought || "";
+      let currentAgentActions = (messagesRef.current.find(item => item.id === messageId)?.agentActions || [])
+        .map(commandAction => commandAction.id === actionId ? completedAction : commandAction);
+      let currentWebSearchStatus: Message["webSearchStatus"];
+      let currentWebSearchQueries: string[] | undefined;
+      let didCompleteWebSearch = false;
+
+      const publishResumedMessage = (patch: Partial<Message> = {}) => {
+        const nextMessages = messagesRef.current.map(item => {
+          if (item.id !== messageId) return item;
+          return {
+            ...item,
+            content: currentDisplayText,
+            thought: currentThought,
+            isThinking: true,
+            webSearchStatus: currentWebSearchStatus,
+            webSearchQueries: currentWebSearchQueries,
+            agentActions: currentAgentActions,
+            ...patch,
+          };
+        });
+        setMessages(nextMessages);
+        setChats(prev => prev.map(chat => chat.id === message.chatId ? { ...chat, messages: nextMessages, updatedAt: Date.now() } : chat));
+      };
+
+      const setResumedAgentActions = (updater: (actions: CommandAgentAction[]) => CommandAgentAction[]) => {
+        currentAgentActions = updater(currentAgentActions);
+        publishResumedMessage();
+      };
+
+      const upsertPreparingAction = (nativeCall: CommandNativeToolCall) => {
+        const internalCall = commandNativeToInternalCall(nativeCall);
+        const preparingAction: CommandAgentAction = {
+          id: nativeCall.id || `draft_${nativeCall.name}`,
+          toolName: internalCall.tool,
+          action: getCommandActionKind(internalCall.tool),
+          targetType: getCommandTargetType(internalCall.tool),
+          targetId: typeof internalCall.arguments.id === "string" ? internalCall.arguments.id : undefined,
+          targetTitle: getCommandActionTitle(internalCall),
+          status: "preparing",
+          detail: "Preparing",
+          createdAt: Date.now(),
+        };
+        setResumedAgentActions(actions => {
+          const index = actions.findIndex(item => item.id === preparingAction.id || (item.status === "preparing" && item.toolName === preparingAction.toolName));
+          if (index < 0) return [...actions, preparingAction];
+          return actions.map((item, itemIndex) => itemIndex === index ? { ...item, ...preparingAction, createdAt: item.createdAt } : item);
+        });
+      };
+
+      const markNativeCallRunning = (nativeCall: Required<Pick<CommandNativeToolCall, "id">> & CommandNativeToolCall) => {
+        const internalCall = commandNativeToInternalCall(nativeCall);
+        const runningAction: CommandAgentAction = {
+          id: nativeCall.id,
+          toolName: internalCall.tool,
+          action: getCommandActionKind(internalCall.tool),
+          targetType: getCommandTargetType(internalCall.tool),
+          targetId: typeof internalCall.arguments.id === "string" ? internalCall.arguments.id : undefined,
+          targetTitle: getCommandActionTitle(internalCall),
+          status: "running",
+          detail: internalCall.tool,
+          createdAt: Date.now(),
+        };
+        setResumedAgentActions(actions => [
+          ...actions.filter(item => item.id !== nativeCall.id && !(item.status === "preparing" && item.toolName === internalCall.tool)),
+          runningAction,
+        ]);
+      };
+
+      if (!resume) {
+        currentDisplayText = result.summary || "Done.";
+        publishResumedMessage({ isThinking: false });
+        await persistCurrentChatMessages(messagesRef.current.map(item => item.id === messageId ? {
+          ...item,
+          content: currentDisplayText,
+          isThinking: false,
+          agentActions: currentAgentActions,
+        } : item));
+        return;
+      }
+
+      let providerMessages = appendCommandToolResults(
+        resume.providerMessages as CommandProviderMessage[],
+        [{
+          id: resume.nativeToolCallId,
+          name: resume.nativeToolName,
+          response: result.response,
+        }]
+      );
+      if ((message.agentActions || []).some(item => item.id !== actionId && item.status === "pending")) {
+        providerMessages = [
+          ...providerMessages,
+          {
+            role: "user",
+            content: "Command Agent runtime note:\nThe user reviewed the pending bundle. Previously approved changes in this bundle have already been applied; continue from the current Command Center state without recreating them.",
+          },
+        ];
+      }
+      let totalToolCalls = resume.completedToolCalls;
+      let finalText = "";
+      let stoppedForConfirmation = false;
+      let loopCapped = false;
+      let interruptedBeforeSummary = false;
+      const actionSummaries = [result.summary].filter(Boolean);
+      const countCompletedChanges = () => currentAgentActions.filter(item => item.action !== "search" && item.status === "done").length;
+      const completedCallResults = new Map<string, CommandFunctionResponse>();
+      const controller = new AbortController();
+      resumeController = controller;
+      abortControllerRef.current = controller;
+
+      for (let iteration = 1; iteration <= COMMAND_AGENT_MAX_RESUME_ITERATIONS; iteration += 1) {
+        if (controller.signal.aborted) break;
+        const iterationToolCalls: Array<Required<Pick<CommandNativeToolCall, "id">> & CommandNativeToolCall> = [];
+        const seenToolCalls = new Set<string>();
+        let iterationText = "";
+
+        publishResumedMessage();
+        try {
+          await streamCommandAgentResponse({
+            provider: resume.provider as ProviderId | undefined,
+            model: resume.model,
+            systemInstruction: resume.systemInstruction,
+            providerMessages,
+            reasoningEnabled: resume.reasoningEnabled,
+            webSearchEnabled: resume.webSearchEnabled,
+            signal: controller.signal,
+            onTextDelta: (delta) => {
+              iterationText += delta;
+              currentDisplayText = iterationText;
+              publishResumedMessage();
+            },
+            onThoughtDelta: (delta) => {
+              currentThought += delta;
+              publishResumedMessage();
+            },
+            onWebSearch: ({ status, queries }) => {
+              currentWebSearchStatus = status;
+              if (status === "searched") didCompleteWebSearch = true;
+              currentWebSearchQueries = queries || currentWebSearchQueries;
+              publishResumedMessage();
+            },
+            onToolDelta: (draft) => upsertPreparingAction({ id: draft.id, name: draft.name, arguments: draft.arguments }),
+            onToolCall: (nativeCall) => {
+              const normalized = withCommandNativeToolCallId(nativeCall);
+              const signature = `${normalized.name}:${JSON.stringify(normalized.arguments)}`;
+              if (seenToolCalls.has(normalized.id) || seenToolCalls.has(signature)) return;
+              seenToolCalls.add(normalized.id);
+              seenToolCalls.add(signature);
+              iterationToolCalls.push(normalized);
+            },
+          });
+        } catch (error) {
+          if (error instanceof CommandProviderIdleTimeoutError && actionSummaries.length > 0) {
+            finalText = `Stopped. ${countCompletedChanges()} completed change${countCompletedChanges() === 1 ? " was" : "s were"} kept. The model connection stalled before it could finish the remaining steps.`;
+            interruptedBeforeSummary = true;
+            break;
+          }
+          throw error;
+        }
+
+        currentAgentActions = currentAgentActions.filter(item => item.status !== "preparing");
+        publishResumedMessage();
+
+        if (iterationToolCalls.length === 0) {
+          finalText = iterationText.trim();
+          break;
+        }
+
+        const remainingToolBudget = COMMAND_AGENT_MAX_TOOL_CALLS - totalToolCalls;
+        const callsToRun = iterationToolCalls.slice(0, Math.max(0, remainingToolBudget));
+        if (callsToRun.length === 0) {
+          loopCapped = true;
+          break;
+        }
+
+        const executedCalls: Array<Required<Pick<CommandNativeToolCall, "id">> & CommandNativeToolCall> = [];
+        const toolResults: Array<{ id: string; name: string; response: CommandFunctionResponse }> = [];
+        for (const nativeCall of callsToRun) {
+          if (controller.signal.aborted) break;
+          totalToolCalls += 1;
+          const operationSignature = `${nativeCall.name}:${JSON.stringify(nativeCall.arguments)}`;
+          const priorResponse = completedCallResults.get(operationSignature);
+          if (priorResponse) {
+            executedCalls.push(nativeCall);
+            toolResults.push({
+              id: nativeCall.id,
+              name: nativeCall.name,
+              response: {
+                ...priorResponse,
+                output: "This identical action was already completed in this operation. Continue without repeating it.",
+              },
+            });
+            continue;
+          }
+          markNativeCallRunning(nativeCall);
+          const internalCall = commandNativeToInternalCall(nativeCall);
+          try {
+            const nextResult = await executeCommandToolCall(
+              { ...internalCall, id: nativeCall.id },
+              { chatId: message.chatId, messageId, userMessageId: previousUser?.id || messageId, sessionId: message.agentSessionId }
+            );
+            actionSummaries.push(nextResult.summary);
+            executedCalls.push(nativeCall);
+            const toolResult = { id: nativeCall.id, name: nativeCall.name, response: nextResult.response };
+            const nextAction = nextResult.pendingCall
+              ? {
+                  ...nextResult.action,
+                  sessionId: message.agentSessionId,
+                  pendingCall: {
+                    tool: nextResult.pendingCall.tool,
+                    arguments: nextResult.pendingCall.arguments,
+                    resume: {
+                      provider: resume.provider,
+                      model: resume.model,
+                      systemInstruction: resume.systemInstruction,
+                      providerMessages: appendCommandToolResults(
+                        appendCommandAssistantToolCalls(providerMessages, iterationText, executedCalls),
+                        toolResults
+                      ),
+                      nativeToolName: nativeCall.name,
+                      nativeToolCallId: nativeCall.id,
+                      reasoningEnabled: resume.reasoningEnabled,
+                      webSearchEnabled: resume.webSearchEnabled,
+                      completedToolCalls: totalToolCalls,
+                    },
+                  },
+                }
+              : { ...nextResult.action, sessionId: message.agentSessionId };
+            setResumedAgentActions(actions => actions.map(item => item.id === nativeCall.id ? nextAction : item));
+            toolResults.push(toolResult);
+            if (!nextResult.pendingCall) completedCallResults.set(operationSignature, nextResult.response);
+            if (nextResult.pendingCall) {
+              stoppedForConfirmation = true;
+              finalText = getCommandPendingConfirmationMessage(nextAction);
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Action failed.";
+            setResumedAgentActions(actions => actions.map(item => item.id === nativeCall.id ? {
+              ...item,
+              status: "failed",
+              error: errorMessage,
+              completedAt: Date.now(),
+            } : item));
+            executedCalls.push(nativeCall);
+            toolResults.push({
+              id: nativeCall.id,
+              name: nativeCall.name,
+              response: {
+                success: false,
+                status: "failed",
+                error: errorMessage,
+                output: errorMessage,
+              },
+            });
+          }
+          if (totalToolCalls >= COMMAND_AGENT_MAX_TOOL_CALLS) break;
+        }
+        if (executedCalls.length > 0) {
+          providerMessages = appendCommandToolResults(
+            appendCommandAssistantToolCalls(providerMessages, iterationText, executedCalls),
+            toolResults
+          );
+        }
+        if (stoppedForConfirmation) break;
+        if (totalToolCalls >= COMMAND_AGENT_MAX_TOOL_CALLS) {
+          loopCapped = true;
+          break;
+        }
+        providerMessages = [
+          ...providerMessages,
+          {
+            role: "user",
+            content: "Command Agent runtime note:\nTool results are available. If more tools are needed, call them now; otherwise give the user a short final summary.",
+          },
+        ];
+      }
+
+      if (!finalText) {
+        finalText = loopCapped
+          ? `Stopped. ${countCompletedChanges()} completed change${countCompletedChanges() === 1 ? " was" : "s were"} kept because the tool budget was reached.`
+          : actionSummaries.length > 0
+            ? `Done. ${actionSummaries.join("; ")}.`
+            : "Done.";
+      }
+
+      currentDisplayText = finalText;
+      publishResumedMessage({
+        isThinking: false,
+        webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+        webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+      });
+      await persistCurrentChatMessages(messagesRef.current.map(item => item.id === messageId ? {
+        ...item,
+        content: finalText,
+        thought: currentThought,
+        isThinking: false,
+        webSearchStatus: didCompleteWebSearch ? "searched" : undefined,
+        webSearchQueries: didCompleteWebSearch ? currentWebSearchQueries : undefined,
+        agentActions: currentAgentActions,
+      } : item));
+      if (message.agentSessionId) {
+        await updateCommandSession(message.agentSessionId, {
+          status: stoppedForConfirmation ? "awaiting_confirmation" : interruptedBeforeSummary || loopCapped ? "stopped" : "completed",
+          actionCount: currentAgentActions.length,
+          completedCount: countCompletedChanges(),
+          pendingCount: currentAgentActions.filter(item => item.status === "pending").length,
+          failedCount: currentAgentActions.filter(item => item.status === "failed").length,
+          finalSummary: finalText,
+          completedAt: stoppedForConfirmation || interruptedBeforeSummary || loopCapped ? undefined : Date.now(),
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Action failed.";
+      const isStopped = error instanceof DOMException && error.name === "AbortError" || abortControllerRef.current?.signal.aborted;
+      const failedText = isStopped ? "Stopped." : `I could not apply that change: ${errorMessage}`;
+      await streamCommandMessageContent(messageId, failedText, { isThinking: false });
+      const nextMessages = messagesRef.current.map(item => {
+        if (item.id !== messageId || !item.agentActions) return item;
+        return {
+          ...item,
+          content: failedText,
+          isThinking: false,
+          agentActions: item.agentActions.map(commandAction => commandAction.id === actionId ? {
+            ...commandAction,
+            status: "failed" as const,
+            error: errorMessage,
+            completedAt: Date.now(),
+          } : commandAction),
+        };
+      });
+      await persistCurrentChatMessages(nextMessages);
+      if (message.agentSessionId) {
+        await updateCommandSession(message.agentSessionId, {
+          status: isStopped ? "stopped" : "failed",
+          error: isStopped ? undefined : errorMessage,
+          finalSummary: failedText,
+        });
+      }
+    } finally {
+      if (!resumeController || abortControllerRef.current === resumeController) {
+        abortControllerRef.current = null;
+      }
+      isTypingRef.current = false;
+      setIsTyping(false);
+    }
+  };
+
+  const updateDuplicateCommandAction = async (messageId: string, actionId: string) => {
+    const action = messagesRef.current.find(item => item.id === messageId)?.agentActions?.find(item => item.id === actionId);
+    if (!action?.pendingCall || action.confirmationKind !== "duplicate" || !action.existingTargetId) return;
+    if (action.targetType !== "task" || action.pendingCall.tool !== "createTask") {
+      await cancelCommandAction(messageId, actionId);
+      return;
+    }
+    await confirmCommandAction(messageId, actionId, {
+      id: actionId,
+      tool: "updateTask",
+      arguments: {
+        ...action.pendingCall.arguments,
+        id: action.existingTargetId,
+      },
+    });
+  };
+
+  const findAlternativeCommandAction = async (messageId: string, actionId: string) => {
+    const action = messagesRef.current.find(item => item.id === messageId)?.agentActions?.find(item => item.id === actionId);
+    if (!action?.pendingCall || action.confirmationKind !== "conflict") return;
+    const startAt = typeof action.pendingCall.arguments.startAt === "string"
+      ? Date.parse(action.pendingCall.arguments.startAt)
+      : Number(action.pendingCall.arguments.startAt);
+    const endAt = typeof action.pendingCall.arguments.endAt === "string"
+      ? Date.parse(action.pendingCall.arguments.endAt)
+      : Number(action.pendingCall.arguments.endAt);
+    if (!Number.isFinite(startAt)) {
+      await cancelCommandAction(messageId, actionId);
+      return;
+    }
+    const dayStart = new Date(startAt);
+    dayStart.setHours(6, 0, 0, 0);
+    const dayEnd = new Date(startAt);
+    dayEnd.setHours(23, 0, 0, 0);
+    const durationMinutes = Number.isFinite(endAt) && endAt > startAt
+      ? Math.max(15, Math.round((endAt - startAt) / 60_000))
+      : Number(action.pendingCall.arguments.durationMinutes) || 30;
+    await confirmCommandAction(messageId, actionId, {
+      id: actionId,
+      tool: "findFreeSlots",
+      arguments: {
+        startAt: dayStart.toISOString(),
+        endAt: dayEnd.toISOString(),
+        durationMinutes,
+      },
+    });
+  };
+
+  const resolvePendingCommandActionFromText = async (text: string) => {
+    const pendingMessage = [...messagesRef.current]
+      .reverse()
+      .find(message => message.role === "model" && message.agentActions?.some(action => action.status === "pending" && action.pendingCall));
+    const pendingAction = pendingMessage?.agentActions?.find(action => action.status === "pending" && action.pendingCall);
+    if (!pendingMessage || !pendingAction) return false;
+
+    const normalized = text.trim().toLowerCase();
+    const isCancel =
+      /\b(cancel|stop|no|nope|leave it|keep it|don't|dont|do not)\b/i.test(normalized) ||
+      /^(never mind|nevermind)$/i.test(normalized) ||
+      /\b(keep|use)\s+(the\s+)?existing\b/i.test(normalized);
+    const isUpdateExisting =
+      pendingAction.confirmationKind === "duplicate" &&
+      pendingAction.targetType === "task" &&
+      /\b(update|change|edit)\b.{0,20}\b(existing|current|that|it)\b/i.test(normalized);
+    const isFindAlternative =
+      pendingAction.confirmationKind === "conflict" &&
+      /\b(find|choose|pick|use)\b.{0,25}\b(another|other|free|different)\b.{0,15}\b(time|slot)?\b/i.test(normalized);
+    const isConfirm =
+      /^(yes|y|yeah|yep|ok|okay|sure|confirm|approve|approved|do it|go ahead|proceed|run it|apply it|continue)$/i.test(normalized) ||
+      (pendingAction.action === "delete" && (/^(delete|remove)$/i.test(normalized) || /\b(delete|remove)\b.{0,24}\b(it|this|that)\b/i.test(normalized)));
+
+    if (!isCancel && !isConfirm && !isUpdateExisting && !isFindAlternative) return false;
+    if (isFindAlternative) {
+      await findAlternativeCommandAction(pendingMessage.id, pendingAction.id);
+      return true;
+    }
+    if (isUpdateExisting) {
+      await updateDuplicateCommandAction(pendingMessage.id, pendingAction.id);
+      return true;
+    }
+    if (isCancel) {
+      await cancelCommandAction(pendingMessage.id, pendingAction.id);
+      return true;
+    }
+    await confirmCommandAction(pendingMessage.id, pendingAction.id);
+    return true;
+  };
+
+  const getPendingCommandConfirmation = () => {
+    const message = [...messagesRef.current]
+      .reverse()
+      .find(item => item.role === "model" && item.agentActions?.some(action => action.status === "pending" && action.pendingCall));
+    const action = message?.agentActions?.find(item => item.status === "pending" && item.pendingCall);
+    return message && action ? { message, action } : null;
+  };
+
+  const confirmAllCommandActions = async (messageId: string) => {
+    while (true) {
+      const action = messagesRef.current
+        .find(item => item.id === messageId)
+        ?.agentActions?.find(item => item.status === "pending" && item.pendingCall);
+      if (!action) return;
+      await confirmCommandAction(messageId, action.id);
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+  };
+
+  const hasPendingCommandConfirmation = Boolean(getPendingCommandConfirmation());
+
+  const stopGenerationOrPendingCommand = () => {
+    if (isTypingRef.current || abortControllerRef.current) {
+      stopGeneration();
+      return;
+    }
+    const pending = getPendingCommandConfirmation();
+    if (pending) {
+      void cancelCommandAction(pending.message.id, pending.action.id);
+    }
   };
 
   useEffect(() => {
@@ -761,6 +1605,18 @@ export default function App() {
     void navigate({ to: "/characters", replace });
   };
 
+  const navigateToCommandCenter = (section: CommandSection = "tasks", itemId?: string | null, replace = false) => {
+    if (itemId) {
+      void navigate({ to: "/command-center/$section/$itemId", params: { section, itemId } as any, replace });
+      return;
+    }
+    if (section && section !== "tasks") {
+      void navigate({ to: "/command-center/$section", params: { section } as any, replace });
+      return;
+    }
+    void navigate({ to: "/command-center", replace });
+  };
+
   const navigateToWorkspaceMode = (mode: WorkspaceMode) => {
     if (mode === "web-dev") {
       setActiveArtifactId(null);
@@ -771,6 +1627,12 @@ export default function App() {
     if (mode === "characters") {
       setActiveArtifactId(null);
       navigateToCharacters(currentCharacterSessionId);
+      return;
+    }
+
+    if (mode === "command-center") {
+      setActiveArtifactId(null);
+      navigateToCommandCenter(routeState.mode === "command-center" ? routeState.section : "tasks");
       return;
     }
 
@@ -1007,6 +1869,10 @@ export default function App() {
       navigateToCharacters(null, true);
       return;
     }
+    if (fallbackMode === "command-center") {
+      navigateToCommandCenter("tasks", null, true);
+      return;
+    }
     navigateToChat(null, true);
   }, [pathname]);
 
@@ -1116,6 +1982,7 @@ export default function App() {
     isDeepResearchEnabledRef,
     isDebateModeEnabledRef,
     isClashModeEnabledRef,
+    isAgentModeEnabledRef,
     debateSettingsRef,
     clashSettingsRef,
     imageSettingsRef,
@@ -1127,6 +1994,7 @@ export default function App() {
     isNearChatBottom,
     onArtifactUpsert: upsertArtifactInState,
     onArtifactOpen: setActiveArtifactId,
+    onResolvePendingCommandAction: resolvePendingCommandActionFromText,
   });
 
   const isLandingChat = messages.length === 0;
@@ -1164,6 +2032,7 @@ export default function App() {
       input={input}
       attachments={attachments}
       isTyping={isTyping}
+      isAwaitingConfirmation={hasPendingCommandConfirmation}
       selectedModel={selectedModel}
       selectedStyle={selectedStyle}
       isThinkingEnabled={isThinkingEnabled}
@@ -1171,6 +2040,7 @@ export default function App() {
       isDeepResearchEnabled={isDeepResearchEnabled}
       isDebateModeEnabled={isDebateModeEnabled}
       isClashModeEnabled={isClashModeEnabled}
+      isAgentModeEnabled={isAgentModeEnabled}
       composerMode={composerMode}
       debateSettings={debateSettings}
       clashSettings={clashSettings}
@@ -1193,6 +2063,7 @@ export default function App() {
       onToggleDeepResearch={toggleDeepResearchForNextMessage}
       onToggleDebateMode={toggleDebateModeForNextMessage}
       onToggleClashMode={toggleClashModeForNextMessage}
+      onToggleAgentMode={toggleAgentModeForNextMessage}
       onOpenCodePlayground={openEmptyChatPlayground}
       onSelectComposerMode={selectComposerMode}
       onDebateSettingsChange={setDebateSettings}
@@ -1200,7 +2071,7 @@ export default function App() {
       onImageSettingsChange={setImageSettings}
       onSelectModel={selectModelForNextMessage}
       onSelectStyle={selectStyleForNextMessage}
-      onStopGeneration={stopGeneration}
+      onStopGeneration={stopGenerationOrPendingCommand}
       onClearResearchEdit={() => editingResearchPlanMessage && clearResearchPlanEdit(editingResearchPlanMessage.id)}
       placement={placement}
     />
@@ -1299,7 +2170,22 @@ export default function App() {
         </div>
 
         <AnimatePresence mode="wait" initial={false}>
-          {workspaceMode === "web-dev" ? null : workspaceMode === "characters" ? (
+          {workspaceMode === "web-dev" ? null : workspaceMode === "command-center" ? (
+            <motion.div
+              key="command-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="contents"
+            >
+              <CommandCenterWorkspace
+                initialSection={routeState.mode === "command-center" ? routeState.section : "tasks"}
+                selectedItemId={routeState.mode === "command-center" ? routeState.itemId : null}
+                onOpenChatSession={(chatId) => selectChat(chatId)}
+              />
+            </motion.div>
+          ) : workspaceMode === "characters" ? (
             <motion.div
               key="characters"
               initial={{ opacity: 0 }}
@@ -1386,6 +2272,15 @@ export default function App() {
                   setIsChatPlaygroundOpen(false);
                   setActiveArtifactId(artifactId);
                 }}
+                onOpenCommandTarget={openCommandTarget}
+                onUndoCommandAction={(messageId, actionId) => void undoCommandAction(messageId, actionId)}
+                onUndoCommandSession={(messageId) => void undoCommandMessageSession(messageId)}
+                onRedoCommandSession={(messageId) => void redoCommandMessageSession(messageId)}
+                onConfirmCommandAction={(messageId, actionId) => void confirmCommandAction(messageId, actionId)}
+                onUpdateDuplicateCommandAction={(messageId, actionId) => void updateDuplicateCommandAction(messageId, actionId)}
+                onFindAlternativeCommandAction={(messageId, actionId) => void findAlternativeCommandAction(messageId, actionId)}
+                onConfirmAllCommandActions={(messageId) => void confirmAllCommandActions(messageId)}
+                onCancelCommandAction={(messageId, actionId) => void cancelCommandAction(messageId, actionId)}
                 onOpenCodePlayground={openCodeInChatPlayground}
                 onPreviewAttachment={setPreviewAttachment}
               />

@@ -577,6 +577,7 @@ function WebDevAssistantMessage({
         })}
         {message.attachments && message.attachments.length > 0 && (
           <ChatMessage
+            id={`${message.id}-attachments`}
             role="model"
             content=""
             isTyping={false}
@@ -595,6 +596,7 @@ function WebDevAssistantMessage({
         <WebDevThoughtPart key={`${message.id}-thought-${index}`} part={part} />
       ))}
       <ChatMessage
+        id={message.id}
         role="model"
         content={message.content}
         thought={thinkingParts.length > 0 ? undefined : message.thought}

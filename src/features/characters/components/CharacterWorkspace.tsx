@@ -920,6 +920,7 @@ export function CharacterWorkspace({
                 {messages.map((message, index) => (
                   <ChatMessage
                     key={message.id}
+                    id={message.id}
                     role={message.role}
                     content={message.content}
                     thought={message.thought}
@@ -949,6 +950,7 @@ export function CharacterWorkspace({
               isDeepResearchEnabled={isDeepResearchEnabled}
               isDebateModeEnabled={false}
               isClashModeEnabled={false}
+              isAgentModeEnabled={false}
               composerMode="chat"
               debateSettings={{}}
               clashSettings={{}}
@@ -978,6 +980,7 @@ export function CharacterWorkspace({
               onToggleDeepResearch={onToggleDeepResearch}
               onToggleDebateMode={() => undefined}
               onToggleClashMode={() => undefined}
+              onToggleAgentMode={() => undefined}
               onSelectComposerMode={() => undefined}
               onDebateSettingsChange={() => undefined}
               onClashSettingsChange={() => undefined}
