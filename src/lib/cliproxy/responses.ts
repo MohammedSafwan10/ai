@@ -1,6 +1,7 @@
 import type { Attachment } from "../attachments";
 import { artifactToolDefinition, parseArtifactToolArguments, parsePartialArtifactToolArguments, type ArtifactDraftPayload, type ArtifactPayload } from "../artifacts";
 import { appLogger } from "../logger";
+import { normalizeProviderErrorMessage } from "../providerErrors";
 
 export interface CliproxyMessage {
   role: "user" | "model";
@@ -308,7 +309,7 @@ export async function streamCliproxyResponse({
       durationMs: Date.now() - startedAt,
       errorText,
     });
-    throw new Error(errorText || `CLIProxy request failed with ${response.status}`);
+    throw new Error(normalizeProviderErrorMessage(errorText, `CLIProxy request failed with ${response.status}`));
   }
 
   appLogger.debug("CLIProxy stream response opened", {
@@ -466,7 +467,7 @@ export async function generateCliproxyArtifactSummary({
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(errorText || `CLIProxy artifact summary failed with ${response.status}`);
+    throw new Error(normalizeProviderErrorMessage(errorText, `CLIProxy artifact summary failed with ${response.status}`));
   }
 
   const text = extractResponseText(await response.json());

@@ -1,4 +1,5 @@
 import { getAttachmentDataUrl, type Attachment } from "../attachments";
+import { normalizeProviderErrorMessage } from "../providerErrors";
 
 export const CLIPROXY_IMAGE_MODEL = "gpt-image-2";
 
@@ -96,7 +97,7 @@ const getFriendlyImageError = async (response: Response) => {
   if (response.status === 404) {
     return "Image generation is disabled or unavailable in CLIProxy. Enable image generation in CLIProxy and restart it.";
   }
-  return errorText || `CLIProxy image request failed with ${response.status}`;
+  return normalizeProviderErrorMessage(errorText, `CLIProxy image request failed with ${response.status}`);
 };
 
 export async function streamCliproxyImage({

@@ -1,4 +1,5 @@
 import { getOpenRouterModelCapabilities, getOpenRouterReasoningEffort, modelSupportsOpenRouterParameter } from "../../../lib/openrouter/models";
+import { normalizeProviderErrorMessage } from "../../../lib/providerErrors";
 import {
   geminiWebDevFunctionDeclarations,
   openRouterWebDevTools,
@@ -168,9 +169,9 @@ const extractOpenRouterErrorMessage = (value: string) => {
   try {
     const parsed = JSON.parse(value);
     if (typeof parsed?.error === "string") return extractOpenRouterErrorMessage(parsed.error);
-    return parsed?.error?.message || parsed?.message || value;
+    return normalizeProviderErrorMessage(parsed?.error?.message || parsed?.message || value);
   } catch {
-    return value;
+    return normalizeProviderErrorMessage(value);
   }
 };
 
@@ -185,12 +186,12 @@ const extractCliproxyErrorMessage = (value: string) => {
     ) {
       return "CLIProxy authentication is unavailable for this model. Reconnect or restart the CLIProxy/Codex session, or switch to another configured model/provider and try again.";
     }
-    return String(message || value);
+    return normalizeProviderErrorMessage(String(message || value));
   } catch {
     if (/auth_unavailable|invalidated oauth token|no auth available/i.test(value)) {
       return "CLIProxy authentication is unavailable for this model. Reconnect or restart the CLIProxy/Codex session, or switch to another configured model/provider and try again.";
     }
-    return value;
+    return normalizeProviderErrorMessage(value);
   }
 };
 

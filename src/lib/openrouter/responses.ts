@@ -1,5 +1,6 @@
 import { artifactToolDefinition, parseArtifactToolArguments, parsePartialArtifactToolArguments, type ArtifactDraftPayload, type ArtifactPayload } from "../artifacts";
 import { appLogger } from "../logger";
+import { normalizeProviderErrorMessage } from "../providerErrors";
 import { getOpenRouterModelCapabilities, getOpenRouterReasoningEffort, modelSupportsOpenRouterParameter } from "./models";
 
 export interface OpenRouterMessage {
@@ -106,9 +107,9 @@ const extractOpenRouterErrorMessage = (value: string) => {
       parsed?.error?.error?.message,
       parsed?.message,
     ];
-    return candidates.find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0) || value;
+    return normalizeProviderErrorMessage(candidates.find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0) || value);
   } catch {
-    return value;
+    return normalizeProviderErrorMessage(value);
   }
 };
 
