@@ -1672,11 +1672,14 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
             systemInstruction: body.systemInstruction,
             temperature: body.temperature ?? 0.85,
             ...(typeof body.maxOutputTokens === 'number' ? {maxOutputTokens: body.maxOutputTokens} : {}),
-            thinkingConfig: {
-              thinkingLevel: body.thinkingEnabled ? ThinkingLevel.MEDIUM : ThinkingLevel.MINIMAL,
-              ...(body.thinkingEnabled ? {includeThoughts: true} : {}),
-            },
+            ...(body.thinkingEnabled ? {
+              thinkingConfig: {
+                thinkingLevel: ThinkingLevel.MEDIUM,
+                includeThoughts: true,
+              },
+            } : {}),
             ...(tools.length > 0 ? {tools} : {}),
+            ...(tools.length > 0 ? {toolConfig: {includeServerSideToolInvocations: true}} : {}),
           },
         });
 
@@ -1699,10 +1702,19 @@ const createGeminiApiPlugin = (apiKey: string | undefined, logger: Logger): Plug
           for (const part of parts) {
             if (part.functionCall?.name === geminiArtifactFunctionDeclaration.name) {
               artifactToolEvents += 1;
-              res.write(`${JSON.stringify({type: 'artifactToolCall', payload: part.functionCall.args || {}})}\n`);
+              res.write(`${JSON.stringify({
+                type: 'artifactToolCall',
+                payload: part.functionCall.args || {},
+                thoughtSignature: part.thoughtSignature,
+              })}\n`);
             } else if (part.functionCall?.name) {
               artifactToolEvents += 1;
-              res.write(`${JSON.stringify({type: 'toolCall', name: part.functionCall.name, payload: part.functionCall.args || {}})}\n`);
+              res.write(`${JSON.stringify({
+                type: 'toolCall',
+                name: part.functionCall.name,
+                payload: part.functionCall.args || {},
+                thoughtSignature: part.thoughtSignature,
+              })}\n`);
             } else if (part.thought && part.text) {
               thoughtEvents += 1;
               res.write(`${JSON.stringify({type: 'thought', text: part.text})}\n`);

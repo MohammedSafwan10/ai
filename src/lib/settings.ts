@@ -1,13 +1,13 @@
 import { appLogger } from "./logger";
 import { DEFAULT_IMAGE_MODEL_ID, getImageModelOption, type ImageModelId } from "./imageModels";
-import { normalizeModelId } from "./models";
+import { GEMINI_35_FLASH_MODEL_ID, normalizeModelId } from "./models";
 import { DEFAULT_RESPONSE_STYLE_ID, getResponseStyle, type ResponseStyleId } from "./prompt";
 
 export const SETTINGS_STORAGE_KEY = "privora-ui-settings";
-export const DEFAULT_MODEL_ID = "gemini-3.1-flash-lite-preview";
+export const DEFAULT_MODEL_ID = GEMINI_35_FLASH_MODEL_ID;
 
 export interface UiSettings {
-  workspaceMode: "chat" | "web-dev" | "characters";
+  workspaceMode: "chat" | "web-dev" | "characters" | "command-center";
   selectedModel: string;
   selectedStyle: ResponseStyleId;
   isThinkingEnabled: boolean;
@@ -15,6 +15,7 @@ export interface UiSettings {
   isDeepResearchEnabled: boolean;
   isDebateModeEnabled: boolean;
   isClashModeEnabled: boolean;
+  isAgentModeEnabled: boolean;
   isDarkMode: boolean;
   composerMode: "chat" | "image";
   debateSettings: DebateSettings;
@@ -63,6 +64,7 @@ export const defaultUiSettings: UiSettings = {
   isDeepResearchEnabled: false,
   isDebateModeEnabled: false,
   isClashModeEnabled: false,
+  isAgentModeEnabled: false,
   isDarkMode: false,
   composerMode: "chat",
   debateSettings: {},
@@ -140,9 +142,16 @@ export const loadUiSettings = (): UiSettings => {
 
     const isDeepResearchEnabled = Boolean(parsedSettings.isDeepResearchEnabled);
     const isClashModeEnabled = Boolean((parsedSettings as Partial<UiSettings>).isClashModeEnabled) && !isDeepResearchEnabled;
+    const isDebateModeEnabled = Boolean(parsedSettings.isDebateModeEnabled) && !isDeepResearchEnabled && !isClashModeEnabled;
+    const composerMode = parsedSettings.composerMode === "image" ? "image" : "chat";
+    const isAgentModeEnabled = Boolean((parsedSettings as Partial<UiSettings>).isAgentModeEnabled) &&
+      composerMode !== "image" &&
+      !isDeepResearchEnabled &&
+      !isDebateModeEnabled &&
+      !isClashModeEnabled;
 
     return {
-      workspaceMode: parsedSettings.workspaceMode === "web-dev" || parsedSettings.workspaceMode === "characters"
+      workspaceMode: parsedSettings.workspaceMode === "web-dev" || parsedSettings.workspaceMode === "characters" || parsedSettings.workspaceMode === "command-center"
         ? parsedSettings.workspaceMode
         : "chat",
       selectedModel,
@@ -150,10 +159,11 @@ export const loadUiSettings = (): UiSettings => {
       isThinkingEnabled: Boolean(parsedSettings.isThinkingEnabled),
       isWebSearchEnabled: Boolean(parsedSettings.isWebSearchEnabled) || isDeepResearchEnabled,
       isDeepResearchEnabled,
-      isDebateModeEnabled: Boolean(parsedSettings.isDebateModeEnabled) && !isDeepResearchEnabled && !isClashModeEnabled,
+      isDebateModeEnabled,
       isClashModeEnabled,
+      isAgentModeEnabled,
       isDarkMode: Boolean(parsedSettings.isDarkMode),
-      composerMode: parsedSettings.composerMode === "image" ? "image" : "chat",
+      composerMode,
       debateSettings: normalizeDebateSettings(parsedSettings.debateSettings),
       clashSettings: normalizeClashSettings((parsedSettings as Partial<UiSettings>).clashSettings),
       imageSettings: normalizeImageSettings(parsedSettings.imageSettings),

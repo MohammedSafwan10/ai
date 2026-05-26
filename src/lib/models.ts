@@ -22,6 +22,7 @@ export const GEMINI_35_FLASH_MODEL_ID = "gemini-3.5-flash";
 
 const legacyModelReplacements: Record<string, string> = {
   "gemini-3-flash-preview": GEMINI_35_FLASH_MODEL_ID,
+  "gemini-3.1-flash-lite-preview": GEMINI_35_FLASH_MODEL_ID,
 };
 
 export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
@@ -47,7 +48,7 @@ export const modelOptions: ModelOption[] = [
     id: "gemini-3.1-flash-lite-preview",
     label: "Gemini 3.1 Flash Lite",
     provider: "gemini",
-    description: "Fast Gemini model through Google GenAI.",
+    description: "Legacy Gemini option; routed to Gemini 3.5 Flash when used.",
   },
   {
     id: GEMINI_35_FLASH_MODEL_ID,
