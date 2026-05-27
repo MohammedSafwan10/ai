@@ -5,6 +5,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin, { Draggable, type EventReceiveArg } from "@fullcalendar/interaction";
 import type { DateSelectArg, EventChangeArg, EventClickArg } from "@fullcalendar/core";
 import { CalendarDays, Check, ChevronDown, Plus, Trash2 } from "lucide-react";
+import { PrivoraSelect } from "../../../components/ui/PrivoraSelect";
 import type { CommandScheduleBlockRecord, CommandTaskRecord } from "../../../lib/db";
 import {
   createCommandScheduleBlock,
@@ -51,6 +52,13 @@ export function CommandSchedulePanel({ tasks, blocks, selectedItemId, onRefresh 
   const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
   const [draft, setDraft] = useState(defaultBlockDraft);
   const selectedBlock = blocks.find(block => block.id === selectedBlockId) || null;
+  const taskOptions = useMemo(
+    () => [
+      { value: "", label: "No linked task" },
+      ...tasks.map(task => ({ value: task.id, label: task.title, meta: task.status === "done" ? "Done" : undefined })),
+    ],
+    [tasks]
+  );
   const openTasks = tasks.filter(task => task.status !== "done" && task.status !== "archived");
 
   useEffect(() => {
@@ -247,10 +255,12 @@ export function CommandSchedulePanel({ tasks, blocks, selectedItemId, onRefresh 
         </div>
         <div className="grid gap-3">
           <input value={draft.title} onChange={event => setDraft(previous => ({ ...previous, title: event.target.value }))} placeholder="Block title" className="h-11 rounded-lg border border-[var(--privora-border)]/70 bg-transparent px-3 outline-none" />
-          <select value={draft.taskId} onChange={event => setDraft(previous => ({ ...previous, taskId: event.target.value }))} className="h-11 rounded-lg border border-[var(--privora-border)]/70 bg-[var(--privora-bg)] px-3 outline-none">
-            <option value="">No linked task</option>
-            {tasks.map(task => <option key={task.id} value={task.id}>{task.title}</option>)}
-          </select>
+          <PrivoraSelect
+            value={draft.taskId}
+            options={taskOptions}
+            onChange={taskId => setDraft(previous => ({ ...previous, taskId }))}
+            menuClassName="min-w-72"
+          />
           <label className="grid gap-1 text-[12px] font-semibold text-[var(--privora-muted)]">
             Starts
             <input type="datetime-local" value={draft.startAt} onChange={event => setDraft(previous => ({ ...previous, startAt: event.target.value }))} className="h-11 rounded-lg border border-[var(--privora-border)]/70 bg-transparent px-3 text-[var(--privora-text)] outline-none" />

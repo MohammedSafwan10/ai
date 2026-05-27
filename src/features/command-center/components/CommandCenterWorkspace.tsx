@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { MarkdownRenderer } from "../../chat/components/MarkdownRenderer";
+import { PrivoraSelect } from "../../../components/ui/PrivoraSelect";
 import { CommandSchedulePanel } from "./CommandSchedulePanel";
 import type {
   CommandActivityRecord,
@@ -67,6 +68,17 @@ const tabs: Array<{ id: CommandSection; label: string; icon: typeof ClipboardLis
   { id: "notes", label: "Notes", icon: NotebookPen },
   { id: "finance", label: "Finance", icon: IndianRupee },
   { id: "activity", label: "Activity", icon: Activity },
+];
+
+const taskPriorityOptions: Array<{ value: CommandTaskPriority; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+const financeTypeOptions: Array<{ value: FinanceEntryType; label: string }> = [
+  { value: "expense", label: "Expense" },
+  { value: "income", label: "Income" },
 ];
 
 const formatDate = (timestamp?: number) => {
@@ -572,11 +584,11 @@ export function CommandCenterWorkspace({ initialSection = "tasks", selectedItemI
                   </label>
                   <label>
                     <span className="mb-1 block text-[12px] font-semibold text-[var(--privora-muted)]">Priority</span>
-                    <select value={taskDraft.priority} onChange={(event) => setTaskDraft(prev => ({ ...prev, priority: event.target.value as CommandTaskPriority }))} className="h-11 w-full rounded-lg border border-[var(--privora-border)]/70 bg-[var(--privora-bg)] px-3 outline-none">
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                    </select>
+                    <PrivoraSelect
+                      value={taskDraft.priority}
+                      options={taskPriorityOptions}
+                      onChange={(priority) => setTaskDraft(prev => ({ ...prev, priority }))}
+                    />
                   </label>
                   <label>
                     <span className="mb-1 block text-[12px] font-semibold text-[var(--privora-muted)]">Due</span>
@@ -713,7 +725,11 @@ export function CommandCenterWorkspace({ initialSection = "tasks", selectedItemI
                   <button type="button" onClick={() => { setSelectedFinanceId(null); setFinanceDraft({ type: "expense", amount: "", currency: "INR", category: "", note: "", occurredAt: toInputDate(Date.now()) }); }} className="rounded-md p-1.5 text-[var(--privora-muted)] hover:bg-[var(--privora-text)]/5"><Plus className="h-4 w-4" /></button>
                 </div>
                 <div className="grid gap-3">
-                  <select value={financeDraft.type} onChange={(event) => setFinanceDraft(prev => ({ ...prev, type: event.target.value as FinanceEntryType }))} className="h-11 rounded-lg border border-[var(--privora-border)]/70 bg-[var(--privora-bg)] px-3 outline-none"><option value="expense">Expense</option><option value="income">Income</option></select>
+                  <PrivoraSelect
+                    value={financeDraft.type}
+                    options={financeTypeOptions}
+                    onChange={(type) => setFinanceDraft(prev => ({ ...prev, type }))}
+                  />
                   <div className="grid grid-cols-[5rem_1fr] gap-2">
                     <input value={financeDraft.currency} onChange={(event) => setFinanceDraft(prev => ({ ...prev, currency: event.target.value.toUpperCase() }))} className="h-11 rounded-lg border border-[var(--privora-border)]/70 bg-transparent px-3 outline-none" />
                     <input type="number" value={financeDraft.amount} onChange={(event) => setFinanceDraft(prev => ({ ...prev, amount: event.target.value }))} placeholder="Amount" className="h-11 rounded-lg border border-[var(--privora-border)]/70 bg-transparent px-3 outline-none" />
