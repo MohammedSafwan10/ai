@@ -1,0 +1,16 @@
+export const channels = {
+  getSnapshot: "desktop:getSnapshot",
+  createThread: "desktop:createThread",
+  renameThread: "desktop:renameThread",
+  toggleThreadStar: "desktop:toggleThreadStar",
+  deleteThread: "desktop:deleteThread",
+  setActiveThread: "desktop:setActiveThread",
+  selectWorkspace: "desktop:selectWorkspace",
+  startTurn: "desktop:startTurn",
+  stopTurn: "desktop:stopTurn",
+  decideApproval: "desktop:decideApproval",
+  saveSettings: "desktop:saveSettings",
+  openPath: "desktop:openPath",
+  openWorkspaceTarget: "desktop:openWorkspaceTarget",
+  event: "desktop:event",
+} as const;

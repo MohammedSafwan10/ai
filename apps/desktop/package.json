@@ -1,0 +1,43 @@
+{
+  "name": "@privora/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Privora Desktop agent for local workspaces.",
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "dev": "electron-forge start",
+    "dev:debug": "electron-forge start --inspect-electron",
+    "dev:debug:break": "electron-forge start --inspect-brk-electron",
+    "dev:log": "electron-forge start --enable-logging",
+    "start": "electron-forge start",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "dependencies": {
+    "@google/genai": "^1.29.0",
+    "@vscode/ripgrep": "^1.15.14",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.546.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.8.1",
+    "@electron-forge/maker-squirrel": "^7.8.1",
+    "@electron-forge/maker-zip": "^7.8.1",
+    "@electron-forge/plugin-vite": "^7.8.1",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "electron": "^36.4.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "vitest": "^3.1.4"
+  }
+}
