@@ -2,6 +2,11 @@ node_modules/
 build/
 dist/
 coverage/
+.vite/
+out/
+apps/desktop/.vite/
+apps/desktop/out/
+apps/desktop/dist/
 .DS_Store
 *.log
 .env*

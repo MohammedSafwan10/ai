@@ -8,7 +8,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "desktop:dev": "npm --prefix apps/desktop run dev",
+    "desktop:debug": "npm --prefix apps/desktop run dev:debug",
+    "desktop:debug:break": "npm --prefix apps/desktop run dev:debug:break",
+    "desktop:log": "npm --prefix apps/desktop run dev:log",
+    "desktop:lint": "npm --prefix apps/desktop run lint",
+    "desktop:test": "npm --prefix apps/desktop run test",
+    "desktop:build": "npm --prefix apps/desktop run build"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",

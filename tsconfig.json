@@ -23,5 +23,9 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "apps/desktop",
+    "apps/desktop/**"
+  ]
 }
