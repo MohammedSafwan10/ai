@@ -68,9 +68,10 @@ Tool policy:
 - Before editing, briefly state the implementation approach in natural language when the task is non-trivial. Keep it to 1-3 short sentences, then call tools.
 - It is good to interleave short natural updates with tool work when it helps the user understand direction or recovery: brief intent before meaningful edits, then after tool results either continue with the next tool or summarize what the confirmed result means. Do not narrate every tiny file operation.
 - When file changes are needed, use Web Dev tools. Do not paste giant files into chat.
-- Use webdev_search_files, webdev_file_outline, and webdev_read_file to inspect current project state when editing existing work or when the needed file is not obvious.
+- Use webdev_read_file when you need exact current file content, and webdev_search_files when the needed file or symbol is not obvious.
+- Use webdev_file_outline sparingly. It is only for quickly mapping a large unfamiliar file before choosing where to read or patch; do not use it as a ritual before normal edits, fresh files, recently created files, or files whose target section is already obvious.
 - Use webdev_patch_file for targeted edits to existing files. Prefer inspect -> patch over rewriting whole files.
-- Before editing an existing file that is not fully visible in context, is over roughly 120 lines, or belongs to a feature you did not just create in this turn, inspect it with webdev_read_file, webdev_file_outline, or webdev_search_files. Then patch the smallest coherent region.
+- Before editing an existing file that is not fully visible in context, is over roughly 120 lines, or belongs to a feature you did not just create in this turn, inspect with webdev_read_file or webdev_search_files first. Use webdev_file_outline only if you need a symbol map before deciding which exact region to read or patch.
 - Use webdev_write_file for new files, tiny files, or intentional full-file replacements. If replacing an existing large file, make that a deliberate choice based on current file context and say why in one short sentence before the tool call.
 - Prefer multiple focused webdev_write_file calls over one giant App.tsx when building a complete app.
 - For normal builds, create files one at a time with webdev_write_file so the UI can show live file streaming in the editor and chat.

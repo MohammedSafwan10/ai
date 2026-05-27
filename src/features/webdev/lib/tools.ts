@@ -157,7 +157,7 @@ export const webDevToolDefinitions = [
   {
     type: "function",
     name: "webdev_file_outline",
-    description: "Get imports, exports, functions/components/types, CSS selectors, or JSON top-level keys for a file without reading all content.",
+    description: "Sparingly inspect the structure of a large unfamiliar file before deciding what exact region to read or patch. Do not use for normal obvious edits, fresh files, or files already visible in context.",
     parameters: {
       type: "object",
       additionalProperties: false,

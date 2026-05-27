@@ -141,7 +141,12 @@ const toGeminiContents = (messages: WebDevProviderMessage[]) =>
       message.parts?.forEach(part => {
         if (part.type === "text") parts.push({ text: part.text });
         if (part.type === "image" || part.type === "file") parts.push({ inlineData: { data: part.data, mimeType: part.mimeType } });
-        if (part.type === "function_call") parts.push({ functionCall: { name: part.name, args: part.arguments || {} } });
+        if (part.type === "function_call") {
+          parts.push({
+            functionCall: { name: part.name, args: part.arguments || {} },
+            ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
+          });
+        }
         if (part.type === "function_response") parts.push({ functionResponse: { name: part.name, response: part.response || {} } });
       });
       if (parts.length === 0 && message.content) parts.push({ text: message.content });
@@ -529,7 +534,7 @@ async function streamGeminiWebDevResponse({
       const call = event.name && event.payload ? { name: event.name, arguments: event.payload } : null;
       if (call) {
         const normalized = parseWebDevToolCall(call.name, JSON.stringify(call.arguments), `gemini_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
-        if (normalized) onToolCall(normalized);
+        if (normalized) onToolCall({ ...normalized, thoughtSignature: event.thoughtSignature });
       }
     }
     if (event.type === "error") throw new Error(event.error || "Gemini Web Dev stream failed.");
