@@ -1295,6 +1295,23 @@ small {
   background: color-mix(in srgb, var(--privora-bg) 78%, var(--privora-surface));
 }
 
+.live-line {
+  display: block;
+  min-height: 1.45em;
+}
+
+.live-add {
+  color: var(--ok);
+}
+
+.live-del {
+  color: var(--danger);
+}
+
+.live-meta {
+  color: color-mix(in srgb, var(--privora-muted) 88%, var(--privora-text));
+}
+
 .tool-detail {
   margin-top: 5px;
 }
