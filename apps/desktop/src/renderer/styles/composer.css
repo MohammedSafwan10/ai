@@ -4,8 +4,8 @@
   z-index: 5;
   justify-items: center;
   gap: 8px;
-  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--privora-bg) 92%, transparent) 22%);
-  padding: 0 0 22px;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--privora-bg) 92%, transparent) 24%);
+  padding: 4px 0 22px;
 }
 
 .jump-to-bottom {

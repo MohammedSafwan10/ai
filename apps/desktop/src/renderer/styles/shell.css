@@ -200,8 +200,9 @@
   position: relative;
   min-height: 0;
   overflow: auto;
-  padding: 6px 24px 24px;
+  padding: 6px 24px 28px;
   scroll-behavior: auto;
+  scroll-padding-bottom: 92px;
 }
 
 .virtual-message-spacer {
@@ -214,7 +215,7 @@
   top: 0;
   left: 0;
   width: 100%;
-  contain: layout paint style;
+  contain: layout style;
 }
 
 .empty-state {

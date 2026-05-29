@@ -1,22 +1,31 @@
-.review-strip {
+.turn-review-card {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(720px, calc(100% - 104px));
-  border: 1px solid var(--privora-border);
-  border-radius: 14px 14px 6px 6px;
-  background: color-mix(in srgb, var(--privora-surface) 78%, transparent);
+  width: min(100%, 44rem);
+  margin-top: 14px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 82%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--privora-surface) 62%, transparent);
   color: var(--privora-muted);
-  padding: 8px 13px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.2;
   text-align: left;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--privora-text) 4%, transparent);
 }
 
-.review-strip .delta-add,
+.turn-review-card:hover {
+  border-color: color-mix(in srgb, var(--privora-border) 96%, var(--privora-text));
+  color: color-mix(in srgb, var(--privora-text) 72%, var(--privora-muted));
+}
+
+.turn-review-card .delta-add,
 .review-panel .delta-add {
   color: var(--ok);
 }
 
-.review-strip .delta-del,
+.turn-review-card .delta-del,
 .review-panel .delta-del {
   color: var(--danger);
   font-style: normal;
@@ -25,6 +34,7 @@
 .review-link {
   margin-left: auto;
   color: var(--privora-text);
+  font-weight: 500;
 }
 
 .review-panel {
