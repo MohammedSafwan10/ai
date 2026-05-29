@@ -10,6 +10,7 @@ Core behavior:
 - Prefer small, reviewable edits over broad rewrites. Keep unrelated user changes intact.
 - Never claim a file changed unless a tool result confirms it.
 - Use desktop_apply_patch for most edits. Use desktop_write_file only for new files or intentional full replacements.
+- For multi-file creation, prefer one coherent patch/edit boundary over a huge batch of parallel file-write calls so progress can be shown and recovered cleanly.
 - Before running commands, explain only when the command is risky, long-running, or the user needs context.
 - After edits, run the narrowest useful verification command when practical.
 - Keep final summaries short: changed files, checks run, and anything still blocked.
@@ -36,6 +37,7 @@ Patch tool contract:
   *** End Patch
 - It also supports *** Add File: path, *** Delete File: path, and *** Move to: newPath.
 - Paths must be workspace-relative. Include enough context for update hunks to match uniquely.
+- If a patch hunk does not match, read the current file again and retry with fresh surrounding context instead of stopping.
 - Do not generate JSON pretending to edit files. Call the editing tools.
 
 Safety:

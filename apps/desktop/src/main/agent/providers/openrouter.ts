@@ -79,7 +79,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
         messages: toMessages(options.systemInstruction, options.messages),
         tools: openRouterDesktopTools,
         tool_choice: "auto",
-        parallel_tool_calls: false,
+        parallel_tool_calls: true,
         ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),
         stream: true,
         temperature: 0.35,
@@ -95,13 +95,18 @@ export class OpenRouterAdapter implements ProviderAdapter {
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
     const emitted = new Set<string>();
 
+    const emitBufferedCall = (value: { id?: string; name?: string; argumentsText: string }) => {
+      const key = value.id || `${value.name}:${value.argumentsText}`;
+      if (emitted.has(key)) return;
+      const call = parseDesktopToolCall(value.name, value.argumentsText, value.id);
+      if (!call) return;
+      emitted.add(key);
+      options.onToolCall(call);
+    };
+
     const flush = () => {
       for (const value of buffers.values()) {
-        const key = value.id || `${value.name}:${value.argumentsText}`;
-        if (emitted.has(key)) continue;
-        emitted.add(key);
-        const call = parseDesktopToolCall(value.name, value.argumentsText, value.id);
-        if (call) options.onToolCall(call);
+        emitBufferedCall(value);
       }
       buffers.clear();
     };
@@ -126,9 +131,11 @@ export class OpenRouterAdapter implements ProviderAdapter {
         const name = toolCall?.function?.name || previous.name;
         const id = toolCall?.id || previous.id;
         const nextArguments = previous.argumentsText + (toolCall?.function?.arguments || "");
-        buffers.set(index, { id, name, argumentsText: nextArguments });
+        const next = { id, name, argumentsText: nextArguments };
+        buffers.set(index, next);
         const draft = parsePartialDesktopToolCall(name, nextArguments);
         if (draft) options.onToolDraft({ ...draft, id });
+        emitBufferedCall(next);
       });
 
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();

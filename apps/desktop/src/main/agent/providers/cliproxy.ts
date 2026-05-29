@@ -111,6 +111,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         instructions: options.systemInstruction,
         input: toInput(options.messages),
         tools: desktopToolDefinitions,
+        parallel_tool_calls: true,
         ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),
         stream: true,
         temperature: 0.35,
@@ -123,25 +124,37 @@ export class CliproxyAdapter implements ProviderAdapter {
       throw new Error(errorText || `CLIProxy request failed with ${response.status}`);
     }
 
-    let currentName = "";
-    let currentId = "";
-    let argumentBuffer = "";
+    const buffers = new Map<string, { id?: string; name?: string; argumentsText: string }>();
     const emitted = new Set<string>();
     const emit = (name: string, args: string, id?: string) => {
       const key = id || `${name}:${args}`;
       if (emitted.has(key)) return;
-      emitted.add(key);
       const call = parseDesktopToolCall(name, args, id);
-      if (call) options.onToolCall(call);
+      if (!call) return;
+      emitted.add(key);
+      options.onToolCall(call);
+    };
+    const keyFor = (data: any) => {
+      const id = data?.item_id || data?.output_item?.id || data?.item?.id || data?.call_id || data?.id;
+      if (typeof id === "string" && id) return id;
+      if (data?.output_index !== undefined && data?.output_index !== null) return `output:${data.output_index}`;
+      return "default";
     };
 
     await readSse(response, (event, dataLine) => {
       try {
         const data = JSON.parse(dataLine);
+        const key = keyFor(data);
+        const previous = buffers.get(key) || { argumentsText: "" };
         const itemName = data?.item?.name || data?.output_item?.name || data?.name;
-        if (typeof itemName === "string" && itemName.startsWith("desktop_")) currentName = itemName;
+        const name = typeof itemName === "string" && itemName.startsWith("desktop_")
+          ? itemName
+          : previous.name;
         const itemId = data?.item?.call_id || data?.output_item?.call_id || data?.call_id || data?.item?.id || data?.output_item?.id || data?.id;
-        if (typeof itemId === "string") currentId = itemId;
+        const id = typeof itemId === "string" ? itemId : previous.id;
+        if (name || id || previous.argumentsText) {
+          buffers.set(key, { ...previous, name, id });
+        }
 
         const text = textDelta(event, data);
         if (text) options.onTextDelta(text);
@@ -150,21 +163,25 @@ export class CliproxyAdapter implements ProviderAdapter {
 
         const type = `${event || ""} ${data?.type || ""}`;
         if (type.includes("function_call_arguments.delta") && typeof data?.delta === "string") {
-          argumentBuffer += data.delta;
-          const draft = parsePartialDesktopToolCall(currentName, argumentBuffer);
-          if (draft) options.onToolDraft({ ...draft, id: currentId || undefined });
+          const next = {
+            id,
+            name,
+            argumentsText: previous.argumentsText + data.delta,
+          };
+          buffers.set(key, next);
+          const draft = parsePartialDesktopToolCall(next.name, next.argumentsText);
+          if (draft) options.onToolDraft({ ...draft, id: next.id });
         }
         const completed = completedFunctionCall(event, data);
         if (completed) {
           emit(completed.name, completed.argumentsText, completed.id);
-          argumentBuffer = "";
-          currentName = "";
-          currentId = "";
-        } else if (argumentBuffer && type.includes("function_call_arguments.done")) {
-          emit(currentName, argumentBuffer, currentId || undefined);
-          argumentBuffer = "";
-          currentName = "";
-          currentId = "";
+          buffers.delete(key);
+        } else if (type.includes("function_call_arguments.done")) {
+          const buffered = buffers.get(key);
+          if (buffered?.name && buffered.argumentsText) {
+            emit(buffered.name, buffered.argumentsText, buffered.id);
+            buffers.delete(key);
+          }
         }
       } catch {
         if (!event || event.includes("output_text")) options.onTextDelta(dataLine);
