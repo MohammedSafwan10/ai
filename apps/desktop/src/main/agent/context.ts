@@ -1,6 +1,7 @@
 import type { DesktopStore } from "../db/store";
 import type { ProviderMessage } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
+import { detectProjectProfileSync } from "./diagnostics";
 
 const MAX_HISTORY_MESSAGES = 18;
 const MAX_MESSAGE_CHARS = 12_000;
@@ -35,6 +36,7 @@ export const buildProviderHistory = (
     });
 
 export const buildRuntimeContext = (store: DesktopStore, threadId: string, workspaceRoot: string) => {
+  const profile = detectProjectProfileSync(workspaceRoot);
   const recentTools = store
     .listToolEvents(threadId)
     .filter((tool) => tool.status !== "preparing")
@@ -48,8 +50,10 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
   return [
     "Runtime context:",
     `- Workspace root: ${workspaceRoot}`,
+    `- Workspace profile: ${formatProfile(profile)}`,
+    "- Terminal protocol: start commands with desktop_exec_command. If a processId is returned, the process is still running; use desktop_write_stdin with empty input to poll, non-empty input to interact, or desktop_stop_process to stop it.",
     "- Terminal output is streamed live to the user, but model-visible tool results may be head/tail compacted.",
-    "- Prefer finite, non-interactive commands. Use explicit timeouts for commands that may hang.",
+    "- Prefer finite, non-interactive commands. Use desktop_run_diagnostics for lint/typecheck/test/build when you need verification.",
     recentTools.length ? "Recent tool activity:" : "",
     ...recentTools,
   ].filter(Boolean).join("\n");
@@ -67,3 +71,16 @@ const indent = (value: string) =>
     .slice(0, 24)
     .map((line) => `  ${line}`)
     .join("\n");
+
+const formatProfile = (profile: ReturnType<typeof detectProjectProfileSync>) => {
+  const parts = [
+    profile.hasPackageJson ? `${profile.packageManager || "npm"} package` : "",
+    profile.hasTsconfig ? "TypeScript" : "",
+    profile.hasVite ? "Vite" : "",
+    profile.hasFlutter ? "Flutter" : "",
+    profile.hasCargo ? "Cargo" : "",
+    profile.hasPythonProject ? "Python" : "",
+    profile.packageScripts?.length ? `scripts: ${profile.packageScripts.slice(0, 12).join(", ")}` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join("; ") : "unknown";
+};

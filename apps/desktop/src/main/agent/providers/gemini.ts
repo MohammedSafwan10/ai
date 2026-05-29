@@ -65,6 +65,20 @@ export class GeminiAdapter implements ProviderAdapter {
       },
     });
 
+    let emittedText = "";
+    let emittedThought = "";
+    const emitIncrementalText = (text: string, thought = false) => {
+      const previous = thought ? emittedThought : emittedText;
+      const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+      if (thought) {
+        emittedThought = text.startsWith(previous) ? text : `${emittedThought}${delta}`;
+        if (delta) options.onThoughtDelta(delta);
+      } else {
+        emittedText = text.startsWith(previous) ? text : `${emittedText}${delta}`;
+        if (delta) options.onTextDelta(delta);
+      }
+    };
+
     for await (const chunk of responseStream) {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
       const parts = chunk.candidates?.[0]?.content?.parts || [];
@@ -77,12 +91,12 @@ export class GeminiAdapter implements ProviderAdapter {
           );
           if (call) options.onToolCall({ ...call, thoughtSignature: part.thoughtSignature });
         } else if (part.thought && part.text) {
-          options.onThoughtDelta(part.text);
+          emitIncrementalText(part.text, true);
         } else if (!part.thought && part.text) {
-          options.onTextDelta(part.text);
+          emitIncrementalText(part.text);
         }
       }
-      if (parts.length === 0 && chunk.text) options.onTextDelta(chunk.text);
+      if (parts.length === 0 && chunk.text) emitIncrementalText(chunk.text);
     }
   }
 }
