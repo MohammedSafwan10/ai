@@ -1,11 +1,19 @@
-import { dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
+import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
 import { channels } from "./channels";
-import type { ApprovalDecisionInput, SaveSettingsInput, SearchContextMentionsInput, StartTurnInput, WorkspaceOpenTarget } from "../../shared/types";
+import type {
+  ApprovalDecisionInput,
+  DesktopEvent,
+  SaveSettingsInput,
+  SearchContextMentionsInput,
+  StartTurnInput,
+  WorkspaceOpenTarget,
+} from "../../shared/types";
 
 export interface IpcState {
   activeThreadId: string | null;
@@ -13,6 +21,14 @@ export interface IpcState {
 }
 
 export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState) => {
+  const undoCoordinator = new TurnUndoCoordinator(store, (threadId) => {
+    const run = runtime.getActiveRun(threadId);
+    return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
+  });
+  const emit = (event: DesktopEvent) => {
+    BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, event));
+  };
+
   const ensureThread = () => {
     const threads = store.listThreads();
     if (state.activeThreadId && threads.some((thread) => thread.id === state.activeThreadId)) return state.activeThreadId;
@@ -85,6 +101,20 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
 
   ipcMain.handle(channels.decideApproval, async (_event, input: ApprovalDecisionInput) => {
     await runtime.decideApproval(input);
+  });
+
+  ipcMain.handle(channels.prepareTurnUndo, (_event, input: { messageId: string }) => {
+    const undo = undoCoordinator.prepare(input.messageId);
+    if (undo) emit({ type: "turn_undo_updated", undo });
+    return undo;
+  });
+
+  ipcMain.handle(channels.undoTurnChanges, async (_event, input: { messageId: string }) => {
+    const undoing = undoCoordinator.prepare(input.messageId);
+    if (undoing) emit({ type: "turn_undo_updated", undo: { ...undoing, status: "undoing", updatedAt: Date.now() } });
+    const undo = await undoCoordinator.undo(input.messageId);
+    if (undo) emit({ type: "turn_undo_updated", undo });
+    return undo;
   });
 
   ipcMain.handle(channels.searchContextMentions, async (_event, input: SearchContextMentionsInput) => {

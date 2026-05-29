@@ -5,6 +5,8 @@ import type {
   PrivoraDesktopApi,
   SaveSettingsInput,
   StartTurnInput,
+  PrepareTurnUndoInput,
+  UndoTurnChangesInput,
 } from "../shared/types";
 import { channels } from "../main/ipc/channels";
 
@@ -21,6 +23,8 @@ const api: PrivoraDesktopApi = {
   continueRun: (threadId: string) => ipcRenderer.invoke(channels.continueRun, threadId),
   stopTurn: (threadId: string) => ipcRenderer.invoke(channels.stopTurn, threadId),
   decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(channels.decideApproval, input),
+  prepareTurnUndo: (input: PrepareTurnUndoInput) => ipcRenderer.invoke(channels.prepareTurnUndo, input),
+  undoTurnChanges: (input: UndoTurnChangesInput) => ipcRenderer.invoke(channels.undoTurnChanges, input),
   searchContextMentions: (input) => ipcRenderer.invoke(channels.searchContextMentions, input),
   saveSettings: (input: SaveSettingsInput) => ipcRenderer.invoke(channels.saveSettings, input),
   openPath: (path: string) => ipcRenderer.invoke(channels.openPath, path),

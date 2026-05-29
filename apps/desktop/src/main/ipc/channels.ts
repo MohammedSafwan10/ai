@@ -10,6 +10,8 @@ export const channels = {
   continueRun: "desktop:continueRun",
   stopTurn: "desktop:stopTurn",
   decideApproval: "desktop:decideApproval",
+  prepareTurnUndo: "desktop:prepareTurnUndo",
+  undoTurnChanges: "desktop:undoTurnChanges",
   searchContextMentions: "desktop:searchContextMentions",
   saveSettings: "desktop:saveSettings",
   openPath: "desktop:openPath",

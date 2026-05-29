@@ -8,6 +8,7 @@ import type {
   SettingsRecord,
   ThreadRecord,
   ToolEventRecord,
+  TurnUndoRecord,
   WorkspaceRecord,
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
@@ -32,6 +33,7 @@ interface DesktopDataFile {
   threads: ThreadRecord[];
   messages: ChatMessageRecord[];
   toolEvents: ToolEventRecord[];
+  turnUndos: TurnUndoRecord[];
   agentRunCheckpoints: AgentRunCheckpointRecord[];
 }
 
@@ -51,6 +53,7 @@ const defaultData = (): DesktopDataFile => ({
   threads: [],
   messages: [],
   toolEvents: [],
+  turnUndos: [],
   agentRunCheckpoints: [],
 });
 
@@ -78,6 +81,7 @@ export class DesktopStore {
       threads: this.listThreads(),
       messages: activeThreadId ? this.listMessages(activeThreadId) : [],
       toolEvents: activeThreadId ? this.listToolEvents(activeThreadId) : [],
+      turnUndos: activeThreadId ? this.listTurnUndos(activeThreadId) : [],
       activeThreadId,
       activeWorkspaceId,
       activeRun: null,
@@ -184,6 +188,7 @@ export class DesktopStore {
     this.data.threads = this.data.threads.filter((thread) => thread.id !== threadId);
     this.data.messages = this.data.messages.filter((message) => message.threadId !== threadId);
     this.data.toolEvents = this.data.toolEvents.filter((event) => event.threadId !== threadId);
+    this.data.turnUndos = this.data.turnUndos.filter((undo) => undo.threadId !== threadId);
     this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => checkpoint.threadId !== threadId);
     this.writeData();
   }
@@ -244,6 +249,23 @@ export class DesktopStore {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  getTurnUndo(messageId: string): TurnUndoRecord | null {
+    return this.data.turnUndos.find((undo) => undo.messageId === messageId) || null;
+  }
+
+  upsertTurnUndo(record: TurnUndoRecord): TurnUndoRecord {
+    this.data.turnUndos = upsertById(this.data.turnUndos, record);
+    this.touchThread(record.threadId);
+    this.scheduleWrite();
+    return record;
+  }
+
+  listTurnUndos(threadId: string): TurnUndoRecord[] {
+    return this.data.turnUndos
+      .filter((undo) => undo.threadId === threadId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
   getRunCheckpoint(threadId: string): AgentRunCheckpointRecord | null {
     return this.data.agentRunCheckpoints.find((checkpoint) => checkpoint.threadId === threadId) || null;
   }
@@ -269,8 +291,10 @@ export class DesktopStore {
     const removedMessages = this.listMessagesAfter(threadId, messageId);
     const removedMessageIds = new Set(removedMessages.map((message) => message.id));
     const removedToolEvents = this.data.toolEvents.filter((event) => event.threadId === threadId && removedMessageIds.has(event.messageId));
+    const removedTurnUndos = this.data.turnUndos.filter((undo) => undo.threadId === threadId && removedMessageIds.has(undo.messageId));
     this.data.messages = this.data.messages.filter((message) => !(message.threadId === threadId && removedMessageIds.has(message.id)));
     this.data.toolEvents = this.data.toolEvents.filter((event) => !(event.threadId === threadId && removedMessageIds.has(event.messageId)));
+    this.data.turnUndos = this.data.turnUndos.filter((undo) => !(undo.threadId === threadId && removedMessageIds.has(undo.messageId)));
     this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) =>
       !(checkpoint.threadId === threadId && removedMessageIds.has(checkpoint.assistantMessageId))
     );
@@ -279,6 +303,7 @@ export class DesktopStore {
     return {
       removedMessages: removedMessages.length,
       removedToolEvents: removedToolEvents.length,
+      removedTurnUndos: removedTurnUndos.length,
     };
   }
 
@@ -344,6 +369,7 @@ export class DesktopStore {
         threads: Array.isArray(parsed.threads) ? parsed.threads : [],
         messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeLegacyMessage) : [],
         toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeLegacyToolEvent) : [],
+        turnUndos: Array.isArray(parsed.turnUndos) ? parsed.turnUndos : [],
         agentRunCheckpoints: Array.isArray(parsed.agentRunCheckpoints) ? parsed.agentRunCheckpoints : [],
       };
     } catch {
