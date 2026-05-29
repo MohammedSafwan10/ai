@@ -175,6 +175,47 @@ export interface ToolTerminalRecord {
   truncated?: boolean;
 }
 
+export type TurnUndoStatus = "available" | "undoing" | "undone" | "partially_undone" | "failed";
+
+export type TurnUndoOperationRecord =
+  | {
+      type: "restore_file";
+      path: string;
+      restorePath?: string;
+      existed: boolean;
+      previous: string;
+      expectedCurrent?: string | null;
+    }
+  | {
+      type: "rename_path";
+      fromPath: string;
+      toPath: string;
+    };
+
+export interface TurnUndoConflictRecord {
+  path: string;
+  reason: string;
+}
+
+export interface TurnUndoRecord {
+  id: string;
+  threadId: string;
+  messageId: string;
+  workspaceId: string | null;
+  status: TurnUndoStatus;
+  operations: TurnUndoOperationRecord[];
+  summary: {
+    files: number;
+    additions: number;
+    deletions: number;
+    paths: string[];
+  };
+  conflicts: TurnUndoConflictRecord[];
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ContextPackRecord {
   workspaceRoot: string;
   generatedAt: number;
@@ -275,6 +316,7 @@ export interface AppSnapshot {
   threads: ThreadRecord[];
   messages: ChatMessageRecord[];
   toolEvents: ToolEventRecord[];
+  turnUndos: TurnUndoRecord[];
   activeThreadId: string | null;
   activeWorkspaceId: string | null;
   activeRun: ActiveRunState | null;
@@ -332,10 +374,19 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "snapshot"; snapshot: AppSnapshot }
   | { type: "message_updated"; message: ChatMessageRecord }
   | { type: "tool_updated"; tool: ToolEventRecord }
+  | { type: "turn_undo_updated"; undo: TurnUndoRecord }
   | { type: "command_output_delta"; callId: string; delta: string }
   | { type: "run_state"; run: ActiveRunState | null }
   | { type: "toast"; tone: "info" | "error" | "success"; message: string }
 );
+
+export interface PrepareTurnUndoInput {
+  messageId: string;
+}
+
+export interface UndoTurnChangesInput {
+  messageId: string;
+}
 
 export interface StartTurnInput {
   threadId: string;
@@ -374,6 +425,8 @@ export interface PrivoraDesktopApi {
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): Promise<void>;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
+  prepareTurnUndo(input: PrepareTurnUndoInput): Promise<TurnUndoRecord | null>;
+  undoTurnChanges(input: UndoTurnChangesInput): Promise<TurnUndoRecord | null>;
   searchContextMentions(input: SearchContextMentionsInput): Promise<ContextMentionSuggestion[]>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   openPath(path: string): Promise<void>;
