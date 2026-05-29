@@ -38,15 +38,7 @@ function ChatMessageComponent({
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const hasAttachments = (message.attachments || []).length > 0;
-  const runActive = !isUser && (
-    activeRunStatus === "sampling" ||
-    activeRunStatus === "running" ||
-    activeRunStatus === "executing_tool" ||
-    activeRunStatus === "awaiting_approval" ||
-    activeRunStatus === "draining" ||
-    message.status === "running" ||
-    message.status === "awaiting_approval"
-  );
+  const runActive = !isUser && (isActiveTurnStatus(activeRunStatus) || isActiveTurnStatus(message.status));
   const renderParts = useMemo(
     () => isUser ? [] : buildAssistantRenderParts(message, tools, runActive),
     [isUser, message, runActive, tools],
@@ -301,6 +293,18 @@ function timelineRank(item: AssistantTimelineItem) {
 
 function clampOffset(offset: number, max: number) {
   return Math.max(0, Math.min(max, offset));
+}
+
+function isActiveTurnStatus(status: string | null | undefined) {
+  return (
+    status === "sampling" ||
+    status === "running" ||
+    status === "executing_tool" ||
+    status === "waiting_tool" ||
+    status === "awaiting_approval" ||
+    status === "draining" ||
+    status === "completing"
+  );
 }
 
 function AssistantRunMeta({
