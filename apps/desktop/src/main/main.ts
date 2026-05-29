@@ -3,7 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DesktopStore } from "./db/store";
 import { AgentRuntime } from "./agent/runtime";
+import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
+import { installRendererDiagnostics } from "./diagnostics";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -12,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow: BrowserWindow | null = null;
 let store: DesktopStore | null = null;
-let runtime: AgentRuntime | null = null;
+let runtime: AgentService | null = null;
 const state: IpcState = {
   activeThreadId: null,
   activeWorkspaceId: null,
@@ -53,6 +55,7 @@ const createWindow = async () => {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+  installRendererDiagnostics(mainWindow);
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -75,7 +78,7 @@ if (!singleInstanceLock) {
     const workspaces = store.listWorkspaces();
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
-    runtime = new AgentRuntime(store, () => mainWindow, () => state);
+    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state));
     registerIpc(store, runtime, state);
     await createWindow();
 

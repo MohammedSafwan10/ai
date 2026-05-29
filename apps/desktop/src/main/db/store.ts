@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type {
   AppSnapshot,
+  AgentRunCheckpointRecord,
   ChatMessageRecord,
   SettingsRecord,
   ThreadRecord,
@@ -31,6 +32,7 @@ interface DesktopDataFile {
   threads: ThreadRecord[];
   messages: ChatMessageRecord[];
   toolEvents: ToolEventRecord[];
+  agentRunCheckpoints: AgentRunCheckpointRecord[];
 }
 
 const now = () => Date.now();
@@ -49,11 +51,14 @@ const defaultData = (): DesktopDataFile => ({
   threads: [],
   messages: [],
   toolEvents: [],
+  agentRunCheckpoints: [],
 });
 
 export class DesktopStore {
   private data: DesktopDataFile;
   private filePath: string;
+  private writeTimer: NodeJS.Timeout | null = null;
+  private dirty = false;
 
   constructor(userDataPath = app.getPath("userData")) {
     fs.mkdirSync(userDataPath, { recursive: true });
@@ -63,7 +68,7 @@ export class DesktopStore {
   }
 
   close() {
-    this.writeData();
+    this.flushScheduledWrite();
   }
 
   snapshot(activeThreadId: string | null, activeWorkspaceId: string | null): AppSnapshot {
@@ -179,6 +184,7 @@ export class DesktopStore {
     this.data.threads = this.data.threads.filter((thread) => thread.id !== threadId);
     this.data.messages = this.data.messages.filter((message) => message.threadId !== threadId);
     this.data.toolEvents = this.data.toolEvents.filter((event) => event.threadId !== threadId);
+    this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => checkpoint.threadId !== threadId);
     this.writeData();
   }
 
@@ -200,7 +206,7 @@ export class DesktopStore {
   upsertMessage(message: ChatMessageRecord): ChatMessageRecord {
     this.data.messages = upsertById(this.data.messages, message);
     this.touchThread(message.threadId);
-    this.writeData();
+    this.scheduleWrite();
     return message;
   }
 
@@ -221,7 +227,7 @@ export class DesktopStore {
   upsertToolEvent(event: ToolEventRecord): ToolEventRecord {
     this.data.toolEvents = upsertById(this.data.toolEvents, event);
     this.touchThread(event.threadId);
-    this.writeData();
+    this.scheduleWrite();
     return event;
   }
 
@@ -238,12 +244,36 @@ export class DesktopStore {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  getRunCheckpoint(threadId: string): AgentRunCheckpointRecord | null {
+    return this.data.agentRunCheckpoints.find((checkpoint) => checkpoint.threadId === threadId) || null;
+  }
+
+  saveRunCheckpoint(checkpoint: AgentRunCheckpointRecord) {
+    const next = {
+      ...checkpoint,
+      updatedAt: now(),
+    };
+    this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.some((item) => item.threadId === checkpoint.threadId)
+      ? this.data.agentRunCheckpoints.map((item) => item.threadId === checkpoint.threadId ? next : item)
+      : [...this.data.agentRunCheckpoints, next];
+    this.scheduleWrite();
+    return this.getRunCheckpoint(checkpoint.threadId);
+  }
+
+  clearRunCheckpoint(threadId: string) {
+    this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => checkpoint.threadId !== threadId);
+    this.writeData();
+  }
+
   pruneThreadAfterMessage(threadId: string, messageId: string) {
     const removedMessages = this.listMessagesAfter(threadId, messageId);
     const removedMessageIds = new Set(removedMessages.map((message) => message.id));
     const removedToolEvents = this.data.toolEvents.filter((event) => event.threadId === threadId && removedMessageIds.has(event.messageId));
     this.data.messages = this.data.messages.filter((message) => !(message.threadId === threadId && removedMessageIds.has(message.id)));
     this.data.toolEvents = this.data.toolEvents.filter((event) => !(event.threadId === threadId && removedMessageIds.has(event.messageId)));
+    this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) =>
+      !(checkpoint.threadId === threadId && removedMessageIds.has(checkpoint.assistantMessageId))
+    );
     this.touchThread(threadId);
     this.writeData();
     return {
@@ -312,8 +342,9 @@ export class DesktopStore {
         secrets: parsed.secrets || {},
         workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces : [],
         threads: Array.isArray(parsed.threads) ? parsed.threads : [],
-        messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-        toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents : [],
+        messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeLegacyMessage) : [],
+        toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeLegacyToolEvent) : [],
+        agentRunCheckpoints: Array.isArray(parsed.agentRunCheckpoints) ? parsed.agentRunCheckpoints : [],
       };
     } catch {
       return defaultData();
@@ -321,9 +352,28 @@ export class DesktopStore {
   }
 
   private writeData() {
+    this.dirty = false;
     const tempPath = `${this.filePath}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 2), "utf8");
     fs.renameSync(tempPath, this.filePath);
+  }
+
+  private scheduleWrite() {
+    this.dirty = true;
+    if (this.writeTimer) return;
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null;
+      if (this.dirty) this.writeData();
+    }, 250);
+    this.writeTimer.unref?.();
+  }
+
+  private flushScheduledWrite() {
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+    }
+    if (this.dirty) this.writeData();
   }
 }
 
@@ -333,3 +383,22 @@ const upsertById = <T extends { id: string }>(items: T[], item: T) => {
     ? items.map((candidate) => candidate.id === item.id ? item : candidate)
     : [...items, item];
 };
+
+const normalizeLegacyMessage = (message: ChatMessageRecord): ChatMessageRecord => {
+  const content = message.content?.replace(
+    /I stopped because the model iteration budget was reached\./g,
+    "Paused after a long run. Completed changes were kept. Use Continue to resume from the last checkpoint.",
+  );
+  return content === message.content ? message : { ...message, content };
+};
+
+const normalizeLegacyToolEvent = (event: ToolEventRecord): ToolEventRecord => {
+  if (!isNoisyCommandReason(event.approvalReason)) return event;
+  return { ...event, approvalReason: undefined };
+};
+
+const isNoisyCommandReason = (reason?: string) =>
+  Boolean(
+    reason?.toLowerCase().includes("mutate files") &&
+    reason.toLowerCase().includes("chain shell operations"),
+  );

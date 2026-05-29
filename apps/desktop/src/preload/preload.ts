@@ -9,6 +9,7 @@ import type {
 import { channels } from "../main/ipc/channels";
 
 const api: PrivoraDesktopApi = {
+  debugEnabled: typeof process !== "undefined" && process.env.PRIVORA_DEBUG === "1",
   getSnapshot: () => ipcRenderer.invoke(channels.getSnapshot),
   createThread: (workspaceId?: string | null) => ipcRenderer.invoke(channels.createThread, workspaceId),
   renameThread: (threadId: string, title: string) => ipcRenderer.invoke(channels.renameThread, threadId, title),
@@ -17,8 +18,10 @@ const api: PrivoraDesktopApi = {
   selectWorkspace: () => ipcRenderer.invoke(channels.selectWorkspace),
   setActiveThread: (threadId: string) => ipcRenderer.invoke(channels.setActiveThread, threadId),
   startTurn: (input: StartTurnInput) => ipcRenderer.invoke(channels.startTurn, input),
+  continueRun: (threadId: string) => ipcRenderer.invoke(channels.continueRun, threadId),
   stopTurn: (threadId: string) => ipcRenderer.invoke(channels.stopTurn, threadId),
   decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(channels.decideApproval, input),
+  searchContextMentions: (input) => ipcRenderer.invoke(channels.searchContextMentions, input),
   saveSettings: (input: SaveSettingsInput) => ipcRenderer.invoke(channels.saveSettings, input),
   openPath: (path: string) => ipcRenderer.invoke(channels.openPath, path),
   openWorkspaceTarget: (target) => ipcRenderer.invoke(channels.openWorkspaceTarget, target),

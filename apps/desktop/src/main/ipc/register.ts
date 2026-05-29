@@ -2,16 +2,17 @@ import { dialog, ipcMain, shell } from "electron";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import type { DesktopStore } from "../db/store";
-import type { AgentRuntime } from "../agent/runtime";
+import type { AgentService } from "../agent/service";
+import { searchContextMentions } from "../agent/contextMentions";
 import { channels } from "./channels";
-import type { ApprovalDecisionInput, SaveSettingsInput, StartTurnInput, WorkspaceOpenTarget } from "../../shared/types";
+import type { ApprovalDecisionInput, SaveSettingsInput, SearchContextMentionsInput, StartTurnInput, WorkspaceOpenTarget } from "../../shared/types";
 
 export interface IpcState {
   activeThreadId: string | null;
   activeWorkspaceId: string | null;
 }
 
-export const registerIpc = (store: DesktopStore, runtime: AgentRuntime, state: IpcState) => {
+export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState) => {
   const ensureThread = () => {
     const threads = store.listThreads();
     if (state.activeThreadId && threads.some((thread) => thread.id === state.activeThreadId)) return state.activeThreadId;
@@ -74,12 +75,20 @@ export const registerIpc = (store: DesktopStore, runtime: AgentRuntime, state: I
     await runtime.startTurn(input);
   });
 
+  ipcMain.handle(channels.continueRun, async (_event, threadId: string) => {
+    await runtime.continueRun(threadId);
+  });
+
   ipcMain.handle(channels.stopTurn, (_event, threadId: string) => {
     runtime.stopTurn(threadId);
   });
 
   ipcMain.handle(channels.decideApproval, async (_event, input: ApprovalDecisionInput) => {
     await runtime.decideApproval(input);
+  });
+
+  ipcMain.handle(channels.searchContextMentions, async (_event, input: SearchContextMentionsInput) => {
+    return searchContextMentions(store, input.threadId, input.query);
   });
 
   ipcMain.handle(channels.saveSettings, (_event, input: SaveSettingsInput) => {

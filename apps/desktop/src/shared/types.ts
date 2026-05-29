@@ -4,10 +4,16 @@ export type MessageRole = "user" | "assistant";
 
 export type TurnStatus =
   | "idle"
+  | "sampling"
   | "running"
+  | "executing_tool"
+  | "waiting_tool"
   | "awaiting_approval"
+  | "draining"
+  | "completing"
   | "completed"
   | "stopped"
+  | "stalled"
   | "failed";
 
 export type ToolEventStatus =
@@ -54,8 +60,19 @@ export interface ChatMessageRecord {
   role: MessageRole;
   content: string;
   attachments?: DesktopAttachmentRecord[];
+  contextMentions?: ContextMentionRecord[];
   thought?: string;
+  thoughtParts?: AssistantThoughtPartRecord[];
   status: TurnStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AssistantThoughtPartRecord {
+  id: string;
+  textOffset: number;
+  thoughtOffset: number;
+  streamOrder?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -69,6 +86,145 @@ export interface DesktopAttachmentRecord {
   createdAt: number;
 }
 
+export type ContextMentionType = "file" | "folder" | "terminal";
+
+export interface ContextMentionRecord {
+  id: string;
+  type: ContextMentionType;
+  label: string;
+  path?: string;
+  createdAt: number;
+}
+
+export interface ContextMentionSuggestion {
+  id: string;
+  type: ContextMentionType | "category";
+  label: string;
+  sublabel?: string;
+  path?: string;
+}
+
+export interface SearchContextMentionsInput {
+  threadId: string;
+  query: string;
+}
+
+export type ToolEventCategory =
+  | "read"
+  | "search"
+  | "edit"
+  | "terminal"
+  | "diagnostic"
+  | "git"
+  | "approval"
+  | "other";
+
+export interface ToolActivityItemRecord {
+  verb: string;
+  path?: string;
+  title?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface ToolDiffStatsRecord {
+  additions: number;
+  deletions: number;
+}
+
+export type ToolDiffFileStatus = "created" | "deleted" | "modified" | "renamed";
+
+export type ToolDiffLineKind = "context" | "add" | "remove";
+
+export interface ToolDiffLineRecord {
+  kind: ToolDiffLineKind;
+  oldLineNumber?: number | null;
+  newLineNumber?: number | null;
+  text: string;
+}
+
+export interface ToolDiffHunkRecord {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  section?: string;
+  lines: ToolDiffLineRecord[];
+  truncated?: boolean;
+}
+
+export interface ToolDiffFileRecord {
+  path: string;
+  oldPath?: string;
+  status: ToolDiffFileStatus;
+  additions: number;
+  deletions: number;
+  hunks: ToolDiffHunkRecord[];
+  truncated?: boolean;
+}
+
+export interface ToolTerminalRecord {
+  command: string;
+  cwd?: string;
+  processId?: number;
+  running?: boolean;
+  exitCode?: number | null;
+  durationMs?: number;
+  timedOut?: boolean;
+  omittedBytes?: number;
+  truncated?: boolean;
+}
+
+export interface ContextPackRecord {
+  workspaceRoot: string;
+  generatedAt: number;
+  profile?: Record<string, unknown>;
+  recentToolCount: number;
+  runningTerminalCount?: number;
+  truncated?: boolean;
+}
+
+export interface TerminalProcessRecord {
+  id: number;
+  threadId?: string;
+  messageId?: string;
+  callId: string;
+  command: string;
+  cwd: string;
+  status: "running" | "exited" | "stopped" | "failed";
+  exitCode?: number | null;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface FileMutationRecord {
+  id: string;
+  threadId: string;
+  messageId: string;
+  callId: string;
+  path: string;
+  kind: "create" | "update" | "delete" | "rename";
+  diff?: string;
+  additions: number;
+  deletions: number;
+  createdAt: number;
+}
+
+export interface DiagnosticRunRecord {
+  id: string;
+  threadId: string;
+  messageId: string;
+  callId: string;
+  command: string;
+  cwd: string;
+  status: "running" | "passed" | "failed" | "stopped";
+  exitCode?: number | null;
+  durationMs?: number;
+  output?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ToolEventRecord {
   id: string;
   threadId: string;
@@ -76,14 +232,40 @@ export interface ToolEventRecord {
   callId: string;
   name: DesktopToolName | string;
   title: string;
+  category?: ToolEventCategory;
+  liveStatus?: string;
+  textOffset?: number;
+  streamOrder?: number;
   status: ToolEventStatus;
   risk: ToolRisk;
   args: Record<string, unknown>;
   result?: ToolResult;
   output?: string;
   diff?: string;
+  diffFiles?: ToolDiffFileRecord[];
+  diffStats?: ToolDiffStatsRecord;
+  activities?: ToolActivityItemRecord[];
+  terminal?: ToolTerminalRecord;
+  preview?: string;
+  approvalGroupId?: string;
   approvalReason?: string;
+  startedAt?: number;
+  endedAt?: number;
   createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentRunCheckpointRecord {
+  threadId: string;
+  assistantMessageId: string;
+  workspaceRoot: string;
+  history: unknown[];
+  assistantText: string;
+  assistantThought: string;
+  iteration: number;
+  toolCount: number;
+  recoveryAttempts: number;
+  lastProgressAt: number;
   updatedAt: number;
 }
 
@@ -101,7 +283,14 @@ export interface AppSnapshot {
 export interface ActiveRunState {
   threadId: string;
   assistantMessageId: string;
+  phase: TurnStatus;
   status: TurnStatus;
+  startedAt?: number;
+  updatedAt?: number;
+  iteration?: number;
+  toolCount?: number;
+  reason?: string;
+  resumable?: boolean;
 }
 
 export type DesktopToolName =
@@ -112,6 +301,10 @@ export type DesktopToolName =
   | "desktop_search"
   | "desktop_delete_path"
   | "desktop_rename_path"
+  | "desktop_exec_command"
+  | "desktop_write_stdin"
+  | "desktop_stop_process"
+  | "desktop_run_diagnostics"
   | "desktop_run_command"
   | "desktop_git_status"
   | "desktop_git_diff";
@@ -130,24 +323,32 @@ export interface ToolResult {
   data?: Record<string, unknown>;
 }
 
-export type DesktopEvent =
+export interface DesktopEventMeta {
+  sequence?: number;
+  emittedAt?: number;
+}
+
+export type DesktopEvent = DesktopEventMeta & (
   | { type: "snapshot"; snapshot: AppSnapshot }
   | { type: "message_updated"; message: ChatMessageRecord }
   | { type: "tool_updated"; tool: ToolEventRecord }
   | { type: "command_output_delta"; callId: string; delta: string }
   | { type: "run_state"; run: ActiveRunState | null }
-  | { type: "toast"; tone: "info" | "error" | "success"; message: string };
+  | { type: "toast"; tone: "info" | "error" | "success"; message: string }
+);
 
 export interface StartTurnInput {
   threadId: string;
   prompt: string;
   attachments?: DesktopAttachmentRecord[];
+  contextMentions?: ContextMentionRecord[];
 }
 
 export interface ApprovalDecisionInput {
   threadId: string;
-  callId: string;
-  approved: boolean;
+  callId?: string;
+  approved?: boolean;
+  decisions?: Array<{ callId: string; approved: boolean }>;
 }
 
 export interface SaveSettingsInput {
@@ -161,6 +362,7 @@ export interface SaveSettingsInput {
 }
 
 export interface PrivoraDesktopApi {
+  debugEnabled: boolean;
   getSnapshot(): Promise<AppSnapshot>;
   createThread(workspaceId?: string | null): Promise<ThreadRecord>;
   renameThread(threadId: string, title: string): Promise<ThreadRecord | null>;
@@ -169,8 +371,10 @@ export interface PrivoraDesktopApi {
   selectWorkspace(): Promise<WorkspaceRecord | null>;
   setActiveThread(threadId: string): Promise<void>;
   startTurn(input: StartTurnInput): Promise<void>;
+  continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): Promise<void>;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
+  searchContextMentions(input: SearchContextMentionsInput): Promise<ContextMentionSuggestion[]>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   openPath(path: string): Promise<void>;
   openWorkspaceTarget(target: WorkspaceOpenTarget): Promise<void>;
