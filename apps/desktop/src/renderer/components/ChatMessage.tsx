@@ -10,6 +10,7 @@ import type {
   ToolEventRecord,
 } from "../../shared/types";
 import { ToolTimeline } from "./ToolTimeline";
+import { TurnReviewCard } from "./ReviewPanel";
 
 interface ChatMessageProps {
   message: ChatMessageRecord;
@@ -17,9 +18,10 @@ interface ChatMessageProps {
   activeRunStatus: string | null;
   onApprove: (callId: string, approved: boolean) => void;
   onApproveAll: (callIds: string[]) => void;
+  onOpenReview: (messageId: string) => void;
 }
 
-function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onApproveAll }: ChatMessageProps) {
+function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onApproveAll, onOpenReview }: ChatMessageProps) {
   const isUser = message.role === "user";
   const hasAttachments = (message.attachments || []).length > 0;
   const runActive = !isUser && (
@@ -35,6 +37,18 @@ function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onAp
     () => isUser ? [] : buildAssistantRenderParts(message, tools, runActive),
     [isUser, message, runActive, tools],
   );
+  const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
+  const activityNeedsAttention = renderParts.some((part) =>
+    part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed")
+  );
+  const [activityOpen, setActivityOpen] = useState(runActive || activityNeedsAttention);
+  useEffect(() => {
+    if (runActive || activityNeedsAttention) {
+      setActivityOpen(true);
+      return;
+    }
+    setActivityOpen(false);
+  }, [activityNeedsAttention, runActive]);
   const [copied, setCopied] = useState(false);
   const showCopyFeedback = () => {
     setCopied(true);
@@ -55,23 +69,31 @@ function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onAp
             </>
           ) : (
             <>
-              <AssistantRunMeta message={message} active={runActive} />
+              <AssistantRunMeta
+                message={message}
+                active={runActive}
+                hasActivity={hasAssistantActivity}
+                activityOpen={activityOpen}
+                onToggleActivity={() => setActivityOpen((value) => !value)}
+              />
               <div className="assistant-flow">
                 {renderParts.length > 0 ? (
                   renderParts.map((part) => {
+                    const showActivityPart = runActive || activityOpen || activityNeedsAttention;
                     if (part.type === "thought") {
-                      return <ThoughtPanel key={part.key} thought={part.thought} active={part.active} />;
+                      return showActivityPart ? <ThoughtPanel key={part.key} thought={part.thought} active={part.active} /> : null;
                     }
                     if (part.type === "tools") {
-                      return (
+                      return showActivityPart ? (
                         <ToolTimeline
                           key={part.key}
                           tools={part.tools}
                           messageStatus={message.status}
+                          defaultOpen={part.defaultOpen}
                           onApprove={onApprove}
                           onApproveAll={onApproveAll}
                         />
-                      );
+                      ) : null;
                     }
                     return (
                       <div key={part.key} className="assistant-flow-text markdown-body">
@@ -83,6 +105,7 @@ function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onAp
                   <ThoughtPanel thought="" active={runActive} />
                 )}
               </div>
+              <TurnReviewCard tools={tools} onOpen={() => onOpenReview(message.id)} />
             </>
           )}
         </div>
@@ -107,7 +130,7 @@ export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
 type AssistantRenderPart =
   | { type: "thought"; key: string; thought: string; active: boolean }
   | { type: "text"; key: string; text: string }
-  | { type: "tools"; key: string; tools: ToolEventRecord[] };
+  | { type: "tools"; key: string; tools: ToolEventRecord[]; defaultOpen: boolean };
 
 type AssistantTimelineItem =
   | {
@@ -155,6 +178,7 @@ function buildAssistantRenderParts(
       type: "tools",
       key: `tools-${keySuffix}-${pendingTools.map((tool) => tool.id).join("-")}`,
       tools: pendingTools,
+      defaultOpen: false,
     });
     pendingTools = [];
   };
@@ -178,7 +202,22 @@ function buildAssistantRenderParts(
 
   const tail = content.slice(cursor);
   if (tail.trim()) parts.push({ type: "text", key: `text-tail-${cursor}`, text: tail });
-  return parts;
+  return markDefaultOpenToolPart(parts, runActive);
+}
+
+function markDefaultOpenToolPart(parts: AssistantRenderPart[], runActive: boolean): AssistantRenderPart[] {
+  const latestLiveToolIndex = [...parts].reverse().findIndex((part) =>
+    part.type === "tools" && part.tools.some((tool) => tool.status === "running" || tool.status === "preparing")
+  );
+  const liveIndex = latestLiveToolIndex >= 0 ? parts.length - 1 - latestLiveToolIndex : -1;
+  return parts.map((part, index) => {
+    if (part.type !== "tools") return part;
+    const needsAttention = part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed");
+    return {
+      ...part,
+      defaultOpen: needsAttention || (runActive && index === liveIndex),
+    };
+  });
 }
 
 function buildThoughtTimelineItems(
@@ -241,11 +280,30 @@ function clampOffset(offset: number, max: number) {
   return Math.max(0, Math.min(max, offset));
 }
 
-function AssistantRunMeta({ message, active }: { message: ChatMessageRecord; active: boolean }) {
+function AssistantRunMeta({
+  message,
+  active,
+  hasActivity,
+  activityOpen,
+  onToggleActivity,
+}: {
+  message: ChatMessageRecord;
+  active: boolean;
+  hasActivity: boolean;
+  activityOpen: boolean;
+  onToggleActivity: () => void;
+}) {
   const elapsed = useElapsedTime(message.createdAt, active ? undefined : message.updatedAt);
   return (
     <div className="assistant-run-meta">
-      <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
+      {hasActivity ? (
+        <button type="button" className="assistant-run-toggle" onClick={onToggleActivity}>
+          <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
+          <ChevronDown className={clsx("assistant-run-chevron", !activityOpen && "closed")} size={14} />
+        </button>
+      ) : (
+        <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
+      )}
     </div>
   );
 }

@@ -7,11 +7,12 @@ import { InlineFileChangeList } from "./InlineDiff";
 interface ToolTimelineProps {
   tools: ToolEventRecord[];
   messageStatus: string;
+  defaultOpen?: boolean;
   onApprove: (callId: string, approved: boolean) => void;
   onApproveAll: (callIds: string[]) => void;
 }
 
-export function ToolTimeline({ tools, messageStatus, onApprove, onApproveAll }: ToolTimelineProps) {
+export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onApprove, onApproveAll }: ToolTimelineProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [showAllSteps, setShowAllSteps] = useState(false);
   const messageActive = messageStatus === "running" || messageStatus === "awaiting_approval";
@@ -31,7 +32,10 @@ export function ToolTimeline({ tools, messageStatus, onApprove, onApproveAll }: 
     const done = normalizedTools.filter((tool) => tool.status === "done").length;
     if (pending) return `${done} done · ${pending} need approval`;
     if (failed) return `${failed} failed · ${done} done`;
-    if (running) return `${running} running · ${done} done`;
+    if (running) {
+      const doneTools = normalizedTools.filter((tool) => tool.status === "done");
+      return done ? completedSummary(doneTools, done) : "Working";
+    }
     return completedSummary(normalizedTools, done);
   }, [normalizedTools]);
 
@@ -45,7 +49,7 @@ export function ToolTimeline({ tools, messageStatus, onApprove, onApproveAll }: 
         : "done";
   const shouldShowRows =
     userOpen ?? (
-      messageActive ||
+      defaultOpen ||
       hasAttention ||
       messageStatus === "awaiting_approval"
     );
@@ -82,7 +86,6 @@ export function ToolTimeline({ tools, messageStatus, onApprove, onApproveAll }: 
                 {!hasFileDiffs(tool) && (
                   <div className="tool-title-line">
                     <strong>{primaryToolLabel(tool)}</strong>
-                    {tool.status !== "done" && <small>{tool.status.replace(/_/g, " ")}</small>}
                   </div>
                 )}
                 {hasFileDiffs(tool) ? (

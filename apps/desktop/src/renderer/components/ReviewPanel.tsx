@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, GitCompareArrows, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ToolDiffFileRecord, ToolEventRecord } from "../../shared/types";
 
 interface ParsedDiff {
@@ -10,22 +10,26 @@ interface ParsedDiff {
   diff: string;
 }
 
-export function ReviewStrip({ tools, onOpen }: { tools: ToolEventRecord[]; onOpen: () => void }) {
+export function TurnReviewCard({ tools, onOpen }: { tools: ToolEventRecord[]; onOpen: () => void }) {
   const stats = useMemo(() => summarizeDiffs(tools), [tools]);
   if (stats.files === 0) return null;
   return (
-    <button className="review-strip" onClick={onOpen}>
-      <span>{stats.files} files changed</span>
+    <button className="turn-review-card" onClick={onOpen}>
+      <span>{stats.files} {stats.files === 1 ? "file changed" : "files changed"}</span>
       <strong className="delta-add">+{stats.additions}</strong>
       <em className="delta-del">-{stats.deletions}</em>
-      <span className="review-link">Review here</span>
+      <span className="review-link">Review</span>
     </button>
   );
 }
 
 export function ReviewPanel({ tools, open, onClose }: { tools: ToolEventRecord[]; open: boolean; onClose: () => void }) {
   const diffs = useMemo(() => parseDiffs(tools), [tools]);
+  const firstDiffKey = diffs[0]?.key || null;
   const [expanded, setExpanded] = useState<string | null>(diffs[0]?.key || null);
+  useEffect(() => {
+    setExpanded(firstDiffKey);
+  }, [firstDiffKey]);
   if (!open) return null;
   const stats = summarizeDiffs(tools);
 

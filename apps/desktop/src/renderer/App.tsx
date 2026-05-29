@@ -6,12 +6,12 @@ import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AppLauncher } from "./components/AppLauncher";
-import { ReviewPanel, ReviewStrip } from "./components/ReviewPanel";
+import { ReviewPanel } from "./components/ReviewPanel";
 import type { ContextMentionRecord, DesktopAttachmentRecord, SaveSettingsInput } from "../shared/types";
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [composerDraft, setComposerDraft] = useState<{ id: number; text: string; attachments?: DesktopAttachmentRecord[] } | null>(null);
   const [showJumpButton, setShowJumpButton] = useState(false);
@@ -53,11 +53,10 @@ export default function App() {
     return map;
   }, [snapshot.toolEvents]);
 
-  const latestReviewTools = useMemo(() => {
-    const assistantIds = messages.filter((message) => message.role === "assistant").map((message) => message.id).reverse();
-    const latestId = assistantIds.find((messageId) => (toolsByMessage.get(messageId) || []).some((tool) => tool.diff));
-    return latestId ? (toolsByMessage.get(latestId) || []).filter((tool) => tool.diff) : [];
-  }, [messages, toolsByMessage]);
+  const reviewTools = useMemo(
+    () => reviewMessageId ? (toolsByMessage.get(reviewMessageId) || []) : [],
+    [reviewMessageId, toolsByMessage],
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -93,6 +92,7 @@ export default function App() {
 
   useEffect(() => {
     setComposerDraft(null);
+    setReviewMessageId(null);
   }, [activeThread?.id]);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
@@ -217,6 +217,7 @@ export default function App() {
                           decisions: callIds.map((callId) => ({ callId, approved: true })),
                         });
                       }}
+                      onOpenReview={setReviewMessageId}
                     />
                   </div>
                 );
@@ -244,7 +245,6 @@ export default function App() {
               v
             </button>
           )}
-          <ReviewStrip tools={latestReviewTools} onOpen={() => setReviewOpen(true)} />
           {resumable && activeThread && (
             <button
               type="button"
@@ -273,7 +273,7 @@ export default function App() {
         </div>
         {toast && <div className="toast">{toast}</div>}
       </main>
-      <ReviewPanel tools={latestReviewTools} open={reviewOpen} onClose={() => setReviewOpen(false)} />
+      <ReviewPanel tools={reviewTools} open={Boolean(reviewMessageId)} onClose={() => setReviewMessageId(null)} />
     </div>
   );
 }
