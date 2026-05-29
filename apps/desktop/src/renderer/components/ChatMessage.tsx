@@ -8,6 +8,7 @@ import type {
   ChatMessageRecord,
   DesktopAttachmentRecord,
   ToolEventRecord,
+  TurnUndoRecord,
 } from "../../shared/types";
 import { ToolTimeline } from "./ToolTimeline";
 import { TurnReviewCard } from "./ReviewPanel";
@@ -19,9 +20,22 @@ interface ChatMessageProps {
   onApprove: (callId: string, approved: boolean) => void;
   onApproveAll: (callIds: string[]) => void;
   onOpenReview: (messageId: string) => void;
+  turnUndo: TurnUndoRecord | null;
+  onPrepareTurnUndo: (messageId: string) => Promise<TurnUndoRecord | null>;
+  onUndoTurnChanges: (messageId: string) => Promise<TurnUndoRecord | null>;
 }
 
-function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onApproveAll, onOpenReview }: ChatMessageProps) {
+function ChatMessageComponent({
+  message,
+  tools,
+  activeRunStatus,
+  onApprove,
+  onApproveAll,
+  onOpenReview,
+  turnUndo,
+  onPrepareTurnUndo,
+  onUndoTurnChanges,
+}: ChatMessageProps) {
   const isUser = message.role === "user";
   const hasAttachments = (message.attachments || []).length > 0;
   const runActive = !isUser && (
@@ -105,7 +119,15 @@ function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onAp
                   <ThoughtPanel thought="" active={runActive} />
                 )}
               </div>
-              <TurnReviewCard tools={tools} onOpen={() => onOpenReview(message.id)} />
+              {!runActive && (
+                <TurnReviewCard
+                  tools={tools}
+                  undo={turnUndo}
+                  onOpen={() => onOpenReview(message.id)}
+                  onPrepareUndo={() => onPrepareTurnUndo(message.id)}
+                  onUndo={() => onUndoTurnChanges(message.id)}
+                />
+              )}
             </>
           )}
         </div>
@@ -124,7 +146,8 @@ function ChatMessageComponent({ message, tools, activeRunStatus, onApprove, onAp
 export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.message === next.message &&
   previous.tools === next.tools &&
-  previous.activeRunStatus === next.activeRunStatus
+  previous.activeRunStatus === next.activeRunStatus &&
+  previous.turnUndo === next.turnUndo
 );
 
 type AssistantRenderPart =

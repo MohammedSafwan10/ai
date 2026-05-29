@@ -1,14 +1,18 @@
+.turn-review-shell {
+  width: min(100%, 44rem);
+  margin-top: 14px;
+}
+
 .turn-review-card {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(100%, 44rem);
-  margin-top: 14px;
+  width: 100%;
   border: 1px solid color-mix(in srgb, var(--privora-border) 82%, transparent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--privora-surface) 62%, transparent);
   color: var(--privora-muted);
-  padding: 8px 12px;
+  padding: 0;
   font-size: 12px;
   line-height: 1.2;
   text-align: left;
@@ -18,6 +22,66 @@
 .turn-review-card:hover {
   border-color: color-mix(in srgb, var(--privora-border) 96%, var(--privora-text));
   color: color-mix(in srgb, var(--privora-text) 72%, var(--privora-muted));
+}
+
+.turn-review-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.turn-undo-link,
+.turn-undo-status {
+  margin-right: 10px;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.turn-undo-link {
+  background: transparent;
+}
+
+.turn-undo-link:hover {
+  color: var(--privora-text);
+}
+
+.turn-undo-status.warning,
+.turn-undo-error {
+  color: var(--danger);
+}
+
+.turn-undo-confirm,
+.turn-undo-conflicts,
+.turn-undo-error {
+  margin-top: 8px;
+  border-left: 1px solid var(--privora-border);
+  color: var(--privora-muted);
+  padding: 5px 0 5px 12px;
+  font-size: 12px;
+}
+
+.turn-undo-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.turn-undo-confirm button {
+  border: 1px solid var(--privora-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--privora-surface) 70%, transparent);
+  color: var(--privora-text);
+  padding: 5px 8px;
+}
+
+.turn-undo-conflicts summary {
+  cursor: pointer;
 }
 
 .turn-review-card .delta-add,

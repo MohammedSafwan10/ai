@@ -57,6 +57,11 @@ export default function App() {
     () => reviewMessageId ? (toolsByMessage.get(reviewMessageId) || []) : [],
     [reviewMessageId, toolsByMessage],
   );
+  const undoByMessage = useMemo(() => {
+    const map = new Map<string, typeof snapshot.turnUndos[number]>();
+    snapshot.turnUndos.forEach((undo) => map.set(undo.messageId, undo));
+    return map;
+  }, [snapshot.turnUndos]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -218,6 +223,9 @@ export default function App() {
                         });
                       }}
                       onOpenReview={setReviewMessageId}
+                      turnUndo={undoByMessage.get(message.id) || null}
+                      onPrepareTurnUndo={(messageId) => window.privoraDesktop.prepareTurnUndo({ messageId })}
+                      onUndoTurnChanges={(messageId) => window.privoraDesktop.undoTurnChanges({ messageId })}
                     />
                   </div>
                 );

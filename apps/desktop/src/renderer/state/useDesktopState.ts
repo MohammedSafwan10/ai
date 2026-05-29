@@ -6,6 +6,7 @@ import type {
   SettingsRecord,
   ThreadRecord,
   ToolEventRecord,
+  TurnUndoRecord,
   WorkspaceRecord,
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID } from "../../shared/models";
@@ -27,6 +28,7 @@ const emptySnapshot: AppSnapshot = {
   threads: [],
   messages: [],
   toolEvents: [],
+  turnUndos: [],
   activeThreadId: null,
   activeWorkspaceId: null,
   activeRun: null,
@@ -113,6 +115,11 @@ const reduceDesktopEvents = (snapshot: AppSnapshot, events: DesktopEvent[]): App
       if (toolEvents !== next.toolEvents) next = { ...next, toolEvents };
       continue;
     }
+    if (event.type === "turn_undo_updated") {
+      const turnUndos = upsertById(next.turnUndos, event.undo);
+      if (turnUndos !== next.turnUndos) next = { ...next, turnUndos };
+      continue;
+    }
     if (event.type === "run_state") {
       if (next.activeRun !== event.run) next = { ...next, activeRun: event.run };
       continue;
@@ -139,16 +146,19 @@ const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
   const coalesced: DesktopEvent[] = [];
   let messages = new Map<string, ChatMessageRecord>();
   let tools = new Map<string, ToolEventRecord>();
+  let undos = new Map<string, TurnUndoRecord>();
   let runState: DesktopEvent | null = null;
   const commandDeltas = new Map<string, string>();
 
   const flush = () => {
     messages.forEach((message) => coalesced.push({ type: "message_updated", message }));
     tools.forEach((tool) => coalesced.push({ type: "tool_updated", tool }));
+    undos.forEach((undo) => coalesced.push({ type: "turn_undo_updated", undo }));
     commandDeltas.forEach((delta, callId) => coalesced.push({ type: "command_output_delta", callId, delta }));
     if (runState) coalesced.push(runState);
     messages = new Map();
     tools = new Map();
+    undos = new Map();
     runState = null;
     commandDeltas.clear();
   };
@@ -165,6 +175,10 @@ const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
     }
     if (event.type === "tool_updated") {
       tools.set(event.tool.id, event.tool);
+      continue;
+    }
+    if (event.type === "turn_undo_updated") {
+      undos.set(event.undo.id, event.undo);
       continue;
     }
     if (event.type === "run_state") {
