@@ -9,6 +9,7 @@
     "dev:debug": "electron-forge start --inspect-electron",
     "dev:debug:break": "electron-forge start --inspect-brk-electron",
     "dev:log": "electron-forge start --enable-logging",
+    "dev:trace": "set PRIVORA_DEBUG=1&& electron-forge start --enable-logging",
     "start": "electron-forge start",
     "lint": "tsc --noEmit",
     "test": "vitest run",
@@ -17,6 +18,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
+    "@tanstack/react-virtual": "^3.13.26",
     "@vscode/ripgrep": "^1.15.14",
     "clsx": "^2.1.1",
     "lucide-react": "^0.546.0",
