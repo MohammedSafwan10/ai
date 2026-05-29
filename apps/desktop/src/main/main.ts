@@ -15,11 +15,40 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let store: DesktopStore | null = null;
 let runtime: AgentService | null = null;
+const MIN_ZOOM_FACTOR = 0.5;
+const MAX_ZOOM_FACTOR = 1.7;
+const ZOOM_STEP = 0.1;
 const state: IpcState = {
   activeThreadId: null,
   activeWorkspaceId: null,
 };
 const singleInstanceLock = app.requestSingleInstanceLock();
+
+const clampZoomFactor = (zoomFactor: number) => Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
+
+const installWindowShortcuts = (window: BrowserWindow) => {
+  window.webContents.on("before-input-event", (event, input) => {
+    if (!input.control && !input.meta) return;
+
+    const key = input.key.toLowerCase();
+    const code = input.code.toLowerCase();
+    const isZoomIn = key === "+" || key === "=" || code === "equal" || code === "numpadadd";
+    const isZoomOut = key === "-" || code === "minus" || code === "numpadsubtract";
+    const isResetZoom = key === "0" || code === "digit0" || code === "numpad0";
+
+    if (!isZoomIn && !isZoomOut && !isResetZoom) return;
+
+    event.preventDefault();
+
+    if (isResetZoom) {
+      window.webContents.setZoomFactor(1);
+      return;
+    }
+
+    const nextZoomFactor = window.webContents.getZoomFactor() + (isZoomIn ? ZOOM_STEP : -ZOOM_STEP);
+    window.webContents.setZoomFactor(clampZoomFactor(Number(nextZoomFactor.toFixed(2))));
+  });
+};
 
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
@@ -51,6 +80,7 @@ const createWindow = async () => {
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error(`[renderer:gone] ${details.reason}`);
   });
+  installWindowShortcuts(mainWindow);
 
   mainWindow.on("closed", () => {
     mainWindow = null;

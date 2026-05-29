@@ -13,4 +13,21 @@ export class DesktopToolOrchestrator {
   execute(call: DesktopToolCall, context: ToolExecutionContext) {
     return this.executor.execute(call, context);
   }
+
+  supportsParallelExecution(call: DesktopToolCall) {
+    return supportsParallelExecution(call);
+  }
 }
+
+export const supportsParallelExecution = (call: DesktopToolCall) => {
+  switch (call.name) {
+    case "desktop_read_file":
+    case "desktop_list_dir":
+    case "desktop_search":
+    case "desktop_git_status":
+    case "desktop_git_diff":
+      return true;
+    default:
+      return false;
+  }
+};

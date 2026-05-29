@@ -71,6 +71,58 @@ interface ContinueOptions {
   recoveryAttempts: number;
 }
 
+interface ScheduledToolExecution {
+  call: DesktopToolCall;
+  promise: Promise<ScheduledToolResult>;
+}
+
+interface ScheduledToolResult {
+  call: DesktopToolCall;
+  result: ToolResult;
+  response: ToolResult;
+}
+
+class ToolExecutionScheduler {
+  private barrier: Promise<void> = Promise.resolve();
+  private openParallel: Promise<unknown>[] = [];
+  private entries: ScheduledToolExecution[] = [];
+
+  schedule(call: DesktopToolCall, parallelSafe: boolean, runner: (call: DesktopToolCall) => Promise<ScheduledToolResult>) {
+    const run = () => runner(call);
+    let promise: Promise<ScheduledToolResult>;
+
+    if (parallelSafe) {
+      promise = this.barrier.then(run);
+      this.openParallel.push(promise.catch(() => undefined));
+    } else {
+      const waitForReads = Promise.allSettled(this.openParallel);
+      promise = this.barrier
+        .then(() => waitForReads)
+        .then(run);
+      this.openParallel = [];
+      this.barrier = promise.catch(() => undefined).then(() => undefined);
+    }
+
+    this.entries.push({ call, promise });
+    return promise;
+  }
+
+  async drainOrdered() {
+    const results: Array<{ id: string; name: string; response: ToolResult; call: DesktopToolCall; result: ToolResult }> = [];
+    for (const entry of this.entries) {
+      const scheduled = await entry.promise;
+      results.push({
+        id: scheduled.call.id,
+        name: scheduled.call.name,
+        response: scheduled.response,
+        call: scheduled.call,
+        result: scheduled.result,
+      });
+    }
+    return results;
+  }
+}
+
 export class AgentRuntime {
   private tools = new DesktopToolOrchestrator();
   private activeRuns = new Map<string, AgentRunTracker>();
@@ -308,6 +360,54 @@ export class AgentRuntime {
         this.emitRun(run);
 
         const calls: DesktopToolCall[] = [];
+        const approvalCalls: DesktopToolCall[] = [];
+        const scheduler = new ToolExecutionScheduler();
+        const scheduleTool = (call: DesktopToolCall) => {
+          scheduler.schedule(call, this.tools.supportsParallelExecution(call), async (scheduledCall) => {
+            try {
+              if (controller.signal.aborted) {
+                return {
+                  call: scheduledCall,
+                  result: { success: false, error: "Stopped before this tool started." },
+                  response: { success: false, error: "Stopped before this tool started." },
+                };
+              }
+              transitionRun(run, "executing_tool", { iteration, toolCount });
+              this.emitRun(run);
+              const result = await this.executeTool(
+                scheduledCall,
+                options.workspaceRoot,
+                controller,
+                run,
+                options.threadId,
+                options.assistantMessage.id,
+              );
+              const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
+                status: result.success ? "done" : "failed",
+                result,
+                output: result.output || result.error,
+                diff: (result as ToolResult & { diff?: string }).diff,
+                diffFiles: (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
+                endedAt: now(),
+              });
+              this.emit({ type: "tool_updated", tool: event });
+              return { call: scheduledCall, result, response: compactToolResultForModel(result) };
+            } catch (error) {
+              const result: ToolResult = {
+                success: false,
+                error: controller.signal.aborted ? "Stopped before this tool completed." : errorMessage(error),
+              };
+              const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
+                status: controller.signal.aborted ? "stopped" : "failed",
+                result,
+                output: result.error,
+                endedAt: now(),
+              });
+              this.emit({ type: "tool_updated", tool: event });
+              return { call: scheduledCall, result, response: compactToolResultForModel(result) };
+            }
+          });
+        };
         const textStart = assistantText.length;
         const thoughtStart = assistantThought.length;
         let activeThoughtPart: AssistantThoughtPartRecord | null = null;
@@ -399,6 +499,11 @@ export class AgentRuntime {
                 startedAt: now(),
               });
               this.emit({ type: "tool_updated", tool: event });
+              if (decision.requiresApproval) {
+                approvalCalls.push(call);
+              } else {
+                scheduleTool(call);
+              }
             },
           });
         } catch (error) {
@@ -436,33 +541,22 @@ export class AgentRuntime {
         history = appendAssistantToolCalls(history, assistantText, calls);
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
 
-        const results: Array<{ id: string; name: string; response: ToolResult }> = [];
-        const approvalCalls: DesktopToolCall[] = [];
-        for (const call of calls) {
-          const decision = this.tools.assess(call, settings.permissionMode);
-          if (decision.requiresApproval) {
-            approvalCalls.push(call);
-            continue;
-          }
-          transitionRun(run, "executing_tool", { iteration, toolCount });
-          this.emitRun(run);
-          const result = await this.executeTool(call, options.workspaceRoot, controller, run, options.threadId, options.assistantMessage.id);
+        const scheduledResults = await scheduler.drainOrdered();
+        for (const item of scheduledResults) {
           toolCount += 1;
           run.toolCount = toolCount;
-          const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
-            status: result.success ? "done" : "failed",
-            result,
-            output: result.output || result.error,
-            diff: (result as ToolResult & { diff?: string }).diff,
-            diffFiles: (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
-            endedAt: now(),
-          });
-          this.emit({ type: "tool_updated", tool: event });
-          results.push({ id: call.id, name: call.name, response: compactToolResultForModel(result) });
           this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         }
+        const results = scheduledResults.map((item) => ({
+          id: item.id,
+          name: item.name,
+          response: item.response,
+        }));
 
         if (approvalCalls.length > 0) {
+          if (results.length > 0) {
+            history = appendToolResults(history, results);
+          }
           const bundle = this.createApprovalBundle({
             options,
             calls: approvalCalls,
@@ -485,6 +579,7 @@ export class AgentRuntime {
         transitionRun(run, "draining", { iteration, toolCount });
         this.emitRun(run);
         history = appendToolResults(history, results);
+        this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         recoveryAttempts = 0;
       }
 
@@ -534,6 +629,11 @@ export class AgentRuntime {
       }
 
       const aborted = controller.signal.aborted;
+      const hasVisibleWork = Boolean(
+        assistantText.trim() ||
+        assistantThought.trim() ||
+        this.store.listToolEvents(options.threadId).some((event) => event.messageId === options.assistantMessage.id),
+      );
       this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
       transitionRun(run, aborted ? "stopped" : "failed", {
         iteration,
@@ -542,7 +642,11 @@ export class AgentRuntime {
         resumable: aborted,
       });
       if (!assistantText) {
-        assistantText = aborted ? "Stopped. Completed tool changes were kept." : `I could not complete that request: ${errorMessage(error)}`;
+        assistantText = aborted
+          ? "Stopped. Completed tool changes were kept."
+          : hasVisibleWork
+            ? ""
+            : "The run stopped before producing visible output.";
       }
       flushAssistant(aborted ? "stopped" : "failed", true);
       this.emitRun(run);
