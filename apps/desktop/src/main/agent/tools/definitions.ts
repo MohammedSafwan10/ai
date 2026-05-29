@@ -79,30 +79,44 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
-    name: "desktop_run_command",
-    description: "Run a terminal command in the selected workspace with streamed output.",
+    name: "desktop_exec_command",
+    description: "Start a terminal command in the selected workspace. If the command is still running, the result includes processId; poll or interact with it using desktop_write_stdin.",
     parameters: schema({
       command: textProperty("Command to run."),
       cwd: textProperty("Optional workspace-relative working directory."),
-      timeoutMs: numberProperty("Optional timeout in milliseconds. Default 120000."),
+      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 1000, max 30000."),
+      maxOutputChars: numberProperty("Optional retained output budget before head/tail compaction."),
     }, ["command"]),
   },
   {
     type: "function",
-    name: "desktop_git_status",
-    description: "Run git status --short --branch in the selected workspace.",
+    name: "desktop_write_stdin",
+    description: "Send input to, or poll, a running terminal process returned by desktop_exec_command. Use empty input to poll for more output.",
     parameters: schema({
-      cwd: textProperty("Optional workspace-relative working directory."),
-    }, []),
+      processId: numberProperty("Running process id returned by desktop_exec_command."),
+      input: textProperty("Input to write. Use an empty string to poll without sending input."),
+      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 5000 for empty polls, max 30000."),
+      maxOutputChars: numberProperty("Optional retained output budget before head/tail compaction."),
+    }, ["processId", "input"]),
   },
   {
     type: "function",
-    name: "desktop_git_diff",
-    description: "Run git diff in the selected workspace.",
+    name: "desktop_stop_process",
+    description: "Stop a running terminal process started by desktop_exec_command.",
     parameters: schema({
+      processId: numberProperty("Running process id to stop."),
+    }, ["processId"]),
+  },
+  {
+    type: "function",
+    name: "desktop_run_diagnostics",
+    description: "Run the best known verification command for this workspace, such as lint, typecheck, test, build, cargo check, or flutter analyze.",
+    parameters: schema({
+      kind: textProperty("Diagnostic kind: auto, lint, typecheck, test, or build."),
       cwd: textProperty("Optional workspace-relative working directory."),
-      staged: boolProperty("Whether to show staged diff."),
-    }, []),
+      command: textProperty("Optional explicit command. Use only when the user asked for a specific check or auto-detection is not enough."),
+      timeoutMs: numberProperty("Optional wait window for each terminal poll, max 30000."),
+    }, ["kind"]),
   },
 ] as const;
 
@@ -121,7 +135,7 @@ export const geminiDesktopFunctionDeclarations = desktopToolDefinitions.map((too
   parametersJsonSchema: tool.parameters,
 }));
 
-const names = new Set(desktopToolDefinitions.map((tool) => tool.name));
+const names: Set<string> = new Set(desktopToolDefinitions.map((tool) => tool.name));
 
 const toolCallSchema = z.object({
   id: z.string().optional(),
@@ -147,7 +161,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }

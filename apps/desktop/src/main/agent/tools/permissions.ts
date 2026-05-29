@@ -45,8 +45,8 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode): P
     };
   }
 
-  if (call.name === "desktop_run_command") {
-    const command = String(call.arguments.command || "");
+  if (call.name === "desktop_exec_command" || call.name === "desktop_run_command" || call.name === "desktop_run_diagnostics") {
+    const command = String(call.arguments.command || (call.name === "desktop_run_diagnostics" ? call.arguments.kind || "" : ""));
     const risky =
       destructiveCommandPattern.test(command) ||
       networkCommandPattern.test(command) ||
@@ -54,7 +54,20 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode): P
     return {
       risk: risky ? "risky" : "safe",
       requiresApproval: risky && mode !== "yolo",
-      reason: risky ? "This command may mutate files, install packages, access the network, or chain shell operations." : undefined,
+      reason: undefined,
+    };
+  }
+
+  if (call.name === "desktop_write_stdin") {
+    const input = String(call.arguments.input || "");
+    const risky =
+      destructiveCommandPattern.test(input) ||
+      networkCommandPattern.test(input) ||
+      shellControlPattern.test(input);
+    return {
+      risk: risky ? "risky" : "safe",
+      requiresApproval: risky && mode !== "yolo",
+      reason: undefined,
     };
   }
 

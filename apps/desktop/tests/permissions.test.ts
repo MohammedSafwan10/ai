@@ -31,7 +31,14 @@ describe("desktop permission classifier", () => {
   });
 
   it("requires approval for chained terminal commands", () => {
-    expect(classifyToolCall(call("desktop_run_command", { command: "npm install && npm run build" }), "ask_risky")).toMatchObject({
+    expect(classifyToolCall(call("desktop_exec_command", { command: "npm install && npm run build" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+  });
+
+  it("requires approval for risky terminal stdin", () => {
+    expect(classifyToolCall(call("desktop_write_stdin", { processId: 7, input: "rm -rf dist\n" }), "ask_risky")).toMatchObject({
       risk: "risky",
       requiresApproval: true,
     });

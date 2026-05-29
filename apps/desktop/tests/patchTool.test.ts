@@ -43,6 +43,11 @@ describe("desktop apply patch tool", () => {
     expect(result.success).toBe(true);
     expect(fs.readFileSync(path.join(tempDir, "src", "app.ts"), "utf8")).toContain("value + 1");
     expect(fs.readFileSync(path.join(tempDir, "src", "new.ts"), "utf8")).toContain("created");
-    expect(result.diff).toContain(path.join("src", "app.ts"));
+    expect(result.diff).toContain("src/app.ts");
+    expect(result.diffFiles?.map((file) => file.path)).toEqual(["src/app.ts", "src/new.ts"]);
+    expect(result.diffFiles?.[0].hunks[0].lines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "remove", oldLineNumber: 2 }),
+      expect.objectContaining({ kind: "add", newLineNumber: 2 }),
+    ]));
   });
 });
