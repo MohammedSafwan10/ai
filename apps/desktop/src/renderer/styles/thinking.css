@@ -1,0 +1,211 @@
+.thought-shell {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 2px 0;
+}
+
+.thought-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--privora-muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 0;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.thought-toggle:not(:disabled):hover {
+  opacity: 0.72;
+}
+
+.thought-toggle.active {
+  color: var(--privora-accent);
+}
+
+.thought-toggle.empty {
+  cursor: default;
+}
+
+.thought-indicator {
+  flex: 0 0 auto;
+  color: var(--privora-text);
+  opacity: 0.9;
+}
+
+.thought-indicator.is-empty {
+  opacity: 0.55;
+}
+
+.thought-chevron {
+  color: var(--privora-muted);
+  transition: transform 0.28s ease;
+}
+
+.thought-chevron.closed {
+  transform: rotate(-90deg);
+}
+
+.privora-thought-panel {
+  position: relative;
+  max-width: min(620px, 92%);
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--privora-muted) 28%, transparent);
+  border-radius: 0 10px 10px 0;
+  background: color-mix(in srgb, var(--privora-surface) 18%, transparent);
+  padding: 0.54rem 0.78rem 0.56rem 0.86rem;
+  animation: thought-panel-in 0.22s ease-out;
+}
+
+.privora-thought-content {
+  color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
+  font-size: 0.82rem;
+  font-style: italic;
+  line-height: 1.55;
+}
+
+.privora-thought-content strong,
+.privora-thought-content h1,
+.privora-thought-content h2,
+.privora-thought-content h3,
+.privora-thought-content h4 {
+  color: color-mix(in srgb, var(--privora-muted) 62%, var(--privora-text));
+  font-style: normal;
+  font-weight: 600;
+}
+
+.privora-thought-content .markdown-body p,
+.privora-thought-content p {
+  margin: 0.26rem 0;
+}
+
+.privora-thought-content h1,
+.privora-thought-content h2,
+.privora-thought-content h3 {
+  margin: 0.55rem 0 0.28rem;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--privora-text);
+}
+
+.typing-indicator svg {
+  overflow: visible;
+  stroke-width: 1.25;
+  animation: typing-orbit-rest 0.5s ease-out;
+}
+
+.typing-indicator.animating svg {
+  animation: typing-orbit 18s linear infinite;
+}
+
+.typing-core {
+  fill: var(--privora-text);
+  stroke: none;
+  opacity: 0.8;
+}
+
+.typing-indicator.animating .typing-core {
+  animation: typing-core-pulse 2s ease-in-out infinite;
+}
+
+.typing-track,
+.typing-trail {
+  fill: none;
+}
+
+.typing-track {
+  stroke: var(--privora-muted);
+  opacity: 0.18;
+}
+
+.typing-indicator.animating .typing-track {
+  opacity: 0.3;
+}
+
+.typing-trail {
+  stroke: var(--privora-text);
+  stroke-dasharray: 4 62;
+  stroke-dashoffset: 0;
+}
+
+.typing-indicator.animating .typing-trail {
+  animation: typing-trail 3s ease-in-out infinite;
+}
+
+.typing-indicator.animating .trail-1 {
+  animation-delay: 0.25s;
+}
+
+.typing-indicator.animating .trail-2 {
+  animation-delay: 0.5s;
+}
+
+.typing-indicator.animating .trail-3 {
+  animation-delay: 0.75s;
+}
+
+.inline-thinking-indicator {
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
+@keyframes typing-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes typing-orbit-rest {
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes typing-core-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.7);
+    transform-origin: 12px 12px;
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.4);
+    transform-origin: 12px 12px;
+  }
+}
+
+@keyframes typing-trail {
+  0%,
+  100% {
+    stroke-dasharray: 4 62;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 44 62;
+    stroke-dashoffset: -28;
+  }
+}
+
+@keyframes thought-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

@@ -1,0 +1,242 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  height: 100vh;
+  min-height: 0;
+  background: var(--privora-bg);
+  transition: grid-template-columns 0.2s ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+
+.chat-shell {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 46px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
+  padding: 8px clamp(24px, 5vw, 72px);
+}
+
+.topbar h1 {
+  max-width: min(560px, 48vw);
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--privora-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settings-panel,
+.app-launcher,
+.menu-anchor {
+  position: relative;
+}
+
+.app-launcher > button,
+.settings-panel > button {
+  height: 38px;
+  border-color: var(--privora-border);
+  background: color-mix(in srgb, var(--privora-surface) 58%, transparent);
+}
+
+.app-launcher > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+}
+
+.app-launcher > button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.settings-popover,
+.floating-menu {
+  position: absolute;
+  z-index: 20;
+  top: 42px;
+  right: 0;
+  width: 340px;
+  border: 1px solid var(--privora-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--privora-surface) 94%, transparent);
+  box-shadow: var(--privora-shadow);
+}
+
+.settings-popover {
+  padding: 14px;
+}
+
+.floating-menu {
+  display: grid;
+  gap: 4px;
+  width: 238px;
+  padding: 7px;
+}
+
+.floating-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.launcher-menu button {
+  justify-content: flex-start;
+}
+
+.settings-popover label {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.settings-popover input,
+.settings-popover button {
+  width: 100%;
+  border: 1px solid var(--privora-border);
+  border-radius: 8px;
+  background: var(--privora-surface);
+  color: var(--privora-text);
+  padding: 10px;
+}
+
+.settings-popover button {
+  background: var(--privora-accent);
+  color: var(--privora-accent-fg);
+}
+
+.settings-secret-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-secret-label small {
+  color: color-mix(in srgb, var(--privora-muted) 76%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.settings-secret-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.settings-popover .settings-secret-row input {
+  min-width: 0;
+}
+
+.settings-popover .secret-clear-button {
+  display: grid;
+  width: 38px;
+  min-width: 38px;
+  place-items: center;
+  background: transparent;
+  color: var(--danger);
+  padding: 0;
+}
+
+.settings-popover .secret-clear-button:hover {
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
+.settings-popover button:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.settings-error {
+  margin: 10px 2px 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.message-list {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 24px 24px;
+  scroll-behavior: auto;
+}
+
+.virtual-message-spacer {
+  position: relative;
+  width: 100%;
+}
+
+.virtual-message-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  contain: layout paint style;
+}
+
+.empty-state {
+  max-width: 660px;
+  margin: 14vh auto 0;
+  border-top: 1px solid var(--privora-border);
+  padding-top: 24px;
+}
+
+.empty-state h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.1vw, 38px);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.08;
+}
+
+.empty-state p {
+  max-width: 680px;
+  color: var(--privora-muted);
+  font-size: 0.92rem;
+  line-height: 1.68;
+}
+

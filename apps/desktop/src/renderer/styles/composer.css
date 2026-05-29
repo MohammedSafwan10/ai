@@ -1,0 +1,373 @@
+.composer-stack {
+  display: grid;
+  position: relative;
+  z-index: 5;
+  justify-items: center;
+  gap: 8px;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--privora-bg) 92%, transparent) 22%);
+  padding: 0 0 22px;
+}
+
+.jump-to-bottom {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 90%, transparent);
+  color: var(--privora-muted);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--privora-text) 8%, transparent);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.jump-to-bottom:hover {
+  color: var(--privora-text);
+  background: var(--privora-surface);
+}
+
+.composer {
+  width: min(760px, calc(100% - 64px));
+  margin: 0 auto;
+  border: 1px solid var(--privora-border);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--privora-surface) 92%, transparent);
+  box-shadow: var(--privora-shadow);
+  padding: 11px;
+}
+
+.composer.is-dragging {
+  border-color: color-mix(in srgb, var(--privora-accent) 54%, var(--privora-border));
+  background: color-mix(in srgb, var(--privora-surface) 84%, var(--privora-accent) 4%);
+}
+
+:root[data-theme="dark"] .composer {
+  background: color-mix(in srgb, var(--privora-surface) 84%, transparent);
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 48px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 6px 4px 12px;
+  font-size: 0.9rem;
+  line-height: 1.48;
+}
+
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 2px 10px;
+}
+
+.context-mention-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0 2px 9px;
+}
+
+.context-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(260px, 100%);
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 68%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 56%, transparent);
+  color: var(--privora-text);
+  padding: 5px 7px 5px 9px;
+  font-size: 12px;
+}
+
+.context-mention-chip button {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+}
+
+.context-mention-chip button:hover {
+  background: color-mix(in srgb, var(--privora-border) 60%, transparent);
+  color: var(--privora-text);
+}
+
+.context-mention-menu {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow: auto;
+  margin: -2px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--privora-surface) 96%, transparent);
+  box-shadow: 0 18px 44px color-mix(in srgb, var(--privora-text) 10%, transparent);
+  padding: 6px;
+}
+
+.context-mention-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.context-mention-menu button:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+}
+
+.context-mention-menu strong,
+.context-mention-menu small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-mention-menu strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-mention-menu small {
+  color: var(--privora-muted);
+  font-size: 11px;
+}
+
+.attachment-chip {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  width: min(230px, 100%);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+  padding: 5px;
+}
+
+.attachment-chip img {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.attachment-chip strong,
+.attachment-chip span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip strong {
+  color: var(--privora-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.attachment-chip span,
+.attachment-error {
+  color: var(--privora-muted);
+  font-size: 11px;
+}
+
+.attachment-chip button,
+.icon-tool-button {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 64%, transparent);
+  background: color-mix(in srgb, var(--privora-surface) 72%, transparent);
+  color: var(--privora-muted);
+}
+
+.attachment-chip button {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  padding: 0;
+}
+
+.icon-tool-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.attachment-chip button:hover,
+.icon-tool-button:hover {
+  color: var(--privora-text);
+}
+
+.hidden-file-input {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.attachment-error {
+  margin: -3px 4px 8px;
+  color: var(--danger);
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toolbar-left,
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-pill,
+.model-button,
+.reasoning-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  border-color: var(--privora-border);
+  background: color-mix(in srgb, var(--privora-user-bubble) 70%, transparent);
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.reasoning-button {
+  color: var(--privora-text);
+}
+
+.reasoning-spin {
+  animation: reasoning-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes reasoning-pulse {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+    opacity: 0.72;
+  }
+  50% {
+    transform: rotate(14deg) scale(1.08);
+    opacity: 1;
+  }
+}
+
+.permission-pill {
+  color: #b65d16;
+}
+
+:root[data-theme="dark"] .permission-pill {
+  color: #f19a4a;
+}
+
+.model-short {
+  max-width: 128px;
+  overflow: hidden;
+  color: var(--privora-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-menu {
+  top: auto;
+  right: auto;
+  bottom: 42px;
+  left: 0;
+  width: 190px;
+}
+
+.model-menu {
+  top: auto;
+  right: 0;
+  bottom: 42px;
+  width: 252px;
+}
+
+.reasoning-menu {
+  top: auto;
+  right: 0;
+  bottom: 42px;
+  width: 190px;
+}
+
+.model-menu section {
+  display: grid;
+  gap: 0;
+}
+
+.model-group {
+  display: grid;
+  gap: 3px;
+}
+
+.model-group + .model-group {
+  margin-top: 7px;
+  border-top: 1px solid var(--privora-border);
+  padding-top: 8px;
+}
+
+.model-menu small,
+.reasoning-menu small {
+  padding: 4px 10px;
+  color: var(--privora-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.send-button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--privora-accent);
+  color: var(--privora-accent-fg);
+}
+
+.send-button:disabled {
+  opacity: 0.45;
+}
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  max-width: 420px;
+  border: 1px solid var(--privora-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--privora-surface) 88%, transparent);
+  box-shadow: var(--privora-shadow);
+  padding: 12px 14px;
+}
+

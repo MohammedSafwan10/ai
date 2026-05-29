@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -6,16 +7,41 @@ import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AppLauncher } from "./components/AppLauncher";
 import { ReviewPanel, ReviewStrip } from "./components/ReviewPanel";
-import type { DesktopAttachmentRecord, SaveSettingsInput } from "../shared/types";
+import type { ContextMentionRecord, DesktopAttachmentRecord, SaveSettingsInput } from "../shared/types";
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
   const [reviewOpen, setReviewOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [composerDraft, setComposerDraft] = useState<{ id: number; text: string; attachments?: DesktopAttachmentRecord[] } | null>(null);
+  const [showJumpButton, setShowJumpButton] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const running = snapshot.activeRun?.status === "running" || snapshot.activeRun?.status === "awaiting_approval";
+  const followBottomRef = useRef(true);
+  const manualScrollHoldUntilRef = useRef(0);
+  const programmaticScrollRef = useRef(false);
+  const runStatus = snapshot.activeRun?.status;
+  const running =
+    runStatus === "sampling" ||
+    runStatus === "running" ||
+    runStatus === "executing_tool" ||
+    runStatus === "waiting_tool" ||
+    runStatus === "awaiting_approval" ||
+    runStatus === "draining" ||
+    runStatus === "completing";
+  const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
   const messages = snapshot.messages;
+  const lastToolUpdatedAt = useMemo(
+    () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
+    [snapshot.toolEvents],
+  );
+  const latestActivityKey = `${messages[messages.length - 1]?.id || ""}:${messages[messages.length - 1]?.updatedAt || 0}:${lastToolUpdatedAt}:${snapshot.activeRun?.updatedAt || 0}`;
+  const messageVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollerRef.current,
+    estimateSize: () => 190,
+    overscan: 6,
+    getItemKey: (index) => messages[index]?.id ?? index,
+  });
 
   const toolsByMessage = useMemo(() => {
     const map = new Map<string, typeof snapshot.toolEvents>();
@@ -43,8 +69,27 @@ export default function App() {
   }, [snapshot.settings.theme]);
 
   useEffect(() => {
-    scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages.length, snapshot.activeRun, snapshot.toolEvents.length]);
+    if (Date.now() < manualScrollHoldUntilRef.current) {
+      setShowJumpButton((value) => value ? value : true);
+      return;
+    }
+    if (!followBottomRef.current || !scrollerRef.current) {
+      setShowJumpButton((value) => value ? value : true);
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      programmaticScrollRef.current = true;
+      if (messages.length > 0) {
+        messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+      } else {
+        scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
+      }
+      window.setTimeout(() => {
+        programmaticScrollRef.current = false;
+      }, 90);
+      setShowJumpButton((value) => value && false);
+    });
+  }, [latestActivityKey, messages.length]);
 
   useEffect(() => {
     setComposerDraft(null);
@@ -60,9 +105,9 @@ export default function App() {
     }
   };
 
-  const startPrompt = (prompt: string, attachments?: DesktopAttachmentRecord[]) => {
+  const startPrompt = (prompt: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => {
     if (!activeThread || running) return;
-    void window.privoraDesktop.startTurn({ threadId: activeThread.id, prompt, attachments });
+    void window.privoraDesktop.startTurn({ threadId: activeThread.id, prompt, attachments, contextMentions });
   };
 
   return (
@@ -110,40 +155,112 @@ export default function App() {
           </div>
         </header>
 
-        <div className="message-list" ref={scrollerRef}>
+        <div
+          className="message-list"
+          ref={scrollerRef}
+          onWheel={(event) => {
+            if (event.deltaY < 0) {
+              manualScrollHoldUntilRef.current = Date.now() + 1200;
+              followBottomRef.current = false;
+            }
+          }}
+          onPointerDown={() => {
+            manualScrollHoldUntilRef.current = Date.now() + 900;
+          }}
+          onScroll={() => {
+            const scroller = scrollerRef.current;
+            if (!scroller) return;
+            const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+            if (!programmaticScrollRef.current) {
+              followBottomRef.current = distance < 96;
+              if (distance >= 96) manualScrollHoldUntilRef.current = Date.now() + 900;
+            }
+            const shouldShow = distance > 220;
+            setShowJumpButton((value) => value === shouldShow ? value : shouldShow);
+          }}
+        >
           {messages.length === 0 && (
             <div className="empty-state">
               <h2>Local coding agent, clean room.</h2>
               <p>Select a workspace and ask for a real repo task. Privora will read files, patch code, run commands, and pause for risky actions.</p>
             </div>
           )}
-          {messages.map((message) => (
-            <ChatMessage
-              key={message.id}
-              message={message}
-              tools={toolsByMessage.get(message.id) || []}
-              activeRunStatus={
-                snapshot.activeRun?.assistantMessageId === message.id
-                  ? snapshot.activeRun.status
-                  : null
-              }
-              onApprove={(callId, approved) => {
-                if (!activeThread) return;
-                void window.privoraDesktop.decideApproval({ threadId: activeThread.id, callId, approved });
-              }}
-              onOpenPath={(targetPath) => {
-                void window.privoraDesktop.openPath(targetPath);
-              }}
-            />
-          ))}
+          {messages.length > 0 && (
+            <div className="virtual-message-spacer" style={{ height: `${messageVirtualizer.getTotalSize()}px` }}>
+              {messageVirtualizer.getVirtualItems().map((virtualItem) => {
+                const message = messages[virtualItem.index];
+                if (!message) return null;
+                return (
+                  <div
+                    key={message.id}
+                    ref={messageVirtualizer.measureElement}
+                    data-index={virtualItem.index}
+                    className="virtual-message-row"
+                    style={{ transform: `translateY(${virtualItem.start}px)` }}
+                  >
+                    <ChatMessage
+                      message={message}
+                      tools={toolsByMessage.get(message.id) || EMPTY_TOOLS}
+                      activeRunStatus={
+                        snapshot.activeRun?.assistantMessageId === message.id
+                          ? snapshot.activeRun.status
+                          : null
+                      }
+                      onApprove={(callId, approved) => {
+                        if (!activeThread) return;
+                        void window.privoraDesktop.decideApproval({ threadId: activeThread.id, callId, approved });
+                      }}
+                      onApproveAll={(callIds) => {
+                        if (!activeThread) return;
+                        void window.privoraDesktop.decideApproval({
+                          threadId: activeThread.id,
+                          decisions: callIds.map((callId) => ({ callId, approved: true })),
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="composer-stack">
+          {showJumpButton && (
+            <button
+              type="button"
+              className="jump-to-bottom"
+              onClick={() => {
+                followBottomRef.current = true;
+                manualScrollHoldUntilRef.current = 0;
+                programmaticScrollRef.current = true;
+                scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
+                window.setTimeout(() => {
+                  programmaticScrollRef.current = false;
+                }, 180);
+                setShowJumpButton(false);
+              }}
+            >
+              v
+            </button>
+          )}
           <ReviewStrip tools={latestReviewTools} onOpen={() => setReviewOpen(true)} />
+          {resumable && activeThread && (
+            <button
+              type="button"
+              className="continue-run-button"
+              onClick={() => {
+                void window.privoraDesktop.continueRun(activeThread.id);
+              }}
+            >
+              Continue remaining steps
+            </button>
+          )}
           <Composer
             settings={snapshot.settings}
             disabled={!activeThread || !activeWorkspace}
             running={running}
+            activeThreadId={activeThread?.id || null}
             draft={composerDraft}
             onDraftConsumed={() => setComposerDraft(null)}
             onSubmit={startPrompt}
@@ -160,3 +277,5 @@ export default function App() {
     </div>
   );
 }
+
+const EMPTY_TOOLS: [] = [];

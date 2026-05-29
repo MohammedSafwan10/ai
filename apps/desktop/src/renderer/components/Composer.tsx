@@ -1,22 +1,26 @@
-import { Brain, BrainCircuit, Check, ChevronDown, ImagePlus, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AtSign, Brain, BrainCircuit, Check, ChevronDown, FileText, FolderOpen, ImagePlus, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
-import type { DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
+import type { ContextMentionRecord, ContextMentionSuggestion, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 
 interface ComposerProps {
   settings: SettingsRecord;
   disabled: boolean;
   running: boolean;
+  activeThreadId: string | null;
   draft?: { id: number; text: string; attachments?: DesktopAttachmentRecord[] } | null;
-  onSubmit: (value: string, attachments?: DesktopAttachmentRecord[]) => void;
+  onSubmit: (value: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => void;
   onStop: () => void;
   onSettings: (settings: Partial<SettingsRecord>) => void;
   onDraftConsumed?: () => void;
 }
 
-export function Composer({ settings, disabled, running, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
+export function Composer({ settings, disabled, running, activeThreadId, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
+  const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
+  const [mentionToken, setMentionToken] = useState<{ query: string; start: number; end: number } | null>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<ContextMentionSuggestion[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -31,12 +35,36 @@ export function Composer({ settings, disabled, running, draft, onSubmit, onStop,
     if (!draft) return;
     setValue(draft.text);
     setAttachments(draft.attachments || []);
+    setContextMentions([]);
+    setMentionToken(null);
+    setMentionSuggestions([]);
     window.setTimeout(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(draft.text.length, draft.text.length);
     }, 0);
     onDraftConsumed?.();
   }, [draft, onDraftConsumed]);
+
+  useEffect(() => {
+    if (!activeThreadId || !mentionToken) {
+      setMentionSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      window.privoraDesktop.searchContextMentions({ threadId: activeThreadId, query: mentionToken.query })
+        .then((suggestions) => {
+          if (!cancelled) setMentionSuggestions(suggestions);
+        })
+        .catch(() => {
+          if (!cancelled) setMentionSuggestions([]);
+        });
+    }, 80);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeThreadId, mentionToken]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -47,12 +75,58 @@ export function Composer({ settings, disabled, running, draft, onSubmit, onStop,
 
   const submit = () => {
     const trimmed = value.trim();
-    if ((!trimmed && attachments.length === 0) || disabled || running) return;
+    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled || running) return;
     setValue("");
     const submittedAttachments = attachments;
+    const submittedMentions = contextMentions;
     setAttachments([]);
+    setContextMentions([]);
+    setMentionToken(null);
+    setMentionSuggestions([]);
     setAttachmentError(null);
-    onSubmit(trimmed, submittedAttachments.length ? submittedAttachments : undefined);
+    onSubmit(
+      trimmed,
+      submittedAttachments.length ? submittedAttachments : undefined,
+      submittedMentions.length ? submittedMentions : undefined,
+    );
+  };
+
+  const detectMentionToken = (nextValue: string, cursor: number) => {
+    const beforeCursor = nextValue.slice(0, cursor);
+    const match = beforeCursor.match(/(^|\s)@([^\s]*)$/);
+    if (!match) {
+      setMentionToken(null);
+      setMentionSuggestions([]);
+      return;
+    }
+    const query = match[2] || "";
+    setMentionToken({ query, start: cursor - query.length - 1, end: cursor });
+  };
+
+  const selectMention = (suggestion: ContextMentionSuggestion) => {
+    if (!mentionToken) return;
+    const replacement = suggestion.type === "category" ? `@${suggestion.path || ""}` : "";
+    const nextValue = `${value.slice(0, mentionToken.start)}${replacement}${value.slice(mentionToken.end)}`;
+    setValue(nextValue);
+    if (suggestion.type !== "category") {
+      const mention: ContextMentionRecord = {
+        id: suggestion.id,
+        type: suggestion.type,
+        label: suggestion.label,
+        path: suggestion.path,
+        createdAt: Date.now(),
+      };
+      setContextMentions((current) => current.some((item) => item.id === mention.id) ? current : [...current, mention]);
+      setMentionToken(null);
+      setMentionSuggestions([]);
+    } else {
+      const nextCursor = mentionToken.start + replacement.length;
+      window.setTimeout(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+        detectMentionToken(nextValue, nextCursor);
+      }, 0);
+    }
   };
 
   const addFiles = async (files: FileList | File[]) => {
@@ -102,12 +176,26 @@ export function Composer({ settings, disabled, running, draft, onSubmit, onStop,
         value={value}
         disabled={disabled}
         placeholder={disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : "Ask Privora to inspect, edit, or run something locally"}
-        onChange={(event) => setValue(event.target.value)}
+        onChange={(event) => {
+          setValue(event.target.value);
+          detectMentionToken(event.target.value, event.currentTarget.selectionStart);
+        }}
         onPaste={(event) => {
           const imageFiles = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
           if (imageFiles.length > 0) void addFiles(imageFiles);
         }}
         onKeyDown={(event) => {
+          if (mentionToken && mentionSuggestions.length > 0 && (event.key === "Enter" || event.key === "Tab")) {
+            event.preventDefault();
+            selectMention(mentionSuggestions[0]);
+            return;
+          }
+          if (event.key === "Escape" && mentionToken) {
+            event.preventDefault();
+            setMentionToken(null);
+            setMentionSuggestions([]);
+            return;
+          }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             submit();
@@ -131,6 +219,41 @@ export function Composer({ settings, disabled, running, draft, onSubmit, onStop,
                 <X size={13} />
               </button>
             </div>
+          ))}
+        </div>
+      )}
+      {contextMentions.length > 0 && (
+        <div className="context-mention-tray" aria-label="Attached context">
+          {contextMentions.map((mention) => (
+            <span className="context-mention-chip" key={mention.id}>
+              {mention.type === "file" && <FileText size={13} />}
+              {mention.type === "folder" && <FolderOpen size={13} />}
+              {mention.type === "terminal" && <TerminalSquare size={13} />}
+              {mention.label}
+              <button
+                type="button"
+                title="Remove context"
+                onClick={() => setContextMentions((current) => current.filter((item) => item.id !== mention.id))}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {mentionToken && mentionSuggestions.length > 0 && (
+        <div className="context-mention-menu">
+          {mentionSuggestions.map((suggestion) => (
+            <button type="button" key={suggestion.id} onClick={() => selectMention(suggestion)}>
+              {suggestion.type === "category" && <AtSign size={14} />}
+              {suggestion.type === "file" && <FileText size={14} />}
+              {suggestion.type === "folder" && <FolderOpen size={14} />}
+              {suggestion.type === "terminal" && <TerminalSquare size={14} />}
+              <span>
+                <strong>{suggestion.label}</strong>
+                {suggestion.sublabel && <small>{suggestion.sublabel}</small>}
+              </span>
+            </button>
           ))}
         </div>
       )}
@@ -258,7 +381,7 @@ export function Composer({ settings, disabled, running, draft, onSubmit, onStop,
               </div>
             )}
           </div>
-          <button type="button" className="send-button" onClick={running ? onStop : submit} disabled={(disabled || (!value.trim() && attachments.length === 0)) && !running}>
+          <button type="button" className="send-button" onClick={running ? onStop : submit} disabled={(disabled || (!value.trim() && attachments.length === 0 && contextMentions.length === 0)) && !running}>
             {running ? <Square size={17} fill="currentColor" /> : <Send size={17} />}
           </button>
         </div>

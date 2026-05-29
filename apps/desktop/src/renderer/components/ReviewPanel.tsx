@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, GitCompareArrows, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { ToolEventRecord } from "../../shared/types";
+import type { ToolDiffFileRecord, ToolEventRecord } from "../../shared/types";
 
 interface ParsedDiff {
   key: string;
@@ -60,7 +60,7 @@ export function ReviewPanel({ tools, open, onClose }: { tools: ToolEventRecord[]
 }
 
 const summarizeDiffs = (tools: ToolEventRecord[]) => {
-  const diffs = parseDiffs(tools);
+  const diffs = summarizeDiffRecords(tools);
   return {
     files: new Set(diffs.map((diff) => diff.path)).size,
     additions: diffs.reduce((sum, diff) => sum + diff.additions, 0),
@@ -68,8 +68,40 @@ const summarizeDiffs = (tools: ToolEventRecord[]) => {
   };
 };
 
+const summarizeDiffRecords = (tools: ToolEventRecord[]): ParsedDiff[] =>
+  collapseDiffsByPath(tools.flatMap((tool) => {
+    if (tool.diffFiles?.length) {
+      return tool.diffFiles.map((file, index) => ({
+        key: `${tool.id}-${index}`,
+        path: file.path,
+        additions: file.additions,
+        deletions: file.deletions,
+        diff: "",
+      }));
+    }
+    if (!tool.diff) return [];
+    return tool.diff
+      .split(/\n\n(?=--- )/g)
+      .filter(Boolean)
+      .map((diff, index) => {
+        const path = diff.match(/^\+\+\+ (.+)$/m)?.[1] || diff.match(/^--- (.+)$/m)?.[1] || tool.title;
+        const additions = diff.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length;
+        const deletions = diff.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length;
+        return { key: `${tool.id}-${index}`, path, additions, deletions, diff: "" };
+      });
+  }));
+
 const parseDiffs = (tools: ToolEventRecord[]): ParsedDiff[] =>
-  tools.flatMap((tool) => {
+  collapseDiffsByPath(tools.flatMap((tool) => {
+    if (tool.diffFiles?.length) {
+      return tool.diffFiles.map((file, index) => ({
+        key: `${tool.id}-${index}`,
+        path: file.path,
+        additions: file.additions,
+        deletions: file.deletions,
+        diff: formatDiffFile(file),
+      }));
+    }
     if (!tool.diff) return [];
     return tool.diff
       .split(/\n\n(?=--- )/g)
@@ -80,4 +112,21 @@ const parseDiffs = (tools: ToolEventRecord[]): ParsedDiff[] =>
         const deletions = diff.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length;
         return { key: `${tool.id}-${index}`, path, additions, deletions, diff };
       });
-  });
+  }));
+
+const collapseDiffsByPath = (diffs: ParsedDiff[]) => {
+  const byPath = new Map<string, ParsedDiff>();
+  diffs.forEach((diff) => byPath.set(diff.path, diff));
+  return Array.from(byPath.values());
+};
+
+const formatDiffFile = (file: ToolDiffFileRecord) => [
+  `--- ${file.status === "created" ? "/dev/null" : file.oldPath || file.path}`,
+  `+++ ${file.status === "deleted" ? "/dev/null" : file.path}`,
+  ...file.hunks.flatMap((hunk) => [
+    `@@ -${formatRange(hunk.oldStart, hunk.oldLines)} +${formatRange(hunk.newStart, hunk.newLines)} @@`,
+    ...hunk.lines.map((line) => `${line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}${line.text}`),
+  ]),
+].join("\n");
+
+const formatRange = (start: number, count: number) => count === 1 ? String(start) : `${start},${count}`;

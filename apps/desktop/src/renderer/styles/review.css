@@ -1,0 +1,108 @@
+.review-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(720px, calc(100% - 104px));
+  border: 1px solid var(--privora-border);
+  border-radius: 14px 14px 6px 6px;
+  background: color-mix(in srgb, var(--privora-surface) 78%, transparent);
+  color: var(--privora-muted);
+  padding: 8px 13px;
+  text-align: left;
+}
+
+.review-strip .delta-add,
+.review-panel .delta-add {
+  color: var(--ok);
+}
+
+.review-strip .delta-del,
+.review-panel .delta-del {
+  color: var(--danger);
+  font-style: normal;
+}
+
+.review-link {
+  margin-left: auto;
+  color: var(--privora-text);
+}
+
+.review-panel {
+  position: fixed;
+  z-index: 30;
+  top: 0;
+  right: 0;
+  display: grid;
+  width: min(540px, 42vw);
+  height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: 1px solid var(--privora-border);
+  background: var(--privora-bg);
+  box-shadow: -20px 0 80px rgba(0, 0, 0, 0.18);
+}
+
+.review-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--privora-border);
+  padding: 18px;
+}
+
+.review-panel header span,
+.review-panel header strong,
+.review-panel header small {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+
+.review-panel header button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--privora-surface);
+  color: var(--privora-text);
+}
+
+.review-files {
+  overflow: auto;
+  padding: 10px 14px 18px;
+}
+
+.review-file {
+  border-bottom: 1px solid var(--privora-border);
+}
+
+.review-file > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 12px 4px;
+  text-align: left;
+}
+
+.review-file > button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-file pre {
+  max-height: 460px;
+  overflow: auto;
+  margin: 0 0 14px 27px;
+  border-left: 2px solid var(--privora-border);
+  background: var(--privora-surface-faint);
+  color: var(--privora-muted);
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+

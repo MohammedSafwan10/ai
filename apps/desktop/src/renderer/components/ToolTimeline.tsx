@@ -1,52 +1,55 @@
-import { Check, Loader2, ExternalLink, ShieldAlert, XCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Loader2, ShieldAlert, XCircle } from "lucide-react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ToolEventRecord } from "../../shared/types";
+import { InlineFileChangeList } from "./InlineDiff";
 
 interface ToolTimelineProps {
   tools: ToolEventRecord[];
   messageStatus: string;
   onApprove: (callId: string, approved: boolean) => void;
-  onOpenPath: (path: string) => void;
+  onApproveAll: (callIds: string[]) => void;
 }
 
-export function ToolTimeline({ tools, messageStatus, onApprove, onOpenPath }: ToolTimelineProps) {
+export function ToolTimeline({ tools, messageStatus, onApprove, onApproveAll }: ToolTimelineProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const [lastRunActive, setLastRunActive] = useState(false);
-  const hasLive = tools.some((tool) => tool.status === "running" || tool.status === "preparing");
-  const hasAttention = hasLive || tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed");
-  const runActive = messageStatus === "running" || messageStatus === "awaiting_approval";
+  const [showAllSteps, setShowAllSteps] = useState(false);
+  const messageActive = messageStatus === "running" || messageStatus === "awaiting_approval";
+  const normalizedTools = useMemo(() => normalizeStaleTools(tools, messageActive), [tools, messageActive]);
+  const compactedTools = useMemo(() => compactTimelineTools(normalizedTools), [normalizedTools]);
+  const displayTools = useMemo(
+    () => showAllSteps ? compactedTools : visibleTimelineTools(compactedTools),
+    [compactedTools, showAllSteps],
+  );
+  const hiddenStepCount = Math.max(0, compactedTools.length - displayTools.length);
+  const hasLive = normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing");
+  const hasAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed");
   const summary = useMemo(() => {
-    const pending = tools.filter((tool) => tool.status === "awaiting_approval").length;
-    const failed = tools.filter((tool) => tool.status === "failed").length;
-    const running = tools.filter((tool) => tool.status === "running" || tool.status === "preparing").length;
-    const done = tools.filter((tool) => tool.status === "done").length;
+    const pending = normalizedTools.filter((tool) => tool.status === "awaiting_approval").length;
+    const failed = normalizedTools.filter((tool) => tool.status === "failed").length;
+    const running = normalizedTools.filter((tool) => tool.status === "running" || tool.status === "preparing").length;
+    const done = normalizedTools.filter((tool) => tool.status === "done").length;
     if (pending) return `${done} done · ${pending} need approval`;
     if (failed) return `${failed} failed · ${done} done`;
     if (running) return `${running} running · ${done} done`;
-    return completedSummary(tools, done);
-  }, [tools]);
+    return completedSummary(normalizedTools, done);
+  }, [normalizedTools]);
 
-  useEffect(() => {
-    if (runActive && !lastRunActive) setUserOpen(true);
-    if (!runActive && lastRunActive && !hasAttention) setUserOpen(false);
-    setLastRunActive(runActive);
-  }, [hasAttention, lastRunActive, runActive]);
-
-  if (tools.length === 0) return null;
-  const summaryStatus = tools.some((tool) => tool.status === "failed")
+  if (normalizedTools.length === 0) return null;
+  const summaryStatus = normalizedTools.some((tool) => tool.status === "failed")
     ? "failed"
-    : tools.some((tool) => tool.status === "awaiting_approval")
+    : normalizedTools.some((tool) => tool.status === "awaiting_approval")
       ? "awaiting_approval"
-      : tools.some((tool) => tool.status === "running" || tool.status === "preparing")
+      : normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing")
         ? "running"
         : "done";
   const shouldShowRows =
     userOpen ?? (
-      runActive ||
+      messageActive ||
       hasAttention ||
       messageStatus === "awaiting_approval"
     );
+  const pendingCallIds = normalizedTools.filter((tool) => tool.status === "awaiting_approval").map((tool) => tool.callId);
 
   return (
     <div className="tool-timeline">
@@ -54,21 +57,41 @@ export function ToolTimeline({ tools, messageStatus, onApprove, onOpenPath }: To
         className="tool-summary"
         onClick={() => setUserOpen((value) => !(value ?? shouldShowRows))}
       >
-        <StatusIcon status={summaryStatus} />
+        {summaryStatus !== "done" && <StatusIcon status={summaryStatus} />}
         <span>{summary}</span>
       </button>
       {shouldShowRows && (
         <div className="tool-rows">
-          {tools.map((tool) => (
+          {pendingCallIds.length > 1 && (
+            <div className="approval-bundle-row">
+              <span>{pendingCallIds.length} actions need approval</span>
+              <button type="button" onClick={() => onApproveAll(pendingCallIds)}>
+                Approve all
+              </button>
+            </div>
+          )}
+          {hiddenStepCount > 0 && (
+            <button type="button" className="tool-hidden-steps" onClick={() => setShowAllSteps(true)}>
+              Show {hiddenStepCount} earlier {hiddenStepCount === 1 ? "step" : "steps"}
+            </button>
+          )}
+          {displayTools.map((tool) => (
             <div key={tool.id} className={clsx("tool-row", tool.status, tool.risk === "risky" && "risky")}>
               <StatusIcon status={tool.status} />
               <div className="tool-main">
-                <div className="tool-title-line">
-                  <strong>{primaryToolLabel(tool)}</strong>
-                  {tool.status !== "done" && <small>{tool.status.replace(/_/g, " ")}</small>}
-                </div>
-                {shouldShowActivity(tool) && <ToolActivity tool={tool} />}
-                {tool.approvalReason && <p>{tool.approvalReason}</p>}
+                {!hasFileDiffs(tool) && (
+                  <div className="tool-title-line">
+                    <strong>{primaryToolLabel(tool)}</strong>
+                    {tool.status !== "done" && <small>{tool.status.replace(/_/g, " ")}</small>}
+                  </div>
+                )}
+                {hasFileDiffs(tool) ? (
+                  <InlineFileChangeList
+                    files={tool.diffFiles || []}
+                    active={isLiveOutput(tool)}
+                  />
+                ) : shouldShowActivity(tool) && <ToolActivity tool={tool} />}
+                {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
                 {hasUsefulOutput(displayOutput(tool)) && (
                   isLiveOutput(tool)
                     ? <LiveOutput output={displayOutput(tool).slice(-9000)} />
@@ -79,7 +102,7 @@ export function ToolTimeline({ tools, messageStatus, onApprove, onOpenPath }: To
                       </details>
                     )
                 )}
-                {tool.diff && shouldShowDiffDetail(tool) && (
+                {tool.diff && shouldShowDiffDetail(tool) && !hasFileDiffs(tool) && (
                   <details className="tool-detail">
                     <summary>Diff</summary>
                     <pre>{tool.diff}</pre>
@@ -91,16 +114,6 @@ export function ToolTimeline({ tools, messageStatus, onApprove, onOpenPath }: To
                   <button onClick={() => onApprove(tool.callId, true)}>Approve</button>
                   <button onClick={() => onApprove(tool.callId, false)}>Cancel</button>
                 </div>
-              )}
-              {typeof tool.result?.data?.path === "string" && (
-                <button
-                  type="button"
-                  className="tool-open-button"
-                  title={`Open ${tool.result.data.path}`}
-                  onClick={() => onOpenPath(String(tool.result?.data?.path))}
-                >
-                  <ExternalLink size={14} />
-                </button>
               )}
             </div>
           ))}
@@ -114,7 +127,7 @@ function StatusIcon({ status }: { status: string }) {
   if (status === "failed" || status === "cancelled") return <XCircle size={15} className="status-failed" />;
   if (status === "awaiting_approval") return <ShieldAlert size={15} className="status-pending" />;
   if (status === "running" || status === "preparing") return <Loader2 size={15} className="status-running" />;
-  return <Check size={15} className="status-done" />;
+  return <span className="tool-status-spacer" aria-hidden="true" />;
 }
 
 function LiveOutput({ output }: { output: string }) {
@@ -139,6 +152,15 @@ const liveLineClass = (line: string) => {
 const cleanTitle = (title: string) => title.replace(/\s+\.$/, "").trim() || "Tool";
 
 const primaryToolLabel = (tool: ToolEventRecord) => {
+  if (tool.diffFiles?.length === 1) {
+    const [file] = tool.diffFiles;
+    return (
+      <>
+        {fileVerb(file.status)} {file.path}
+        <InlineDelta additions={file.additions} deletions={file.deletions} />
+      </>
+    );
+  }
   const activity = toolActivityItems(tool);
   if (activity.length === 1) {
     const item = activity[0];
@@ -179,19 +201,18 @@ const displayOutput = (tool: ToolEventRecord) =>
 const isLiveOutput = (tool: ToolEventRecord) =>
   tool.status === "running" || tool.status === "preparing";
 
+const hasFileDiffs = (tool: ToolEventRecord) =>
+  Boolean(tool.diffFiles?.length);
+
 const shouldShowActivity = (tool: ToolEventRecord) =>
-  tool.status !== "done" || toolActivityItems(tool).length > 1;
+  toolActivityItems(tool).length > 1;
 
 const shouldShowDiffDetail = (tool: ToolEventRecord) =>
   tool.status !== "done" || toolActivityItems(tool).length !== 1;
 
 const shouldShowOutputDetail = (tool: ToolEventRecord) =>
   tool.status !== "done" ||
-  Boolean(tool.result?.error) ||
-  tool.name === "desktop_run_command" ||
-  tool.name === "desktop_git_status" ||
-  tool.name === "desktop_git_diff" ||
-  tool.name === "desktop_search";
+  Boolean(tool.result?.error);
 
 function ToolActivity({ tool }: { tool: ToolEventRecord }) {
   const items = toolActivityItems(tool);
@@ -222,6 +243,15 @@ interface ToolActivityItem {
 }
 
 const toolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
+  if (tool.diffFiles?.length) {
+    return tool.diffFiles.map((file) => ({
+      verb: fileVerb(file.status),
+      path: file.oldPath && file.oldPath !== file.path ? `${file.oldPath} -> ${file.path}` : file.path,
+      additions: file.additions,
+      deletions: file.deletions,
+    }));
+  }
+
   const fromDiff = diffActivityItems(tool.diff);
   if (fromDiff.length > 0) return fromDiff;
 
@@ -247,6 +277,13 @@ const toolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
   }
 
   return [];
+};
+
+const fileVerb = (status: string) => {
+  if (status === "created") return "Created";
+  if (status === "deleted") return "Deleted";
+  if (status === "renamed") return "Renamed";
+  return "Edited";
 };
 
 const normalizePatchText = (value: string) =>
@@ -310,13 +347,16 @@ const dedupeActivityItems = (items: ToolActivityItem[]) => {
 };
 
 const completedSummary = (tools: ToolEventRecord[], done: number) => {
-  const fileChanges = tools.filter((tool) =>
+  const changedFiles = new Set(
+    tools.flatMap((tool) => tool.status === "done" ? (tool.diffFiles || []).map((file) => file.path) : []),
+  );
+  const fileChanges = changedFiles.size || tools.filter((tool) =>
     tool.status === "done" &&
     ["desktop_write_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(tool.name)
   ).length;
   const commands = tools.filter((tool) =>
     tool.status === "done" &&
-    ["desktop_run_command", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
+    ["desktop_exec_command", "desktop_write_stdin", "desktop_stop_process", "desktop_run_diagnostics", "desktop_run_command", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
   ).length;
   const reads = tools.filter((tool) =>
     tool.status === "done" &&
@@ -328,4 +368,52 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
     !fileChanges && !commands && reads ? `${reads} ${reads === 1 ? "check" : "checks"}` : "",
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : `${done} ${done === 1 ? "tool" : "tools"} done`;
+};
+
+const compactTimelineTools = (tools: ToolEventRecord[]) => {
+  const latestCompletedFileEdit = new Map<string, ToolEventRecord>();
+  tools.forEach((tool) => {
+    const key = completedSingleFileEditKey(tool);
+    if (key) latestCompletedFileEdit.set(key, tool);
+  });
+  return tools.filter((tool) => {
+    const key = completedSingleFileEditKey(tool);
+    return !key || latestCompletedFileEdit.get(key)?.id === tool.id;
+  });
+};
+
+const completedSingleFileEditKey = (tool: ToolEventRecord) => {
+  if (tool.status !== "done" || tool.diffFiles?.length !== 1) return "";
+  const [file] = tool.diffFiles;
+  return `${file.oldPath || ""}->${file.path}`;
+};
+
+const visibleTimelineTools = (tools: ToolEventRecord[]) => {
+  const active = tools.filter((tool) => tool.status !== "done" && tool.status !== "cancelled");
+  const attention = tools.filter((tool) => tool.status === "failed" || tool.status === "awaiting_approval");
+  const completed = tools.filter((tool) => tool.status === "done" || tool.status === "cancelled");
+  const keepIds = new Set([
+    ...active.map((tool) => tool.id),
+    ...attention.map((tool) => tool.id),
+    ...completed.slice(-18).map((tool) => tool.id),
+  ]);
+  return tools.filter((tool) => keepIds.has(tool.id));
+};
+
+const isNoisyCommandReason = (reason: string) =>
+  reason.toLowerCase().includes("mutate files") &&
+  reason.toLowerCase().includes("chain shell operations");
+
+const normalizeStaleTools = (tools: ToolEventRecord[], messageActive: boolean): ToolEventRecord[] => {
+  if (messageActive) return tools;
+  return tools.map((tool) => {
+    if (tool.status !== "preparing" && tool.status !== "running") return tool;
+    return {
+      ...tool,
+      status: "done",
+      liveStatus: undefined,
+      result: tool.result || { success: true },
+      endedAt: tool.endedAt || tool.updatedAt,
+    };
+  });
 };

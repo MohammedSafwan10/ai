@@ -1,0 +1,363 @@
+.sidebar {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  border-right: 1px solid var(--privora-border);
+  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
+  padding: 14px 8px;
+  transition: padding 0.2s ease;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 2px 8px 10px;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand strong {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.sidebar-collapse {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  place-items: center;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-muted);
+}
+
+.sidebar-collapse:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+  color: var(--privora-text);
+}
+
+.brand span,
+small {
+  color: var(--privora-muted);
+}
+
+.sidebar-top-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.sidebar-top-actions button,
+.sidebar-search,
+.settings-panel > button,
+.app-launcher > button,
+.workspace-button,
+.thread-row,
+.thread-menu-button,
+.tool-summary,
+.tool-pill,
+.model-button,
+.icon-tool {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-text);
+}
+
+.sidebar-top-actions button,
+.sidebar-search,
+.settings-panel > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.sidebar-collapsed .sidebar {
+  align-items: center;
+  padding-inline: 8px;
+}
+
+.sidebar-collapsed .brand {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.sidebar-collapsed .brand-copy,
+.sidebar-collapsed .sidebar-top-actions button span,
+.sidebar-collapsed .sidebar-search input,
+.sidebar-collapsed .project-heading span,
+.sidebar-collapsed .project-list,
+.sidebar-collapsed .empty-project {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-collapse {
+  position: absolute;
+  top: 14px;
+  margin-left: 0;
+}
+
+.sidebar-collapsed .sidebar-top-actions,
+.sidebar-collapsed .project-heading {
+  width: 40px;
+  justify-items: center;
+}
+
+.sidebar-collapsed .sidebar-top-actions button,
+.sidebar-collapsed .sidebar-search,
+.sidebar-collapsed .project-heading button {
+  width: 36px;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.sidebar-top-actions button:hover,
+.sidebar-search:focus-within,
+.thread-row-wrap:hover,
+.thread-row-wrap.menu-open,
+.project-heading button:hover,
+.floating-menu button:hover,
+.settings-panel > button:hover,
+.app-launcher > button:hover,
+.model-button:hover,
+.tool-pill:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+}
+
+.sidebar-search {
+  color: var(--privora-muted);
+}
+
+.sidebar-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--privora-text);
+}
+
+.sidebar-search input::placeholder,
+.composer textarea::placeholder {
+  color: color-mix(in srgb, var(--privora-muted) 78%, transparent);
+}
+
+.project-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 2px;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.project-heading button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-muted);
+}
+
+.project-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.project-group {
+  display: grid;
+  gap: 3px;
+}
+
+.project-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-muted);
+  font-size: 13px;
+  padding: 7px 8px;
+  text-align: left;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.project-name:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 55%, transparent);
+  color: var(--privora-text);
+}
+
+.project-name.active {
+  color: var(--privora-text);
+}
+
+.project-chevron {
+  flex: 0 0 auto;
+  opacity: 0;
+  transform: rotate(90deg);
+  transition: opacity 0.14s ease, transform 0.16s ease;
+}
+
+.project-group:hover .project-chevron,
+.project-name:focus-visible .project-chevron,
+.project-group.collapsed .project-chevron {
+  opacity: 0.72;
+}
+
+.project-group.collapsed .project-chevron {
+  transform: rotate(0deg);
+}
+
+.project-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.project-thread-list {
+  display: grid;
+  gap: 3px;
+}
+
+.empty-project {
+  padding: 4px 8px 8px 42px;
+}
+
+.thread-row-wrap {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+}
+
+.thread-row {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 36px 8px 42px;
+  text-align: left;
+}
+
+.thread-rename-form {
+  padding: 5px 34px 5px 42px;
+}
+
+.thread-rename-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--privora-border);
+  border-radius: 7px;
+  outline: 0;
+  background: color-mix(in srgb, var(--privora-surface) 82%, transparent);
+  color: var(--privora-text);
+  padding: 6px 7px;
+  font-size: 13px;
+}
+
+.thread-row-wrap.active {
+  background: color-mix(in srgb, var(--privora-user-bubble) 82%, transparent);
+}
+
+.thread-row span,
+.thread-row small,
+.project-name > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-title-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.thread-title-line svg {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--pending) 84%, var(--privora-text));
+}
+
+.thread-menu-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--privora-muted);
+  opacity: 0;
+  transition: opacity 0.14s ease, background-color 0.14s ease, color 0.14s ease;
+}
+
+.thread-row-wrap:hover .thread-menu-button,
+.thread-row-wrap.menu-open .thread-menu-button,
+.thread-row-wrap.active .thread-menu-button {
+  opacity: 1;
+}
+
+.thread-menu-button:hover {
+  background: color-mix(in srgb, var(--privora-surface) 76%, transparent);
+  color: var(--privora-text);
+}
+
+.thread-menu {
+  position: absolute;
+  z-index: 30;
+  top: 31px;
+  right: 4px;
+  display: grid;
+  gap: 3px;
+  min-width: 144px;
+  border: 1px solid var(--privora-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--privora-surface) 96%, transparent);
+  box-shadow: var(--privora-shadow);
+  padding: 6px;
+}
+
+.thread-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.thread-menu button:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+}
+
+.thread-menu button.danger {
+  color: var(--danger);
+}
+

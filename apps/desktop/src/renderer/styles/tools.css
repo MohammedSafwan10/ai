@@ -1,0 +1,446 @@
+.tool-timeline {
+  margin: 1px 0 2px;
+}
+
+.tool-summary {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: min(58rem, 100%);
+  gap: 8px;
+  min-height: 22px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--privora-muted);
+  font-size: 11.5px;
+  padding: 1px 0;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tool-summary span {
+  white-space: nowrap;
+}
+
+.tool-summary:hover {
+  background: transparent;
+  color: var(--privora-text);
+}
+
+.tool-rows {
+  display: grid;
+  gap: 6px;
+  width: min(58rem, calc(100% - 8px));
+  max-width: calc(100% - 8px);
+  margin: 4px 0 2px 8px;
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  padding-left: 11px;
+  contain: content;
+}
+
+.tool-hidden-steps {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 1px 0;
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.tool-hidden-steps:hover {
+  color: var(--privora-text);
+}
+
+.approval-bundle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--privora-muted);
+  font-size: 11.5px;
+}
+
+.approval-bundle-row button {
+  border: 1px solid var(--privora-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+  color: var(--privora-text);
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+
+.tool-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 7px;
+  align-items: baseline;
+  color: color-mix(in srgb, var(--privora-text) 86%, var(--privora-muted));
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.tool-status-spacer {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+.tool-row strong {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: color-mix(in srgb, var(--privora-text) 84%, var(--privora-muted));
+  font-size: 11.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-inline-delta {
+  display: inline-flex;
+  gap: 5px;
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  vertical-align: baseline;
+}
+
+.tool-row small {
+  display: inline;
+  flex: 0 0 auto;
+  color: var(--privora-muted);
+  font-size: 10.5px;
+}
+
+.tool-row p {
+  margin: 5px 0 0;
+  color: var(--privora-muted);
+  font-size: 11.5px;
+}
+
+.tool-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tool-activity-list {
+  display: grid;
+  gap: 1px;
+  margin-top: 3px;
+}
+
+.tool-activity-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--privora-muted);
+  font-size: 11.5px;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+.tool-activity-verb {
+  color: color-mix(in srgb, var(--privora-muted) 80%, var(--privora-text));
+}
+
+.tool-activity-path {
+  min-width: 0;
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-activity-delta {
+  display: inline-flex;
+  gap: 5px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+}
+
+.inline-file-list {
+  display: grid;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.tool-main > .inline-file-list:first-child {
+  margin-top: 0;
+}
+
+.inline-file-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.inline-file-row {
+  display: inline-grid;
+  grid-template-columns: 13px minmax(0, 1fr) auto auto;
+  align-items: center;
+  width: min(100%, 58rem);
+  max-width: 100%;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--privora-text) 84%, var(--privora-muted));
+  padding: 0;
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.inline-file-row:hover,
+.inline-file-row.is-open {
+  color: color-mix(in srgb, var(--privora-text) 94%, var(--privora-accent));
+}
+
+.inline-file-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-diff-delta {
+  display: inline-flex;
+  gap: 5px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.inline-diff-truncated-tag {
+  color: var(--privora-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.inline-diff-panel {
+  grid-column: 1 / -1;
+  max-width: min(46rem, 100%);
+  max-height: 360px;
+  overflow: auto;
+  margin: 5px 0 7px 19px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--privora-surface) 82%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 25%, transparent);
+  contain: content;
+}
+
+:root[data-theme="dark"] .inline-diff-panel {
+  background: color-mix(in srgb, var(--privora-surface) 74%, black 10%);
+  box-shadow: none;
+}
+
+.inline-diff-empty,
+.inline-diff-rename {
+  padding: 8px 10px;
+  color: var(--privora-muted);
+  font-size: 10.5px;
+}
+
+.inline-diff-virtual-spacer {
+  position: relative;
+  min-width: max-content;
+}
+
+.inline-diff-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-width: max-content;
+}
+
+.inline-diff-hunk-header {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  background: color-mix(in srgb, var(--privora-bg) 62%, transparent);
+  color: var(--privora-muted);
+  padding: 5px 8px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 42px 42px 18px minmax(0, 1fr);
+  min-width: max-content;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  line-height: 1.42;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.diff-line.remove {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.diff-line.context {
+  color: color-mix(in srgb, var(--privora-text) 84%, var(--privora-muted));
+}
+
+.diff-line-number,
+.diff-marker {
+  user-select: none;
+  color: var(--privora-muted);
+}
+
+.diff-line-number {
+  padding: 0 7px;
+  border-right: 1px solid color-mix(in srgb, var(--privora-border) 54%, transparent);
+  text-align: right;
+}
+
+.diff-marker {
+  padding-left: 7px;
+}
+
+.diff-line.add .diff-marker,
+.diff-line.add .diff-code {
+  color: color-mix(in srgb, var(--ok) 80%, var(--privora-text));
+}
+
+.diff-line.remove .diff-marker,
+.diff-line.remove .diff-code {
+  color: color-mix(in srgb, var(--danger) 84%, var(--privora-text));
+}
+
+.diff-code {
+  display: block;
+  min-width: 0;
+  padding-right: 12px;
+  white-space: pre;
+}
+
+.delta-add {
+  color: var(--ok);
+}
+
+.delta-del {
+  color: var(--danger);
+}
+
+.tool-row pre {
+  max-height: 160px;
+  overflow: auto;
+  margin: 5px 0 0;
+  border: 1px solid var(--privora-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--privora-bg) 72%, var(--privora-surface));
+  color: color-mix(in srgb, var(--privora-muted) 88%, var(--privora-text));
+  padding: 8px 9px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tool-live-output {
+  display: block;
+  max-height: 190px;
+  border-color: color-mix(in srgb, var(--privora-border) 82%, transparent);
+  background: color-mix(in srgb, var(--privora-bg) 78%, var(--privora-surface));
+}
+
+.live-line {
+  display: block;
+  min-height: 1.45em;
+}
+
+.live-add {
+  color: var(--ok);
+}
+
+.live-del {
+  color: var(--danger);
+}
+
+.live-meta {
+  color: color-mix(in srgb, var(--privora-muted) 88%, var(--privora-text));
+}
+
+.tool-detail {
+  margin-top: 5px;
+}
+
+.tool-detail summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--privora-muted);
+  font-size: 11.5px;
+  list-style: none;
+}
+
+.tool-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-detail summary:hover {
+  color: var(--privora-text);
+}
+
+.approval-actions {
+  display: flex;
+  grid-column: 2;
+  gap: 8px;
+}
+
+.approval-actions button {
+  border: 1px solid var(--privora-border);
+  border-radius: 8px;
+  background: var(--privora-surface);
+  color: var(--privora-text);
+  padding: 7px 10px;
+}
+
+.approval-actions button:first-child {
+  background: var(--privora-accent);
+  color: var(--privora-accent-fg);
+}
+
+.status-done {
+  color: var(--ok);
+}
+
+.status-failed {
+  color: var(--danger);
+}
+
+.status-running,
+.status-pending {
+  color: var(--pending);
+}
+
+.status-running {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.muted-icon {
+  color: var(--privora-muted);
+}
+

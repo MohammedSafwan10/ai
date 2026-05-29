@@ -1,0 +1,308 @@
+.chat-message {
+  display: flex;
+  width: min(760px, calc(100% - 64px));
+  justify-content: flex-start;
+  margin: 13px auto;
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 180px;
+}
+
+.virtual-message-row:last-child .chat-message {
+  margin-bottom: 8px;
+}
+
+.chat-message.user {
+  justify-content: flex-end;
+}
+
+.message-stack {
+  display: grid;
+  justify-items: start;
+  width: 100%;
+  max-width: 100%;
+}
+
+.chat-message.user .message-stack {
+  width: 100%;
+  justify-items: end;
+}
+
+.message-bubble {
+  width: 100%;
+  color: var(--privora-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.assistant-flow {
+  display: grid;
+  gap: 8px;
+  position: relative;
+}
+
+.assistant-flow-text {
+  min-width: 0;
+}
+
+.streaming-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.assistant-run-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 58%, transparent);
+  padding-bottom: 8px;
+  color: color-mix(in srgb, var(--privora-muted) 84%, transparent);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.chat-message.user .message-bubble {
+  width: max-content;
+  min-inline-size: 4.75rem;
+  max-inline-size: min(620px, 74%);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
+  border-radius: 20px;
+  background: var(--privora-user-bubble);
+  padding: 8px 12px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--privora-text) 5%, transparent);
+  overflow-wrap: normal;
+  white-space: pre-wrap;
+  word-break: normal;
+}
+
+.chat-message.user .message-bubble p {
+  margin: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.chat-message.user .message-bubble a,
+.chat-message.user .message-bubble code {
+  overflow-wrap: anywhere;
+}
+
+.message-attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+  width: min(460px, 100%);
+  margin-bottom: 10px;
+}
+
+.message-attachment {
+  display: grid;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--privora-surface) 68%, transparent);
+  padding: 6px;
+  color: var(--privora-muted);
+  text-decoration: none;
+}
+
+.message-attachment img {
+  width: 100%;
+  height: 104px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.message-attachment span {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin-top: 6px;
+  color: var(--privora-muted);
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.chat-message:hover .message-actions,
+.message-actions:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.message-actions button {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.message-actions button:hover,
+.message-actions button.active {
+  color: var(--privora-text);
+}
+
+.message-actions button.success {
+  color: var(--ok);
+}
+
+.markdown-body {
+  overflow-wrap: break-word;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.62em 0;
+}
+
+.markdown-body li {
+  margin: 0.22em 0;
+}
+
+.markdown-body li > p {
+  margin: 0.28em 0;
+}
+
+.markdown-body p,
+.markdown-body li,
+.markdown-body blockquote {
+  overflow-wrap: break-word;
+}
+
+.markdown-body a,
+.markdown-body code {
+  overflow-wrap: anywhere;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.05em 0 0.42em;
+  font-family: var(--font-display);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.markdown-body h1 {
+  font-size: 1.15rem;
+}
+
+.markdown-body h2 {
+  font-size: 1.02rem;
+}
+
+.markdown-body h3 {
+  font-size: 0.94rem;
+}
+
+.markdown-body a {
+  color: var(--privora-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.markdown-body strong {
+  color: color-mix(in srgb, var(--privora-text) 92%, var(--privora-muted));
+  font-weight: 600;
+}
+
+.markdown-body code {
+  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 76%, transparent);
+  padding: 0.08em 0.3em;
+  font-size: 0.92em;
+}
+
+.markdown-body pre {
+  overflow: auto;
+  margin: 0.72rem 0;
+  border: 1px solid var(--privora-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--privora-surface) 76%, var(--privora-bg));
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.markdown-body pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.markdown-body blockquote {
+  margin-left: 0;
+  border-left: 2px solid color-mix(in srgb, var(--privora-muted) 36%, transparent);
+  color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
+  padding-left: 1rem;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.72rem 0;
+  overflow: hidden;
+  border: 1px solid var(--privora-border);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border-bottom: 1px solid var(--privora-border);
+  padding: 0.42rem 0.54rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: color-mix(in srgb, var(--privora-user-bubble) 58%, transparent);
+  font-weight: 600;
+}
+
+.animate-text-shimmer {
+  background: linear-gradient(
+    to right,
+    var(--privora-muted) 20%,
+    var(--privora-text) 50%,
+    var(--privora-muted) 80%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: text-shimmer 2.5s linear infinite;
+  display: inline-block;
+}
+
+@keyframes text-shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
