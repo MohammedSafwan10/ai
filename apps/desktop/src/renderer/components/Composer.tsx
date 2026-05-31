@@ -1,4 +1,5 @@
-import { AtSign, Brain, BrainCircuit, Check, ChevronDown, FileText, FolderOpen, ImagePlus, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AtSign, Brain, BrainCircuit, Check, ChevronDown, FileText, FolderOpen, ImagePlus, Maximize2, Minimize2, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
 import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
@@ -19,6 +20,7 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
   const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
+  const [expanded, setExpanded] = useState(false);
   const [mentionToken, setMentionToken] = useState<{ query: string; start: number; end: number } | null>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<ContextMentionSuggestion[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -30,6 +32,8 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const activeModel = getModelOption(settings.model);
   const modelProviderGroups = getModelProviderGroups();
+  const lineCount = value ? value.split(/\r?\n/).length : 0;
+  const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
   useEffect(() => {
     if (!draft) return;
@@ -69,9 +73,10 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
+    const maxHeight = expanded ? Math.min(window.innerHeight * 0.56, 520) : 180;
     el.style.height = "0px";
-    el.style.height = `${Math.min(180, Math.max(52, el.scrollHeight))}px`;
-  }, [value]);
+    el.style.height = `${Math.min(maxHeight, Math.max(52, el.scrollHeight))}px`;
+  }, [expanded, value]);
 
   const submit = () => {
     const trimmed = value.trim();
@@ -84,6 +89,7 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
     setMentionToken(null);
     setMentionSuggestions([]);
     setAttachmentError(null);
+    setExpanded(false);
     onSubmit(
       trimmed,
       submittedAttachments.length ? submittedAttachments : undefined,
@@ -155,7 +161,7 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
 
   return (
     <form
-      className={dragging ? "composer is-dragging" : "composer"}
+      className={clsx("composer", dragging && "is-dragging", expanded && "is-expanded")}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
@@ -202,6 +208,22 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
           }
         }}
       />
+      {showLongPromptControls && (
+        <div className="composer-long-prompt-bar">
+          <span>{value.length.toLocaleString()} chars · {lineCount.toLocaleString()} lines</span>
+          <button
+            type="button"
+            className="composer-expand-button"
+            onClick={() => {
+              setExpanded((current) => !current);
+              window.setTimeout(() => textareaRef.current?.focus(), 0);
+            }}
+          >
+            {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            {expanded ? "Compact editor" : "Expand editor"}
+          </button>
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="attachment-tray" aria-label="Attached images">
           {attachments.map((attachment) => (
@@ -409,6 +431,8 @@ const reasoningLabel = (value: ReasoningEffort) =>
 const MAX_ATTACHMENTS = 15;
 const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"];
+const COMPOSER_LONG_PROMPT_CHARS = 1200;
+const COMPOSER_LONG_PROMPT_LINES = 12;
 
 const readImageAttachment = async (file: File): Promise<DesktopAttachmentRecord> => {
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
