@@ -210,14 +210,19 @@ const nearestSnippets = (content: string, oldBlock: string) => {
   if (scored.length === 0) return "(no similar lines found)";
   const seen = new Set<string>();
   const usedRanges: Array<{ start: number; end: number }> = [];
+  const usedNormalizedLines = new Set<string>();
   const snippets = scored.flatMap(({ index, score }) => {
     const start = Math.max(0, index - 1);
     const end = Math.min(lines.length, start + windowSize + 2);
     if (usedRanges.some((range) => rangesOverlap(start, end, range.start, range.end))) return [];
-    const body = lines.slice(start, end).map((line, offset) => `${start + offset + 1}: ${line}`).join("\n");
+    const windowLines = lines.slice(start, end);
+    const normalizedLines = windowLines.map(normalizeSnippetLine).filter(Boolean);
+    if (normalizedLines.length > 0 && normalizedLines.every((line) => usedNormalizedLines.has(line))) return [];
+    const body = windowLines.map((line, offset) => `${start + offset + 1}: ${line}`).join("\n");
     if (seen.has(body)) return [];
     seen.add(body);
     usedRanges.push({ start, end });
+    normalizedLines.forEach((line) => usedNormalizedLines.add(line));
     return [`[score ${score.toFixed(2)}]\n${body}`];
   });
   return snippets.length > 0 ? snippets.join("\n---\n") : "(no non-overlapping similar snippets found)";
@@ -225,6 +230,9 @@ const nearestSnippets = (content: string, oldBlock: string) => {
 
 const rangesOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
   Math.max(aStart, bStart) < Math.min(aEnd, bEnd);
+
+const normalizeSnippetLine = (line: string) =>
+  line.trim().replace(/\s+/g, " ").toLowerCase();
 
 const similarity = (a: string, b: string) => {
   if (!a || !b) return 0;

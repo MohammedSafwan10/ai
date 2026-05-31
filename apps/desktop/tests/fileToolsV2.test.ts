@@ -335,6 +335,36 @@ describe("file tools v2", () => {
     expect(result.error).toContain("\n\nRead the file again");
   });
 
+  it("does not repeat patch suggestion windows that only contain already shown lines", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
+    fs.writeFileSync(path.join(tempDir, "app.ts"), [
+      "target alpha",
+      "target beta",
+      "target gamma",
+      "target delta",
+      "target epsilon",
+    ].join("\n"), "utf8");
+
+    const result = await execute({
+      id: "patch-suggest-overlap",
+      name: "desktop_apply_patch",
+      arguments: {
+        patch: [
+          "*** Begin Patch",
+          "*** Update File: app.ts",
+          "@@",
+          "-target missing",
+          "+target replacement",
+          "*** End Patch",
+        ].join("\n"),
+      },
+    });
+
+    expect(result.success).toBe(false);
+    const snippets = String(result.error).match(/\[score /g) || [];
+    expect(snippets.length).toBe(1);
+  });
+
   it("reports trailing newline and non-empty line metadata", async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
     fs.writeFileSync(path.join(tempDir, "notes.txt"), "one\ntwo\n", "utf8");
