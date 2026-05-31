@@ -17,6 +17,7 @@ export interface ProjectProfile {
   hasFlutter?: boolean;
   hasCargo?: boolean;
   hasPythonProject?: boolean;
+  staticJsFiles?: string[];
 }
 
 export class DiagnosticsEngine {
@@ -28,11 +29,19 @@ export class DiagnosticsEngine {
     const explicit = typeof call.arguments.command === "string" ? call.arguments.command.trim() : "";
     const profile = await detectProjectProfile(cwd);
     const command = explicit || pickDiagnosticCommand(profile, kind);
+    const reason = explicit ? "Using explicit diagnostic command from tool arguments." : diagnosticReason(profile, command);
     if (!command) {
       return {
         success: false,
         error: "No suitable diagnostic command was detected for this workspace.",
-        data: { kind, profile },
+        data: {
+          kind,
+          profile,
+          diagnosticsAvailable: false,
+          selectedCommand: null,
+          command: null,
+          reason: "No package, Flutter, Cargo, Python, TypeScript, or static JavaScript diagnostic target was detected.",
+        },
       };
     }
 
@@ -62,10 +71,16 @@ export class DiagnosticsEngine {
       data: {
         kind,
         command,
+        selectedCommand: command,
+        diagnosticsAvailable: true,
+        reason,
         cwd,
         profile,
         exitCode: final.exitCode,
         durationMs: final.durationMs,
+        backend: final.backend,
+        tty: final.tty,
+        streamsMerged: final.streamsMerged,
         omittedBytes: final.omittedBytes,
         issues,
       },
@@ -82,10 +97,11 @@ export const detectProjectProfile = async (workspaceRoot: string): Promise<Proje
     exists(path.join(workspaceRoot, "pubspec.yaml")),
     exists(path.join(workspaceRoot, "Cargo.toml")),
     exists(path.join(workspaceRoot, "pyproject.toml")),
+    findStaticJavaScriptFiles(workspaceRoot),
   ]);
-  const [pkg, hasTsconfig, hasViteTs, hasViteJs, hasFlutter, hasCargo, hasPythonProject] = entries;
+  const [pkg, hasTsconfig, hasViteTs, hasViteJs, hasFlutter, hasCargo, hasPythonProject, staticJsFiles] = entries;
   return {
-    packageManager: detectPackageManager(workspaceRoot),
+    packageManager: detectPackageManager(workspaceRoot, Boolean(pkg)),
     packageScripts: pkg ? Object.keys(pkg.scripts || {}) : [],
     hasPackageJson: Boolean(pkg),
     hasTsconfig,
@@ -93,6 +109,7 @@ export const detectProjectProfile = async (workspaceRoot: string): Promise<Proje
     hasFlutter,
     hasCargo,
     hasPythonProject,
+    staticJsFiles,
   };
 };
 
@@ -102,7 +119,7 @@ export const detectProjectProfileSync = (workspaceRoot: string): ProjectProfile 
     ? safeParseJson(fsSync.readFileSync(packagePath, "utf8"))
     : null;
   return {
-    packageManager: detectPackageManager(workspaceRoot),
+    packageManager: detectPackageManager(workspaceRoot, Boolean(pkg)),
     packageScripts: pkg ? Object.keys(pkg.scripts || {}) : [],
     hasPackageJson: Boolean(pkg),
     hasTsconfig: fsSync.existsSync(path.join(workspaceRoot, "tsconfig.json")),
@@ -110,6 +127,7 @@ export const detectProjectProfileSync = (workspaceRoot: string): ProjectProfile 
     hasFlutter: fsSync.existsSync(path.join(workspaceRoot, "pubspec.yaml")),
     hasCargo: fsSync.existsSync(path.join(workspaceRoot, "Cargo.toml")),
     hasPythonProject: fsSync.existsSync(path.join(workspaceRoot, "pyproject.toml")),
+    staticJsFiles: findStaticJavaScriptFilesSync(workspaceRoot),
   };
 };
 
@@ -150,7 +168,21 @@ const pickDiagnosticCommand = (profile: ProjectProfile, kind: DiagnosticKind) =>
     if (kind === "test") return "pytest";
     return "python -m compileall .";
   }
+  if ((kind === "auto" || kind === "typecheck" || kind === "lint") && profile.staticJsFiles?.length) {
+    return profile.staticJsFiles.map((file) => `node --check ${quoteCommandArg(file)}`).join(" && ");
+  }
   return "";
+};
+
+const diagnosticReason = (profile: ProjectProfile, command: string) => {
+  if (profile.hasPackageJson) return "Detected package.json; selected the best matching package script or TypeScript fallback.";
+  if (profile.hasFlutter) return "Detected pubspec.yaml; using Flutter diagnostics.";
+  if (profile.hasCargo) return "Detected Cargo.toml; using Cargo diagnostics.";
+  if (profile.hasPythonProject) return "Detected pyproject.toml; using Python diagnostics.";
+  if (profile.staticJsFiles?.length && command.includes("node --check")) {
+    return "No package.json found; using static JavaScript syntax-check fallback.";
+  }
+  return "Using detected diagnostic command.";
 };
 
 const readPackageJson = async (workspaceRoot: string) => {
@@ -172,13 +204,73 @@ const safeParseJson = (value: string) => {
   }
 };
 
-const detectPackageManager = (workspaceRoot: string): ProjectProfile["packageManager"] => {
+const detectPackageManager = (workspaceRoot: string, hasPackageJson: boolean): ProjectProfile["packageManager"] => {
   if (fsSync.existsSync(path.join(workspaceRoot, "pnpm-lock.yaml"))) return "pnpm";
   if (fsSync.existsSync(path.join(workspaceRoot, "yarn.lock"))) return "yarn";
   if (fsSync.existsSync(path.join(workspaceRoot, "bun.lockb")) || fsSync.existsSync(path.join(workspaceRoot, "bun.lock"))) return "bun";
   if (fsSync.existsSync(path.join(workspaceRoot, "package-lock.json"))) return "npm";
-  return "npm";
+  return hasPackageJson ? "npm" : undefined;
 };
+
+const findStaticJavaScriptFiles = async (workspaceRoot: string) => {
+  const results: string[] = [];
+  await walkStaticJavaScriptFiles(workspaceRoot, ".", results);
+  return results;
+};
+
+const walkStaticJavaScriptFiles = async (workspaceRoot: string, relativeDir: string, results: string[]) => {
+  if (results.length >= 20) return;
+  const absoluteDir = path.join(workspaceRoot, relativeDir);
+  let entries: fsSync.Dirent[];
+  try {
+    entries = await fs.readdir(absoluteDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (results.length >= 20) return;
+    if (ignoredDiagnosticEntry(entry.name)) continue;
+    const relativePath = path.join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      await walkStaticJavaScriptFiles(workspaceRoot, relativePath, results);
+    } else if (entry.isFile() && /\.(?:mjs|cjs|js)$/i.test(entry.name)) {
+      results.push(relativePath);
+    }
+  }
+};
+
+const findStaticJavaScriptFilesSync = (workspaceRoot: string) => {
+  const results: string[] = [];
+  const walk = (relativeDir: string) => {
+    if (results.length >= 20) return;
+    let entries: fsSync.Dirent[];
+    try {
+      entries = fsSync.readdirSync(path.join(workspaceRoot, relativeDir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= 20) return;
+      if (ignoredDiagnosticEntry(entry.name)) continue;
+      const relativePath = path.join(relativeDir, entry.name);
+      if (entry.isDirectory()) walk(relativePath);
+      else if (entry.isFile() && /\.(?:mjs|cjs|js)$/i.test(entry.name)) results.push(relativePath);
+    }
+  };
+  walk(".");
+  return results;
+};
+
+const ignoredDiagnosticEntry = (name: string) =>
+  name === "node_modules" ||
+  name === ".git" ||
+  name === "dist" ||
+  name === "build" ||
+  name === ".vite" ||
+  name.startsWith(".");
+
+const quoteCommandArg = (value: string) =>
+  `"${value.replace(/"/g, '\\"')}"`;
 
 const parseDiagnosticIssues = (output: string) => {
   const issues: Array<{ file: string; line?: number; column?: number; text: string }> = [];
