@@ -63,6 +63,10 @@ function ChatMessageComponent({
     () => splitAssistantActivityAndFinalText(renderParts),
     [renderParts],
   );
+  const pinnedToolActivityParts = useMemo(
+    () => activityParts.filter((part): part is Extract<AssistantRenderPart, { type: "tools" }> => part.type === "tools"),
+    [activityParts],
+  );
   const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
   const activityNeedsAttention = renderParts.some((part) =>
     part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed")
@@ -71,8 +75,15 @@ function ChatMessageComponent({
   useEffect(() => {
     if (runActive || activityNeedsAttention) {
       setActivityOpen(true);
+      return;
     }
+    setActivityOpen(false);
   }, [activityNeedsAttention, runActive]);
+  useEffect(() => {
+    if (finalTextParts.length > 0 && !activityNeedsAttention) {
+      setActivityOpen(false);
+    }
+  }, [activityNeedsAttention, finalTextParts.length]);
   const [copied, setCopied] = useState(false);
   const showCopyFeedback = () => {
     setCopied(true);
@@ -137,6 +148,20 @@ function ChatMessageComponent({
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+                    {!activityOpen && pinnedToolActivityParts.length > 0 && (
+                      <div className="assistant-activity-block assistant-activity-pinned">
+                        {pinnedToolActivityParts.map((part) => (
+                          <ToolTimeline
+                            key={part.key}
+                            tools={part.tools}
+                            messageStatus={message.status}
+                            defaultOpen
+                            onApprove={onApprove}
+                            onApproveAll={onApproveAll}
+                          />
+                        ))}
                       </div>
                     )}
                     {finalTextParts.map((part) => (

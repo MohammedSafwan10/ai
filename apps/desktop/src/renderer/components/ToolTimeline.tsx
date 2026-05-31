@@ -1,5 +1,5 @@
 import { MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, ToolEventRecord } from "../../shared/types";
 import { InlineFileChangeList } from "./InlineDiff";
@@ -23,6 +23,11 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
   const currentLiveToolId = useMemo(() => latestLiveToolId(normalizedTools), [normalizedTools]);
   const hasBlockingAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval");
   const liveGroupOpen = messageActive && (defaultOpen || hasLive);
+  useEffect(() => {
+    if (userOpen === null && (defaultOpen || hasBlockingAttention || messageStatus === "awaiting_approval")) {
+      setUserOpen(true);
+    }
+  }, [defaultOpen, hasBlockingAttention, messageStatus, userOpen]);
   const displayTools = useMemo(
     () => liveGroupOpen ? normalizedTools : showAllSteps ? compactedTools : visibleTimelineTools(compactedTools),
     [compactedTools, liveGroupOpen, normalizedTools, showAllSteps],
