@@ -84,6 +84,7 @@ function ChatMessageComponent({
     await writeClipboard(message.content || message.thought || "");
     showCopyFeedback();
   };
+  const showMessageActions = (message.content || hasAttachments) && (isUser || !runActive);
   return (
     <article className={clsx("chat-message", isUser && "user")}>
       <div className="message-stack">
@@ -168,7 +169,7 @@ function ChatMessageComponent({
             </>
           )}
         </div>
-        {(message.content || hasAttachments) && (
+        {showMessageActions && (
           <div className="message-actions" aria-label="Message actions">
             <button type="button" title="Copy" className={copied ? "success" : undefined} onClick={copyMessage}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
