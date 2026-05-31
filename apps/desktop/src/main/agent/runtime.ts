@@ -41,6 +41,7 @@ const MAX_CONTINUOUS_MODEL_ITERATIONS = 512;
 const MAX_TOOL_CALLS = 500;
 const MAX_RECOVERY_NUDGES = 2;
 const STREAM_STALL_TIMEOUT_MS = 45_000;
+const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 18_000;
 const REPEAT_FINGERPRINT_MIN_CHARS = 72;
 const RECENT_VISIBLE_TEXT_CHARS = 5000;
 const LIVE_OUTPUT_MAX_CHARS = 140_000;
@@ -505,9 +506,12 @@ export class AgentRuntime {
           activeThoughtPart = null;
         };
         let stalledAbortReason: string | null = null;
+        const stallTimeoutMs = historyHasRecentToolResults(history)
+          ? POST_TOOL_RESULT_STALL_TIMEOUT_MS
+          : STREAM_STALL_TIMEOUT_MS;
         const stallWatchdog = windowlessInterval(() => {
           if (controller.signal.aborted) return;
-          if (Date.now() - run.lastProgressAt < STREAM_STALL_TIMEOUT_MS) return;
+          if (Date.now() - run.lastProgressAt < stallTimeoutMs) return;
           stalledAbortReason = `The model connection stalled before it returned more output.`;
           controller.abort();
         }, 1000);

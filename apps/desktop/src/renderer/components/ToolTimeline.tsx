@@ -1,4 +1,4 @@
-import { Loader2, MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, ToolEventRecord } from "../../shared/types";
@@ -158,7 +158,7 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
 function StatusIcon({ status }: { status: string }) {
   if (status === "failed" || status === "cancelled") return <XCircle size={15} className="status-failed" />;
   if (status === "awaiting_approval") return <ShieldAlert size={15} className="status-pending" />;
-  if (status === "running" || status === "preparing") return <Loader2 size={15} className="status-running" />;
+  if (status === "running" || status === "preparing") return <span className="tool-status-live" aria-hidden="true" />;
   return <span className="tool-status-spacer" aria-hidden="true" />;
 }
 

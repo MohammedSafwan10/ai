@@ -87,6 +87,12 @@
   height: 15px;
 }
 
+.tool-status-live {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
 .tool-row strong {
   display: block;
   flex: 1 1 auto;
@@ -530,16 +536,6 @@
 .status-running,
 .status-pending {
   color: var(--pending);
-}
-
-.status-running {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .muted-icon {
