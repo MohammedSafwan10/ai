@@ -235,11 +235,9 @@ function ThreadButton({
         <button className="thread-row" onClick={onClick} title={thread.title}>
           <span className="thread-title-line">
             {thread.starred && <Star size={12} fill="currentColor" />}
-            <span>{thread.title}</span>
+            <span className={clsx(run && isLiveRun(run) && "active-text-shimmer")}>{thread.title}</span>
           </span>
-          <small>
-            {run ? <ThreadRunBadge run={run} /> : formatAge(thread.updatedAt)}
-          </small>
+          {!run && <small>{formatAge(thread.updatedAt)}</small>}
         </button>
       )}
       <button
@@ -290,22 +288,15 @@ function ThreadButton({
   );
 }
 
-function ThreadRunBadge({ run }: { run: ActiveRunState }) {
-  const label = run.status === "awaiting_approval"
-    ? "needs approval"
-    : run.status === "stalled"
-      ? "stalled"
-      : run.status === "stopped"
-        ? "stopped"
-        : run.status === "failed"
-          ? "failed"
-          : "running";
-  return (
-    <span className={clsx("thread-run-badge", run.status)}>
-      <span aria-hidden="true" />
-      {label}
-    </span>
-  );
+function isLiveRun(run: ActiveRunState) {
+  return [
+    "sampling",
+    "running",
+    "executing_tool",
+    "waiting_tool",
+    "draining",
+    "completing",
+  ].includes(run.status);
 }
 
 function formatAge(timestamp: number) {

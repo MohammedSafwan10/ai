@@ -327,31 +327,6 @@ small {
   color: color-mix(in srgb, var(--pending) 84%, var(--privora-text));
 }
 
-.thread-run-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  color: color-mix(in srgb, var(--pending) 84%, var(--privora-muted));
-}
-
-.thread-run-badge > span {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.thread-run-badge.failed,
-.thread-run-badge.stalled {
-  color: var(--danger);
-}
-
-.thread-run-badge.stopped {
-  color: var(--privora-muted);
-}
-
 .thread-menu-button {
   position: absolute;
   top: 5px;

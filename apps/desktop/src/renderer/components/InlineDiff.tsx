@@ -41,7 +41,7 @@ export function InlineFileChangeList({ files, active }: InlineFileChangeListProp
               }}
             >
               {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              <span className="inline-file-label">{fileVerb(file)} {file.path}</span>
+              <span className={clsx("inline-file-label", active && "active-text-shimmer")}>{fileVerb(file)} {file.path}</span>
               <InlineDelta additions={file.additions} deletions={file.deletions} />
               {file.truncated && <span className="inline-diff-truncated-tag">truncated</span>}
             </button>

@@ -107,7 +107,11 @@ export class CliproxyAdapter implements ProviderAdapter {
         Authorization: "Bearer dummy-key",
       },
       body: JSON.stringify({
-        model: options.model,
+        model: options.model === "gemini-3.5-flash-cliproxy"
+          ? "gemini-3-flash-agent"
+          : options.model === "gemini-3.1-pro-cliproxy"
+          ? "gemini-pro-agent"
+          : options.model,
         instructions: options.systemInstruction,
         input: toInput(options.messages),
         tools: desktopToolDefinitions,

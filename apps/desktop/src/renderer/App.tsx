@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, Bug, FileSearch, GitBranch, Pencil, Play, Terminal, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, FileSearch, GitBranch, Layers, ListChecks, PackageCheck, Pencil, Play, Recycle, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -560,6 +560,7 @@ function EmptyThreadState({
   disabled: boolean;
   onPrompt: (text: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const promptCards = [
     {
       icon: <FileSearch size={17} />,
@@ -580,6 +581,93 @@ function EmptyThreadState({
       icon: <GitBranch size={17} />,
       title: "Review changes",
       prompt: "Check the current git changes, explain what changed, and flag anything unsafe before commit.",
+    },
+  ];
+  const morePromptGroups = [
+    {
+      title: "Build",
+      cards: [
+        {
+          icon: <Wand2 size={16} />,
+          title: "Improve UI",
+          prompt: "Inspect the current UI and make one focused quality-of-life improvement with polished styling and verification.",
+        },
+        {
+          icon: <Recycle size={16} />,
+          title: "Refactor safely",
+          prompt: "Find a small high-value refactor in this workspace, make it safely, and verify behavior did not change.",
+        },
+        {
+          icon: <Layers size={16} />,
+          title: "Map architecture",
+          prompt: "Map the important modules, ownership boundaries, data flow, and highest-risk coupling in this workspace.",
+        },
+      ],
+    },
+    {
+      title: "Quality",
+      cards: [
+        {
+          icon: <PackageCheck size={16} />,
+          title: "Add tests",
+          prompt: "Find an important untested path, add focused tests, and run the relevant test command.",
+        },
+        {
+          icon: <Bug size={16} />,
+          title: "Fix flaky area",
+          prompt: "Look for fragile or flaky code paths and fix the highest-confidence issue with minimal scope.",
+        },
+        {
+          icon: <ListChecks size={16} />,
+          title: "Smoke test",
+          prompt: "Create and run a safe smoke test plan for the current workspace. Do not change unrelated files.",
+        },
+        {
+          icon: <ShieldAlert size={16} />,
+          title: "Security pass",
+          prompt: "Review the workspace for security and data-loss risks. Fix only clear, local issues and report the rest.",
+        },
+      ],
+    },
+    {
+      title: "Ship",
+      cards: [
+        {
+          icon: <BookOpen size={16} />,
+          title: "Update docs",
+          prompt: "Review docs or README gaps for this workspace and make the smallest useful update.",
+        },
+        {
+          icon: <GitBranch size={16} />,
+          title: "Prepare commit",
+          prompt: "Review git status and diffs, group changes into sensible commits, and suggest commit messages.",
+        },
+        {
+          icon: <Terminal size={16} />,
+          title: "Release check",
+          prompt: "Run the safest release-readiness checks available in this workspace and summarize what blocks shipping.",
+        },
+      ],
+    },
+    {
+      title: "Maintain",
+      cards: [
+        {
+          icon: <FileSearch size={16} />,
+          title: "Find TODOs",
+          prompt: "Find TODO/FIXME/hack comments, group them by risk, and suggest the best next cleanup.",
+        },
+        {
+          icon: <Recycle size={16} />,
+          title: "Reduce noise",
+          prompt: "Find noisy UI text, duplicated status output, or confusing labels and improve one focused area.",
+        },
+        {
+          icon: <PackageCheck size={16} />,
+          title: "Dependency check",
+          prompt: "Inspect dependency and script setup for outdated or risky patterns. Report safe upgrades separately from risky ones.",
+        },
+      ],
     },
   ];
 
@@ -605,6 +693,40 @@ function EmptyThreadState({
             <span>{card.title}</span>
           </button>
         ))}
+      </div>
+
+      <div className="empty-more">
+        <button
+          type="button"
+          className="empty-more-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span>{expanded ? "Fewer starters" : "More starters"}</span>
+          <ChevronDown size={14} />
+        </button>
+        {expanded && (
+          <div className="empty-more-grid">
+            {morePromptGroups.map((group) => (
+              <section key={group.title}>
+                <h3>{group.title}</h3>
+                <div className="empty-more-list">
+                  {group.cards.map((card) => (
+                    <button
+                      type="button"
+                      key={card.title}
+                      disabled={disabled}
+                      onClick={() => onPrompt(card.prompt)}
+                    >
+                      {card.icon}
+                      <span>{card.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -76,6 +76,20 @@ export const modelOptions: ModelOption[] = [
     description: "GPT-5.5 through CLIProxy.",
   },
   {
+    id: "gemini-3.5-flash-cliproxy",
+    label: "Gemini 3.5 Flash (CLIProxy)",
+    provider: "cliproxy",
+    supportsTools: true,
+    description: "Gemini 3.5 Flash through CLIProxy.",
+  },
+  {
+    id: "gemini-3.1-pro-cliproxy",
+    label: "Gemini 3.1 Pro (CLIProxy)",
+    provider: "cliproxy",
+    supportsTools: true,
+    description: "Gemini 3.1 Pro through CLIProxy.",
+  },
+  {
     id: "deepseek/deepseek-v4-flash:free",
     label: "DeepSeek V4 Flash",
     provider: "openrouter",

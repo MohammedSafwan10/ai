@@ -181,10 +181,11 @@ function ToolTitleLine({
 }) {
   const canExpand = isTerminalOutputTool(tool) && hasUsefulOutput(output);
   const preview = canExpand ? compactOutputPreview(output.trimEnd()) : "";
+  const live = isLiveOutput(tool);
   if (!canExpand) {
     return (
       <div className="tool-title-line">
-        <strong>{primaryToolLabel(tool)}</strong>
+        <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       </div>
     );
   }
@@ -196,7 +197,7 @@ function ToolTitleLine({
       title={expanded ? "Collapse output" : "Expand output"}
     >
       <Terminal size={13} />
-      <strong>{primaryToolLabel(tool)}</strong>
+      <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       {preview && <code>{preview}</code>}
     </button>
   );
