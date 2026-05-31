@@ -215,20 +215,7 @@ function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: 
 }
 
 function TerminalStats({ tool }: { tool: ToolEventRecord }) {
-  const terminal = tool.terminal;
-  if (!terminal) return null;
-  const parts = [
-    terminal.status ? terminal.status.replace(/_/g, " ") : "",
-    typeof terminal.processId === "number" ? `pid ${terminal.processId}` : "",
-    typeof terminal.exitCode === "number" || terminal.exitCode === null ? `exit ${terminal.exitCode ?? "none"}` : "",
-    typeof terminal.operationDurationMs === "number" ? `op ${formatDuration(terminal.operationDurationMs)}` : "",
-    typeof terminal.processDurationMs === "number" ? `proc ${formatDuration(terminal.processDurationMs)}` : typeof terminal.durationMs === "number" ? formatDuration(terminal.durationMs) : "",
-    terminal.backend ? terminal.backend : "",
-    terminal.tty ? "pty" : "",
-    terminal.omittedBytes ? `${formatBytes(terminal.omittedBytes)} omitted` : "",
-  ].filter(Boolean);
-  if (parts.length === 0) return null;
-  return <div className="terminal-output-stats">{parts.join(" · ")}</div>;
+  return null;
 }
 
 const liveLineClass = (line: string) => {
