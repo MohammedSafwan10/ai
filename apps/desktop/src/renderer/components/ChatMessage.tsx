@@ -31,6 +31,7 @@ interface ChatMessageProps {
   turnUndo: TurnUndoRecord | null;
   onPrepareTurnUndo: (messageId: string) => Promise<TurnUndoRecord | null>;
   onUndoTurnChanges: (messageId: string) => Promise<TurnUndoRecord | null>;
+  showPlanActions?: boolean;
   onImplementPlan?: (plan: string) => void;
   onSuggestPlanChanges?: (plan: string) => void;
 }
@@ -45,6 +46,7 @@ function ChatMessageComponent({
   turnUndo,
   onPrepareTurnUndo,
   onUndoTurnChanges,
+  showPlanActions = false,
   onImplementPlan,
   onSuggestPlanChanges,
 }: ChatMessageProps) {
@@ -127,6 +129,7 @@ function ChatMessageComponent({
                               <AssistantTextPart
                                 text={part.text}
                                 active={runActive && message.status !== "failed"}
+                                showPlanActions={showPlanActions}
                                 onImplementPlan={onImplementPlan}
                                 onSuggestPlanChanges={onSuggestPlanChanges}
                               />
@@ -140,6 +143,7 @@ function ChatMessageComponent({
                         <AssistantTextPart
                           text={part.text}
                           active={runActive && message.status !== "failed"}
+                          showPlanActions={showPlanActions}
                           onImplementPlan={onImplementPlan}
                           onSuggestPlanChanges={onSuggestPlanChanges}
                         />
@@ -179,6 +183,7 @@ export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.tools === next.tools &&
   previous.activeRunStatus === next.activeRunStatus &&
   previous.turnUndo === next.turnUndo &&
+  previous.showPlanActions === next.showPlanActions &&
   previous.onImplementPlan === next.onImplementPlan &&
   previous.onSuggestPlanChanges === next.onSuggestPlanChanges
 );
@@ -451,11 +456,13 @@ function AssistantRunMeta({
 function AssistantTextPart({
   text,
   active,
+  showPlanActions,
   onImplementPlan,
   onSuggestPlanChanges,
 }: {
   text: string;
   active: boolean;
+  showPlanActions: boolean;
   onImplementPlan?: (plan: string) => void;
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
@@ -464,6 +471,7 @@ function AssistantTextPart({
     return (
       <AssistantMarkdownWithPlan
         text={text}
+        showPlanActions={showPlanActions}
         onImplementPlan={onImplementPlan}
         onSuggestPlanChanges={onSuggestPlanChanges}
       />
@@ -476,6 +484,7 @@ function AssistantTextPart({
       {committedMarkdown && (
         <AssistantMarkdownWithPlan
           text={committedMarkdown}
+          showPlanActions={showPlanActions}
           onImplementPlan={onImplementPlan}
           onSuggestPlanChanges={onSuggestPlanChanges}
         />
@@ -487,10 +496,12 @@ function AssistantTextPart({
 
 function AssistantMarkdownWithPlan({
   text,
+  showPlanActions,
   onImplementPlan,
   onSuggestPlanChanges,
 }: {
   text: string;
+  showPlanActions: boolean;
   onImplementPlan?: (plan: string) => void;
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
@@ -501,6 +512,7 @@ function AssistantMarkdownWithPlan({
         <ProposedPlanCard
           key={`plan-${index}`}
           text={part.text}
+          showActions={showPlanActions}
           onImplementPlan={onImplementPlan}
           onSuggestPlanChanges={onSuggestPlanChanges}
         />
@@ -513,10 +525,12 @@ function AssistantMarkdownWithPlan({
 
 function ProposedPlanCard({
   text,
+  showActions,
   onImplementPlan,
   onSuggestPlanChanges,
 }: {
   text: string;
+  showActions: boolean;
   onImplementPlan?: (plan: string) => void;
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
@@ -525,7 +539,7 @@ function ProposedPlanCard({
     <section className="proposed-plan-card markdown-body">
       <div className="proposed-plan-label">Proposed plan</div>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-      {!actionsHidden && (
+      {showActions && !actionsHidden && (
         <div className="proposed-plan-actions" aria-label="Plan actions">
           <button
             type="button"

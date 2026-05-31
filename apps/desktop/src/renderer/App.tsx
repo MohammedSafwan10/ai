@@ -407,6 +407,7 @@ export default function App() {
                       turnUndo={undoByMessage.get(message.id) || null}
                       onPrepareTurnUndo={(messageId) => window.privoraDesktop.prepareTurnUndo({ messageId })}
                       onUndoTurnChanges={(messageId) => window.privoraDesktop.undoTurnChanges({ messageId })}
+                      showPlanActions={virtualItem.index === messages.length - 1}
                       onImplementPlan={implementPlan}
                       onSuggestPlanChanges={suggestPlanChanges}
                     />
