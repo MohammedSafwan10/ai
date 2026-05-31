@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, BookOpen, Bug, ChevronDown, FileSearch, GitBranch, Layers, ListChecks, PackageCheck, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
-import type { ContextMentionRecord, DesktopAttachmentRecord, SaveSettingsInput } from "../shared/types";
+import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput } from "../shared/types";
 
 interface QueuedPrompt {
   id: string;
@@ -200,6 +200,29 @@ export default function App() {
     return true;
   };
 
+  const implementPlan = useCallback((plan: string) => {
+    if (!activeThread) return;
+    void window.privoraDesktop.saveSettings({ collaborationMode: "default" })
+      .then(refresh)
+      .then(() => startPrompt(
+        "Implement the proposed plan above. Keep the changes scoped to that plan and verify the result.",
+      ))
+      .catch((error) => {
+        console.error(error);
+        setComposerDraft({
+          id: Date.now(),
+          text: `Implement this proposed plan:\n\n${plan}`,
+        });
+      });
+  }, [activeThread, refresh, startPrompt]);
+
+  const suggestPlanChanges = useCallback((plan: string) => {
+    setComposerDraft({
+      id: Date.now(),
+      text: `Suggest changes to this proposed plan before implementation:\n\n${plan}`,
+    });
+  }, []);
+
   useEffect(() => {
     if (!running && stoppingThreadId === activeThread?.id) setStoppingThreadId(null);
   }, [activeThread?.id, running, stoppingThreadId]);
@@ -384,6 +407,8 @@ export default function App() {
                       turnUndo={undoByMessage.get(message.id) || null}
                       onPrepareTurnUndo={(messageId) => window.privoraDesktop.prepareTurnUndo({ messageId })}
                       onUndoTurnChanges={(messageId) => window.privoraDesktop.undoTurnChanges({ messageId })}
+                      onImplementPlan={implementPlan}
+                      onSuggestPlanChanges={suggestPlanChanges}
                     />
                   </div>
                 );
@@ -515,9 +540,20 @@ export default function App() {
               )}
             </div>
           )}
+          {snapshot.pendingUserInput && (
+            <RequestUserInputPanel
+              request={snapshot.pendingUserInput}
+              onSubmit={(answers) => window.privoraDesktop.answerRequestUserInput({
+                threadId: snapshot.pendingUserInput!.threadId,
+                callId: snapshot.pendingUserInput!.callId,
+                answers,
+              })}
+            />
+          )}
           <Composer
             settings={snapshot.settings}
             disabled={!activeThread || !activeWorkspace}
+            inputDisabledReason={snapshot.pendingUserInput ? "Answer the question to continue" : undefined}
             running={running}
             stopping={stopping}
             activeThreadId={activeThread?.id || null}
@@ -730,6 +766,121 @@ function EmptyThreadState({
         )}
       </div>
     </div>
+  );
+}
+
+function RequestUserInputPanel({
+  request,
+  onSubmit,
+}: {
+  request: RequestUserInputRequestRecord;
+  onSubmit: (answers: Record<string, { answers: string[] }>) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState<Record<string, string>>(() =>
+    Object.fromEntries(request.questions.map((question) => [question.id, question.options[0]?.label || ""])),
+  );
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [index, setIndex] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const question = request.questions[Math.min(index, request.questions.length - 1)];
+  const isFirst = index === 0;
+  const isLast = index === request.questions.length - 1;
+
+  useEffect(() => {
+    setSelected(Object.fromEntries(request.questions.map((question) => [question.id, question.options[0]?.label || ""])));
+    setNotes({});
+    setIndex(0);
+    setSubmitting(false);
+  }, [request.callId, request.questions]);
+
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    const answers = Object.fromEntries(request.questions.map((question) => {
+      const values = [selected[question.id]].filter(Boolean);
+      const note = notes[question.id]?.trim();
+      if (note) values.push(`user_note: ${note}`);
+      return [question.id, { answers: values }];
+    }));
+    await onSubmit(answers);
+  };
+
+  if (!question) return null;
+
+  return (
+    <section className="request-user-input-panel" aria-label="Plan question">
+      <div className="request-user-input-header">
+        <div>
+          <MessageSquareMore size={15} />
+          <span>{request.questions.length === 1 ? "Question" : `Question ${index + 1}/${request.questions.length}`}</span>
+        </div>
+        {request.questions.length > 1 && (
+          <div className="request-user-input-nav" aria-label="Question navigation">
+            <button
+              type="button"
+              title="Previous question"
+              disabled={isFirst}
+              onClick={() => setIndex((current) => Math.max(0, current - 1))}
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <button
+              type="button"
+              title="Next question"
+              disabled={isLast}
+              onClick={() => setIndex((current) => Math.min(request.questions.length - 1, current + 1))}
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="request-user-input-question" key={question.id}>
+        <small>{question.header}</small>
+        <p>{question.question}</p>
+        <div className="request-user-input-options">
+          {question.options.map((option) => (
+            <button
+              type="button"
+              key={option.label}
+              className={selected[question.id] === option.label ? "active" : undefined}
+              onClick={() => setSelected((current) => ({ ...current, [question.id]: option.label }))}
+            >
+              <span>{option.label}</span>
+              <small>{option.description}</small>
+            </button>
+          ))}
+        </div>
+        {question.isOther && (
+          <input
+            value={notes[question.id] || ""}
+            onChange={(event) => setNotes((current) => ({ ...current, [question.id]: event.target.value }))}
+            placeholder="Optional note"
+          />
+        )}
+      </div>
+      <div className="request-user-input-actions">
+        {request.questions.length > 1 && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={isFirst}
+            onClick={() => setIndex((current) => Math.max(0, current - 1))}
+          >
+            Back
+          </button>
+        )}
+        {!isLast ? (
+          <button type="button" onClick={() => setIndex((current) => Math.min(request.questions.length - 1, current + 1))}>
+            Next
+          </button>
+        ) : (
+          <button type="button" onClick={submit} disabled={submitting}>
+            Continue
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 

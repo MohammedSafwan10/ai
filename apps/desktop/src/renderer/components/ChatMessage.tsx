@@ -31,6 +31,8 @@ interface ChatMessageProps {
   turnUndo: TurnUndoRecord | null;
   onPrepareTurnUndo: (messageId: string) => Promise<TurnUndoRecord | null>;
   onUndoTurnChanges: (messageId: string) => Promise<TurnUndoRecord | null>;
+  onImplementPlan?: (plan: string) => void;
+  onSuggestPlanChanges?: (plan: string) => void;
 }
 
 function ChatMessageComponent({
@@ -43,6 +45,8 @@ function ChatMessageComponent({
   turnUndo,
   onPrepareTurnUndo,
   onUndoTurnChanges,
+  onImplementPlan,
+  onSuggestPlanChanges,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const hasAttachments = (message.attachments || []).length > 0;
@@ -120,7 +124,12 @@ function ChatMessageComponent({
                               key={part.key}
                               className={clsx("assistant-activity-text", runActive && message.status !== "failed" && "is-streaming", "markdown-body")}
                             >
-                              <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} />
+                              <AssistantTextPart
+                                text={part.text}
+                                active={runActive && message.status !== "failed"}
+                                onImplementPlan={onImplementPlan}
+                                onSuggestPlanChanges={onSuggestPlanChanges}
+                              />
                             </div>
                           );
                         })}
@@ -128,7 +137,12 @@ function ChatMessageComponent({
                     )}
                     {finalTextParts.map((part) => (
                       <div key={part.key} className={clsx("assistant-flow-text", message.status === "failed" && "is-error", "markdown-body")}>
-                        <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} />
+                        <AssistantTextPart
+                          text={part.text}
+                          active={runActive && message.status !== "failed"}
+                          onImplementPlan={onImplementPlan}
+                          onSuggestPlanChanges={onSuggestPlanChanges}
+                        />
                       </div>
                     ))}
                   </>
@@ -164,7 +178,9 @@ export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.message === next.message &&
   previous.tools === next.tools &&
   previous.activeRunStatus === next.activeRunStatus &&
-  previous.turnUndo === next.turnUndo
+  previous.turnUndo === next.turnUndo &&
+  previous.onImplementPlan === next.onImplementPlan &&
+  previous.onSuggestPlanChanges === next.onSuggestPlanChanges
 );
 
 type AssistantRenderPart =
@@ -432,18 +448,113 @@ function AssistantRunMeta({
   );
 }
 
-function AssistantTextPart({ text, active }: { text: string; active: boolean }) {
+function AssistantTextPart({
+  text,
+  active,
+  onImplementPlan,
+  onSuggestPlanChanges,
+}: {
+  text: string;
+  active: boolean;
+  onImplementPlan?: (plan: string) => void;
+  onSuggestPlanChanges?: (plan: string) => void;
+}) {
   const committedMarkdown = useStreamingCommittedMarkdown(text, active);
-  if (!active) return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
+  if (!active) {
+    return (
+      <AssistantMarkdownWithPlan
+        text={text}
+        onImplementPlan={onImplementPlan}
+        onSuggestPlanChanges={onSuggestPlanChanges}
+      />
+    );
+  }
 
   const tail = text.slice(committedMarkdown.length);
   return (
     <>
-      {committedMarkdown && <ReactMarkdown remarkPlugins={[remarkGfm]}>{committedMarkdown}</ReactMarkdown>}
+      {committedMarkdown && (
+        <AssistantMarkdownWithPlan
+          text={committedMarkdown}
+          onImplementPlan={onImplementPlan}
+          onSuggestPlanChanges={onSuggestPlanChanges}
+        />
+      )}
       {tail && <div className="streaming-text">{tail}</div>}
     </>
   );
 }
+
+function AssistantMarkdownWithPlan({
+  text,
+  onImplementPlan,
+  onSuggestPlanChanges,
+}: {
+  text: string;
+  onImplementPlan?: (plan: string) => void;
+  onSuggestPlanChanges?: (plan: string) => void;
+}) {
+  const parts = splitProposedPlan(text);
+  return (
+    <>
+      {parts.map((part, index) => part.type === "plan" ? (
+        <ProposedPlanCard
+          key={`plan-${index}`}
+          text={part.text}
+          onImplementPlan={onImplementPlan}
+          onSuggestPlanChanges={onSuggestPlanChanges}
+        />
+      ) : (
+        part.text.trim() && <ReactMarkdown key={`text-${index}`} remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+      ))}
+    </>
+  );
+}
+
+function ProposedPlanCard({
+  text,
+  onImplementPlan,
+  onSuggestPlanChanges,
+}: {
+  text: string;
+  onImplementPlan?: (plan: string) => void;
+  onSuggestPlanChanges?: (plan: string) => void;
+}) {
+  const [actionsHidden, setActionsHidden] = useState(false);
+  return (
+    <section className="proposed-plan-card markdown-body">
+      <div className="proposed-plan-label">Proposed plan</div>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      {!actionsHidden && (
+        <div className="proposed-plan-actions" aria-label="Plan actions">
+          <button type="button" className="primary" onClick={() => onImplementPlan?.(text)}>
+            Implement plan
+          </button>
+          <button type="button" onClick={() => onSuggestPlanChanges?.(text)}>
+            Suggest changes
+          </button>
+          <button type="button" onClick={() => setActionsHidden(true)}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const splitProposedPlan = (text: string): Array<{ type: "text" | "plan"; text: string }> => {
+  const open = "<proposed_plan>";
+  const close = "</proposed_plan>";
+  const start = text.indexOf(open);
+  if (start === -1) return [{ type: "text", text }];
+  const end = text.indexOf(close, start + open.length);
+  if (end === -1) return [{ type: "text", text }];
+  return [
+    { type: "text" as const, text: text.slice(0, start) },
+    { type: "plan" as const, text: text.slice(start + open.length, end).trim() },
+    { type: "text" as const, text: text.slice(end + close.length) },
+  ].filter((part) => part.text.length > 0);
+};
 
 function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[]) {
   return {

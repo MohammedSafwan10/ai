@@ -1,12 +1,13 @@
-import { AtSign, Brain, BrainCircuit, Check, ChevronDown, FileText, FolderOpen, ImagePlus, Maximize2, Minimize2, Search, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AtSign, Brain, BrainCircuit, Check, ChevronDown, ClipboardList, FileText, FolderOpen, ImagePlus, Maximize2, Minimize2, Search, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
+import { getModelOption, getModelProviderGroups, type CollaborationMode, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 
 interface ComposerProps {
   settings: SettingsRecord;
   disabled: boolean;
+  inputDisabledReason?: string;
   running: boolean;
   stopping?: boolean;
   activeThreadId: string | null;
@@ -30,7 +31,20 @@ interface PastedBlock {
   createdAt: number;
 }
 
-export function Composer({ settings, disabled, running, stopping = false, activeThreadId, promptHistory, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
+export function Composer({
+  settings,
+  disabled,
+  inputDisabledReason,
+  running,
+  stopping = false,
+  activeThreadId,
+  promptHistory,
+  draft,
+  onSubmit,
+  onStop,
+  onSettings,
+  onDraftConsumed,
+}: ComposerProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
   const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
@@ -49,6 +63,7 @@ export function Composer({ settings, disabled, running, stopping = false, active
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastHistoryTextRef = useRef<string | null>(null);
@@ -124,7 +139,7 @@ export function Composer({ settings, disabled, running, stopping = false, active
   const submit = async () => {
     const expandedValue = expandPastedBlocks(value, pastedBlocks);
     const trimmed = expandedValue.trim();
-    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled) return;
+    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled || inputDisabledReason) return;
     if (trimmed.length > MAX_PROMPT_CHARS) {
       setSubmitError(`Prompt is ${trimmed.length.toLocaleString()} characters. Keep it under ${MAX_PROMPT_CHARS.toLocaleString()} characters.`);
       setExpanded(true);
@@ -319,8 +334,8 @@ export function Composer({ settings, disabled, running, stopping = false, active
       <textarea
         ref={textareaRef}
         value={value}
-        disabled={disabled}
-        placeholder={disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : "Ask Privora to inspect, edit, or run something locally"}
+        disabled={disabled || Boolean(inputDisabledReason)}
+        placeholder={inputDisabledReason || (disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : settings.collaborationMode === "plan" ? "Ask Privora to research and draft a plan" : "Ask Privora to inspect, edit, or run something locally")}
         onChange={(event) => {
           setValue(event.target.value);
           setSubmitError(null);
@@ -488,7 +503,7 @@ export function Composer({ settings, disabled, running, stopping = false, active
             type="button"
             className="icon-tool-button"
             title="Add images"
-            disabled={disabled || running}
+            disabled={disabled || Boolean(inputDisabledReason) || running}
             onClick={() => fileInputRef.current?.click()}
           >
             <ImagePlus size={15} />
@@ -507,6 +522,34 @@ export function Composer({ settings, disabled, running, stopping = false, active
               event.currentTarget.value = "";
             }}
           />
+          <div className="menu-anchor">
+            <button
+              type="button"
+              className={clsx("tool-pill mode-pill", settings.collaborationMode === "plan" && "active")}
+              onClick={() => setModeMenuOpen((open) => !open)}
+            >
+              <ClipboardList size={15} />
+              {settings.collaborationMode === "plan" ? "Plan" : "Default"}
+              <ChevronDown size={13} />
+            </button>
+            {modeMenuOpen && (
+              <div className="floating-menu compact-menu">
+                {collaborationModeOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      onSettings({ collaborationMode: option.id });
+                      setModeMenuOpen(false);
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    {settings.collaborationMode === option.id && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="menu-anchor">
             <button
               type="button"
@@ -606,7 +649,7 @@ export function Composer({ settings, disabled, running, stopping = false, active
             className={clsx("send-button", stopping && "is-stopping")}
             title={running ? (stopping ? "Stopping" : "Stop") : "Send"}
             onClick={running ? onStop : () => void submit()}
-            disabled={running ? stopping : disabled || submitting || (!value.trim() && attachments.length === 0 && contextMentions.length === 0)}
+            disabled={running ? stopping : disabled || Boolean(inputDisabledReason) || submitting || (!value.trim() && attachments.length === 0 && contextMentions.length === 0)}
           >
             {running ? <Square size={17} fill="currentColor" /> : <Send size={17} />}
           </button>
@@ -627,6 +670,11 @@ const reasoningOptions: Array<{ id: ReasoningEffort; label: string }> = [
 const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
   { id: "ask_risky", label: "Ask risky" },
   { id: "yolo", label: "Full access" },
+];
+
+const collaborationModeOptions: Array<{ id: CollaborationMode; label: string }> = [
+  { id: "default", label: "Default" },
+  { id: "plan", label: "Plan" },
 ];
 
 const reasoningLabel = (value: ReasoningEffort) =>

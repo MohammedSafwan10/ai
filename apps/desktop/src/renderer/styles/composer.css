@@ -652,6 +652,141 @@
   width: 190px;
 }
 
+.mode-pill.active {
+  border-color: color-mix(in srgb, var(--privora-accent) 28%, var(--privora-border));
+  background: color-mix(in srgb, var(--privora-accent) 9%, var(--privora-surface));
+  color: var(--privora-text);
+}
+
+.request-user-input-panel {
+  display: grid;
+  width: min(720px, calc(100% - 64px));
+  gap: 9px;
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 86%, transparent);
+  background: transparent;
+  padding: 2px 0 2px 14px;
+}
+
+.request-user-input-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.request-user-input-header > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.request-user-input-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.request-user-input-nav button {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 48%, transparent);
+  color: var(--privora-text);
+}
+
+.request-user-input-nav button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.request-user-input-question {
+  display: grid;
+  gap: 8px;
+}
+
+.request-user-input-question > small {
+  color: var(--privora-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.request-user-input-question > p {
+  margin: 0;
+  color: var(--privora-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.request-user-input-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.request-user-input-options button {
+  display: grid;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 76%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 40%, transparent);
+  color: var(--privora-text);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.request-user-input-options button.active {
+  border-color: color-mix(in srgb, var(--privora-text) 38%, var(--privora-border));
+  background: color-mix(in srgb, var(--privora-user-bubble) 78%, transparent);
+}
+
+.request-user-input-options button small {
+  color: var(--privora-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.request-user-input-question input {
+  min-height: 32px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
+  border-radius: 9px;
+  outline: 0;
+  background: color-mix(in srgb, var(--privora-surface) 42%, transparent);
+  color: var(--privora-text);
+  padding: 7px 9px;
+}
+
+.request-user-input-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.request-user-input-actions button {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 78%, transparent);
+  background: color-mix(in srgb, var(--privora-text) 92%, transparent);
+  color: var(--privora-bg);
+  padding: 7px 13px;
+  font-weight: 650;
+}
+
+.request-user-input-actions button.secondary {
+  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+  color: var(--privora-text);
+}
+
+.request-user-input-actions button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
 .shortcuts-menu {
   top: auto;
   right: auto;

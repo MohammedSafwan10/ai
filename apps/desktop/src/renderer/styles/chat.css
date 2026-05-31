@@ -425,6 +425,54 @@
   display: inline-block;
 }
 
+.proposed-plan-card {
+  margin: 8px 0 12px;
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 86%, transparent);
+  background: transparent;
+  padding: 2px 0 2px 16px;
+}
+
+.proposed-plan-label {
+  margin-bottom: 9px;
+  color: var(--privora-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.proposed-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.proposed-plan-actions button {
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 78%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+  color: var(--privora-text);
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.proposed-plan-actions button.primary {
+  background: color-mix(in srgb, var(--privora-text) 92%, transparent);
+  color: var(--privora-bg);
+}
+
+.proposed-plan-actions button:hover {
+  border-color: color-mix(in srgb, var(--privora-text) 24%, var(--privora-border));
+  background: color-mix(in srgb, var(--privora-user-bubble) 92%, transparent);
+}
+
+.proposed-plan-actions button.primary:hover {
+  background: var(--privora-text);
+}
+
 @keyframes text-shimmer {
   0% {
     background-position: 180% center;

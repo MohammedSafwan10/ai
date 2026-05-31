@@ -261,6 +261,9 @@ const formatBytes = (bytes: number) => {
 };
 
 const primaryToolLabel = (tool: ToolEventRecord) => {
+  if (tool.name === "request_user_input") {
+    return tool.status === "done" ? "Answered questions" : cleanTitle(tool.title);
+  }
   if (tool.diffFiles?.length === 1) {
     const [file] = tool.diffFiles;
     return (
