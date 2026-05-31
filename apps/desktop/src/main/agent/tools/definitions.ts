@@ -94,7 +94,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_write_process",
-    description: "Write stdin to, close stdin for, or poll a running process returned by desktop_spawn_process. Use empty input to poll without writing.",
+    description: "Write stdin to, close stdin for, or poll a running process returned by desktop_spawn_process. Empty input polls without writing and returns unread buffered output since the last read, not only output produced during the wait window.",
     parameters: schema({
       processId: numberProperty("Running process id returned by desktop_spawn_process."),
       input: textProperty("Input to write. Use an empty string to poll without sending input."),
@@ -116,7 +116,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_kill_process",
-    description: "Terminate a running process started by desktop_spawn_process.",
+    description: "Terminate a running process started by desktop_spawn_process. Stop is idempotent: a missing or already-ended process returns success with status:not_found because the desired not-running state is already true.",
     parameters: schema({
       processId: numberProperty("Running process id to terminate."),
     }, ["processId"]),
