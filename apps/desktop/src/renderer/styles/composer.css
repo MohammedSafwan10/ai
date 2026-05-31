@@ -3,74 +3,184 @@
   position: relative;
   z-index: 5;
   justify-items: center;
-  gap: 8px;
+  gap: 6px;
   background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--privora-bg) 92%, transparent) 24%);
-  padding: 4px 0 22px;
+  padding: 0 0 8px;
 }
 
 .jump-to-bottom {
+  position: absolute;
+  top: -40px;
+  left: 50%;
   display: inline-grid;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--privora-border) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 55%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--privora-surface) 90%, transparent);
-  color: var(--privora-muted);
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--privora-text) 8%, transparent);
-  font-size: 13px;
+  background: color-mix(in srgb, var(--privora-surface) 42%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 70%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--privora-text) 7%, transparent);
+  backdrop-filter: blur(10px);
   line-height: 1;
+  transform: translateX(-50%);
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
 .jump-to-bottom:hover {
   color: var(--privora-text);
-  background: var(--privora-surface);
+  border-color: color-mix(in srgb, var(--privora-border) 82%, transparent);
+  background: color-mix(in srgb, var(--privora-surface) 68%, transparent);
+  transform: translate(-50%, -1px);
 }
 
 .queued-prompts {
   display: grid;
-  width: min(760px, calc(100% - 64px));
-  gap: 7px;
+  position: relative;
+  width: min(720px, calc(100% - 88px));
+  gap: 4px;
+  z-index: 4;
 }
 
-.queued-prompt {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--privora-border) 78%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--privora-surface) 86%, transparent);
-  padding: 7px 8px;
-  color: var(--privora-muted);
+.queued-prompts.is-paused {
+  gap: 6px;
+}
+
+.queued-prompt-note {
+  color: color-mix(in srgb, var(--privora-muted) 84%, transparent);
   font-size: 12px;
 }
 
-.queued-prompt span {
-  color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
-  font-weight: 600;
-  white-space: nowrap;
+.queued-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 42%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 38%, transparent);
+  padding: 3px 5px;
+  color: var(--privora-muted);
+  font-size: 12px;
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+}
+
+.queued-prompt-index {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 46%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 24%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 86%, var(--privora-muted));
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .queued-prompt p {
+  flex: 1 1 auto;
   overflow: hidden;
   margin: 0;
-  color: var(--privora-text);
+  min-width: 0;
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.queued-prompt button {
-  border: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+.queued-prompt-action {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
   color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
-  padding: 4px 7px;
-  font-size: 11px;
+  padding: 0;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
-.queued-prompt button:hover {
+.queued-prompt-action:hover {
+  border-color: color-mix(in srgb, var(--privora-border) 62%, transparent);
+  background: color-mix(in srgb, var(--privora-user-bubble) 28%, transparent);
   color: var(--privora-text);
+}
+
+.queued-count-pill {
+  display: inline-grid;
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 62%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 86%, var(--privora-muted));
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
+}
+
+.queued-count-pill:hover,
+.queued-count-pill[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--privora-border) 82%, transparent);
+  background: color-mix(in srgb, var(--privora-user-bubble) 32%, transparent);
+  color: var(--privora-text);
+}
+
+.queued-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: grid;
+  width: min(440px, 100%);
+  max-height: min(30vh, 220px);
+  gap: 3px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--privora-surface) 62%, transparent);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--privora-text) 7%, transparent);
+  padding: 5px;
+  backdrop-filter: blur(12px);
+}
+
+.queued-prompt-secondary {
+  min-height: 29px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.queued-prompt-secondary:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 32%, transparent);
+}
+
+.recovery-notice {
+  display: grid;
+  width: min(760px, calc(100% - 64px));
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--privora-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pending) 12%, var(--privora-surface));
+  padding: 9px 10px;
+  color: var(--privora-text);
+  font-size: 12px;
+}
+
+.recovery-notice span,
+.recovery-notice code {
+  overflow: hidden;
+  color: var(--privora-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer {
@@ -124,6 +234,112 @@
   color: color-mix(in srgb, var(--privora-muted) 88%, transparent);
   font-size: 11px;
   line-height: 1.2;
+}
+
+.prompt-history-search {
+  display: grid;
+  gap: 7px;
+  margin: -2px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--privora-surface) 96%, transparent);
+  padding: 7px;
+}
+
+.prompt-history-search label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--privora-muted);
+}
+
+.prompt-history-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--privora-text);
+  font-size: 12px;
+}
+
+.prompt-history-results {
+  display: grid;
+  gap: 3px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.prompt-history-results button {
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 6px 8px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-history-results button:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+}
+
+.prompt-history-results span {
+  color: var(--privora-muted);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.pasted-block-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0 2px 10px;
+}
+
+.pasted-block-chip {
+  display: grid;
+  grid-template-columns: 14px minmax(0, auto) minmax(0, 1fr) 18px;
+  align-items: center;
+  max-width: 100%;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 68%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 56%, transparent);
+  color: var(--privora-text);
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.pasted-block-chip span,
+.pasted-block-chip small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pasted-block-chip small {
+  color: var(--privora-muted);
+  font-size: 11px;
+}
+
+.pasted-block-chip button {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+}
+
+.pasted-block-chip button:hover {
+  background: color-mix(in srgb, var(--privora-border) 60%, transparent);
+  color: var(--privora-text);
 }
 
 .composer-expand-button {
@@ -405,6 +621,22 @@
   width: 190px;
 }
 
+.shortcuts-menu {
+  top: auto;
+  right: auto;
+  bottom: 42px;
+  left: 0;
+  width: 250px;
+  padding: 8px;
+}
+
+.topbar-shortcuts-menu {
+  top: 42px;
+  right: 0;
+  bottom: auto;
+  left: auto;
+}
+
 .model-menu section {
   display: grid;
   gap: 0;
@@ -422,13 +654,44 @@
 }
 
 .model-menu small,
-.reasoning-menu small {
+.reasoning-menu small,
+.shortcuts-menu small {
   padding: 4px 10px;
   color: var(--privora-muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  color: var(--privora-text);
+  font-size: 12px;
+}
+
+.shortcut-row kbd {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 58%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
+  padding: 3px 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 11px;
+}
+
+.shortcut-row span {
+  overflow: hidden;
+  color: var(--privora-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .send-button {

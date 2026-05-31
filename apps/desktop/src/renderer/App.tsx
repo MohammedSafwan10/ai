@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Pencil, Play, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -28,6 +28,9 @@ export default function App() {
     contextMentions?: ContextMentionRecord[];
   } | null>(null);
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const [queuePaused, setQueuePaused] = useState(false);
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
   const [showJumpButton, setShowJumpButton] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const followBottomRef = useRef(true);
@@ -43,6 +46,7 @@ export default function App() {
     runStatus === "awaiting_approval" ||
     runStatus === "draining" ||
     runStatus === "completing";
+  const stopping = Boolean(activeThread?.id && stoppingThreadId === activeThread.id && running);
   const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
   const messages = snapshot.messages;
   const promptHistory = useMemo(
@@ -149,8 +153,15 @@ export default function App() {
     setComposerDraft(null);
     setReviewMessageId(null);
     setQueuedPrompts([]);
+    setQueuePaused(false);
+    setQueueExpanded(false);
+    setStoppingThreadId(null);
     queuedSubmitInFlightRef.current = false;
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (queuedPrompts.length <= 1) setQueueExpanded(false);
+  }, [queuedPrompts.length]);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
     try {
@@ -190,8 +201,12 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!running && stoppingThreadId === activeThread?.id) setStoppingThreadId(null);
+  }, [activeThread?.id, running, stoppingThreadId]);
+
+  useEffect(() => {
     if (running) queuedSubmitInFlightRef.current = false;
-    if (!activeThread || running || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
+    if (!activeThread || running || queuePaused || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
     const [next, ...rest] = queuedPrompts;
     queuedSubmitInFlightRef.current = true;
     setQueuedPrompts(rest);
@@ -204,7 +219,48 @@ export default function App() {
       queuedSubmitInFlightRef.current = false;
       setQueuedPrompts((current) => [next, ...current]);
     });
-  }, [activeThread, queuedPrompts, running]);
+  }, [activeThread, queuePaused, queuedPrompts, running]);
+
+  const runQueuedPrompt = (item: QueuedPrompt) => {
+    if (!activeThread || running || queuedSubmitInFlightRef.current) return;
+    queuedSubmitInFlightRef.current = true;
+    setQueuePaused(false);
+    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+    void window.privoraDesktop.startTurn({
+      threadId: activeThread.id,
+      prompt: item.prompt,
+      attachments: item.attachments,
+      contextMentions: item.contextMentions,
+    }).catch(() => {
+      queuedSubmitInFlightRef.current = false;
+      setQueuedPrompts((current) => [item, ...current]);
+      setQueuePaused(true);
+    });
+  };
+
+  const stopActiveTurn = () => {
+    if (!activeThread || stoppingThreadId === activeThread.id) return;
+    setStoppingThreadId(activeThread.id);
+    if (queuedPrompts.length > 0) setQueuePaused(true);
+    void window.privoraDesktop.stopTurn(activeThread.id);
+  };
+
+  const editQueuedPrompt = (item: QueuedPrompt) => {
+    setComposerDraft({
+      id: Date.now(),
+      text: item.prompt,
+      attachments: item.attachments,
+      contextMentions: item.contextMentions,
+    });
+    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+  };
+
+  const removeQueuedPrompt = (item: QueuedPrompt) => {
+    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+  };
+
+  const queuedHead = queuedPrompts[0] || null;
+  const queuedRest = queuedPrompts.slice(1);
 
   return (
     <div className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}>
@@ -212,6 +268,7 @@ export default function App() {
         threads={snapshot.threads}
         workspaces={snapshot.workspaces}
         activeThreadId={snapshot.activeThreadId}
+        activeRunsByThread={snapshot.activeRunsByThread}
         activeWorkspace={activeWorkspace}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
@@ -373,49 +430,108 @@ export default function App() {
             </button>
           )}
           {queuedPrompts.length > 0 && (
-            <div className="queued-prompts" aria-label="Queued prompts">
-              {queuedPrompts.map((item, index) => (
-                <div className="queued-prompt" key={item.id}>
-                  <span>Queued {index + 1}</span>
-                  <p>{item.prompt}</p>
+            <div className={queuePaused ? "queued-prompts is-paused" : "queued-prompts"} aria-label="Queued prompts">
+              {queuePaused && <div className="queued-prompt-note">Queue paused after stop</div>}
+              {queuedHead && (
+                <div className="queued-prompt">
+                  <span className="queued-prompt-index">1</span>
+                  <p>{queuedHead.prompt}</p>
+                  {queuedRest.length > 0 && (
+                    <button
+                      type="button"
+                      className="queued-count-pill"
+                      aria-label={`${queuedRest.length} more queued prompts`}
+                      aria-expanded={queueExpanded}
+                      title={`${queuedRest.length} more queued`}
+                      onClick={() => setQueueExpanded((value) => !value)}
+                    >
+                      +{queuedRest.length}
+                    </button>
+                  )}
+                  {queuePaused && !running && (
+                    <button
+                      type="button"
+                      className="queued-prompt-action"
+                      aria-label="Run queued prompt"
+                      title="Run queued prompt"
+                      onClick={() => runQueuedPrompt(queuedHead)}
+                    >
+                      <Play size={13} fill="currentColor" />
+                    </button>
+                  )}
                   <button
                     type="button"
+                    className="queued-prompt-action"
+                    aria-label="Edit queued prompt"
                     title="Edit queued prompt"
-                    onClick={() => {
-                      setComposerDraft({
-                        id: Date.now(),
-                        text: item.prompt,
-                        attachments: item.attachments,
-                        contextMentions: item.contextMentions,
-                      });
-                      setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-                    }}
+                    onClick={() => editQueuedPrompt(queuedHead)}
                   >
-                    Edit
+                    <Pencil size={13} />
                   </button>
                   <button
                     type="button"
+                    className="queued-prompt-action"
+                    aria-label="Remove queued prompt"
                     title="Remove queued prompt"
-                    onClick={() => setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id))}
+                    onClick={() => removeQueuedPrompt(queuedHead)}
                   >
-                    Remove
+                    <X size={14} />
                   </button>
                 </div>
-              ))}
+              )}
+              {queueExpanded && queuedRest.length > 0 && (
+                <div className="queued-popover">
+                  {queuedRest.map((item, index) => (
+                    <div className="queued-prompt queued-prompt-secondary" key={item.id}>
+                      <span className="queued-prompt-index">{index + 2}</span>
+                      <p>{item.prompt}</p>
+                      {queuePaused && !running && (
+                        <button
+                          type="button"
+                          className="queued-prompt-action"
+                          aria-label="Run queued prompt"
+                          title="Run queued prompt"
+                          onClick={() => runQueuedPrompt(item)}
+                        >
+                          <Play size={13} fill="currentColor" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="queued-prompt-action"
+                        aria-label="Edit queued prompt"
+                        title="Edit queued prompt"
+                        onClick={() => editQueuedPrompt(item)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="queued-prompt-action"
+                        aria-label="Remove queued prompt"
+                        title="Remove queued prompt"
+                        onClick={() => removeQueuedPrompt(item)}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <Composer
             settings={snapshot.settings}
             disabled={!activeThread || !activeWorkspace}
             running={running}
+            stopping={stopping}
             activeThreadId={activeThread?.id || null}
             promptHistory={promptHistory}
             draft={composerDraft}
             onDraftConsumed={() => setComposerDraft(null)}
             onSubmit={startPrompt}
             onStop={() => {
-              if (!activeThread) return;
-              void window.privoraDesktop.stopTurn(activeThread.id);
+              stopActiveTurn();
             }}
             onSettings={saveSettings}
           />

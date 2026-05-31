@@ -1,6 +1,6 @@
-import { AtSign, Brain, BrainCircuit, Check, ChevronDown, FileText, FolderOpen, ImagePlus, Maximize2, Minimize2, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AtSign, Brain, BrainCircuit, Check, ChevronDown, FileText, FolderOpen, ImagePlus, Maximize2, Minimize2, Search, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 
@@ -8,6 +8,7 @@ interface ComposerProps {
   settings: SettingsRecord;
   disabled: boolean;
   running: boolean;
+  stopping?: boolean;
   activeThreadId: string | null;
   promptHistory: string[];
   draft?: {
@@ -16,21 +17,34 @@ interface ComposerProps {
     attachments?: DesktopAttachmentRecord[];
     contextMentions?: ContextMentionRecord[];
   } | null;
-  onSubmit: (value: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => void;
+  onSubmit: (value: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => void | boolean | Promise<void | boolean>;
   onStop: () => void;
   onSettings: (settings: Partial<SettingsRecord>) => void;
   onDraftConsumed?: () => void;
 }
 
-export function Composer({ settings, disabled, running, activeThreadId, promptHistory, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
+interface PastedBlock {
+  id: string;
+  label: string;
+  text: string;
+  createdAt: number;
+}
+
+export function Composer({ settings, disabled, running, stopping = false, activeThreadId, promptHistory, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
   const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  const [persistedPromptHistory, setPersistedPromptHistory] = useState<string[]>([]);
+  const [historySearchOpen, setHistorySearchOpen] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
   const [mentionToken, setMentionToken] = useState<{ query: string; start: number; end: number } | null>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<ContextMentionSuggestion[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
@@ -40,14 +54,28 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
   const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = getModelOption(settings.model);
   const modelProviderGroups = getModelProviderGroups();
+  const combinedPromptHistory = useMemo(
+    () => mergePromptHistory(promptHistory, persistedPromptHistory),
+    [persistedPromptHistory, promptHistory],
+  );
+  const historySearchResults = useMemo(
+    () => filterPromptHistory(combinedPromptHistory, historySearchQuery),
+    [combinedPromptHistory, historySearchQuery],
+  );
   const lineCount = value ? value.split(/\r?\n/).length : 0;
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
+
+  useEffect(() => {
+    setPersistedPromptHistory(readPromptHistory());
+  }, []);
 
   useEffect(() => {
     if (!draft) return;
     setValue(draft.text);
     setAttachments(draft.attachments || []);
     setContextMentions(draft.contextMentions || []);
+    setPastedBlocks([]);
+    setSubmitError(null);
     setMentionToken(null);
     setMentionSuggestions([]);
     window.setTimeout(() => {
@@ -60,6 +88,8 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
   useEffect(() => {
     setHistoryCursor(null);
     lastHistoryTextRef.current = null;
+    setHistorySearchOpen(false);
+    setHistorySearchQuery("");
   }, [activeThreadId]);
 
   useEffect(() => {
@@ -91,25 +121,51 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
     el.style.height = `${Math.min(maxHeight, Math.max(52, el.scrollHeight))}px`;
   }, [expanded, value]);
 
-  const submit = () => {
-    const trimmed = value.trim();
+  const submit = async () => {
+    const expandedValue = expandPastedBlocks(value, pastedBlocks);
+    const trimmed = expandedValue.trim();
     if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled) return;
-    setValue("");
+    if (trimmed.length > MAX_PROMPT_CHARS) {
+      setSubmitError(`Prompt is ${trimmed.length.toLocaleString()} characters. Keep it under ${MAX_PROMPT_CHARS.toLocaleString()} characters.`);
+      setExpanded(true);
+      return;
+    }
+    if (submitting) return;
+    setSubmitting(true);
     const submittedAttachments = attachments;
     const submittedMentions = contextMentions;
+    let accepted: void | boolean;
+    try {
+      accepted = await Promise.resolve(onSubmit(
+        trimmed,
+        submittedAttachments.length ? submittedAttachments : undefined,
+        submittedMentions.length ? submittedMentions : undefined,
+      ));
+    } catch (error) {
+      console.error(error);
+      accepted = false;
+    } finally {
+      setSubmitting(false);
+    }
+    if (accepted === false) {
+      setSubmitError("Privora could not start that turn. Your draft was kept.");
+      return;
+    }
+    const nextHistory = rememberPrompt(trimmed, persistedPromptHistory);
+    setPersistedPromptHistory(nextHistory);
+    setValue("");
     setAttachments([]);
     setContextMentions([]);
+    setPastedBlocks([]);
     setMentionToken(null);
     setMentionSuggestions([]);
     setAttachmentError(null);
+    setSubmitError(null);
     setExpanded(false);
     setHistoryCursor(null);
+    setHistorySearchOpen(false);
+    setHistorySearchQuery("");
     lastHistoryTextRef.current = null;
-    onSubmit(
-      trimmed,
-      submittedAttachments.length ? submittedAttachments : undefined,
-      submittedMentions.length ? submittedMentions : undefined,
-    );
   };
 
   const detectMentionToken = (nextValue: string, cursor: number) => {
@@ -127,7 +183,7 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
   };
 
   const shouldNavigatePromptHistory = () => {
-    if (promptHistory.length === 0 || mentionToken) return false;
+    if (combinedPromptHistory.length === 0 || mentionToken || historySearchOpen) return false;
     const textarea = textareaRef.current;
     if (!textarea || textarea.selectionStart !== textarea.selectionEnd) return false;
     if (!value) return true;
@@ -150,18 +206,46 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
   const navigatePromptHistory = (direction: "older" | "newer") => {
     if (!shouldNavigatePromptHistory()) return false;
     if (direction === "older") {
-      const nextCursor = historyCursor === null ? promptHistory.length - 1 : Math.max(0, historyCursor - 1);
-      applyHistoryValue(promptHistory[nextCursor] || "", nextCursor);
+      const nextCursor = historyCursor === null ? combinedPromptHistory.length - 1 : Math.max(0, historyCursor - 1);
+      applyHistoryValue(combinedPromptHistory[nextCursor] || "", nextCursor);
       return true;
     }
     if (historyCursor === null) return false;
     const nextCursor = historyCursor + 1;
-    if (nextCursor >= promptHistory.length) {
+    if (nextCursor >= combinedPromptHistory.length) {
       applyHistoryValue("", null);
       return true;
     }
-    applyHistoryValue(promptHistory[nextCursor] || "", nextCursor);
+    applyHistoryValue(combinedPromptHistory[nextCursor] || "", nextCursor);
     return true;
+  };
+
+  const chooseHistoryResult = (text: string) => {
+    applyHistoryValue(text, null);
+    setHistorySearchOpen(false);
+    setHistorySearchQuery("");
+  };
+
+  const addLargePaste = (text: string, cursorStart: number, cursorEnd: number) => {
+    const label = nextPasteLabel(text.length, pastedBlocks);
+    const before = value.slice(0, cursorStart);
+    const after = value.slice(cursorEnd);
+    const nextValue = `${before}${after}`;
+    const nextCursor = before.length;
+    setValue(nextValue);
+    setPastedBlocks((current) => [...current, { id: crypto.randomUUID(), label, text, createdAt: Date.now() }]);
+    setSubmitError(null);
+    setExpanded(true);
+    setMentionToken(null);
+    setMentionSuggestions([]);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    }, 0);
+  };
+
+  const removePastedBlock = (block: PastedBlock) => {
+    setPastedBlocks((current) => current.filter((item) => item.id !== block.id));
   };
 
   const selectMention = (suggestion: ContextMentionSuggestion) => {
@@ -219,7 +303,7 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
       className={clsx("composer", dragging && "is-dragging", expanded && "is-expanded")}
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
+        void submit();
       }}
       onDragOver={(event) => {
         event.preventDefault();
@@ -239,13 +323,27 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
         placeholder={disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : "Ask Privora to inspect, edit, or run something locally"}
         onChange={(event) => {
           setValue(event.target.value);
+          setSubmitError(null);
           detectMentionToken(event.target.value, event.currentTarget.selectionStart);
         }}
         onPaste={(event) => {
           const imageFiles = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
           if (imageFiles.length > 0) void addFiles(imageFiles);
+          const text = event.clipboardData.getData("text/plain");
+          if (text.length >= LARGE_PASTE_CHARS) {
+            event.preventDefault();
+            addLargePaste(text, event.currentTarget.selectionStart, event.currentTarget.selectionEnd);
+          }
         }}
         onKeyDown={(event) => {
+          if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "h") {
+            event.preventDefault();
+            setHistorySearchOpen(true);
+            setHistorySearchQuery("");
+            setMentionToken(null);
+            setMentionSuggestions([]);
+            return;
+          }
           if (mentionToken && mentionSuggestions.length > 0 && (event.key === "Enter" || event.key === "Tab")) {
             event.preventDefault();
             selectMention(mentionSuggestions[0]);
@@ -263,10 +361,41 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
           }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            submit();
+            void submit();
           }
         }}
       />
+      {historySearchOpen && (
+        <div className="prompt-history-search">
+          <label>
+            <Search size={14} />
+            <input
+              autoFocus
+              value={historySearchQuery}
+              placeholder="Search prompt history"
+              onChange={(event) => setHistorySearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setHistorySearchOpen(false);
+                }
+                if (event.key === "Enter" && historySearchResults[0]) {
+                  event.preventDefault();
+                  chooseHistoryResult(historySearchResults[0]);
+                }
+              }}
+            />
+          </label>
+          <div className="prompt-history-results">
+            {historySearchResults.slice(0, 6).map((item) => (
+              <button type="button" key={item} onClick={() => chooseHistoryResult(item)}>
+                {item}
+              </button>
+            ))}
+            {historySearchResults.length === 0 && <span>No matching prompts</span>}
+          </div>
+        </div>
+      )}
       {showLongPromptControls && (
         <div className="composer-long-prompt-bar">
           <span>{value.length.toLocaleString()} chars · {lineCount.toLocaleString()} lines</span>
@@ -281,6 +410,20 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
             {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
             {expanded ? "Compact editor" : "Expand editor"}
           </button>
+        </div>
+      )}
+      {pastedBlocks.length > 0 && (
+        <div className="pasted-block-tray" aria-label="Large pasted content">
+          {pastedBlocks.map((block) => (
+            <div className="pasted-block-chip" key={block.id}>
+              <FileText size={13} />
+              <span>{block.label}</span>
+              <small>{block.text.length.toLocaleString()} chars, expands on send</small>
+              <button type="button" title="Remove pasted content" onClick={() => removePastedBlock(block)}>
+                <X size={12} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
       {attachments.length > 0 && (
@@ -338,7 +481,7 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
           ))}
         </div>
       )}
-      {attachmentError && <div className="attachment-error">{attachmentError}</div>}
+      {(attachmentError || submitError) && <div className="attachment-error">{attachmentError || submitError}</div>}
       <div className="composer-toolbar">
         <div className="toolbar-left">
           <button
@@ -364,10 +507,6 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
               event.currentTarget.value = "";
             }}
           />
-          <span className="tool-pill">
-            <TerminalSquare size={15} />
-            Files + terminal
-          </span>
           <div className="menu-anchor">
             <button
               type="button"
@@ -462,7 +601,13 @@ export function Composer({ settings, disabled, running, activeThreadId, promptHi
               </div>
             )}
           </div>
-          <button type="button" className="send-button" onClick={running ? onStop : submit} disabled={(disabled || (!value.trim() && attachments.length === 0 && contextMentions.length === 0)) && !running}>
+          <button
+            type="button"
+            className={clsx("send-button", stopping && "is-stopping")}
+            title={running ? (stopping ? "Stopping" : "Stop") : "Send"}
+            onClick={running ? onStop : () => void submit()}
+            disabled={running ? stopping : disabled || submitting || (!value.trim() && attachments.length === 0 && contextMentions.length === 0)}
+          >
             {running ? <Square size={17} fill="currentColor" /> : <Send size={17} />}
           </button>
         </div>
@@ -492,6 +637,64 @@ const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"];
 const COMPOSER_LONG_PROMPT_CHARS = 1200;
 const COMPOSER_LONG_PROMPT_LINES = 12;
+const LARGE_PASTE_CHARS = 4000;
+const MAX_PROMPT_CHARS = 1_000_000;
+const PROMPT_HISTORY_STORAGE_KEY = "privora.promptHistory.v1";
+const MAX_PERSISTED_PROMPTS = 200;
+
+const mergePromptHistory = (currentThread: string[], persisted: string[]) => {
+  const seen = new Set<string>();
+  return [...persisted.slice().reverse(), ...currentThread]
+    .map((item) => item.trim())
+    .reverse()
+    .filter((item) => {
+      if (!item || seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    })
+    .reverse();
+};
+
+const filterPromptHistory = (history: string[], query: string) => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return history.slice().reverse();
+  return history.filter((item) => item.toLowerCase().includes(normalized)).reverse();
+};
+
+const readPromptHistory = () => {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, MAX_PERSISTED_PROMPTS) : [];
+  } catch {
+    return [];
+  }
+};
+
+const rememberPrompt = (prompt: string, current: string[]) => {
+  const trimmed = prompt.trim();
+  if (!trimmed) return current;
+  const next = [trimmed, ...current.filter((item) => item.trim() !== trimmed)].slice(0, MAX_PERSISTED_PROMPTS);
+  try {
+    window.localStorage.setItem(PROMPT_HISTORY_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // History is a convenience cache; failing to persist it must not block sending.
+  }
+  return next;
+};
+
+const nextPasteLabel = (charCount: number, existing: PastedBlock[]) => {
+  const base = `[Pasted Content ${charCount.toLocaleString()} chars]`;
+  if (!existing.some((block) => block.label === base)) return base;
+  let index = 2;
+  while (existing.some((block) => block.label === `${base} #${index}`)) index += 1;
+  return `${base} #${index}`;
+};
+
+const expandPastedBlocks = (value: string, blocks: PastedBlock[]) =>
+  [
+    ...blocks.map((block) => block.text),
+    value,
+  ].filter((part) => part.trim()).join("\n\n");
 
 const readImageAttachment = async (file: File): Promise<DesktopAttachmentRecord> => {
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
