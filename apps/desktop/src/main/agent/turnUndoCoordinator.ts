@@ -163,7 +163,9 @@ const undoRestore = async (
 ): Promise<TurnUndoConflictRecord | null> => {
   const currentTarget = resolveWorkspacePath(workspaceRoot, operation.path);
   const restoreTarget = resolveWorkspacePath(workspaceRoot, operation.restorePath || operation.path);
-  const current = await readTextIfExists(currentTarget.absolutePath);
+  const current = operation.encoding === "base64"
+    ? await readBase64IfExists(currentTarget.absolutePath)
+    : await readTextIfExists(currentTarget.absolutePath);
   if (operation.expectedCurrent !== undefined && current !== operation.expectedCurrent) {
     return { path: operation.path, reason: "File changed after this turn." };
   }
@@ -174,11 +176,25 @@ const undoRestore = async (
   }
 
   await fs.mkdir(path.dirname(restoreTarget.absolutePath), { recursive: true });
-  await fs.writeFile(restoreTarget.absolutePath, operation.previous, "utf8");
+  if (operation.encoding === "base64") {
+    await fs.writeFile(restoreTarget.absolutePath, Buffer.from(operation.previous, "base64"));
+  } else {
+    await fs.writeFile(restoreTarget.absolutePath, operation.previous, "utf8");
+  }
   if (operation.restorePath && currentTarget.absolutePath !== restoreTarget.absolutePath && current !== null) {
     await fs.rm(currentTarget.absolutePath, { force: false });
   }
   return null;
+};
+
+const readBase64IfExists = async (filePath: string) => {
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) return null;
+    return (await fs.readFile(filePath)).toString("base64");
+  } catch {
+    return null;
+  }
 };
 
 const readTextIfExists = async (filePath: string) => {

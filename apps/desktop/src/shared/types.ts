@@ -239,6 +239,7 @@ export type TurnUndoOperationRecord =
       existed: boolean;
       previous: string;
       expectedCurrent?: string | null;
+      encoding?: "utf8" | "base64";
     }
   | {
       type: "rename_path";
@@ -402,6 +403,7 @@ export interface ActiveRunState {
 
 export type DesktopToolName =
   | "desktop_read_file"
+  | "desktop_edit_file"
   | "desktop_write_file"
   | "desktop_apply_patch"
   | "desktop_list_dir"

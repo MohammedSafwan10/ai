@@ -7,6 +7,7 @@ import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../../securi
 import { redactSecrets } from "../../security/redact";
 import { TerminalSessionManager } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
+import { FileOperationService, hashBuffer, recordFileObservation, recordFileObservationData } from "./fileOperationService";
 import { FileMutationCoordinator } from "./mutationCoordinator";
 
 export interface ToolExecutionContext {
@@ -14,21 +15,6 @@ export interface ToolExecutionContext {
   signal: AbortSignal;
   onCommandOutput: (callId: string, delta: string) => void;
 }
-
-const readText = async (filePath: string, maxBytes = 120_000) => {
-  const stat = await fs.stat(filePath);
-  if (stat.size > maxBytes) {
-    const handle = await fs.open(filePath, "r");
-    try {
-      const buffer = Buffer.alloc(maxBytes);
-      await handle.read(buffer, 0, maxBytes, 0);
-      return `${buffer.toString("utf8")}\n\n[File truncated at ${maxBytes} bytes.]`;
-    } finally {
-      await handle.close();
-    }
-  }
-  return fs.readFile(filePath, "utf8");
-};
 
 const runProcess = (command: string, args: string[], cwd: string, signal: AbortSignal) =>
   new Promise<{ exitCode: number | null; output: string }>((resolve, reject) => {
@@ -45,6 +31,7 @@ const isNotGitRepository = (output: string) =>
   /not a git repository|not a git repo/i.test(output);
 
 export class DesktopToolExecutor {
+  private files = new FileOperationService();
   private terminal = new TerminalSessionManager();
   private mutations = new FileMutationCoordinator();
   private diagnostics = new DiagnosticsEngine(this.terminal);
@@ -53,33 +40,35 @@ export class DesktopToolExecutor {
     try {
       switch (call.name) {
         case "desktop_read_file":
-          return this.readFile(call, context);
+          return await this.readFile(call, context);
+        case "desktop_edit_file":
+          return await this.mutations.editFile(call, context);
         case "desktop_write_file":
-          return this.mutations.writeFile(call, context);
+          return await this.mutations.writeFile(call, context);
         case "desktop_apply_patch":
-          return this.mutations.applyPatch(call, context);
+          return await this.mutations.applyPatch(call, context);
         case "desktop_list_dir":
-          return this.listDir(call, context);
+          return await this.listDir(call, context);
         case "desktop_search":
-          return this.search(call, context);
+          return await this.search(call, context);
         case "desktop_delete_path":
-          return this.mutations.deletePath(call, context);
+          return await this.mutations.deletePath(call, context);
         case "desktop_rename_path":
-          return this.mutations.renamePath(call, context);
+          return await this.mutations.renamePath(call, context);
         case "desktop_spawn_process":
-          return this.execCommand(call, context);
+          return await this.execCommand(call, context);
         case "desktop_write_process":
-          return this.writeStdin(call, context);
+          return await this.writeStdin(call, context);
         case "desktop_kill_process":
-          return this.stopProcess(call);
+          return await this.stopProcess(call);
         case "desktop_resize_process":
-          return this.resizeProcess(call);
+          return await this.resizeProcess(call);
         case "desktop_run_diagnostics":
-          return this.diagnostics.run(call, context);
+          return await this.diagnostics.run(call, context);
         case "desktop_git_status":
-          return this.gitStatus(call, context);
+          return await this.gitStatus(call, context);
         case "desktop_git_diff":
-          return this.gitDiff(call, context);
+          return await this.gitDiff(call, context);
         default:
           return { success: false, error: `Unknown tool ${(call as DesktopToolCall).name}` };
       }
@@ -92,37 +81,90 @@ export class DesktopToolExecutor {
   }
 
   private async readFile(call: DesktopToolCall, context: ToolExecutionContext) {
-    const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
+    const target = this.files.resolveExisting(context.workspaceRoot, String(call.arguments.path || ""));
     context.onCommandOutput(call.id, `Reading ${target.relativePath}\n`);
-    const output = await readText(target.absolutePath, Number(call.arguments.maxBytes) || 120_000);
-    return { success: true, output, data: { path: target.relativePath } };
+    const result = await this.files.readText(context.workspaceRoot, target.relativePath, {
+      maxBytes: Number(call.arguments.maxBytes) || undefined,
+      startLine: Number(call.arguments.startLine || call.arguments.start_line) || undefined,
+      endLine: Number(call.arguments.endLine || call.arguments.end_line) || undefined,
+      withLineNumbers: call.arguments.withLineNumbers === true || call.arguments.with_line_numbers === true,
+      encoding: call.arguments.encoding === "base64" ? "base64" : "utf8",
+    });
+    recordFileObservation(context.workspaceRoot, result.snapshot);
+    return { success: true, output: result.output, data: result.data };
   }
 
   private async listDir(call: DesktopToolCall, context: ToolExecutionContext) {
     const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || "."));
     const depth = Math.max(1, Math.min(3, Number(call.arguments.depth) || 1));
+    const includeMetadata = call.arguments.includeMetadata === true || call.arguments.include_metadata === true;
     const lines: string[] = [];
+    const entriesData: Array<{ path: string; type: "file" | "dir"; sizeBytes?: number; modifiedAt?: string; sha256?: string }> = [];
     const walk = async (dir: string, prefix: string, currentDepth: number) => {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200)) {
         if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
         const rel = path.join(prefix, entry.name);
-        lines.push(`${entry.isDirectory() ? "dir " : "file"} ${rel}`);
-        if (entry.isDirectory() && currentDepth < depth) await walk(path.join(dir, entry.name), rel, currentDepth + 1);
+        const absolutePath = path.join(dir, entry.name);
+        const type = entry.isDirectory() ? "dir" : "file";
+        if (includeMetadata && entry.isFile()) {
+          const stat = await fs.stat(absolutePath);
+          const content = await fs.readFile(absolutePath).catch(() => null);
+          const sha256 = content !== null ? hashBuffer(content) : undefined;
+          entriesData.push({
+            path: rel,
+            type,
+            sizeBytes: stat.size,
+            modifiedAt: stat.mtime.toISOString(),
+            sha256,
+          });
+          recordFileObservationData(context.workspaceRoot, rel, { sizeBytes: stat.size, modifiedAtMs: stat.mtimeMs, sha256 });
+          lines.push(`${type} ${rel} ${stat.size}B`);
+        } else {
+          entriesData.push({ path: rel, type });
+          lines.push(`${type} ${rel}`);
+        }
+        if (entry.isDirectory() && currentDepth < depth) await walk(absolutePath, rel, currentDepth + 1);
       }
     };
     await walk(target.absolutePath, target.relativePath === "." ? "" : target.relativePath, 1);
-    return { success: true, output: lines.join("\n") || "(empty)", data: { path: target.relativePath } };
+    return {
+      success: true,
+      output: lines.join("\n") || "(empty)",
+      data: { path: target.relativePath || ".", entries: entriesData, includeMetadata },
+    };
   }
 
   private async search(call: DesktopToolCall, context: ToolExecutionContext) {
     const query = String(call.arguments.query || "");
     const args = ["--line-number", "--hidden", "--glob", "!node_modules", "--glob", "!.git", "--glob", "!dist"];
+    const caseSensitive = call.arguments.caseSensitive === true || call.arguments.case_sensitive === true;
+    if (!caseSensitive) args.push("--ignore-case");
     if (call.arguments.glob) args.push("--glob", String(call.arguments.glob));
     args.push(query, ".");
     const result = await runProcess(rgPath, args, context.workspaceRoot, context.signal);
-    const lines = result.output.split(/\r?\n/).filter(Boolean).slice(0, Number(call.arguments.maxResults) || 80);
-    return { success: result.exitCode === 0 || result.exitCode === 1, output: lines.join("\n") || "No matches found." };
+    const maxResults = Number(call.arguments.maxResults) || 80;
+    const allLines = result.output.split(/\r?\n/).filter(Boolean);
+    const lines = allLines.slice(0, maxResults);
+    await Promise.all(lines.map(async (line) => {
+      const match = line.match(/^(.+?):\d+:/);
+      if (!match?.[1]) return;
+      const target = resolveExistingWorkspacePath(context.workspaceRoot, match[1]);
+      const stat = await fs.stat(target.absolutePath).catch(() => null);
+      if (!stat?.isFile()) return;
+      recordFileObservationData(context.workspaceRoot, target.relativePath, { sizeBytes: stat.size, modifiedAtMs: stat.mtimeMs });
+    }));
+    return {
+      success: result.exitCode === 0 || result.exitCode === 1,
+      output: lines.join("\n") || "No matches found.",
+      data: {
+        query,
+        glob: call.arguments.glob || null,
+        caseSensitive,
+        resultCount: lines.length,
+        truncated: allLines.length > lines.length,
+      },
+    };
   }
 
   private async execCommand(call: DesktopToolCall, context: ToolExecutionContext) {

@@ -1125,6 +1125,10 @@ export class AgentRuntime {
       const draftPath = String(draftArgs.path || "").trim();
       return Boolean(draftPath && draftPath === String(finalArgs.path || "").trim());
     }
+    if (toolName === "desktop_edit_file") {
+      const draftPath = String(draftArgs.path || "").trim();
+      return Boolean(draftPath && draftPath === String(finalArgs.path || "").trim());
+    }
     if (toolName === "desktop_apply_patch") {
       const draftTarget = patchTargetLabel(String(draftArgs.patch || ""));
       const finalTarget = patchTargetLabel(String(finalArgs.patch || ""));
@@ -1159,6 +1163,8 @@ export class AgentRuntime {
         return `Read ${args.path || "file"}`;
       case "desktop_write_file":
         return `Write ${args.path || "file"}`;
+      case "desktop_edit_file":
+        return `Edit ${args.path || "file"}`;
       case "desktop_apply_patch":
         return `Patch ${patchTargetLabel(String(args.patch || ""))}`;
       case "desktop_list_dir":
@@ -1185,7 +1191,7 @@ export class AgentRuntime {
   }
 
   private categoryForTool(call: DesktopToolCall): ToolEventRecord["category"] {
-    if (["desktop_write_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
+    if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
     if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
     if (call.name === "desktop_run_diagnostics") return "diagnostic";
     if (call.name === "desktop_search") return "search";
@@ -1203,6 +1209,7 @@ export class AgentRuntime {
     if (call.name === "desktop_kill_process") return "Stopping process";
     if (call.name === "desktop_run_diagnostics") return "Checking workspace";
     if (call.name === "desktop_apply_patch") return "Applying patch";
+    if (call.name === "desktop_edit_file") return "Editing file";
     if (call.name === "desktop_write_file") return "Writing file";
     if (call.name === "desktop_search") return "Searching workspace";
     if (call.name === "desktop_read_file") return "Reading file";
@@ -1316,6 +1323,7 @@ const activityItemsForTool = (call: DesktopToolCall, diff?: string, diffFiles?: 
   const diffItems = diffActivityItems(diff) || [];
   if (diffItems.length > 0) return diffItems;
   if (call.name === "desktop_apply_patch") return patchActivityItems(String(call.arguments.patch || ""));
+  if (call.name === "desktop_edit_file") return [{ verb: "Editing", path: String(call.arguments.path || "") }];
   if (call.name === "desktop_write_file") return [{ verb: "Writing", path: String(call.arguments.path || "") }];
   if (call.name === "desktop_delete_path") return [{ verb: "Deleting", path: String(call.arguments.path || "") }];
   if (call.name === "desktop_rename_path") return [{ verb: "Renaming", path: `${call.arguments.fromPath || ""} -> ${call.arguments.toPath || ""}` }];

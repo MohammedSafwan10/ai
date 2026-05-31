@@ -5,6 +5,27 @@ const textProperty = (description: string) => ({ type: "string", description });
 const boolProperty = (description: string) => ({ type: "boolean", description });
 const numberProperty = (description: string) => ({ type: "number", description });
 const stringArrayProperty = (description: string) => ({ type: "array", items: { type: "string" }, description });
+const stringMapProperty = (description: string) => ({ type: "object", additionalProperties: { type: "string" }, description });
+const editOperationsProperty = (description: string) => ({
+  type: "array",
+  description,
+  items: {
+    type: "object",
+    additionalProperties: true,
+    properties: {
+      type: textProperty("Operation type: replace_range, delete_range, replace_text, insert_text, or append."),
+      startLine: numberProperty("1-based start line for range operations."),
+      endLine: numberProperty("1-based end line for range operations."),
+      match: textProperty("Exact text to find for text operations."),
+      replacement: textProperty("Replacement text for replace_text."),
+      content: textProperty("Content to insert, append, or use as range replacement."),
+      occurrence: textProperty("first or all for text operations. Default first."),
+      position: textProperty("before or after for insert_text. Default before."),
+      caseSensitive: boolProperty("If true, text matching is case-sensitive. Default false."),
+      ensureNewline: boolProperty("For append, add a newline before content when needed. Default true."),
+    },
+  },
+});
 
 const schema = (properties: Record<string, unknown>, required: string[]) => ({
   type: "object",
@@ -17,28 +38,50 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_read_file",
-    description: "Read a UTF-8 text file from the selected workspace.",
+    description: "Read a workspace file with metadata. Supports line ranges, line numbers, truncation, hashing, and binary detection.",
     parameters: schema({
       path: textProperty("Workspace-relative file path."),
       maxBytes: numberProperty("Optional maximum bytes to return. Default 120000."),
+      startLine: numberProperty("Optional 1-based first line to read."),
+      endLine: numberProperty("Optional 1-based last line to read."),
+      withLineNumbers: boolProperty("If true, prefix returned lines with line numbers."),
+      encoding: textProperty("utf8 or base64. Default utf8. Use base64 for binary assets."),
     }, ["path"]),
   },
   {
     type: "function",
+    name: "desktop_edit_file",
+    description: "Apply structured UTF-8 text edits to one workspace file. Safer than full rewrites for precise edits and less format-sensitive than patches. Returns diff, hashes, warnings, undo metadata, and dry-run status.",
+    parameters: schema({
+      path: textProperty("Workspace-relative UTF-8 text file path."),
+      operations: editOperationsProperty("Ordered edit operations to apply."),
+      dryRun: boolProperty("If true, validate and return diff preview without mutating files."),
+      reason: textProperty("Optional short reason for the edit, useful for review/audit UI."),
+    }, ["path", "operations"]),
+  },
+  {
+    type: "function",
     name: "desktop_write_file",
-    description: "Create or replace a UTF-8 text file in the selected workspace.",
+    description: "Create or replace a UTF-8 text file or base64 binary file in the selected workspace. Returns diff when text, hashes, warnings, and undo metadata.",
     parameters: schema({
       path: textProperty("Workspace-relative file path."),
-      content: textProperty("Full file contents to write."),
+      content: textProperty("Full UTF-8 file contents, or base64 bytes when encoding is base64."),
+      encoding: textProperty("utf8 or base64. Default utf8. Use base64 for binary assets."),
       createOnly: boolProperty("If true, fail when the file already exists."),
+      expectedPreviousHash: textProperty("Optional sha256 hash from a prior read. A mismatch is reported as a warning, not a hard block."),
+      allowOverwrite: boolProperty("Optional signal that replacing an existing file is intentional."),
+      reason: textProperty("Optional short reason for the write, useful for review/audit UI."),
     }, ["path", "content"]),
   },
   {
     type: "function",
     name: "desktop_apply_patch",
-    description: "Apply a Codex-style workspace-relative patch envelope. Supports Add File, Update File, Move to, and Delete File sections.",
+    description: "Apply or preview a Codex-style workspace-relative patch envelope. Supports Add File, Update File, Move to, and Delete File sections, with diff, hashes, warnings, and undo metadata.",
     parameters: schema({
       patch: textProperty("Patch text beginning with *** Begin Patch and ending with *** End Patch. File paths must be workspace-relative."),
+      expectedHashes: stringMapProperty("Optional map of workspace-relative paths to sha256 hashes from prior reads. Mismatches are reported as warnings, not hard blocks."),
+      dryRun: boolProperty("If true, validate and return the diff preview without mutating files."),
+      reason: textProperty("Optional short reason for the patch, useful for review/audit UI."),
     }, ["patch"]),
   },
   {
@@ -48,6 +91,7 @@ export const desktopToolDefinitions = [
     parameters: schema({
       path: textProperty("Workspace-relative directory path. Use . for the workspace root."),
       depth: numberProperty("Optional directory depth. Default 1, max 3."),
+      includeMetadata: boolProperty("If true, include size, modified time, and sha256 for files in structured data."),
     }, ["path"]),
   },
   {
@@ -58,6 +102,7 @@ export const desktopToolDefinitions = [
       query: textProperty("Search text or regex."),
       glob: textProperty("Optional file glob such as **/*.ts."),
       maxResults: numberProperty("Optional maximum results. Default 80."),
+      caseSensitive: boolProperty("If true, search is case-sensitive. Default false for friendlier code search."),
     }, ["query"]),
   },
   {
@@ -132,6 +177,23 @@ export const desktopToolDefinitions = [
       timeoutMs: numberProperty("Optional wait window for each terminal poll, max 30000."),
     }, ["kind"]),
   },
+  {
+    type: "function",
+    name: "desktop_git_status",
+    description: "Return concise git status for the selected workspace or subdirectory. If the path is not a git repository, returns a clean non-error explanation instead of noisy git help text.",
+    parameters: schema({
+      cwd: textProperty("Optional workspace-relative working directory."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "desktop_git_diff",
+    description: "Return git diff for the selected workspace or subdirectory. If the path is not a git repository, returns a clean non-error explanation instead of noisy git help text.",
+    parameters: schema({
+      cwd: textProperty("Optional workspace-relative working directory."),
+      staged: boolProperty("If true, return staged diff."),
+    }, []),
+  },
 ] as const;
 
 export const openRouterDesktopTools = desktopToolDefinitions.map((tool) => ({
@@ -175,7 +237,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }

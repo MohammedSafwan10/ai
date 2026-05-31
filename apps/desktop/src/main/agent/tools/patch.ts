@@ -126,11 +126,114 @@ export const applyPatchHunks = (content: string, hunks: PatchHunk[], filePath: s
 
     const candidates = oldBlock.endsWith("\n") ? [oldBlock] : [oldBlock, `${oldBlock}\n`];
     const matched = candidates.find((candidate) => next.includes(candidate));
-    if (!matched) {
-      throw new Error(`Patch hunk did not match ${filePath}. Read the file again and include more context.`);
+    if (matched) {
+      const replacement = matched.endsWith("\n") && !newBlock.endsWith("\n") ? `${newBlock}\n` : newBlock;
+      next = next.replace(matched, replacement);
+      continue;
     }
-    const replacement = matched.endsWith("\n") && !newBlock.endsWith("\n") ? `${newBlock}\n` : newBlock;
-    next = next.replace(matched, replacement);
+
+    const indentMatch = applyIndentTolerantReplacement(next, oldBlock, newBlock);
+    if (indentMatch) {
+      next = indentMatch;
+      continue;
+    }
+
+    throw new Error([
+      `Patch hunk did not match ${filePath}.`,
+      "Nearest current file snippets:",
+      nearestSnippets(next, oldBlock),
+      "Read the file again and retry with one of the shown line ranges as fresh context.",
+      `Expected ${oldBlock.split("\n").length} line(s), starting with: ${previewLine(oldBlock)}`,
+    ].join("\n\n"));
   }
   return next;
+};
+
+const applyIndentTolerantReplacement = (content: string, oldBlock: string, newBlock: string) => {
+  const contentLines = content.split("\n");
+  const oldLines = oldBlock.split("\n");
+  const normalizedOld = stripCommonIndent(oldLines).join("\n");
+  if (!normalizedOld.trim()) return null;
+
+  const matches: Array<{ start: number; end: number; indent: string }> = [];
+  for (let start = 0; start <= contentLines.length - oldLines.length; start += 1) {
+    const window = contentLines.slice(start, start + oldLines.length);
+    if (stripCommonIndent(window).join("\n") === normalizedOld) {
+      matches.push({ start, end: start + oldLines.length, indent: commonIndent(window) });
+      if (matches.length > 1) break;
+    }
+  }
+  if (matches.length !== 1) return null;
+
+  const [match] = matches;
+  const normalizedNew = stripCommonIndent(newBlock.split("\n"));
+  const replacement = normalizedNew.map((line) => line ? `${match.indent}${line}` : line);
+  return [
+    ...contentLines.slice(0, match.start),
+    ...replacement,
+    ...contentLines.slice(match.end),
+  ].join("\n");
+};
+
+const stripCommonIndent = (lines: string[]) => {
+  const indent = commonIndent(lines);
+  return indent ? lines.map((line) => line.startsWith(indent) ? line.slice(indent.length) : line) : lines;
+};
+
+const commonIndent = (lines: string[]) => {
+  const indents = lines
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^\s*/)?.[0] || "");
+  if (indents.length === 0) return "";
+  let prefix = indents[0];
+  for (const indent of indents.slice(1)) {
+    while (prefix && !indent.startsWith(prefix)) prefix = prefix.slice(0, -1);
+  }
+  return prefix;
+};
+
+const previewLine = (block: string) =>
+  JSON.stringify(block.split("\n").find((line) => line.trim())?.trim().slice(0, 120) || "");
+
+const nearestSnippets = (content: string, oldBlock: string) => {
+  const lines = content.split("\n");
+  const oldLines = oldBlock.split("\n").filter((line) => line.trim());
+  const firstNeedle = oldLines[0]?.trim().toLowerCase() || "";
+  const windowSize = Math.max(1, oldBlock.split("\n").length);
+  const scored = lines.map((line, index) => ({
+    index,
+    score: similarity(line.trim().toLowerCase(), firstNeedle),
+  }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 3);
+  if (scored.length === 0) return "(no similar lines found)";
+  const seen = new Set<string>();
+  const usedRanges: Array<{ start: number; end: number }> = [];
+  const snippets = scored.flatMap(({ index, score }) => {
+    const start = Math.max(0, index - 1);
+    const end = Math.min(lines.length, start + windowSize + 2);
+    if (usedRanges.some((range) => rangesOverlap(start, end, range.start, range.end))) return [];
+    const body = lines.slice(start, end).map((line, offset) => `${start + offset + 1}: ${line}`).join("\n");
+    if (seen.has(body)) return [];
+    seen.add(body);
+    usedRanges.push({ start, end });
+    return [`[score ${score.toFixed(2)}]\n${body}`];
+  });
+  return snippets.length > 0 ? snippets.join("\n---\n") : "(no non-overlapping similar snippets found)";
+};
+
+const rangesOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
+  Math.max(aStart, bStart) < Math.min(aEnd, bEnd);
+
+const similarity = (a: string, b: string) => {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.85;
+  const aTokens = new Set(a.split(/\W+/).filter(Boolean));
+  const bTokens = new Set(b.split(/\W+/).filter(Boolean));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of aTokens) if (bTokens.has(token)) shared += 1;
+  return shared / Math.max(aTokens.size, bTokens.size);
 };
