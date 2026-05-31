@@ -426,6 +426,7 @@
 }
 
 .proposed-plan-card {
+  position: relative;
   margin: 8px 0 12px;
   border-left: 1px solid color-mix(in srgb, var(--privora-border) 86%, transparent);
   background: transparent;
@@ -439,6 +440,58 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.proposed-plan-content {
+  position: relative;
+}
+
+.proposed-plan-card.is-collapsed .proposed-plan-content {
+  max-height: min(48vh, 430px);
+  overflow: hidden;
+}
+
+.proposed-plan-card.is-collapsed .proposed-plan-content::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 112px;
+  background:
+    linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in srgb, var(--privora-bg) 70%, transparent) 48%,
+      var(--privora-bg) 100%
+    );
+  content: "";
+  pointer-events: none;
+}
+
+.proposed-plan-expand {
+  position: absolute;
+  right: calc(50% - 16px);
+  bottom: 40px;
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 82%, transparent);
+  color: var(--privora-text);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--privora-text) 10%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.proposed-plan-card:not(.is-collapsed) .proposed-plan-expand {
+  position: static;
+  margin-top: 8px;
+}
+
+.proposed-plan-expand:hover {
+  border-color: color-mix(in srgb, var(--privora-text) 24%, var(--privora-border));
+  background: color-mix(in srgb, var(--privora-user-bubble) 96%, transparent);
 }
 
 .proposed-plan-actions {

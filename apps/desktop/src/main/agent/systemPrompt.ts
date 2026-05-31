@@ -72,5 +72,6 @@ Plan Mode:
 <proposed_plan>
 ...
 </proposed_plan>
-- Keep final plans concise, implementation-ready, and do not ask "should I proceed?".
+- Make final plans implementation-grade, not tiny summaries. Include a clear title, goal, assumptions/decisions, files or modules expected to change, ordered implementation steps, verification steps, and notable risks or tradeoffs.
+- Keep the plan compact enough to scan, but include enough detail that a later default-mode turn can implement it without asking what you meant. Do not ask "should I proceed?".
 `.trim();

@@ -19,6 +19,8 @@ import { TurnReviewCard } from "./ReviewPanel";
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
 const USER_MESSAGE_COLLAPSE_LINES = 16;
+const PROPOSED_PLAN_COLLAPSE_CHARS = 1800;
+const PROPOSED_PLAN_COLLAPSE_LINES = 26;
 const STREAM_MARKDOWN_THROTTLE_MS = 90;
 
 interface ChatMessageProps {
@@ -535,10 +537,26 @@ function ProposedPlanCard({
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
   const [actionsHidden, setActionsHidden] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const lineCount = useMemo(() => text.split(/\r?\n/).length, [text]);
+  const shouldCollapse = text.length > PROPOSED_PLAN_COLLAPSE_CHARS || lineCount > PROPOSED_PLAN_COLLAPSE_LINES;
   return (
-    <section className="proposed-plan-card markdown-body">
+    <section className={clsx("proposed-plan-card markdown-body", shouldCollapse && !expanded && "is-collapsed")}>
       <div className="proposed-plan-label">Proposed plan</div>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <div className="proposed-plan-content">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+      {shouldCollapse && (
+        <button
+          type="button"
+          className="proposed-plan-expand"
+          title={expanded ? "Collapse plan" : "Show full plan"}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
+      )}
       {showActions && !actionsHidden && (
         <div className="proposed-plan-actions" aria-label="Plan actions">
           <button
