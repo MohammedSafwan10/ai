@@ -42,7 +42,7 @@ const resolvePath = (workspaceRoot: string, userPath: string, options: ResolveOp
     });
   }
   if (!options.allowMissingFinal && !fs.existsSync(finalPath)) {
-    throw Object.assign(new Error("Path does not exist inside the selected workspace."), {
+    throw Object.assign(new Error("Path does not exist."), {
       code: "PATH_NOT_FOUND",
       path: finalPath,
     });

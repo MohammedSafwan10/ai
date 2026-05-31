@@ -53,6 +53,11 @@ describe("workspace path sandbox", () => {
     const result = resolveExistingWorkspacePath(tempDir, "src/index.ts");
     expect(result.relativePath).toBe(path.join("src", "index.ts"));
   });
+
+  it("reports missing in-workspace paths without implying an escape", () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-desktop-"));
+    expect(() => resolveExistingWorkspacePath(tempDir, "missing.txt")).toThrow("Path does not exist.");
+  });
 });
 
 const trySymlink = (target: string, linkPath: string, type: fs.symlink.Type) => {
