@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { coalesceDesktopEvents, reduceDesktopEvents } from "../src/renderer/state/useDesktopState";
-import type { AppSnapshot, ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
+import type { ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
 
-const baseSnapshot = (): AppSnapshot => ({
+const baseSnapshot = () => ({
   settings: {
-    id: "default",
+    id: "default" as const,
     model: "test-model",
-    reasoningEffort: "medium",
-    permissionMode: "ask_risky",
-    theme: "system",
+    reasoningEffort: "medium" as const,
+    permissionMode: "ask_risky" as const,
+    theme: "system" as const,
     cliproxyBaseUrl: "http://127.0.0.1:8317",
     openRouterApiKeyStored: false,
     geminiApiKeyStored: false,
@@ -26,6 +26,13 @@ const baseSnapshot = (): AppSnapshot => ({
   activeThreadId: "old-thread",
   activeWorkspaceId: null,
   activeRun: null,
+  activeRuns: [],
+  messagesByThread: {
+    "old-thread": [message("old-message", "old-thread", "old visible message")],
+  },
+  toolEventsByThread: {},
+  turnUndosByThread: {},
+  activeRunsByThread: {},
 });
 
 describe("renderer thread isolation", () => {

@@ -1,12 +1,13 @@
 import { ChevronRight, Folder, FolderOpen, MessageSquarePlus, MoreHorizontal, PanelLeft, PanelLeftClose, Pencil, Search, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ThreadRecord, WorkspaceRecord } from "../../shared/types";
+import type { ActiveRunState, ThreadRecord, WorkspaceRecord } from "../../shared/types";
 
 interface SidebarProps {
   threads: ThreadRecord[];
   workspaces: WorkspaceRecord[];
   activeThreadId: string | null;
+  activeRunsByThread?: Record<string, ActiveRunState>;
   activeWorkspace: WorkspaceRecord | null;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -23,6 +24,7 @@ export function Sidebar({
   threads,
   workspaces,
   activeThreadId,
+  activeRunsByThread = {},
   activeWorkspace,
   collapsed,
   onToggleCollapsed,
@@ -104,6 +106,7 @@ export function Sidebar({
                   key={thread.id}
                   thread={thread}
                   active={thread.id === activeThreadId}
+                  run={activeRunsByThread[thread.id]}
                   onClick={() => onSelectThread(thread.id)}
                   onRename={onRenameThread}
                   onToggleStar={onToggleThreadStar}
@@ -157,6 +160,7 @@ function ProjectGroup({
 function ThreadButton({
   thread,
   active,
+  run,
   onClick,
   onRename,
   onToggleStar,
@@ -164,6 +168,7 @@ function ThreadButton({
 }: {
   thread: ThreadRecord;
   active: boolean;
+  run?: ActiveRunState;
   onClick: () => void;
   onRename: (threadId: string, title: string) => void;
   onToggleStar: (threadId: string) => void;
@@ -232,7 +237,9 @@ function ThreadButton({
             {thread.starred && <Star size={12} fill="currentColor" />}
             <span>{thread.title}</span>
           </span>
-          <small>{formatAge(thread.updatedAt)}</small>
+          <small>
+            {run ? <ThreadRunBadge run={run} /> : formatAge(thread.updatedAt)}
+          </small>
         </button>
       )}
       <button
@@ -280,6 +287,24 @@ function ThreadButton({
         </div>
       )}
     </div>
+  );
+}
+
+function ThreadRunBadge({ run }: { run: ActiveRunState }) {
+  const label = run.status === "awaiting_approval"
+    ? "needs approval"
+    : run.status === "stalled"
+      ? "stalled"
+      : run.status === "stopped"
+        ? "stopped"
+        : run.status === "failed"
+          ? "failed"
+          : "running";
+  return (
+    <span className={clsx("thread-run-badge", run.status)}>
+      <span aria-hidden="true" />
+      {label}
+    </span>
   );
 }
 

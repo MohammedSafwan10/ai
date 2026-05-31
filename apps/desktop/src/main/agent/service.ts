@@ -7,6 +7,7 @@ export interface AgentService {
   stopTurn(threadId: string): void;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
   getActiveRun(threadId: string): ReturnType<AgentRuntime["getActiveRun"]>;
+  listActiveRuns(): ReturnType<AgentRuntime["listActiveRuns"]>;
 }
 
 export class InProcessAgentService implements AgentService {
@@ -30,5 +31,9 @@ export class InProcessAgentService implements AgentService {
 
   getActiveRun(threadId: string) {
     return this.runtime.getActiveRun(threadId);
+  }
+
+  listActiveRuns() {
+    return this.runtime.listActiveRuns();
   }
 }

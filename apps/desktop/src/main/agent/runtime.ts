@@ -175,6 +175,15 @@ export class AgentRuntime {
     };
   }
 
+  listActiveRuns() {
+    const runs = new Map<string, ReturnType<typeof toActiveRunState>>();
+    this.activeRuns.forEach((run, threadId) => runs.set(threadId, toActiveRunState(run)));
+    this.pendingApprovalByCallId.forEach((bundle) => {
+      if (!runs.has(bundle.threadId)) runs.set(bundle.threadId, toActiveRunState(bundle.run));
+    });
+    return Array.from(runs.values());
+  }
+
   async startTurn(input: StartTurnInput) {
     const thread = this.store.getThread(input.threadId);
     if (!thread) throw new Error("Thread not found.");
@@ -266,6 +275,10 @@ export class AgentRuntime {
   stopTurn(threadId: string) {
     const run = this.activeRuns.get(threadId);
     run?.controller.abort();
+    if (run) transitionRun(run, "stopped", {
+      reason: "Stop requested. Cleaning up active work.",
+      resumable: true,
+    });
     this.flushThreadToolOutputs(threadId);
     const approvals = Array.from(new Set(Array.from(this.pendingApprovalByCallId.values()).filter((item) => item.threadId === threadId)));
     approvals.forEach((bundle) => {
@@ -282,8 +295,7 @@ export class AgentRuntime {
       const message = this.store.getMessage(bundle.assistantMessageId);
       if (message) this.updateAssistant(message, bundle.assistantText || "Stopped. Completed tool changes were kept.", bundle.assistantThought, "stopped");
     });
-    this.activeRuns.delete(threadId);
-    this.emit({ type: "run_state", threadId, run: this.getActiveRun(threadId) });
+    this.emit({ type: "run_state", threadId, run: run ? toActiveRunState(run) : this.getActiveRun(threadId) });
   }
 
   async decideApproval(input: ApprovalDecisionInput) {
@@ -1212,6 +1224,7 @@ export class AgentRuntime {
     const { activeThreadId, activeWorkspaceId } = this.getActiveIds();
     const snapshot = this.store.snapshot(activeThreadId, activeWorkspaceId);
     snapshot.activeRun = activeThreadId ? this.getActiveRun(activeThreadId) : null;
+    snapshot.activeRuns = this.listActiveRuns();
     this.emit({ type: "snapshot", snapshot });
   }
 }

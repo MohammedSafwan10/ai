@@ -54,6 +54,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     ensureThread();
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
+    snapshot.activeRuns = runtime.listActiveRuns();
     return snapshot;
   });
 

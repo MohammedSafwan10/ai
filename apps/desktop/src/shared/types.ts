@@ -363,6 +363,7 @@ export interface AppSnapshot {
   activeThreadId: string | null;
   activeWorkspaceId: string | null;
   activeRun: ActiveRunState | null;
+  activeRuns: ActiveRunState[];
   recoveryNotice?: StoreRecoveryNoticeRecord;
 }
 

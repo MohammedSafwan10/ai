@@ -95,6 +95,7 @@ export class DesktopStore {
       activeThreadId,
       activeWorkspaceId,
       activeRun: null,
+      activeRuns: [],
       recoveryNotice: this.recoveryNotice,
     };
   }
