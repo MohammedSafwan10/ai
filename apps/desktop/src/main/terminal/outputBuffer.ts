@@ -41,7 +41,12 @@ export class HeadTailOutputBuffer {
     const head = Buffer.concat(this.head).toString("utf8");
     const tail = Buffer.concat(this.tail).toString("utf8");
     if (this.omittedBytes === 0) return `${head}${tail}`;
-    return `${head}\n\n[... ${this.omittedBytes} bytes omitted from the middle ...]\n\n${tail}`;
+    const lineSafe = lineSafeHeadTail(head, tail);
+    return `${lineSafe.head}\n\n[... ${this.omittedBytes} bytes omitted from the middle ...]\n\n${lineSafe.tail}`;
+  }
+
+  hasContent() {
+    return this.headBytes > 0 || this.tailBytes > 0 || this.omittedBytes > 0;
   }
 
   stats() {
@@ -81,6 +86,23 @@ export class HeadTailOutputBuffer {
     }
   }
 }
+
+const lineSafeHeadTail = (head: string, tail: string) => ({
+  head: trimPartialTrailingLine(head),
+  tail: trimPartialLeadingLine(tail),
+});
+
+const trimPartialTrailingLine = (value: string) => {
+  if (!value || value.endsWith("\n")) return value;
+  const index = value.lastIndexOf("\n");
+  return index < 0 ? value : value.slice(0, index + 1);
+};
+
+const trimPartialLeadingLine = (value: string) => {
+  if (!value || value.startsWith("\n")) return value;
+  const index = value.indexOf("\n");
+  return index < 0 ? value : value.slice(index + 1);
+};
 
 export const compactTextForModel = (text: string | undefined, maxChars = 18_000) => {
   if (!text) return text;

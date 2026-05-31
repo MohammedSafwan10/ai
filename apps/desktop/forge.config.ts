@@ -5,7 +5,12 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: "**/node_modules/node-pty/**",
+    },
+    extraResource: [
+      "node_modules/node-pty",
+    ],
     executableName: "Privora",
     name: "Privora",
   },

@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { rgPath } from "@vscode/ripgrep";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
-import { resolveWorkspacePath } from "../../security/pathSandbox";
+import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../../security/pathSandbox";
 import { redactSecrets } from "../../security/redact";
 import { TerminalSessionManager } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
@@ -66,13 +66,14 @@ export class DesktopToolExecutor {
           return this.mutations.deletePath(call, context);
         case "desktop_rename_path":
           return this.mutations.renamePath(call, context);
-        case "desktop_exec_command":
-        case "desktop_run_command":
+        case "desktop_spawn_process":
           return this.execCommand(call, context);
-        case "desktop_write_stdin":
+        case "desktop_write_process":
           return this.writeStdin(call, context);
-        case "desktop_stop_process":
+        case "desktop_kill_process":
           return this.stopProcess(call);
+        case "desktop_resize_process":
+          return this.resizeProcess(call);
         case "desktop_run_diagnostics":
           return this.diagnostics.run(call, context);
         case "desktop_git_status":
@@ -91,14 +92,14 @@ export class DesktopToolExecutor {
   }
 
   private async readFile(call: DesktopToolCall, context: ToolExecutionContext) {
-    const target = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
+    const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
     context.onCommandOutput(call.id, `Reading ${target.relativePath}\n`);
     const output = await readText(target.absolutePath, Number(call.arguments.maxBytes) || 120_000);
     return { success: true, output, data: { path: target.relativePath } };
   }
 
   private async listDir(call: DesktopToolCall, context: ToolExecutionContext) {
-    const target = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.path || "."));
+    const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || "."));
     const depth = Math.max(1, Math.min(3, Number(call.arguments.depth) || 1));
     const lines: string[] = [];
     const walk = async (dir: string, prefix: string, currentDepth: number) => {
@@ -126,12 +127,16 @@ export class DesktopToolExecutor {
 
   private async execCommand(call: DesktopToolCall, context: ToolExecutionContext) {
     const cwd = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.cwd || ".")).absolutePath;
+    const argv = readArgv(call.arguments.argv);
     const command = String(call.arguments.command || "");
-    context.onCommandOutput(call.id, `Running ${command}\n`);
+    const label = argv.length ? argv.map(displayArg).join(" ") : command;
+    context.onCommandOutput(call.id, `Running ${label}\n`);
     const result = await this.terminal.execCommand({
       cwd,
-      command,
-      yieldTimeMs: Number(call.arguments.yieldTimeMs || call.arguments.timeoutMs) || undefined,
+      command: argv.length ? undefined : command,
+      argv: argv.length ? argv : undefined,
+      tty: call.arguments.tty !== false,
+      yieldTimeMs: readYieldTimeMs(call.arguments, ["yieldTimeMs", "yield_time_ms", "timeoutMs"]),
       maxOutputChars: Number(call.arguments.maxOutputChars) || undefined,
       signal: context.signal,
       onOutput: (delta) => context.onCommandOutput(call.id, delta),
@@ -145,7 +150,8 @@ export class DesktopToolExecutor {
     const result = await this.terminal.writeStdin({
       processId: Number(call.arguments.processId),
       input: String(call.arguments.input ?? ""),
-      yieldTimeMs: Number(call.arguments.yieldTimeMs) || undefined,
+      closeStdin: call.arguments.closeStdin === true || call.arguments.close_stdin === true,
+      yieldTimeMs: readYieldTimeMs(call.arguments, ["yieldTimeMs", "yield_time_ms"]),
       maxOutputChars: Number(call.arguments.maxOutputChars) || undefined,
       signal: context.signal,
       onOutput: (delta) => context.onCommandOutput(call.id, delta),
@@ -158,6 +164,15 @@ export class DesktopToolExecutor {
   private async stopProcess(call: DesktopToolCall) {
     const result = await this.terminal.stopProcess({ processId: Number(call.arguments.processId) });
     return terminalToolResult(result, terminalFallbackOutput(result, Number(call.arguments.processId)));
+  }
+
+  private async resizeProcess(call: DesktopToolCall) {
+    const result = await this.terminal.resizeProcess({
+      processId: Number(call.arguments.processId),
+      rows: Number(call.arguments.rows),
+      cols: Number(call.arguments.cols),
+    });
+    return terminalToolResult(result, result.output || "Resize request processed.");
   }
 
   private async gitStatus(call: DesktopToolCall, context: ToolExecutionContext) {
@@ -191,13 +206,20 @@ const terminalToolResult = (
   result: {
     success: boolean;
     output: string;
+    stdout?: string;
+    stderr?: string;
     processId: number | null;
     running: boolean;
     exitCode: number | null;
     durationMs: number;
+    processDurationMs?: number;
+    operationDurationMs?: number;
     timedOut: boolean;
     omittedBytes: number;
     status: string;
+    backend?: string;
+    tty?: boolean;
+    streamsMerged?: boolean;
   },
   fallbackOutput: string,
 ): ToolResult => ({
@@ -209,10 +231,17 @@ const terminalToolResult = (
     running: result.running,
     exitCode: result.exitCode,
     durationMs: result.durationMs,
+    processDurationMs: typeof result.processDurationMs === "number" ? result.processDurationMs : result.durationMs,
+    operationDurationMs: typeof result.operationDurationMs === "number" ? result.operationDurationMs : result.durationMs,
     timedOut: result.timedOut,
     omittedBytes: result.omittedBytes,
     status: result.status,
     stopped: result.status === "stopped",
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    backend: result.backend,
+    tty: result.tty === true,
+    streamsMerged: result.streamsMerged === true,
   },
 });
 
@@ -228,5 +257,21 @@ const terminalFallbackOutput = (
   if (result.status === "stopped") return `Stopped process ${requestedProcessId || ""}.`.trim();
   if (result.status === "not_found") return `Process ${requestedProcessId || ""} is not running.`.trim();
   if (result.status === "timed_out") return "Command timed out.";
+  if (result.status === "failed") return "Terminal process failed to start.";
   return `Process exited with code ${result.exitCode}`;
 };
+
+const readYieldTimeMs = (args: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = args[key];
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const readArgv = (value: unknown) =>
+  Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+
+const displayArg = (value: string) =>
+  /\s/.test(value) ? JSON.stringify(value) : value;

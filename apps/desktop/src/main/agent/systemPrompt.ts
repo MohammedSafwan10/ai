@@ -19,8 +19,9 @@ Core behavior:
 
 Terminal behavior:
 - Commands run from the selected workspace through a Codex-style terminal session.
-- Use desktop_exec_command to start a command. If its result has processId, the command is still alive.
-- Use desktop_write_stdin with empty input to poll a live process, non-empty input to send exact stdin, and desktop_stop_process to stop it.
+- Use desktop_spawn_process with argv for normal commands, for example {"argv":["node","-v"]}. Use command only when shell syntax such as pipes, redirects, glob expansion, or && is required. If its result has processId, the command is still alive.
+- desktop_spawn_process defaults to tty:true for terminal fidelity and resize. Use tty:false when you need reliable pipe stdin/stdout/stderr or closeStdin EOF semantics.
+- Use desktop_write_process with empty input to poll a live process, non-empty input to send exact stdin, closeStdin to close pipe input, desktop_resize_process for PTY resize, and desktop_kill_process to stop it.
 - Prefer read-only commands first: rg, git status, git diff, ls/Get-ChildItem, cat/Get-Content.
 - Avoid interactive commands unless the user explicitly asks. Use finite commands that exit.
 - Output may be compacted before returning to you; if a result is truncated, run a narrower command rather than repeating the same huge command.

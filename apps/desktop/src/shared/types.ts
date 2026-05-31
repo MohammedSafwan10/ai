@@ -27,6 +27,41 @@ export type ToolEventStatus =
 
 export type ToolRisk = "safe" | "risky" | "blocked";
 
+export type ApprovalDecisionScope = "once" | "this_thread" | "this_workspace" | "command_prefix";
+
+export type ApprovalScopeKind = "tool_thread" | "tool_workspace" | "terminal_prefix";
+
+export interface ApprovalScopeRecord {
+  id: string;
+  workspaceId: string | null;
+  threadId?: string;
+  kind: ApprovalScopeKind;
+  toolName?: string;
+  commandPrefix?: string;
+  cwd?: string;
+  expiresAt?: number;
+  maxUses?: number;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt?: number;
+  useCount: number;
+}
+
+export interface ApprovalHistoryRecord {
+  id: string;
+  threadId: string;
+  messageId: string;
+  workspaceId: string | null;
+  callId: string;
+  toolName: string;
+  approved: boolean;
+  scopeId?: string;
+  scopeKind?: ApprovalScopeKind;
+  reason?: string;
+  argsSummary: string;
+  createdAt: number;
+}
+
 export interface WorkspaceRecord {
   id: string;
   path: string;
@@ -170,9 +205,15 @@ export interface ToolTerminalRecord {
   running?: boolean;
   exitCode?: number | null;
   durationMs?: number;
+  processDurationMs?: number;
+  operationDurationMs?: number;
   timedOut?: boolean;
   omittedBytes?: number;
   truncated?: boolean;
+  status?: string;
+  backend?: string;
+  tty?: boolean;
+  streamsMerged?: boolean;
 }
 
 export type TurnUndoStatus = "available" | "undoing" | "undone" | "partially_undone" | "failed";
@@ -317,9 +358,19 @@ export interface AppSnapshot {
   messages: ChatMessageRecord[];
   toolEvents: ToolEventRecord[];
   turnUndos: TurnUndoRecord[];
+  approvalScopes: ApprovalScopeRecord[];
+  approvalHistory: ApprovalHistoryRecord[];
   activeThreadId: string | null;
   activeWorkspaceId: string | null;
   activeRun: ActiveRunState | null;
+  recoveryNotice?: StoreRecoveryNoticeRecord;
+}
+
+export interface StoreRecoveryNoticeRecord {
+  kind: "corrupt_store_backup";
+  message: string;
+  backupPath: string;
+  createdAt: number;
 }
 
 export interface ActiveRunState {
@@ -343,11 +394,11 @@ export type DesktopToolName =
   | "desktop_search"
   | "desktop_delete_path"
   | "desktop_rename_path"
-  | "desktop_exec_command"
-  | "desktop_write_stdin"
-  | "desktop_stop_process"
+  | "desktop_spawn_process"
+  | "desktop_write_process"
+  | "desktop_resize_process"
+  | "desktop_kill_process"
   | "desktop_run_diagnostics"
-  | "desktop_run_command"
   | "desktop_git_status"
   | "desktop_git_diff";
 
@@ -399,7 +450,8 @@ export interface ApprovalDecisionInput {
   threadId: string;
   callId?: string;
   approved?: boolean;
-  decisions?: Array<{ callId: string; approved: boolean }>;
+  scope?: ApprovalDecisionScope;
+  decisions?: Array<{ callId: string; approved: boolean; scope?: ApprovalDecisionScope }>;
 }
 
 export interface SaveSettingsInput {

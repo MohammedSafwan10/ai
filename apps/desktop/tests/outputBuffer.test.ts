@@ -15,6 +15,24 @@ describe("terminal output buffer", () => {
     expect(buffer.stats().omittedBytes).toBeGreaterThan(0);
   });
 
+  it("does not split visible lines around the omission marker", () => {
+    const buffer = new HeadTailOutputBuffer(34);
+    for (let index = 1; index <= 12; index += 1) {
+      buffer.push(`line-${String(index).padStart(3, "0")}\n`);
+    }
+
+    const output = buffer.toString();
+    expect(output).toContain("omitted");
+    expect(output).toContain("line-001");
+    expect(output).toContain("line-012");
+    expect(output).not.toMatch(/line-\n\n\[\.\.\./);
+    expect(output).not.toMatch(/\.\.\.\]\n\n-\d/);
+    output.split("\n").forEach((line) => {
+      if (!line || line.includes("omitted")) return;
+      expect(line).toMatch(/^line-\d{3}$/);
+    });
+  });
+
   it("compacts model text with a readable omission marker", () => {
     const text = `${"a".repeat(20)}${"b".repeat(20)}${"c".repeat(20)}`;
     const compacted = compactTextForModel(text, 24) || "";

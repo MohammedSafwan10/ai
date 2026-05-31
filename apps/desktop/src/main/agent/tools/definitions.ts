@@ -4,6 +4,7 @@ import type { DesktopToolCall, DesktopToolName } from "../../../shared/types";
 const textProperty = (description: string) => ({ type: "string", description });
 const boolProperty = (description: string) => ({ type: "boolean", description });
 const numberProperty = (description: string) => ({ type: "number", description });
+const stringArrayProperty = (description: string) => ({ type: "array", items: { type: "string" }, description });
 
 const schema = (properties: Record<string, unknown>, required: string[]) => ({
   type: "object",
@@ -79,32 +80,45 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
-    name: "desktop_exec_command",
-    description: "Start a terminal command in the selected workspace. If the command is still running, the result includes processId; poll or interact with it using desktop_write_stdin.",
+    name: "desktop_spawn_process",
+    description: "Start a native workspace process. Prefer argv for exact execution; use command only when shell syntax is required. Default tty:true uses a PTY for terminal fidelity and resize. Use tty:false when the process needs real stdin EOF via closeStdin.",
     parameters: schema({
-      command: textProperty("Command to run."),
+      argv: stringArrayProperty("Preferred argv vector, for example [\"node\", \"-v\"]. Use this when pipes, redirects, and shell expansion are not needed."),
+      command: textProperty("Optional shell command string. Use only when shell syntax such as pipes, redirects, or && is required."),
       cwd: textProperty("Optional workspace-relative working directory."),
-      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 1000, max 30000."),
+      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 2000, max 30000. Snake_case yield_time_ms is also accepted."),
       maxOutputChars: numberProperty("Optional retained output budget before head/tail compaction."),
-    }, ["command"]),
+      tty: boolProperty("Use a PTY terminal backend. Default true. Set false for pipe-backed stdin/stdout/stderr and reliable closeStdin."),
+    }, []),
   },
   {
     type: "function",
-    name: "desktop_write_stdin",
-    description: "Send input to, or poll, a running terminal process returned by desktop_exec_command. Use empty input to poll for more output.",
+    name: "desktop_write_process",
+    description: "Write stdin to, close stdin for, or poll a running process returned by desktop_spawn_process. Use empty input to poll without writing.",
     parameters: schema({
-      processId: numberProperty("Running process id returned by desktop_exec_command."),
+      processId: numberProperty("Running process id returned by desktop_spawn_process."),
       input: textProperty("Input to write. Use an empty string to poll without sending input."),
-      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 5000 for empty polls, max 30000."),
+      closeStdin: boolProperty("Whether to close stdin after writing/polling."),
+      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 5000 for empty polls, max 30000. Snake_case yield_time_ms is also accepted."),
       maxOutputChars: numberProperty("Optional retained output budget before head/tail compaction."),
     }, ["processId", "input"]),
   },
   {
     type: "function",
-    name: "desktop_stop_process",
-    description: "Stop a running terminal process started by desktop_exec_command.",
+    name: "desktop_resize_process",
+    description: "Resize a running native PTY process.",
     parameters: schema({
-      processId: numberProperty("Running process id to stop."),
+      processId: numberProperty("Running process id returned by desktop_spawn_process."),
+      rows: numberProperty("Terminal rows."),
+      cols: numberProperty("Terminal columns."),
+    }, ["processId", "rows", "cols"]),
+  },
+  {
+    type: "function",
+    name: "desktop_kill_process",
+    description: "Terminate a running process started by desktop_spawn_process.",
+    parameters: schema({
+      processId: numberProperty("Running process id to terminate."),
     }, ["processId"]),
   },
   {
