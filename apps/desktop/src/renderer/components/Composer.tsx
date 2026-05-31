@@ -9,18 +9,25 @@ interface ComposerProps {
   disabled: boolean;
   running: boolean;
   activeThreadId: string | null;
-  draft?: { id: number; text: string; attachments?: DesktopAttachmentRecord[] } | null;
+  promptHistory: string[];
+  draft?: {
+    id: number;
+    text: string;
+    attachments?: DesktopAttachmentRecord[];
+    contextMentions?: ContextMentionRecord[];
+  } | null;
   onSubmit: (value: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => void;
   onStop: () => void;
   onSettings: (settings: Partial<SettingsRecord>) => void;
   onDraftConsumed?: () => void;
 }
 
-export function Composer({ settings, disabled, running, activeThreadId, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
+export function Composer({ settings, disabled, running, activeThreadId, promptHistory, draft, onSubmit, onStop, onSettings, onDraftConsumed }: ComposerProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
   const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
   const [mentionToken, setMentionToken] = useState<{ query: string; start: number; end: number } | null>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<ContextMentionSuggestion[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -30,6 +37,7 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = getModelOption(settings.model);
   const modelProviderGroups = getModelProviderGroups();
   const lineCount = value ? value.split(/\r?\n/).length : 0;
@@ -39,7 +47,7 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
     if (!draft) return;
     setValue(draft.text);
     setAttachments(draft.attachments || []);
-    setContextMentions([]);
+    setContextMentions(draft.contextMentions || []);
     setMentionToken(null);
     setMentionSuggestions([]);
     window.setTimeout(() => {
@@ -48,6 +56,11 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
     }, 0);
     onDraftConsumed?.();
   }, [draft, onDraftConsumed]);
+
+  useEffect(() => {
+    setHistoryCursor(null);
+    lastHistoryTextRef.current = null;
+  }, [activeThreadId]);
 
   useEffect(() => {
     if (!activeThreadId || !mentionToken) {
@@ -80,7 +93,7 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
 
   const submit = () => {
     const trimmed = value.trim();
-    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled || running) return;
+    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled) return;
     setValue("");
     const submittedAttachments = attachments;
     const submittedMentions = contextMentions;
@@ -90,6 +103,8 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
     setMentionSuggestions([]);
     setAttachmentError(null);
     setExpanded(false);
+    setHistoryCursor(null);
+    lastHistoryTextRef.current = null;
     onSubmit(
       trimmed,
       submittedAttachments.length ? submittedAttachments : undefined,
@@ -98,6 +113,8 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
   };
 
   const detectMentionToken = (nextValue: string, cursor: number) => {
+    setHistoryCursor(null);
+    lastHistoryTextRef.current = null;
     const beforeCursor = nextValue.slice(0, cursor);
     const match = beforeCursor.match(/(^|\s)@([^\s]*)$/);
     if (!match) {
@@ -107,6 +124,44 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
     }
     const query = match[2] || "";
     setMentionToken({ query, start: cursor - query.length - 1, end: cursor });
+  };
+
+  const shouldNavigatePromptHistory = () => {
+    if (promptHistory.length === 0 || mentionToken) return false;
+    const textarea = textareaRef.current;
+    if (!textarea || textarea.selectionStart !== textarea.selectionEnd) return false;
+    if (!value) return true;
+    if (textarea.selectionStart !== 0 && textarea.selectionStart !== value.length) return false;
+    return lastHistoryTextRef.current === value;
+  };
+
+  const applyHistoryValue = (nextValue: string, nextCursor: number | null) => {
+    setValue(nextValue);
+    setHistoryCursor(nextCursor);
+    lastHistoryTextRef.current = nextValue || null;
+    setMentionToken(null);
+    setMentionSuggestions([]);
+    window.setTimeout(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextValue.length, nextValue.length);
+    }, 0);
+  };
+
+  const navigatePromptHistory = (direction: "older" | "newer") => {
+    if (!shouldNavigatePromptHistory()) return false;
+    if (direction === "older") {
+      const nextCursor = historyCursor === null ? promptHistory.length - 1 : Math.max(0, historyCursor - 1);
+      applyHistoryValue(promptHistory[nextCursor] || "", nextCursor);
+      return true;
+    }
+    if (historyCursor === null) return false;
+    const nextCursor = historyCursor + 1;
+    if (nextCursor >= promptHistory.length) {
+      applyHistoryValue("", null);
+      return true;
+    }
+    applyHistoryValue(promptHistory[nextCursor] || "", nextCursor);
+    return true;
   };
 
   const selectMention = (suggestion: ContextMentionSuggestion) => {
@@ -200,6 +255,10 @@ export function Composer({ settings, disabled, running, activeThreadId, draft, o
             event.preventDefault();
             setMentionToken(null);
             setMentionSuggestions([]);
+            return;
+          }
+          if ((event.key === "ArrowUp" || event.key === "ArrowDown") && navigatePromptHistory(event.key === "ArrowUp" ? "older" : "newer")) {
+            event.preventDefault();
             return;
           }
           if (event.key === "Enter" && !event.shiftKey) {

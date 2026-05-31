@@ -27,6 +27,52 @@
   background: var(--privora-surface);
 }
 
+.queued-prompts {
+  display: grid;
+  width: min(760px, calc(100% - 64px));
+  gap: 7px;
+}
+
+.queued-prompt {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 78%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--privora-surface) 86%, transparent);
+  padding: 7px 8px;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.queued-prompt span {
+  color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.queued-prompt p {
+  overflow: hidden;
+  margin: 0;
+  color: var(--privora-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-prompt button {
+  border: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.queued-prompt button:hover {
+  color: var(--privora-text);
+}
+
 .composer {
   width: min(760px, calc(100% - 64px));
   margin: 0 auto;

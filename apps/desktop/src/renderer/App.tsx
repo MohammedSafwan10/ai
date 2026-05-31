@@ -9,16 +9,30 @@ import { AppLauncher } from "./components/AppLauncher";
 import { ReviewPanel } from "./components/ReviewPanel";
 import type { ContextMentionRecord, DesktopAttachmentRecord, SaveSettingsInput } from "../shared/types";
 
+interface QueuedPrompt {
+  id: string;
+  prompt: string;
+  attachments?: DesktopAttachmentRecord[];
+  contextMentions?: ContextMentionRecord[];
+}
+
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
   const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [composerDraft, setComposerDraft] = useState<{ id: number; text: string; attachments?: DesktopAttachmentRecord[] } | null>(null);
+  const [composerDraft, setComposerDraft] = useState<{
+    id: number;
+    text: string;
+    attachments?: DesktopAttachmentRecord[];
+    contextMentions?: ContextMentionRecord[];
+  } | null>(null);
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [showJumpButton, setShowJumpButton] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const followBottomRef = useRef(true);
   const manualScrollHoldUntilRef = useRef(0);
   const programmaticScrollRef = useRef(false);
+  const queuedSubmitInFlightRef = useRef(false);
   const runStatus = snapshot.activeRun?.status;
   const running =
     runStatus === "sampling" ||
@@ -30,6 +44,13 @@ export default function App() {
     runStatus === "completing";
   const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
   const messages = snapshot.messages;
+  const promptHistory = useMemo(
+    () => messages
+      .filter((message) => message.role === "user" && message.threadId === activeThread?.id && message.content.trim())
+      .map((message) => message.content)
+      .filter((content, index, items) => index === 0 || content !== items[index - 1]),
+    [activeThread?.id, messages],
+  );
   const lastToolUpdatedAt = useMemo(
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
@@ -98,6 +119,8 @@ export default function App() {
   useEffect(() => {
     setComposerDraft(null);
     setReviewMessageId(null);
+    setQueuedPrompts([]);
+    queuedSubmitInFlightRef.current = false;
   }, [activeThread?.id]);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
@@ -111,9 +134,38 @@ export default function App() {
   };
 
   const startPrompt = (prompt: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => {
-    if (!activeThread || running) return;
+    if (!activeThread) return;
+    if (running) {
+      setQueuedPrompts((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          prompt,
+          attachments,
+          contextMentions,
+        },
+      ]);
+      return;
+    }
     void window.privoraDesktop.startTurn({ threadId: activeThread.id, prompt, attachments, contextMentions });
   };
+
+  useEffect(() => {
+    if (running) queuedSubmitInFlightRef.current = false;
+    if (!activeThread || running || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
+    const [next, ...rest] = queuedPrompts;
+    queuedSubmitInFlightRef.current = true;
+    setQueuedPrompts(rest);
+    void window.privoraDesktop.startTurn({
+      threadId: activeThread.id,
+      prompt: next.prompt,
+      attachments: next.attachments,
+      contextMentions: next.contextMentions,
+    }).catch(() => {
+      queuedSubmitInFlightRef.current = false;
+      setQueuedPrompts((current) => [next, ...current]);
+    });
+  }, [activeThread, queuedPrompts, running]);
 
   return (
     <div className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}>
@@ -264,11 +316,44 @@ export default function App() {
               Continue remaining steps
             </button>
           )}
+          {queuedPrompts.length > 0 && (
+            <div className="queued-prompts" aria-label="Queued prompts">
+              {queuedPrompts.map((item, index) => (
+                <div className="queued-prompt" key={item.id}>
+                  <span>Queued {index + 1}</span>
+                  <p>{item.prompt}</p>
+                  <button
+                    type="button"
+                    title="Edit queued prompt"
+                    onClick={() => {
+                      setComposerDraft({
+                        id: Date.now(),
+                        text: item.prompt,
+                        attachments: item.attachments,
+                        contextMentions: item.contextMentions,
+                      });
+                      setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    title="Remove queued prompt"
+                    onClick={() => setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <Composer
             settings={snapshot.settings}
             disabled={!activeThread || !activeWorkspace}
             running={running}
             activeThreadId={activeThread?.id || null}
+            promptHistory={promptHistory}
             draft={composerDraft}
             onDraftConsumed={() => setComposerDraft(null)}
             onSubmit={startPrompt}
