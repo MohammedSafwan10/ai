@@ -1,6 +1,5 @@
 import { app, BrowserWindow, nativeTheme } from "electron";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { DesktopStore } from "./db/store";
 import { AgentRuntime } from "./agent/runtime";
 import { InProcessAgentService, type AgentService } from "./agent/service";
@@ -9,8 +8,6 @@ import { installRendererDiagnostics } from "./diagnostics";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow: BrowserWindow | null = null;
 let store: DesktopStore | null = null;
@@ -87,10 +84,15 @@ const createWindow = async () => {
   });
   installRendererDiagnostics(mainWindow);
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    await mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+  try {
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    } else {
+      await mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+    }
+  } catch (error) {
+    if ((error as { code?: string })?.code === "ERR_ABORTED") return;
+    throw error;
   }
 };
 

@@ -140,7 +140,7 @@ const names: Set<string> = new Set(desktopToolDefinitions.map((tool) => tool.nam
 const toolCallSchema = z.object({
   id: z.string().optional(),
   name: z.string(),
-  arguments: z.record(z.unknown()),
+  arguments: z.record(z.string(), z.unknown()),
   thoughtSignature: z.string().optional(),
 });
 

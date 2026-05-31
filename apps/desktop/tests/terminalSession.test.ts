@@ -16,6 +16,7 @@ describe("TerminalSessionManager", () => {
       cwd,
       command: "node -e \"console.log('privora-session')\"",
       signal: new AbortController().signal,
+      yieldTimeMs: 5000,
       onOutput: (delta) => deltas.push(delta),
     });
 
