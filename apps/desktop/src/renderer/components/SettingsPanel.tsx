@@ -10,6 +10,7 @@ interface SettingsPanelProps {
   onOpen: () => void;
   onClose: () => void;
   onSave: (settings: SaveSettingsInput) => Promise<void> | void;
+  className?: string;
 }
 
 type SettingsTab = "general" | "providers" | "workspace" | "shortcuts";
@@ -44,7 +45,7 @@ export function SettingsPanel({ open, onOpen, onClose }: SettingsPanelProps) {
   );
 }
 
-export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onClose, onSave }: SettingsPanelProps) {
+export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onClose, onSave, className }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");

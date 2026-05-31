@@ -13,6 +13,7 @@
 
 
 .chat-shell {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -245,6 +246,23 @@
 
 .settings-mode {
   grid-template-rows: minmax(0, 1fr);
+}
+
+.settings-open .topbar,
+.settings-open .message-list,
+.settings-open .composer-stack {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-screen-layer {
+  position: absolute;
+  z-index: 45;
+  inset: 0;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  background: var(--privora-bg);
 }
 
 .settings-screen {

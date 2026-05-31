@@ -20,6 +20,7 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
   const normalizedTools = useMemo(() => normalizeStaleTools(tools, messageActive), [tools, messageActive]);
   const compactedTools = useMemo(() => compactTimelineTools(normalizedTools), [normalizedTools]);
   const hasLive = normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing");
+  const currentLiveToolId = useMemo(() => latestLiveToolId(normalizedTools), [normalizedTools]);
   const hasBlockingAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval");
   const liveGroupOpen = messageActive && (defaultOpen || hasLive);
   const displayTools = useMemo(
@@ -98,15 +99,16 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
                     tool={tool}
                     output={displayOutput(tool)}
                     expanded={expandedOutputIds.has(tool.id)}
+                    live={tool.id === currentLiveToolId}
                     onToggle={() => toggleOutput(tool.id)}
                   />
                 )}
                 {hasFileDiffs(tool) ? (
                   <InlineFileChangeList
                     files={tool.diffFiles || []}
-                    active={isLiveOutput(tool)}
+                    active={tool.id === currentLiveToolId}
                   />
-                ) : shouldShowActivity(tool) && <ToolActivity tool={tool} />}
+                ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
                 {hasUsefulOutput(displayOutput(tool)) && (
                   isTerminalOutputTool(tool) ? (
@@ -172,16 +174,17 @@ function ToolTitleLine({
   tool,
   output,
   expanded,
+  live,
   onToggle,
 }: {
   tool: ToolEventRecord;
   output: string;
   expanded: boolean;
+  live: boolean;
   onToggle: () => void;
 }) {
   const canExpand = isTerminalOutputTool(tool) && hasUsefulOutput(output);
   const preview = canExpand ? compactOutputPreview(output.trimEnd()) : "";
-  const live = isLiveOutput(tool);
   if (!canExpand) {
     return (
       <div className="tool-title-line">
@@ -331,7 +334,7 @@ const shouldShowOutputDetail = (tool: ToolEventRecord) =>
   tool.status !== "done" ||
   Boolean(tool.result?.error);
 
-function ToolActivity({ tool }: { tool: ToolEventRecord }) {
+function ToolActivity({ tool, active }: { tool: ToolEventRecord; active: boolean }) {
   const items = toolActivityItems(tool);
   if (items.length === 0) return null;
   return (
@@ -339,7 +342,7 @@ function ToolActivity({ tool }: { tool: ToolEventRecord }) {
       {items.map((item, index) => (
         <div className="tool-activity-item" key={`${item.path}-${index}`}>
           <span className="tool-activity-verb">{item.verb}</span>
-          <span className="tool-activity-path">{item.path}</span>
+          <span className={clsx("tool-activity-path", active && "active-text-shimmer")}>{item.path}</span>
           {(item.additions > 0 || item.deletions > 0) && (
             <span className="tool-activity-delta">
               {item.additions > 0 && <b className="delta-add">+{item.additions}</b>}
@@ -380,6 +383,11 @@ const toolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
   if (tool.name === "desktop_write_file") {
     const path = String(tool.args.path || tool.result?.data?.path || "").trim();
     return path ? [{ verb: tool.status === "done" ? "Wrote" : "Writing", path, additions: 0, deletions: 0 }] : [];
+  }
+
+  if (tool.name === "desktop_edit_file") {
+    const path = String(tool.args.path || tool.result?.data?.path || "").trim();
+    return path ? [{ verb: tool.status === "done" ? "Edited" : "Editing", path, additions: 0, deletions: 0 }] : [];
   }
 
   if (tool.name === "desktop_delete_path") {
@@ -469,7 +477,7 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
   );
   const fileChanges = changedFiles.size || tools.filter((tool) =>
     tool.status === "done" &&
-    ["desktop_write_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(tool.name)
+    ["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(tool.name)
   ).length;
   const commands = tools.filter((tool) =>
     tool.status === "done" &&
@@ -516,6 +524,15 @@ const visibleTimelineTools = (tools: ToolEventRecord[]) => {
   ]);
   return tools.filter((tool) => keepIds.has(tool.id));
 };
+
+const latestLiveToolId = (tools: ToolEventRecord[]) =>
+  tools
+    .filter(isLiveOutput)
+    .sort((a, b) =>
+      (b.streamOrder ?? 0) - (a.streamOrder ?? 0) ||
+      (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0) ||
+      (b.startedAt || 0) - (a.startedAt || 0)
+    )[0]?.id || null;
 
 const isNoisyCommandReason = (reason: string) =>
   reason.toLowerCase().includes("mutate files") &&

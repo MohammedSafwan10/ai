@@ -237,7 +237,6 @@ function ThreadButton({
             {thread.starred && <Star size={12} fill="currentColor" />}
             <span className={clsx(run && isLiveRun(run) && "active-text-shimmer")}>{thread.title}</span>
           </span>
-          {!run && <small>{formatAge(thread.updatedAt)}</small>}
         </button>
       )}
       <button
@@ -297,13 +296,4 @@ function isLiveRun(run: ActiveRunState) {
     "draining",
     "completing",
   ].includes(run.status);
-}
-
-function formatAge(timestamp: number) {
-  const diff = Date.now() - timestamp;
-  const day = 86_400_000;
-  if (diff < day) return "today";
-  if (diff < day * 7) return `${Math.max(1, Math.floor(diff / day))}d`;
-  if (diff < day * 35) return `${Math.max(1, Math.floor(diff / (day * 7)))}w`;
-  return new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
 }

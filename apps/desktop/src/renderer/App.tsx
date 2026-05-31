@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, BookOpen, Bug, ChevronDown, FileSearch, GitBranch, Layers, ListChecks, PackageCheck, Pencil, Play, Recycle, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, FileSearch, GitBranch, Layers, ListChecks, PackageCheck, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -307,25 +307,14 @@ export default function App() {
           />
         )}
       />
-      <main className={settingsOpen ? "chat-shell settings-mode" : "chat-shell"}>
-        {settingsOpen ? (
-          <SettingsScreen
-            settings={snapshot.settings}
-            workspaceDisabled={!activeWorkspace}
-            open={settingsOpen}
-            onOpen={() => setSettingsOpen(true)}
-            onClose={() => setSettingsOpen(false)}
-            onSave={saveSettings}
-          />
-        ) : (
-          <>
-            <header className="topbar">
-              <div className="topbar-title">
-                <h1>{activeThread?.title || "New chat"}</h1>
-              </div>
-            </header>
+      <main className={settingsOpen ? "chat-shell settings-open" : "chat-shell"}>
+        <header className="topbar">
+          <div className="topbar-title">
+            <h1>{activeThread?.title || "New chat"}</h1>
+          </div>
+        </header>
 
-            <div
+        <div
           className="message-list"
           ref={scrollerRef}
           onWheel={(event) => {
@@ -401,9 +390,9 @@ export default function App() {
               })}
             </div>
           )}
-            </div>
+        </div>
 
-            <div className="composer-stack">
+        <div className="composer-stack">
           {snapshot.recoveryNotice && (
             <div className="recovery-notice" role="status">
               <strong>Data recovery used</strong>
@@ -426,11 +415,13 @@ export default function App() {
             <button
               type="button"
               className="continue-run-button"
+              title="Continue from the last saved checkpoint"
               onClick={() => {
                 void window.privoraDesktop.continueRun(activeThread.id);
               }}
             >
-              Continue remaining steps
+              <RotateCw size={14} />
+              <span>Resume</span>
             </button>
           )}
           {queuedPrompts.length > 0 && (
@@ -539,8 +530,18 @@ export default function App() {
             }}
             onSettings={saveSettings}
           />
-            </div>
-          </>
+        </div>
+        {settingsOpen && (
+          <div className="settings-screen-layer">
+            <SettingsScreen
+              settings={snapshot.settings}
+              workspaceDisabled={!activeWorkspace}
+              open={settingsOpen}
+              onOpen={() => setSettingsOpen(true)}
+              onClose={() => setSettingsOpen(false)}
+              onSave={saveSettings}
+            />
+          </div>
         )}
         {toast && <div className="toast">{toast}</div>}
       </main>

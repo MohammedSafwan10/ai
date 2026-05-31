@@ -51,6 +51,10 @@
   color: color-mix(in srgb, var(--privora-muted) 88%, var(--privora-text));
 }
 
+.assistant-activity-text.is-streaming {
+  color: var(--privora-text);
+}
+
 .assistant-activity-text p {
   margin: 0.25rem 0;
 }
@@ -405,8 +409,6 @@
   font-weight: 600;
 }
 
-.tool-row.running .tool-activity-path,
-.tool-row.preparing .tool-activity-path,
 .active-text-shimmer,
 .animate-text-shimmer {
   background: linear-gradient(

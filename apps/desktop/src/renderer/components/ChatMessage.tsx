@@ -116,7 +116,10 @@ function ChatMessageComponent({
                             );
                           }
                           return (
-                            <div key={part.key} className="assistant-activity-text markdown-body">
+                            <div
+                              key={part.key}
+                              className={clsx("assistant-activity-text", runActive && message.status !== "failed" && "is-streaming", "markdown-body")}
+                            >
                               <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} />
                             </div>
                           );
@@ -284,13 +287,17 @@ function buildThoughtTimelineItems(
   runActive: boolean,
 ): AssistantTimelineItem[] {
   const thought = message.thought || "";
+  const content = message.content || "";
   const storedParts = normalizeThoughtParts(message.thoughtParts || []);
+  const hasLiveTool = tools.some((tool) => tool.status === "running" || tool.status === "preparing");
+  const hasStartedVisibleText = content.trim().length > 0;
+  const thoughtActive = runActive && !hasLiveTool && !hasStartedVisibleText;
   if (storedParts.length > 0) {
     return storedParts.flatMap((part, index) => {
       const next = storedParts[index + 1];
       const thoughtText = thought.slice(part.thoughtOffset, next?.thoughtOffset ?? thought.length);
       const isLast = index === storedParts.length - 1;
-      if (!thoughtText.trim() && !(runActive && isLast)) return [];
+      if (!thoughtText.trim() && !(thoughtActive && isLast)) return [];
       return [{
         type: "thought" as const,
         key: `thought-${part.id}`,
@@ -298,19 +305,19 @@ function buildThoughtTimelineItems(
         createdAt: part.createdAt,
         streamOrder: part.streamOrder,
         thought: thoughtText,
-        active: runActive && isLast,
+        active: thoughtActive && isLast,
       }];
     });
   }
 
-  if (thought.trim() || (runActive && !message.content.trim() && tools.length === 0)) {
+  if (thought.trim() || (thoughtActive && !message.content.trim() && tools.length === 0)) {
     return [{
       type: "thought",
       key: `thought-${message.id}`,
       offset: 0,
       createdAt: message.createdAt,
       thought,
-      active: runActive,
+      active: thoughtActive,
     }];
   }
   return [];
