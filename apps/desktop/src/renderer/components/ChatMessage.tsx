@@ -13,6 +13,10 @@ import type {
 import { ToolTimeline } from "./ToolTimeline";
 import { TurnReviewCard } from "./ReviewPanel";
 
+const USER_MESSAGE_PREVIEW_CHARS = 900;
+const USER_MESSAGE_COLLAPSE_CHARS = 1200;
+const USER_MESSAGE_COLLAPSE_LINES = 16;
+
 interface ChatMessageProps {
   message: ChatMessageRecord;
   tools: ToolEventRecord[];
@@ -71,7 +75,7 @@ function ChatMessageComponent({
           {isUser ? (
             <>
               {hasAttachments && <AttachmentGrid attachments={message.attachments || []} />}
-              {message.content && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>}
+              {message.content && <UserMessageContent content={message.content} />}
             </>
           ) : (
             <>
@@ -375,6 +379,49 @@ const writeClipboard = async (text: string) => {
   textarea.select();
   document.execCommand("copy");
   textarea.remove();
+};
+
+function UserMessageContent({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const lineCount = useMemo(() => content.split(/\r?\n/).length, [content]);
+  const shouldCollapse = content.length > USER_MESSAGE_COLLAPSE_CHARS || lineCount > USER_MESSAGE_COLLAPSE_LINES;
+  const preview = useMemo(() => buildUserMessagePreview(content), [content]);
+
+  if (!shouldCollapse) {
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
+  }
+
+  return (
+    <div className={clsx("user-message-collapsible", open && "open")}>
+      <div className="user-message-meta">
+        Long prompt · {content.length.toLocaleString()} chars · {lineCount.toLocaleString()} lines
+      </div>
+      <div className="user-message-content">
+        {open ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        ) : (
+          <pre className="user-message-preview">{preview}</pre>
+        )}
+      </div>
+      <button
+        type="button"
+        className="user-message-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span>{open ? "Collapse prompt" : "Show full prompt"}</span>
+        <ChevronDown className={clsx("user-message-toggle-icon", !open && "closed")} size={14} />
+      </button>
+    </div>
+  );
+}
+
+const buildUserMessagePreview = (content: string) => {
+  if (content.length <= USER_MESSAGE_PREVIEW_CHARS) return content;
+  const slice = content.slice(0, USER_MESSAGE_PREVIEW_CHARS);
+  const lastBreak = Math.max(slice.lastIndexOf("\n"), slice.lastIndexOf(" "));
+  const trimmed = slice.slice(0, lastBreak > 500 ? lastBreak : USER_MESSAGE_PREVIEW_CHARS).trimEnd();
+  return `${trimmed}\n\n...`;
 };
 
 function AttachmentGrid({ attachments }: { attachments: DesktopAttachmentRecord[] }) {
