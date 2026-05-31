@@ -18,7 +18,7 @@ const toInput = (messages: ProviderMessage[]) => {
     const textParts = parts.filter((part) => part.type === "text");
     const imageParts = parts.filter((part) => part.type === "image");
 
-    if (message.content || textParts.length > 0 || imageParts.length > 0) {
+    if (message.content || textParts.length > 0 || imageParts.length > 0 || (message.role === "assistant" && functionCalls.length > 0)) {
       const contentParts: Array<Record<string, unknown>> = [];
       const text = message.content || textParts.map((part) => part.text).join("\n") || "";
       if (text || imageParts.length === 0) {
