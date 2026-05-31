@@ -427,7 +427,7 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "tool_updated"; tool: ToolEventRecord }
   | { type: "turn_undo_updated"; undo: TurnUndoRecord }
   | { type: "command_output_delta"; callId: string; delta: string }
-  | { type: "run_state"; run: ActiveRunState | null }
+  | { type: "run_state"; threadId: string; run: ActiveRunState | null }
   | { type: "toast"; tone: "info" | "error" | "success"; message: string }
 );
 

@@ -283,7 +283,7 @@ export class AgentRuntime {
       if (message) this.updateAssistant(message, bundle.assistantText || "Stopped. Completed tool changes were kept.", bundle.assistantThought, "stopped");
     });
     this.activeRuns.delete(threadId);
-    this.emit({ type: "run_state", run: this.getActiveRun(threadId) });
+    this.emit({ type: "run_state", threadId, run: this.getActiveRun(threadId) });
   }
 
   async decideApproval(input: ApprovalDecisionInput) {
@@ -561,7 +561,7 @@ export class AgentRuntime {
           flushAssistant("completed", true);
           this.store.clearRunCheckpoint(options.threadId);
           this.activeRuns.delete(options.threadId);
-          this.emit({ type: "run_state", run: null });
+          this.emit({ type: "run_state", threadId: options.threadId, run: null });
           return;
         }
 
@@ -685,7 +685,7 @@ export class AgentRuntime {
       }
       if (!handoff && this.activeRuns.get(options.threadId)?.assistantMessageId === options.assistantMessage.id) {
         this.activeRuns.delete(options.threadId);
-        this.emit({ type: "run_state", run: this.getActiveRun(options.threadId) });
+        this.emit({ type: "run_state", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
       }
     }
   }
@@ -1194,7 +1194,7 @@ export class AgentRuntime {
   }
 
   private emitRun(run: AgentRunTracker) {
-    this.emit({ type: "run_state", run: toActiveRunState(run) });
+    this.emit({ type: "run_state", threadId: run.threadId, run: toActiveRunState(run) });
   }
 
   private emit(event: DesktopEvent) {

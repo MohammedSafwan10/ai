@@ -100,7 +100,7 @@ export const useDesktopState = () => {
   };
 };
 
-const reduceDesktopEvents = (snapshot: AppSnapshot, events: DesktopEvent[]): AppSnapshot => {
+export const reduceDesktopEvents = (snapshot: AppSnapshot, events: DesktopEvent[]): AppSnapshot => {
   let next = snapshot;
   for (const event of events) {
     if (event.type === "snapshot") {
@@ -108,21 +108,25 @@ const reduceDesktopEvents = (snapshot: AppSnapshot, events: DesktopEvent[]): App
       continue;
     }
     if (event.type === "message_updated") {
+      if (event.message.threadId !== next.activeThreadId) continue;
       const messages = upsertById(next.messages, event.message);
       if (messages !== next.messages) next = { ...next, messages };
       continue;
     }
     if (event.type === "tool_updated") {
+      if (event.tool.threadId !== next.activeThreadId) continue;
       const toolEvents = upsertById(next.toolEvents, event.tool);
       if (toolEvents !== next.toolEvents) next = { ...next, toolEvents };
       continue;
     }
     if (event.type === "turn_undo_updated") {
+      if (event.undo.threadId !== next.activeThreadId) continue;
       const turnUndos = upsertById(next.turnUndos, event.undo);
       if (turnUndos !== next.turnUndos) next = { ...next, turnUndos };
       continue;
     }
     if (event.type === "run_state") {
+      if (event.threadId !== next.activeThreadId) continue;
       if (next.activeRun !== event.run) next = { ...next, activeRun: event.run };
       continue;
     }
@@ -144,12 +148,12 @@ const reduceDesktopEvents = (snapshot: AppSnapshot, events: DesktopEvent[]): App
   return next;
 };
 
-const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
+export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
   const coalesced: DesktopEvent[] = [];
   let messages = new Map<string, ChatMessageRecord>();
   let tools = new Map<string, ToolEventRecord>();
   let undos = new Map<string, TurnUndoRecord>();
-  let runState: DesktopEvent | null = null;
+  let runStates = new Map<string, Extract<DesktopEvent, { type: "run_state" }>>();
   const commandDeltas = new Map<string, string>();
 
   const flush = () => {
@@ -157,11 +161,11 @@ const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
     tools.forEach((tool) => coalesced.push({ type: "tool_updated", tool }));
     undos.forEach((undo) => coalesced.push({ type: "turn_undo_updated", undo }));
     commandDeltas.forEach((delta, callId) => coalesced.push({ type: "command_output_delta", callId, delta }));
-    if (runState) coalesced.push(runState);
+    runStates.forEach((event) => coalesced.push(event));
     messages = new Map();
     tools = new Map();
     undos = new Map();
-    runState = null;
+    runStates = new Map();
     commandDeltas.clear();
   };
 
@@ -184,7 +188,7 @@ const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
       continue;
     }
     if (event.type === "run_state") {
-      runState = event;
+      runStates.set(event.threadId, event);
       continue;
     }
     if (event.type === "command_output_delta") {
