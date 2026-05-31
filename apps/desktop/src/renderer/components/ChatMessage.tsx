@@ -10,6 +10,7 @@ import type {
   ApprovalDecisionScope,
   ChatMessageRecord,
   DesktopAttachmentRecord,
+  SubagentRecord,
   ToolEventRecord,
   TurnUndoRecord,
 } from "../../shared/types";
@@ -26,6 +27,7 @@ const STREAM_MARKDOWN_THROTTLE_MS = 90;
 interface ChatMessageProps {
   message: ChatMessageRecord;
   tools: ToolEventRecord[];
+  subagents: SubagentRecord[];
   activeRunStatus: string | null;
   onApprove: (callId: string, approved: boolean, scope?: ApprovalDecisionScope) => void;
   onApproveAll: (callIds: string[]) => void;
@@ -41,6 +43,7 @@ interface ChatMessageProps {
 function ChatMessageComponent({
   message,
   tools,
+  subagents,
   activeRunStatus,
   onApprove,
   onApproveAll,
@@ -126,6 +129,7 @@ function ChatMessageComponent({
                               <ToolTimeline
                                 key={part.key}
                                 tools={part.tools}
+                                subagents={subagents}
                                 messageStatus={message.status}
                                 defaultOpen={part.defaultOpen}
                                 onApprove={onApprove}
@@ -156,6 +160,7 @@ function ChatMessageComponent({
                           <ToolTimeline
                             key={part.key}
                             tools={part.tools}
+                            subagents={subagents}
                             messageStatus={message.status}
                             defaultOpen
                             onApprove={onApprove}
@@ -207,6 +212,7 @@ function ChatMessageComponent({
 export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.message === next.message &&
   previous.tools === next.tools &&
+  previous.subagents === next.subagents &&
   previous.activeRunStatus === next.activeRunStatus &&
   previous.turnUndo === next.turnUndo &&
   previous.showPlanActions === next.showPlanActions &&

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bot, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
-import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput } from "../shared/types";
+import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, SubagentRecord } from "../shared/types";
 
 interface QueuedPrompt {
   id: string;
@@ -21,6 +21,7 @@ export default function App() {
   const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [subagentDrawerOpen, setSubagentDrawerOpen] = useState(false);
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
     text: string;
@@ -95,13 +96,15 @@ export default function App() {
 
   const toolsByMessage = useMemo(() => {
     const map = new Map<string, typeof snapshot.toolEvents>();
+    const childParentMessage = new Map(snapshot.subagents.map((agent) => [agent.threadId, agent.parentMessageId]));
     snapshot.toolEvents.forEach((tool) => {
-      const current = map.get(tool.messageId) || [];
+      const messageId = childParentMessage.get(tool.threadId) || tool.messageId;
+      const current = map.get(messageId) || [];
       current.push(tool);
-      map.set(tool.messageId, current);
+      map.set(messageId, current);
     });
     return map;
-  }, [snapshot.toolEvents]);
+  }, [snapshot.subagents, snapshot.toolEvents]);
 
   const reviewTools = useMemo(
     () => reviewMessageId ? (toolsByMessage.get(reviewMessageId) || []) : [],
@@ -342,6 +345,18 @@ export default function App() {
           <div className="topbar-title">
             <h1>{activeThread?.title || "New chat"}</h1>
           </div>
+          {snapshot.subagents.length > 0 && (
+            <button
+              type="button"
+              className="topbar-agent-button"
+              onClick={() => setSubagentDrawerOpen((value) => !value)}
+              title="Subagents"
+              aria-label="Subagents"
+            >
+              <Bot size={16} />
+              <span>{snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length || snapshot.subagents.length}</span>
+            </button>
+          )}
         </header>
 
         <div
@@ -405,6 +420,7 @@ export default function App() {
                     <ChatMessage
                       message={message}
                       tools={toolsByMessage.get(message.id) || EMPTY_TOOLS}
+                      subagents={snapshot.subagents}
                       activeRunStatus={
                         snapshot.activeRun?.assistantMessageId === message.id
                           ? snapshot.activeRun.status
@@ -600,8 +616,45 @@ export default function App() {
         )}
         {toast && <div className="toast">{toast}</div>}
       </main>
+      {subagentDrawerOpen && (
+        <SubagentDrawer
+          agents={snapshot.subagents}
+          onClose={() => setSubagentDrawerOpen(false)}
+        />
+      )}
       <ReviewPanel tools={reviewTools} open={Boolean(reviewMessageId)} onClose={() => setReviewMessageId(null)} />
     </div>
+  );
+}
+
+function SubagentDrawer({ agents, onClose }: { agents: SubagentRecord[]; onClose: () => void }) {
+  return (
+    <aside className="subagent-drawer" aria-label="Subagents">
+      <header>
+        <div>
+          <strong>Subagents</strong>
+          <span>{agents.length} child {agents.length === 1 ? "agent" : "agents"}</span>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close subagents">
+          <X size={15} />
+        </button>
+      </header>
+      <div className="subagent-list">
+        {agents.map((agent) => (
+          <section className="subagent-card" key={agent.id}>
+            <div className="subagent-card-head">
+              <span className={`subagent-dot ${agent.status}`} />
+              <div>
+                <strong>{agent.agentNickname || agent.taskName}</strong>
+                <span>{agent.agentRole ? `${agent.agentRole} · ${agent.taskName}` : agent.taskName}</span>
+              </div>
+              <code>{agent.status}</code>
+            </div>
+            <p>{agent.lastPreview || agent.finalMessage || agent.prompt}</p>
+          </section>
+        ))}
+      </div>
+    </aside>
   );
 }
 

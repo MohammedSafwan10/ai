@@ -21,6 +21,7 @@ const baseSnapshot = () => ({
   ],
   messages: [message("old-message", "old-thread", "old visible message")],
   toolEvents: [],
+  subagents: [],
   turnUndos: [],
   approvalScopes: [],
   approvalHistory: [],
@@ -32,6 +33,7 @@ const baseSnapshot = () => ({
     "old-thread": [message("old-message", "old-thread", "old visible message")],
   },
   toolEventsByThread: {},
+  subagentsByThread: {},
   turnUndosByThread: {},
   activeRunsByThread: {},
   pendingUserInputsByThread: {},
@@ -101,6 +103,67 @@ describe("renderer thread isolation", () => {
     expect(next.messages.map((item) => item.id)).toEqual(["old-message", "old-assistant"]);
     expect(next.toolEvents.map((item) => item.id)).toEqual(["old-tool"]);
     expect(next.activeRun?.assistantMessageId).toBe("old-assistant");
+  });
+
+  it("keeps subagents scoped to the active parent thread snapshot", () => {
+    const current = baseSnapshot();
+    const next = reduceDesktopEvents(current, [
+      {
+        type: "snapshot",
+        snapshot: {
+          ...current,
+          subagents: [{
+            id: "agent-1",
+            parentThreadId: "old-thread",
+            parentMessageId: "old-assistant",
+            threadId: "agent-thread",
+            workspaceId: null,
+            taskName: "reviewer",
+            agentPath: "/root/reviewer",
+            agentNickname: "Rook",
+            agentRole: "reviewer",
+            prompt: "Review this.",
+            status: "running",
+            createdAt: 4,
+            updatedAt: 4,
+          }],
+        },
+      },
+    ]);
+
+    expect(next.subagents.map((agent) => agent.taskName)).toEqual(["reviewer"]);
+    expect(next.subagentsByThread["old-thread"]).toHaveLength(1);
+  });
+
+  it("surfaces child tool events in the active parent timeline", () => {
+    const current = reduceDesktopEvents(baseSnapshot(), [
+      {
+        type: "snapshot",
+        snapshot: {
+          ...baseSnapshot(),
+          subagents: [{
+            id: "agent-1",
+            parentThreadId: "old-thread",
+            parentMessageId: "old-assistant",
+            threadId: "agent-thread",
+            workspaceId: null,
+            taskName: "reviewer",
+            agentPath: "/root/reviewer",
+            prompt: "Review this.",
+            status: "running",
+            createdAt: 4,
+            updatedAt: 4,
+          }],
+        },
+      },
+    ]);
+
+    const next = reduceDesktopEvents(current, [
+      { type: "tool_updated", tool: tool("child-tool", "agent-thread", "child-assistant") },
+    ]);
+
+    expect(next.toolEvents.map((item) => item.id)).toContain("child-tool");
+    expect(next.toolEventsByThread["old-thread"].find((item) => item.id === "child-tool")?.messageId).toBe("old-assistant");
   });
 
   it("coalesces run states independently per thread", () => {

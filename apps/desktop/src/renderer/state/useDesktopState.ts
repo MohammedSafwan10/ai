@@ -10,6 +10,7 @@ import type {
   TurnUndoRecord,
   WorkspaceRecord,
   RequestUserInputRequestRecord,
+  SubagentRecord,
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID } from "../../shared/models";
 
@@ -31,6 +32,7 @@ const emptySnapshot: AppSnapshot = {
   threads: [],
   messages: [],
   toolEvents: [],
+  subagents: [],
   turnUndos: [],
   approvalScopes: [],
   approvalHistory: [],
@@ -46,6 +48,7 @@ type DesktopUiSnapshot = AppSnapshot & {
   messagesByThread: ThreadBuckets<ChatMessageRecord>;
   toolEventsByThread: ThreadBuckets<ToolEventRecord>;
   turnUndosByThread: ThreadBuckets<TurnUndoRecord>;
+  subagentsByThread: ThreadBuckets<SubagentRecord>;
   activeRunsByThread: Record<string, ActiveRunState>;
   pendingUserInputsByThread: Record<string, RequestUserInputRequestRecord>;
   pendingUserInput: RequestUserInputRequestRecord | null;
@@ -56,6 +59,7 @@ const emptyUiSnapshot: DesktopUiSnapshot = {
   messagesByThread: {},
   toolEventsByThread: {},
   turnUndosByThread: {},
+  subagentsByThread: {},
   activeRunsByThread: {},
   pendingUserInputsByThread: {},
   pendingUserInput: null,
@@ -141,8 +145,13 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
     }
     if (event.type === "tool_updated") {
       const toolEventsByThread = upsertBucketById(next.toolEventsByThread, event.tool.threadId, event.tool);
-      const toolEvents = event.tool.threadId === next.activeThreadId ? toolEventsByThread[event.tool.threadId] || [] : next.toolEvents;
-      if (toolEventsByThread !== next.toolEventsByThread || toolEvents !== next.toolEvents) next = { ...next, toolEventsByThread, toolEvents };
+      const childParentId = parentThreadForChildTool(next, event.tool.threadId);
+      const parentThreadId = childParentId || event.tool.threadId;
+      const parentBuckets = childParentId && next.activeThreadId === childParentId
+        ? upsertBucketById(toolEventsByThread, childParentId, { ...event.tool, messageId: childParentMessageId(next, event.tool.threadId) || event.tool.messageId })
+        : toolEventsByThread;
+      const toolEvents = parentThreadId === next.activeThreadId ? parentBuckets[parentThreadId] || [] : next.toolEvents;
+      if (parentBuckets !== next.toolEventsByThread || toolEvents !== next.toolEvents) next = { ...next, toolEventsByThread: parentBuckets, toolEvents };
       continue;
     }
     if (event.type === "turn_undo_updated") {
@@ -202,22 +211,35 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
   return next;
 };
 
+const parentThreadForChildTool = (snapshot: DesktopUiSnapshot, childThreadId: string) =>
+  Object.values(snapshot.subagentsByThread)
+    .flat()
+    .find((agent) => agent.threadId === childThreadId)?.parentThreadId || null;
+
+const childParentMessageId = (snapshot: DesktopUiSnapshot, childThreadId: string) =>
+  Object.values(snapshot.subagentsByThread)
+    .flat()
+    .find((agent) => agent.threadId === childThreadId)?.parentMessageId || null;
+
 const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): DesktopUiSnapshot => {
   const activeThreadId = snapshot.activeThreadId;
   const messagesByThread = { ...current.messagesByThread };
   const toolEventsByThread = { ...current.toolEventsByThread };
   const turnUndosByThread = { ...current.turnUndosByThread };
+  const subagentsByThread = { ...current.subagentsByThread };
 
   if (activeThreadId) {
     messagesByThread[activeThreadId] = snapshot.messages;
     toolEventsByThread[activeThreadId] = snapshot.toolEvents;
     turnUndosByThread[activeThreadId] = snapshot.turnUndos;
+    subagentsByThread[activeThreadId] = snapshot.subagents || [];
   }
 
   const liveThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
   pruneBuckets(messagesByThread, liveThreadIds);
   pruneBuckets(toolEventsByThread, liveThreadIds);
   pruneBuckets(turnUndosByThread, liveThreadIds);
+  pruneBuckets(subagentsByThread, liveThreadIds);
 
   const activeRunsByThread = Object.fromEntries((snapshot.activeRuns || []).map((run) => [run.threadId, run]));
   if (snapshot.activeRun) activeRunsByThread[snapshot.activeRun.threadId] = snapshot.activeRun;
@@ -227,11 +249,13 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): Deskt
     messages: activeThreadId ? messagesByThread[activeThreadId] || [] : [],
     toolEvents: activeThreadId ? toolEventsByThread[activeThreadId] || [] : [],
     turnUndos: activeThreadId ? turnUndosByThread[activeThreadId] || [] : [],
+    subagents: activeThreadId ? subagentsByThread[activeThreadId] || [] : [],
     activeRun: activeThreadId ? activeRunsByThread[activeThreadId] || null : null,
     activeRuns: Object.values(activeRunsByThread),
     messagesByThread,
     toolEventsByThread,
     turnUndosByThread,
+    subagentsByThread,
     activeRunsByThread,
     pendingUserInputsByThread: current.pendingUserInputsByThread,
     pendingUserInput: activeThreadId ? current.pendingUserInputsByThread[activeThreadId] || null : null,

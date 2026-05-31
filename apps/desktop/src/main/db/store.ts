@@ -10,6 +10,8 @@ import type {
   ChatMessageRecord,
   SettingsRecord,
   StoreRecoveryNoticeRecord,
+  SubagentRecord,
+  SubagentStatus,
   ThreadRecord,
   ThreadTitleSource,
   ToolEventRecord,
@@ -37,6 +39,7 @@ interface DesktopDataFile {
   workspaces: WorkspaceRecord[];
   threads: ThreadRecord[];
   messages: ChatMessageRecord[];
+  subagents: SubagentRecord[];
   toolEvents: ToolEventRecord[];
   turnUndos: TurnUndoRecord[];
   approvalScopes: ApprovalScopeRecord[];
@@ -62,6 +65,7 @@ const defaultData = (): DesktopDataFile => ({
   workspaces: [],
   threads: [],
   messages: [],
+  subagents: [],
   toolEvents: [],
   turnUndos: [],
   approvalScopes: [],
@@ -93,7 +97,8 @@ export class DesktopStore {
       workspaces: this.listWorkspaces(),
       threads: this.listThreads(),
       messages: activeThreadId ? this.listMessages(activeThreadId) : [],
-      toolEvents: activeThreadId ? this.listToolEvents(activeThreadId) : [],
+      toolEvents: activeThreadId ? this.listToolEventsWithSubagents(activeThreadId) : [],
+      subagents: activeThreadId ? this.listSubagents(activeThreadId) : [],
       turnUndos: activeThreadId ? this.listTurnUndos(activeThreadId) : [],
       approvalScopes: this.listApprovalScopes(activeWorkspaceId, activeThreadId),
       approvalHistory: activeThreadId ? this.listApprovalHistory(activeThreadId).slice(-50) : [],
@@ -166,14 +171,15 @@ export class DesktopStore {
     return this.data.workspaces.find((workspace) => workspace.id === id) || null;
   }
 
-  createThread(workspaceId: string | null): ThreadRecord {
+  createThread(workspaceId: string | null, options: { hidden?: boolean; title?: string } = {}): ThreadRecord {
     const timestamp = now();
     const thread: ThreadRecord = {
       id: crypto.randomUUID(),
-      title: PLACEHOLDER_THREAD_TITLE,
-      titleSource: "placeholder",
+      title: options.title?.trim() || PLACEHOLDER_THREAD_TITLE,
+      titleSource: options.title?.trim() ? "agent" : "placeholder",
       titleUpdatedAt: timestamp,
       workspaceId,
+      hidden: options.hidden === true,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -212,21 +218,30 @@ export class DesktopStore {
   }
 
   deleteThread(threadId: string) {
-    this.data.threads = this.data.threads.filter((thread) => thread.id !== threadId);
-    this.data.messages = this.data.messages.filter((message) => message.threadId !== threadId);
-    this.data.toolEvents = this.data.toolEvents.filter((event) => event.threadId !== threadId);
-    this.data.turnUndos = this.data.turnUndos.filter((undo) => undo.threadId !== threadId);
-    this.data.approvalHistory = this.data.approvalHistory.filter((item) => item.threadId !== threadId);
-    this.data.approvalScopes = this.data.approvalScopes.filter((item) => item.threadId !== threadId);
-    this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => checkpoint.threadId !== threadId);
+    const rootAgents = this.data.subagents.filter((agent) => agent.parentThreadId === threadId);
+    const childThreadIds = this.data.subagents
+      .filter((agent) =>
+        rootAgents.some((root) => agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`))
+      )
+      .map((agent) => agent.threadId);
+    const removedThreadIds = new Set([threadId, ...childThreadIds]);
+    this.data.threads = this.data.threads.filter((thread) => !removedThreadIds.has(thread.id));
+    this.data.messages = this.data.messages.filter((message) => !removedThreadIds.has(message.threadId));
+    this.data.toolEvents = this.data.toolEvents.filter((event) => !removedThreadIds.has(event.threadId) && !removedThreadIds.has(event.args?.threadId as string));
+    this.data.turnUndos = this.data.turnUndos.filter((undo) => !removedThreadIds.has(undo.threadId));
+    this.data.approvalHistory = this.data.approvalHistory.filter((item) => !removedThreadIds.has(item.threadId));
+    this.data.approvalScopes = this.data.approvalScopes.filter((item) => !item.threadId || !removedThreadIds.has(item.threadId));
+    this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => !removedThreadIds.has(checkpoint.threadId));
+    this.data.subagents = this.data.subagents.filter((agent) => agent.parentThreadId !== threadId && agent.threadId !== threadId);
     this.writeData();
   }
 
   listThreads(): ThreadRecord[] {
     return [...this.data.threads].sort((a, b) => {
+      if (a.hidden !== b.hidden) return a.hidden ? 1 : -1;
       if (Boolean(a.starred) !== Boolean(b.starred)) return a.starred ? -1 : 1;
       return b.updatedAt - a.updatedAt;
-    });
+    }).filter((thread) => !thread.hidden);
   }
 
   getThread(threadId: string): ThreadRecord | null {
@@ -293,6 +308,106 @@ export class DesktopStore {
     return this.data.turnUndos
       .filter((undo) => undo.threadId === threadId)
       .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  listToolEventsWithSubagents(parentThreadId: string): ToolEventRecord[] {
+    const threadIds = new Set([
+      parentThreadId,
+      ...this.listSubagents(parentThreadId).map((agent) => agent.threadId),
+    ]);
+    return this.data.toolEvents
+      .filter((event) => threadIds.has(event.threadId))
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  createSubagent(input: {
+    parentThreadId: string;
+    parentMessageId: string;
+    workspaceId: string | null;
+    taskName: string;
+    agentPath: string;
+    agentRole?: string;
+    agentNickname?: string;
+    prompt: string;
+    model?: string;
+    reasoningEffort?: SubagentRecord["reasoningEffort"];
+  }): SubagentRecord {
+    const timestamp = now();
+    const hiddenThread = this.createThread(input.workspaceId, {
+      hidden: true,
+      title: input.agentNickname || input.taskName,
+    });
+    const record: SubagentRecord = {
+      id: crypto.randomUUID(),
+      parentThreadId: input.parentThreadId,
+      parentMessageId: input.parentMessageId,
+      threadId: hiddenThread.id,
+      workspaceId: input.workspaceId,
+      taskName: input.taskName,
+      agentPath: input.agentPath,
+      agentRole: input.agentRole,
+      agentNickname: input.agentNickname,
+      prompt: input.prompt,
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
+      status: "pending",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.data.subagents = upsertById(this.data.subagents, record);
+    this.scheduleWrite();
+    return record;
+  }
+
+  listSubagents(parentThreadId?: string): SubagentRecord[] {
+    if (parentThreadId) {
+      const parentAgent = this.getSubagentByThread(parentThreadId);
+      const roots = parentAgent
+        ? [parentAgent]
+        : this.data.subagents.filter((agent) => agent.parentThreadId === parentThreadId);
+      return this.data.subagents
+        .filter((agent) =>
+          roots.some((root) => agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`))
+        )
+        .sort((a, b) => a.createdAt - b.createdAt);
+    }
+    return this.data.subagents
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  getSubagentByThread(threadId: string): SubagentRecord | null {
+    return this.data.subagents.find((agent) => agent.threadId === threadId) || null;
+  }
+
+  findSubagent(parentThreadId: string, target: string): SubagentRecord | null {
+    const normalized = target.trim().toLowerCase();
+    if (!normalized) return null;
+    const parentAgent = this.getSubagentByThread(parentThreadId);
+    const roots = parentAgent
+      ? [parentAgent]
+      : this.data.subagents.filter((agent) => agent.parentThreadId === parentThreadId);
+    const candidates = this.data.subagents.filter((agent) =>
+      roots.some((root) => agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`))
+    );
+    return candidates.find((agent) =>
+      [agent.id, agent.threadId, agent.taskName, agent.agentPath, agent.agentNickname || ""]
+        .some((value) => value.toLowerCase() === normalized)
+    ) || null;
+  }
+
+  updateSubagent(threadId: string, patch: Partial<Pick<SubagentRecord, "status" | "finalMessage" | "lastPreview" | "closedAt" | "agentNickname" | "agentRole">>): SubagentRecord | null {
+    let updated: SubagentRecord | null = null;
+    this.data.subagents = this.data.subagents.map((agent) => {
+      if (agent.threadId !== threadId && agent.id !== threadId) return agent;
+      updated = {
+        ...agent,
+        ...patch,
+        updatedAt: now(),
+      };
+      return updated;
+    });
+    if (updated) this.scheduleWrite();
+    return updated;
   }
 
   listApprovalScopes(workspaceId: string | null | undefined, threadId?: string | null): ApprovalScopeRecord[] {
@@ -442,6 +557,7 @@ export class DesktopStore {
         workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces : [],
         threads: Array.isArray(parsed.threads) ? parsed.threads.map(normalizeStoredThread) : [],
         messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeStoredMessage) : [],
+        subagents: Array.isArray(parsed.subagents) ? parsed.subagents.map(normalizeStoredSubagent) : [],
         toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeStoredToolEvent) : [],
         turnUndos: Array.isArray(parsed.turnUndos) ? parsed.turnUndos : [],
         approvalScopes: Array.isArray(parsed.approvalScopes) ? parsed.approvalScopes : [],
@@ -526,6 +642,29 @@ const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
     title: titleSource === "placeholder" ? PLACEHOLDER_THREAD_TITLE : normalizeThreadTitle(title) || PLACEHOLDER_THREAD_TITLE,
     titleSource,
     titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(),
+    hidden: thread.hidden === true,
+  };
+};
+
+const normalizeStoredSubagent = (agent: SubagentRecord): SubagentRecord => {
+  const timestamp = agent.updatedAt || agent.createdAt || now();
+  const status: SubagentStatus = [
+    "pending",
+    "running",
+    "waiting",
+    "completed",
+    "failed",
+    "stopped",
+    "closed",
+  ].includes(agent.status) ? agent.status : "stopped";
+  return {
+    ...agent,
+    taskName: agent.taskName?.trim() || "agent",
+    agentPath: agent.agentPath?.trim() || `/${agent.taskName || "agent"}`,
+    prompt: agent.prompt || "",
+    status,
+    createdAt: agent.createdAt || timestamp,
+    updatedAt: timestamp,
   };
 };
 

@@ -89,6 +89,7 @@ export interface ThreadRecord {
   titleSource?: ThreadTitleSource;
   titleUpdatedAt?: number;
   workspaceId: string | null;
+  hidden?: boolean;
   starred?: boolean;
   createdAt: number;
   updatedAt: number;
@@ -169,6 +170,7 @@ export type ToolEventCategory =
   | "terminal"
   | "diagnostic"
   | "git"
+  | "agent"
   | "question"
   | "approval"
   | "other";
@@ -371,12 +373,43 @@ export interface AgentRunCheckpointRecord {
   updatedAt: number;
 }
 
+export type SubagentStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "stopped"
+  | "closed";
+
+export interface SubagentRecord {
+  id: string;
+  parentThreadId: string;
+  parentMessageId: string;
+  threadId: string;
+  workspaceId: string | null;
+  taskName: string;
+  agentPath: string;
+  agentRole?: string;
+  agentNickname?: string;
+  prompt: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  status: SubagentStatus;
+  finalMessage?: string;
+  lastPreview?: string;
+  closedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AppSnapshot {
   settings: SettingsRecord;
   workspaces: WorkspaceRecord[];
   threads: ThreadRecord[];
   messages: ChatMessageRecord[];
   toolEvents: ToolEventRecord[];
+  subagents: SubagentRecord[];
   turnUndos: TurnUndoRecord[];
   approvalScopes: ApprovalScopeRecord[];
   approvalHistory: ApprovalHistoryRecord[];
@@ -409,6 +442,12 @@ export interface ActiveRunState {
 
 export type DesktopToolName =
   | "request_user_input"
+  | "spawn_agent"
+  | "send_message"
+  | "assign_task"
+  | "wait_agent"
+  | "list_agents"
+  | "close_agent"
   | "desktop_read_file"
   | "desktop_edit_file"
   | "desktop_write_file"

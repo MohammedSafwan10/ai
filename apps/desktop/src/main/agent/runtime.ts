@@ -1,7 +1,7 @@
 import type { BrowserWindow } from "electron";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle, normalizeThreadTitle } from "../db/store";
-import { getModelOption, getProviderForModel } from "../../shared/models";
+import { getModelOption, getProviderForModel, type ReasoningEffort } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
@@ -15,6 +15,7 @@ import type {
   RequestUserInputQuestionRecord,
   RequestUserInputResponseInput,
   StartTurnInput,
+  SubagentRecord,
   ToolDiffFileRecord,
   ToolEventRecord,
   ToolResult,
@@ -25,6 +26,7 @@ import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
 import { buildProviderHistory, buildRuntimeContext, compactProviderHistory, compactToolResultForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
+import { loadSubagentRoles, pickSubagentNickname, roleNamesForPrompt, type SubagentRoleConfig } from "./subagents";
 import {
   markRunProgress,
   toActiveRunState,
@@ -42,7 +44,8 @@ const MAX_CONTINUOUS_MODEL_ITERATIONS = 512;
 const MAX_TOOL_CALLS = 500;
 const MAX_RECOVERY_NUDGES = 2;
 const STREAM_STALL_TIMEOUT_MS = 45_000;
-const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 18_000;
+const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 75_000;
+const MAX_STALL_RECOVERY_ATTEMPTS = 2;
 const REPEAT_FINGERPRINT_MIN_CHARS = 72;
 const RECENT_VISIBLE_TEXT_CHARS = 5000;
 const LIVE_OUTPUT_MAX_CHARS = 140_000;
@@ -92,6 +95,9 @@ interface ContinueOptions {
   iteration: number;
   toolCount: number;
   recoveryAttempts: number;
+  parentThreadId?: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 interface ScheduledToolExecution {
@@ -294,6 +300,14 @@ export class AgentRuntime {
   stopTurn(threadId: string) {
     const run = this.activeRuns.get(threadId);
     run?.controller.abort();
+    this.store.listSubagents(threadId).forEach((agent) => {
+      const childRun = this.activeRuns.get(agent.threadId);
+      childRun?.controller.abort();
+      this.store.updateSubagent(agent.threadId, {
+        status: childRun ? "stopped" : agent.status,
+        lastPreview: childRun ? "Stopped with parent run." : agent.lastPreview,
+      });
+    });
     if (run) transitionRun(run, "stopped", {
       reason: "Stop requested. Cleaning up active work.",
       resumable: true,
@@ -519,16 +533,20 @@ export class AgentRuntime {
         }, 1000);
 
         try {
+          const subagent = this.store.getSubagentByThread(options.threadId);
           await streamProviderResponse({
             provider: getProviderForModel(settings.model),
-            model: getModelOption(settings.model).id,
+            model: getModelOption(options.model || settings.model).id,
             systemInstruction: buildDesktopSystemPrompt(
               options.workspaceRoot,
-              buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+              [
+                buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+                subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
+              ].filter(Boolean).join("\n\n"),
               settings.collaborationMode,
             ),
             messages: history,
-            reasoning: settings.reasoningEffort,
+            reasoning: options.reasoningEffort || settings.reasoningEffort,
             collaborationMode: settings.collaborationMode,
             signal: controller.signal,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
@@ -647,6 +665,7 @@ export class AgentRuntime {
           flushAssistant("completed", true);
           this.store.clearRunCheckpoint(options.threadId);
           this.activeRuns.delete(options.threadId);
+          this.markSubagentFinished(options.threadId, "completed", assistantText);
           this.emit({ type: "run_state", threadId: options.threadId, run: null });
           return;
         }
@@ -717,7 +736,7 @@ export class AgentRuntime {
     } catch (error) {
       if (error instanceof StreamStalledError) {
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
-        if (recoveryAttempts < 1) {
+        if (recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
           const nextController = new AbortController();
           run.controller = nextController;
           run.recoveryAttempts = recoveryAttempts + 1;
@@ -744,6 +763,7 @@ export class AgentRuntime {
           recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
         }
         flushAssistant("stalled", true);
+        this.markSubagentFinished(options.threadId, "failed", assistantText || error.message);
         this.emitRun(run);
         handoff = true;
         return;
@@ -772,6 +792,7 @@ export class AgentRuntime {
         recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
       }
       flushAssistant(aborted ? "stopped" : "failed", true);
+      this.markSubagentFinished(options.threadId, aborted ? "stopped" : "failed", assistantText || errorMessage(error));
       this.emitRun(run);
       if (!aborted) this.emit({ type: "toast", tone: "error", message: errorMessage(error) });
     } finally {
@@ -894,6 +915,17 @@ export class AgentRuntime {
     return bundle;
   }
 
+  private markSubagentFinished(threadId: string, status: SubagentRecord["status"], text: string) {
+    const agent = this.store.getSubagentByThread(threadId);
+    if (!agent) return;
+    this.store.updateSubagent(threadId, {
+      status,
+      finalMessage: text,
+      lastPreview: compactPreview(text, 240),
+    });
+    this.emitSnapshot();
+  }
+
   private findReusableApprovalScope(threadId: string, call: DesktopToolCall) {
     const thread = this.store.getThread(threadId);
     const scopes = this.store.listApprovalScopes(thread?.workspaceId ?? null, threadId);
@@ -971,6 +1003,9 @@ export class AgentRuntime {
     threadId: string,
     messageId: string,
   ) {
+    if (isSubagentTool(call.name)) {
+      return await this.executeSubagentTool(call, workspaceRoot, controller, run, threadId, messageId);
+    }
     if (call.name === "request_user_input") {
       return await this.requestUserInput(call, controller, run, threadId, messageId);
     }
@@ -985,6 +1020,172 @@ export class AgentRuntime {
     this.flushToolOutput(call.id);
     this.emitRun(run);
     return result;
+  }
+
+  private async executeSubagentTool(
+    call: DesktopToolCall,
+    workspaceRoot: string,
+    controller: AbortController,
+    run: AgentRunTracker,
+    parentThreadId: string,
+    parentMessageId: string,
+  ): Promise<ToolResult> {
+    switch (call.name) {
+      case "spawn_agent":
+        return this.spawnSubagent(call, workspaceRoot, parentThreadId, parentMessageId);
+      case "send_message":
+        return this.messageSubagent(call, parentThreadId, false);
+      case "assign_task":
+        return this.messageSubagent(call, parentThreadId, true, workspaceRoot);
+      case "wait_agent":
+        return this.waitForSubagents(call, parentThreadId, controller.signal);
+      case "list_agents":
+        return this.listSubagents(call, parentThreadId);
+      case "close_agent":
+        return this.closeSubagent(call, parentThreadId);
+      default:
+        return { success: false, error: `Unknown subagent tool ${call.name}` };
+    }
+  }
+
+  private spawnSubagent(call: DesktopToolCall, workspaceRoot: string, parentThreadId: string, parentMessageId: string): ToolResult {
+    const settings = this.store.getSettings();
+    const taskName = normalizeTaskName(String(call.arguments.taskName || call.arguments.task_name || ""));
+    const message = String(call.arguments.message || "").trim();
+    if (!taskName) return { success: false, error: "taskName must use lowercase letters, digits, and underscores." };
+    if (!message) return { success: false, error: "message is required." };
+    const liveChildren = this.store.listSubagents(parentThreadId).filter((agent) => ["pending", "running", "waiting"].includes(agent.status));
+    if (liveChildren.length >= 3) return { success: false, error: "Subagent limit reached: at most 3 live child agents per chat." };
+    if (this.store.findSubagent(parentThreadId, taskName)) return { success: false, error: `A subagent named ${taskName} already exists.` };
+
+    const roles = loadSubagentRoles(workspaceRoot);
+    const requestedRole = normalizeRoleName(String(call.arguments.agentType || call.arguments.agent_type || ""));
+    const role = requestedRole ? roles.get(requestedRole) : undefined;
+    if (requestedRole && !role) {
+      return {
+        success: false,
+        error: `Unknown agentType ${requestedRole}.`,
+        data: { availableRoles: Array.from(roles.keys()) },
+      };
+    }
+    const forkTurns = normalizeForkTurns(call.arguments.forkTurns || call.arguments.fork_turns);
+    if (!forkTurns.valid) {
+      return { success: false, error: "forkTurns must be none, all, or a positive integer string." };
+    }
+    const usedNicknames = new Set(this.store.listSubagents(parentThreadId).map((agent) => (agent.agentNickname || "").toLowerCase()).filter(Boolean));
+    const nickname = pickSubagentNickname(role, usedNicknames, taskName);
+    const thread = this.store.getThread(parentThreadId);
+    const parentAgent = this.store.getSubagentByThread(parentThreadId);
+    const agent = this.store.createSubagent({
+      parentThreadId,
+      parentMessageId,
+      workspaceId: thread?.workspaceId ?? null,
+      taskName,
+      agentPath: `${parentAgent?.agentPath || "/root"}/${taskName}`,
+      agentRole: role?.name,
+      agentNickname: nickname,
+      prompt: message,
+      model: typeof call.arguments.model === "string" ? call.arguments.model : settings.model,
+      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || settings.reasoningEffort,
+    });
+    this.startSubagentTurn(agent, workspaceRoot, message, role, forkTurns.value);
+    this.emitSnapshot();
+    return {
+      success: true,
+      output: `Spawned ${formatSubagentLabel(agent)}.`,
+      data: subagentToolData(agent),
+    };
+  }
+
+  private messageSubagent(call: DesktopToolCall, parentThreadId: string, triggerTurn: boolean, workspaceRoot?: string): ToolResult {
+    const target = String(call.arguments.target || "").trim();
+    const message = String(call.arguments.message || "").trim();
+    if (!message) return { success: false, error: "message is required." };
+    const agent = this.store.findSubagent(parentThreadId, target);
+    if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
+    if (agent.status === "closed") return { success: false, error: `${formatSubagentLabel(agent)} is closed.` };
+    this.appendSubagentUserMessage(agent.threadId, message);
+    this.store.updateSubagent(agent.threadId, { status: triggerTurn ? "pending" : agent.status, lastPreview: compactPreview(message, 180) });
+    if (triggerTurn) {
+      const workspace = workspaceRoot || this.store.getWorkspace(agent.workspaceId)?.path;
+      if (!workspace) return { success: false, error: "Workspace not found for subagent." };
+      this.startExistingSubagentTurn(agent, workspace);
+    }
+    this.emitSnapshot();
+    return {
+      success: true,
+      output: `${triggerTurn ? "Assigned task to" : "Sent message to"} ${formatSubagentLabel(agent)}.`,
+      data: subagentToolData(agent),
+    };
+  }
+
+  private async waitForSubagents(call: DesktopToolCall, parentThreadId: string, signal: AbortSignal): Promise<ToolResult> {
+    const startedAt = Date.now();
+    const timeoutMs = Math.max(0, Math.min(120_000, Number(call.arguments.timeoutMs || call.arguments.timeout_ms) || 30_000));
+    const initialAgents = this.store.listSubagents(parentThreadId);
+    if (initialAgents.some((agent) => ["completed", "failed", "stopped", "closed"].includes(agent.status))) {
+      return {
+        success: true,
+        output: subagentStatusSummary(initialAgents),
+        data: { timed_out: false, timedOut: false, agents: initialAgents.map(subagentToolData) },
+      };
+    }
+    while (!signal.aborted && Date.now() - startedAt < timeoutMs) {
+      const agents = this.store.listSubagents(parentThreadId);
+      if (agents.some((agent) => agent.updatedAt > startedAt && !["pending", "running", "waiting"].includes(agent.status))) {
+        return {
+          success: true,
+          output: subagentStatusSummary(agents),
+          data: { timed_out: false, timedOut: false, agents: agents.map(subagentToolData) },
+        };
+      }
+      await delay(500);
+    }
+    const agents = this.store.listSubagents(parentThreadId);
+    return {
+      success: true,
+      output: timeoutMs === 0 ? subagentStatusSummary(agents) : `Wait timed out.\n${subagentStatusSummary(agents)}`,
+      data: { timed_out: timeoutMs > 0, timedOut: timeoutMs > 0, agents: agents.map(subagentToolData) },
+    };
+  }
+
+  private listSubagents(call: DesktopToolCall, parentThreadId: string): ToolResult {
+    const prefix = String(call.arguments.pathPrefix || call.arguments.path_prefix || "").trim();
+    const agents = this.store.listSubagents(parentThreadId)
+      .filter((agent) => !prefix || agent.agentPath.startsWith(prefix));
+    return {
+      success: true,
+      output: subagentStatusSummary(agents),
+      data: { agents: agents.map(subagentToolData) },
+    };
+  }
+
+  private closeSubagent(call: DesktopToolCall, parentThreadId: string): ToolResult {
+    const target = String(call.arguments.target || "").trim();
+    const agent = this.store.findSubagent(parentThreadId, target);
+    if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
+    const descendants = this.store.listSubagents()
+      .filter((candidate) => candidate.agentPath === agent.agentPath || candidate.agentPath.startsWith(`${agent.agentPath}/`));
+    descendants.forEach((candidate) => {
+      const childRun = this.activeRuns.get(candidate.threadId);
+      childRun?.controller.abort();
+      this.store.updateSubagent(candidate.threadId, {
+        status: "closed",
+        closedAt: now(),
+        lastPreview: candidate.finalMessage || candidate.lastPreview || "Closed.",
+      });
+    });
+    const updated = this.store.updateSubagent(agent.threadId, {
+      status: "closed",
+      closedAt: now(),
+      lastPreview: agent.finalMessage || agent.lastPreview || "Closed.",
+    }) || agent;
+    this.emitSnapshot();
+    return {
+      success: true,
+      output: `Closed ${formatSubagentLabel(updated)}.`,
+      data: { ...subagentToolData(updated), previous_status: agent.status },
+    };
   }
 
   private async requestUserInput(
@@ -1064,6 +1265,110 @@ export class AgentRuntime {
       lastProgressAt: timestamp,
       recoveryAttempts: 0,
     };
+  }
+
+  private startSubagentTurn(agent: SubagentRecord, workspaceRoot: string, prompt: string, role?: SubagentRoleConfig, forkTurns = "all") {
+    const timestamp = now();
+    const userMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      threadId: agent.threadId,
+      role: "user",
+      content: prompt,
+      status: "completed",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const assistantMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      threadId: agent.threadId,
+      role: "assistant",
+      content: "",
+      textParts: [],
+      thought: "",
+      thoughtParts: [],
+      status: "running",
+      createdAt: timestamp + 1,
+      updatedAt: timestamp + 1,
+    };
+    this.store.upsertMessage(userMessage);
+    this.store.upsertMessage(assistantMessage);
+    this.store.updateSubagent(agent.threadId, { status: "running", lastPreview: compactPreview(prompt, 180) });
+    this.runSubagentLoop(agent, workspaceRoot, assistantMessage, role, forkTurns);
+  }
+
+  private startExistingSubagentTurn(agent: SubagentRecord, workspaceRoot: string) {
+    if (this.activeRuns.has(agent.threadId)) return;
+    const timestamp = now();
+    const assistantMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      threadId: agent.threadId,
+      role: "assistant",
+      content: "",
+      textParts: [],
+      thought: "",
+      thoughtParts: [],
+      status: "running",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.store.upsertMessage(assistantMessage);
+    this.store.updateSubagent(agent.threadId, { status: "running" });
+    const roles = loadSubagentRoles(workspaceRoot);
+    const role = agent.agentRole ? roles.get(agent.agentRole) : undefined;
+    this.runSubagentLoop(agent, workspaceRoot, assistantMessage, role, "all");
+  }
+
+  private runSubagentLoop(
+    agent: SubagentRecord,
+    workspaceRoot: string,
+    assistantMessage: ChatMessageRecord,
+    role?: SubagentRoleConfig,
+    forkTurns = "all",
+  ) {
+    const controller = new AbortController();
+    const run = this.createRun(agent.threadId, assistantMessage.id, controller);
+    this.activeRuns.set(agent.threadId, run);
+    this.emitRun(run);
+    const history = [
+      subagentInstructionMessage(agent, role, forkTurns),
+      ...buildForkedParentHistory(this.store, agent, forkTurns),
+      ...buildProviderHistory(this.store, agent.threadId, assistantMessage.id),
+    ];
+    void this.continueLoop({
+      threadId: agent.threadId,
+      assistantMessage,
+      workspaceRoot,
+      history,
+      assistantText: "",
+      assistantThought: "",
+      controller,
+      iteration: 0,
+      toolCount: 0,
+      recoveryAttempts: 0,
+      parentThreadId: agent.parentThreadId,
+      model: agent.model,
+      reasoningEffort: agent.reasoningEffort,
+    }).catch((error) => {
+      this.store.updateSubagent(agent.threadId, {
+        status: "failed",
+        finalMessage: errorMessage(error),
+        lastPreview: errorMessage(error),
+      });
+      this.emitSnapshot();
+    });
+  }
+
+  private appendSubagentUserMessage(threadId: string, message: string) {
+    const timestamp = now();
+    this.store.upsertMessage({
+      id: crypto.randomUUID(),
+      threadId,
+      role: "user",
+      content: message,
+      status: "completed",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
   }
 
   private saveCheckpoint(
@@ -1322,12 +1627,25 @@ export class AgentRuntime {
         return `Check ${args.kind || args.command || "workspace"}`;
       case "request_user_input":
         return `Questions`;
+      case "spawn_agent":
+        return `Spawn ${args.taskName || args.task_name || "agent"}`;
+      case "send_message":
+        return `Message ${args.target || "agent"}`;
+      case "assign_task":
+        return `Assign ${args.target || "agent"}`;
+      case "wait_agent":
+        return "Wait for agents";
+      case "list_agents":
+        return "List agents";
+      case "close_agent":
+        return `Close ${args.target || "agent"}`;
       default:
         return call.name;
     }
   }
 
   private categoryForTool(call: DesktopToolCall): ToolEventRecord["category"] {
+    if (isSubagentTool(call.name)) return "agent";
     if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
     if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
     if (call.name === "desktop_run_diagnostics") return "diagnostic";
@@ -1347,6 +1665,12 @@ export class AgentRuntime {
     if (call.name === "desktop_kill_process") return "Stopping process";
     if (call.name === "desktop_run_diagnostics") return "Checking workspace";
     if (call.name === "request_user_input") return "Waiting for answer";
+    if (call.name === "spawn_agent") return "Spawning agent";
+    if (call.name === "send_message") return "Sending to agent";
+    if (call.name === "assign_task") return "Assigning agent";
+    if (call.name === "wait_agent") return "Waiting for agents";
+    if (call.name === "list_agents") return "Listing agents";
+    if (call.name === "close_agent") return "Closing agent";
     if (call.name === "desktop_apply_patch") return "Applying patch";
     if (call.name === "desktop_edit_file") return "Editing file";
     if (call.name === "desktop_write_file") return "Writing file";
@@ -1415,6 +1739,95 @@ const textProviderMessage = (content: string): ProviderMessage => ({
   content,
   parts: [{ type: "text", text: content }],
 });
+
+const subagentInstructionMessage = (agent: SubagentRecord, role: SubagentRoleConfig | undefined, forkTurns: string): ProviderMessage =>
+  textProviderMessage([
+    `You are child agent ${formatSubagentLabel(agent)}.`,
+    `Canonical task name: ${agent.agentPath}.`,
+    `Parent thread: ${agent.parentThreadId}.`,
+    `Context fork mode requested by parent: ${forkTurns || "all"}.`,
+    role ? `Role instructions:\n${role.developerInstructions}` : "",
+    "Complete only the assigned child task. Report findings/results clearly in your final answer for the parent agent to use.",
+  ].filter(Boolean).join("\n\n"));
+
+const buildSubagentRuntimeContext = (agent: SubagentRecord, roles: Map<string, SubagentRoleConfig>) => [
+  "Subagent context:",
+  `- You are ${formatSubagentLabel(agent)}.`,
+  `- Canonical task name: ${agent.agentPath}.`,
+  `- Parent thread: ${agent.parentThreadId}.`,
+  `- Available subagent roles:\n${roleNamesForPrompt(roles)}`,
+  "- Child agents inherit workspace tools and approval rules. Keep work bounded to your assigned task and report final results back to the parent.",
+].join("\n");
+
+const isSubagentTool = (name: string) =>
+  ["spawn_agent", "send_message", "assign_task", "wait_agent", "list_agents", "close_agent"].includes(name);
+
+const normalizeTaskName = (value: string) => {
+  const normalized = value.trim().toLowerCase();
+  return /^[a-z0-9_]+$/.test(normalized) ? normalized : "";
+};
+
+const normalizeForkTurns = (value: unknown): { valid: true; value: string } | { valid: false; value: string } => {
+  const normalized = String(value || "all").trim().toLowerCase();
+  if (normalized === "all" || normalized === "none") return { valid: true, value: normalized };
+  if (/^[1-9]\d*$/.test(normalized)) return { valid: true, value: normalized };
+  return { valid: false, value: normalized };
+};
+
+const buildForkedParentHistory = (store: DesktopStore, agent: SubagentRecord, forkTurns: string): ProviderMessage[] => {
+  if (forkTurns === "none") return [];
+  const parentMessages = store
+    .listMessages(agent.parentThreadId)
+    .filter((message) => message.createdAt <= agent.createdAt);
+  const selected = forkTurns === "all"
+    ? parentMessages
+    : parentMessages.slice(-Number(forkTurns));
+  if (selected.length === 0) return [];
+  const summary = selected
+    .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${compactPreview(message.content, 1200)}`)
+    .join("\n\n");
+  return [textProviderMessage(`Forked parent conversation context for ${agent.agentPath}:\n\n${summary}`)];
+};
+
+const normalizeRoleName = (value: string) =>
+  value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+
+const parseReasoningEffort = (value: unknown) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["none", "low", "medium", "high", "extra_high"].includes(normalized) ? normalized as ReasoningEffort : undefined;
+};
+
+const formatSubagentLabel = (agent: Pick<SubagentRecord, "agentNickname" | "agentRole" | "taskName">) => {
+  const name = agent.agentNickname || agent.taskName || "agent";
+  return agent.agentRole ? `${name} [${agent.agentRole}]` : name;
+};
+
+const subagentToolData = (agent: SubagentRecord) => ({
+  id: agent.id,
+  threadId: agent.threadId,
+  taskName: agent.taskName,
+  task_name: agent.agentPath,
+  agentPath: agent.agentPath,
+  agent_path: agent.agentPath,
+  nickname: agent.agentNickname,
+  role: agent.agentRole,
+  status: agent.status,
+  finalMessage: agent.finalMessage,
+  lastPreview: agent.lastPreview,
+});
+
+const subagentStatusSummary = (agents: SubagentRecord[]) =>
+  agents.length
+    ? agents.map((agent) => `${formatSubagentLabel(agent)}: ${agent.status}${agent.lastPreview ? ` - ${compactPreview(agent.lastPreview, 160)}` : ""}`).join("\n")
+    : "No child agents.";
+
+const compactPreview = (value: string, maxLength: number) => {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length <= maxLength ? compact : `${compact.slice(0, Math.max(0, maxLength - 1))}...`;
+};
+
+const delay = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 const historyHasRecentToolResults = (history: ProviderMessage[]) =>
   history.slice(-3).some((message) => message.parts?.some((part) => part.type === "function_response"));

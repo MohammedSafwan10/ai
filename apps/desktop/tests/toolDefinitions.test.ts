@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desktopToolDefinitions } from "../src/main/agent/tools/definitions";
+import { desktopToolDefinitions, parseDesktopToolCall } from "../src/main/agent/tools/definitions";
 
 describe("desktop tool definitions", () => {
   it("exposes git tools to the model", () => {
@@ -7,5 +7,27 @@ describe("desktop tool definitions", () => {
     expect(names).toContain("desktop_edit_file");
     expect(names).toContain("desktop_git_status");
     expect(names).toContain("desktop_git_diff");
+  });
+
+  it("parses subagent tool calls", () => {
+    const call = parseDesktopToolCall(
+      "spawn_agent",
+      JSON.stringify({
+        taskName: "smoke_test",
+        message: "Inspect the selected workspace and report available tools/status.",
+        agentType: "tester",
+      }),
+      "call-subagent-1",
+    );
+
+    expect(call).toMatchObject({
+      id: "call-subagent-1",
+      name: "spawn_agent",
+      arguments: {
+        taskName: "smoke_test",
+        message: "Inspect the selected workspace and report available tools/status.",
+        agentType: "tester",
+      },
+    });
   });
 });

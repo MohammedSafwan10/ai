@@ -1,18 +1,19 @@
-import { MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Bot, MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import type { ApprovalDecisionScope, ToolEventRecord } from "../../shared/types";
+import type { ApprovalDecisionScope, SubagentRecord, ToolEventRecord } from "../../shared/types";
 import { InlineFileChangeList } from "./InlineDiff";
 
 interface ToolTimelineProps {
   tools: ToolEventRecord[];
+  subagents?: SubagentRecord[];
   messageStatus: string;
   defaultOpen?: boolean;
   onApprove: (callId: string, approved: boolean, scope?: ApprovalDecisionScope) => void;
   onApproveAll: (callIds: string[]) => void;
 }
 
-export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onApprove, onApproveAll }: ToolTimelineProps) {
+export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen = false, onApprove, onApproveAll }: ToolTimelineProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
@@ -102,6 +103,7 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
                 {!hasFileDiffs(tool) && (
                   <ToolTitleLine
                     tool={tool}
+                    subagents={subagents}
                     output={displayOutput(tool)}
                     expanded={expandedOutputIds.has(tool.id)}
                     live={tool.id === currentLiveToolId}
@@ -115,7 +117,7 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
-                {hasUsefulOutput(displayOutput(tool)) && (
+                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool)) && (
                   isTerminalOutputTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
@@ -123,6 +125,10 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
                   ) : isQuestionTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <QuestionAnswerPanel tool={tool} />
+                    )
+                  ) : isSubagentTool(tool) ? (
+                    expandedOutputIds.has(tool.id) && (
+                      <SubagentInspector tool={tool} subagents={subagents} />
                     )
                   ) : (
                     isLiveOutput(tool)
@@ -181,18 +187,20 @@ function LiveOutput({ output }: { output: string }) {
 
 function ToolTitleLine({
   tool,
+  subagents,
   output,
   expanded,
   live,
   onToggle,
 }: {
   tool: ToolEventRecord;
+  subagents: SubagentRecord[];
   output: string;
   expanded: boolean;
   live: boolean;
   onToggle: () => void;
 }) {
-  const canExpand = (isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output);
+  const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool);
   const preview = canExpand && !isQuestionTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
   if (!canExpand) {
     return (
@@ -208,10 +216,58 @@ function ToolTitleLine({
       onClick={onToggle}
       title={expanded ? "Collapse output" : "Expand output"}
     >
-      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : <Terminal size={13} />}
+      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : <Terminal size={13} />}
       <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       {preview && <code>{preview}</code>}
     </button>
+  );
+}
+
+function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagents: SubagentRecord[] }) {
+  const agents = subagentsForTool(tool, subagents);
+  const fallback = subagentRecordFromTool(tool);
+  const visibleAgents = agents.length > 0 ? agents : fallback ? [fallback] : [];
+  if (visibleAgents.length === 0) {
+    return (
+      <div className="subagent-inspector">
+        <p>{displayOutput(tool).trim() || "No subagent details available yet."}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="subagent-inspector">
+      {visibleAgents.map((agent) => {
+        const preview = agent.finalMessage || agent.lastPreview || agent.prompt;
+        return (
+          <section key={agent.id || agent.threadId || agent.agentPath}>
+            <div className="subagent-inspector-head">
+              <span className={clsx("subagent-dot", agent.status)} />
+              <strong>{formatSubagentName(agent)}</strong>
+              <code>{agent.status}</code>
+            </div>
+            <dl>
+              <div>
+                <dt>Path</dt>
+                <dd>{agent.agentPath}</dd>
+              </div>
+              {agent.agentRole && (
+                <div>
+                  <dt>Role</dt>
+                  <dd>{agent.agentRole}</dd>
+                </div>
+              )}
+              <div>
+                <dt>Task</dt>
+                <dd>{agent.prompt}</dd>
+              </div>
+            </dl>
+            {preview && (
+              <pre>{compactSubagentPreview(preview)}</pre>
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
@@ -308,6 +364,15 @@ const primaryToolLabel = (tool: ToolEventRecord) => {
   if (tool.name === "request_user_input") {
     return tool.status === "done" ? "Answered questions" : cleanTitle(tool.title);
   }
+  if (isSubagentTool(tool)) {
+    const label = subagentLabelFromTool(tool);
+    if (tool.name === "spawn_agent") return tool.status === "done" ? `Spawned ${label}` : `Spawning ${label}`;
+    if (tool.name === "send_message") return `Sent input to ${label}`;
+    if (tool.name === "assign_task") return tool.status === "done" ? `Assigned ${label}` : `Assigning ${label}`;
+    if (tool.name === "wait_agent") return tool.status === "done" ? "Finished waiting" : "Waiting for agents";
+    if (tool.name === "list_agents") return "Listed agents";
+    if (tool.name === "close_agent") return `Closed ${label}`;
+  }
   if (tool.diffFiles?.length === 1) {
     const [file] = tool.diffFiles;
     return (
@@ -391,6 +456,116 @@ const answersFromObject = (value: unknown): Record<string, string[]> => {
 
 const isLiveOutput = (tool: ToolEventRecord) =>
   tool.status === "running" || tool.status === "preparing";
+
+const isSubagentTool = (tool: ToolEventRecord) =>
+  ["spawn_agent", "send_message", "assign_task", "wait_agent", "list_agents", "close_agent"].includes(tool.name);
+
+const subagentLabelFromTool = (tool: ToolEventRecord) => {
+  const data = tool.result?.data || {};
+  const nickname = typeof data.nickname === "string" ? data.nickname : "";
+  const role = typeof data.role === "string" ? data.role : "";
+  const taskName = typeof data.taskName === "string" ? data.taskName : String(tool.args.taskName || tool.args.task_name || tool.args.target || "agent");
+  const base = nickname || taskName;
+  return role ? `${base} [${role}]` : base;
+};
+
+const subagentRecordFromTool = (tool: ToolEventRecord): SubagentRecord | null => {
+  const data = tool.result?.data || {};
+  const threadId = stringValue(data.threadId);
+  const taskName = stringValue(data.taskName) || stringValue(tool.args.taskName) || stringValue(tool.args.task_name) || stringValue(tool.args.target) || "agent";
+  const agentPath = stringValue(data.agentPath) || stringValue(data.agent_path) || stringValue(data.task_name) || taskName;
+  return {
+    id: stringValue(data.id) || threadId || agentPath,
+    parentThreadId: tool.threadId,
+    parentMessageId: tool.messageId,
+    threadId: threadId || "",
+    workspaceId: null,
+    taskName,
+    agentPath,
+    agentRole: stringValue(data.role) || undefined,
+    agentNickname: stringValue(data.nickname) || undefined,
+    prompt: stringValue(tool.args.message) || stringValue(data.prompt) || "",
+    model: undefined,
+    reasoningEffort: undefined,
+    status: normalizeSubagentStatus(data.status),
+    finalMessage: stringValue(data.finalMessage) || undefined,
+    lastPreview: stringValue(data.lastPreview) || displayOutput(tool) || undefined,
+    createdAt: tool.createdAt,
+    updatedAt: tool.updatedAt,
+  };
+};
+
+const subagentsForTool = (tool: ToolEventRecord, subagents: SubagentRecord[]) => {
+  const data = tool.result?.data || {};
+  const listed = Array.isArray(data.agents)
+    ? data.agents.flatMap((item) => subagentRecordFromRaw(item, tool) || [])
+    : [];
+  if (listed.length > 0) return listed;
+  const ids = new Set([
+    stringValue(data.id),
+    stringValue(data.threadId),
+    stringValue(data.agentPath),
+    stringValue(data.agent_path),
+    stringValue(data.taskName),
+    stringValue(data.task_name),
+    stringValue(tool.args.taskName),
+    stringValue(tool.args.task_name),
+    stringValue(tool.args.target),
+  ].filter(Boolean));
+  return subagents.filter((agent) =>
+    ids.has(agent.id) ||
+    ids.has(agent.threadId) ||
+    ids.has(agent.taskName) ||
+    ids.has(agent.agentPath) ||
+    Boolean(agent.agentNickname && ids.has(agent.agentNickname))
+  );
+};
+
+const subagentRecordFromRaw = (value: unknown, tool: ToolEventRecord): SubagentRecord | null => {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Record<string, unknown>;
+  const taskName = stringValue(data.taskName) || stringValue(data.task_name) || "agent";
+  const agentPath = stringValue(data.agentPath) || stringValue(data.agent_path) || stringValue(data.task_name) || taskName;
+  return {
+    id: stringValue(data.id) || stringValue(data.threadId) || agentPath,
+    parentThreadId: tool.threadId,
+    parentMessageId: tool.messageId,
+    threadId: stringValue(data.threadId) || "",
+    workspaceId: null,
+    taskName,
+    agentPath,
+    agentRole: stringValue(data.role) || undefined,
+    agentNickname: stringValue(data.nickname) || undefined,
+    prompt: stringValue(data.prompt) || "",
+    model: undefined,
+    reasoningEffort: undefined,
+    status: normalizeSubagentStatus(data.status),
+    finalMessage: stringValue(data.finalMessage) || undefined,
+    lastPreview: stringValue(data.lastPreview) || undefined,
+    createdAt: tool.createdAt,
+    updatedAt: tool.updatedAt,
+  };
+};
+
+const normalizeSubagentStatus = (value: unknown): SubagentRecord["status"] => {
+  const status = stringValue(value);
+  return ["pending", "running", "waiting", "completed", "failed", "stopped", "closed"].includes(status)
+    ? status as SubagentRecord["status"]
+    : "pending";
+};
+
+const formatSubagentName = (agent: SubagentRecord) => {
+  const base = agent.agentNickname || agent.taskName || "agent";
+  return agent.agentRole ? `${base} [${agent.agentRole}]` : base;
+};
+
+const compactSubagentPreview = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.length <= 1600 ? trimmed : `${trimmed.slice(0, 1599)}...`;
+};
+
+const stringValue = (value: unknown) =>
+  typeof value === "string" ? value.trim() : "";
 
 const isActiveMessageStatus = (status: string) =>
   [

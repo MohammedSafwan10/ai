@@ -79,6 +79,66 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
+    name: "spawn_agent",
+    description: "Spawn a same-workspace child agent for bounded parallel work. Use when delegation materially helps, and use a harmless researcher/tester workspace-inspection task when the user explicitly asks to spawn/test a subagent but leaves the task vague. The child inherits Privora workspace tools and approval rules.",
+    parameters: schema({
+      taskName: textProperty("Canonical task name using lowercase letters, digits, and underscores."),
+      task_name: textProperty("Alias for taskName."),
+      message: textProperty("Initial task message for the child agent."),
+      agentType: textProperty("Optional configured role name such as researcher, reviewer, tester, or implementer."),
+      agent_type: textProperty("Alias for agentType."),
+      forkTurns: textProperty("Context fork mode: all, none, or a positive integer string. Default all."),
+      fork_turns: textProperty("Alias for forkTurns."),
+      model: textProperty("Optional model override. Omit to inherit current model."),
+      reasoningEffort: textProperty("Optional reasoning effort override. Omit to inherit current setting."),
+    }, ["taskName", "message"]),
+  },
+  {
+    type: "function",
+    name: "send_message",
+    description: "Send a text message to an existing child agent. This queues the message but does not force a new turn.",
+    parameters: schema({
+      target: textProperty("Child task name, canonical agent path, nickname, id, or thread id."),
+      message: textProperty("Message text to queue on the target agent."),
+    }, ["target", "message"]),
+  },
+  {
+    type: "function",
+    name: "assign_task",
+    description: "Send a text message to an existing child agent and start its next turn if it is idle.",
+    parameters: schema({
+      target: textProperty("Child task name, canonical agent path, nickname, id, or thread id."),
+      message: textProperty("Task text to assign to the target agent."),
+    }, ["target", "message"]),
+  },
+  {
+    type: "function",
+    name: "wait_agent",
+    description: "Wait briefly for any child agent mailbox or status update. Do useful local work between waits instead of polling repeatedly.",
+    parameters: schema({
+      timeoutMs: numberProperty("Optional wait timeout in milliseconds. Default 30000, max 120000."),
+      timeout_ms: numberProperty("Alias for timeoutMs."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "list_agents",
+    description: "List child agents spawned from the current parent thread.",
+    parameters: schema({
+      pathPrefix: textProperty("Optional canonical path prefix filter."),
+      path_prefix: textProperty("Alias for pathPrefix."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "close_agent",
+    description: "Close a child agent and stop any active child turn. The main/root thread cannot be closed.",
+    parameters: schema({
+      target: textProperty("Child task name, canonical agent path, nickname, id, or thread id."),
+    }, ["target"]),
+  },
+  {
+    type: "function",
     name: "desktop_read_file",
     description: "Read a workspace file with metadata. Supports line ranges, line numbers, truncation, hashing, and binary detection.",
     parameters: schema({
@@ -287,7 +347,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }
