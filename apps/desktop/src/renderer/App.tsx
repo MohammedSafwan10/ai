@@ -35,6 +35,7 @@ export default function App() {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const followBottomRef = useRef(true);
   const manualScrollHoldUntilRef = useRef(0);
+  const userScrollLockRef = useRef(false);
   const programmaticScrollRef = useRef(false);
   const queuedSubmitInFlightRef = useRef(false);
   const runStatus = snapshot.activeRun?.status;
@@ -71,6 +72,7 @@ export default function App() {
 
   const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
     followBottomRef.current = true;
+    userScrollLockRef.current = false;
     manualScrollHoldUntilRef.current = 0;
     window.requestAnimationFrame(() => {
       programmaticScrollRef.current = true;
@@ -122,6 +124,10 @@ export default function App() {
 
   useEffect(() => {
     if (settingsOpen) return;
+    if (userScrollLockRef.current) {
+      setShowJumpButton((value) => value ? value : true);
+      return;
+    }
     if (Date.now() < manualScrollHoldUntilRef.current) {
       setShowJumpButton((value) => value ? value : true);
       return;
@@ -146,6 +152,7 @@ export default function App() {
 
   useEffect(() => {
     if (settingsOpen) return;
+    if (userScrollLockRef.current) return;
     scrollToLatestMessage();
   }, [activeThread?.id, settingsOpen, messages.length]);
 
@@ -342,6 +349,7 @@ export default function App() {
           ref={scrollerRef}
           onWheel={(event) => {
             if (event.deltaY < 0) {
+              userScrollLockRef.current = true;
               manualScrollHoldUntilRef.current = Date.now() + 1200;
               followBottomRef.current = false;
             }
@@ -354,6 +362,16 @@ export default function App() {
             if (!scroller) return;
             const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
             if (!programmaticScrollRef.current) {
+              if (userScrollLockRef.current) {
+                if (distance < 24 && Date.now() >= manualScrollHoldUntilRef.current) {
+                  userScrollLockRef.current = false;
+                  followBottomRef.current = true;
+                } else {
+                  followBottomRef.current = false;
+                  setShowJumpButton((value) => value || distance > 96);
+                  return;
+                }
+              }
               followBottomRef.current = distance < 96;
               if (distance >= 96) manualScrollHoldUntilRef.current = Date.now() + 900;
             }
