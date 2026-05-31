@@ -1,4 +1,4 @@
-import { ChevronRight, Folder, FolderOpen, MessageSquarePlus, MoreHorizontal, PanelLeft, PanelLeftClose, Pencil, Search, Star, Trash2 } from "lucide-react";
+import { ChevronRight, Edit3, Folder, FolderOpen, Menu, MoreHorizontal, Pencil, Search, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ActiveRunState, ThreadRecord, WorkspaceRecord } from "../../shared/types";
@@ -63,13 +63,13 @@ export function Sidebar({
           <strong>Privora</strong>
         </div>
         <button className="sidebar-collapse" onClick={onToggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-          {collapsed ? <PanelLeft size={15} /> : <PanelLeftClose size={15} />}
+          <Menu size={16} />
         </button>
       </div>
 
       <div className="sidebar-top-actions">
         <button onClick={onNewThread} title="New chat">
-          <MessageSquarePlus size={16} />
+          <Edit3 size={16} />
           <span>New chat</span>
         </button>
         <label className="sidebar-search">

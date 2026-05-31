@@ -15,7 +15,7 @@
   align-items: center;
   gap: 9px;
   min-height: 34px;
-  padding: 2px 8px 10px;
+  padding: 2px 8px 10px 48px;
 }
 
 .brand strong,
@@ -35,18 +35,23 @@
 }
 
 .sidebar-collapse {
+  position: absolute;
+  top: 16px;
+  left: 18px;
   display: grid;
-  width: 28px;
-  height: 28px;
-  margin-left: auto;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--privora-muted);
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 
 .sidebar-collapse:hover {
-  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+  border-color: color-mix(in srgb, var(--privora-border) 52%, transparent);
+  background: color-mix(in srgb, var(--privora-user-bubble) 46%, transparent);
   color: var(--privora-text);
 }
 
@@ -106,12 +111,6 @@ small {
 .sidebar-collapsed .project-list,
 .sidebar-collapsed .empty-project {
   display: none;
-}
-
-.sidebar-collapsed .sidebar-collapse {
-  position: absolute;
-  top: 14px;
-  margin-left: 0;
 }
 
 .sidebar-collapsed .sidebar-top-actions,
