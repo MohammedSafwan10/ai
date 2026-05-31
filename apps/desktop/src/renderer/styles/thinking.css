@@ -121,6 +121,11 @@
   opacity: 0.8;
 }
 
+.typing-indicator:not(.animating) .typing-core {
+  fill: var(--privora-text);
+  opacity: 0.88;
+}
+
 .typing-indicator.animating .typing-core {
   animation: typing-core-pulse 2s ease-in-out infinite;
 }
@@ -147,6 +152,11 @@
 
 .typing-indicator:not(.animating) .typing-trail {
   opacity: 0;
+}
+
+.typing-indicator:not(.animating) .typing-track {
+  stroke: var(--privora-text);
+  opacity: 0.82;
 }
 
 .typing-indicator.animating .typing-trail {
