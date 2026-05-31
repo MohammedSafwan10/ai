@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, Pencil, Play, X } from "lucide-react";
+import { ArrowDown, Bug, FileSearch, GitBranch, Pencil, Play, Terminal, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -350,10 +350,14 @@ export default function App() {
           }}
         >
           {messages.length === 0 && (
-            <div className="empty-state">
-              <h2>Local coding agent, clean room.</h2>
-              <p>Select a workspace and ask for a real repo task. Privora will read files, patch code, run commands, and pause for risky actions.</p>
-            </div>
+            <EmptyThreadState
+              workspaceName={activeWorkspace?.name || null}
+              workspacePath={activeWorkspace?.path || null}
+              disabled={!activeThread || !activeWorkspace}
+              onPrompt={(text) => {
+                setComposerDraft({ id: Date.now(), text });
+              }}
+            />
           )}
           {messages.length > 0 && (
             <div className="virtual-message-spacer" style={{ height: `${messageVirtualizer.getTotalSize()}px` }}>
@@ -541,6 +545,67 @@ export default function App() {
         {toast && <div className="toast">{toast}</div>}
       </main>
       <ReviewPanel tools={reviewTools} open={Boolean(reviewMessageId)} onClose={() => setReviewMessageId(null)} />
+    </div>
+  );
+}
+
+function EmptyThreadState({
+  workspaceName,
+  workspacePath,
+  disabled,
+  onPrompt,
+}: {
+  workspaceName: string | null;
+  workspacePath: string | null;
+  disabled: boolean;
+  onPrompt: (text: string) => void;
+}) {
+  const promptCards = [
+    {
+      icon: <FileSearch size={17} />,
+      title: "Inspect",
+      prompt: "Inspect this workspace and tell me the architecture, main entry points, and the safest first improvements.",
+    },
+    {
+      icon: <Bug size={17} />,
+      title: "Find risks",
+      prompt: "Review this codebase for bugs, risky behavior, and missing tests. Prioritize findings by severity with file references.",
+    },
+    {
+      icon: <Terminal size={17} />,
+      title: "Run checks",
+      prompt: "Find the project diagnostics, run the safest relevant checks, and summarize failures with exact next fixes.",
+    },
+    {
+      icon: <GitBranch size={17} />,
+      title: "Review changes",
+      prompt: "Check the current git changes, explain what changed, and flag anything unsafe before commit.",
+    },
+  ];
+
+  return (
+    <div className="empty-state">
+      <div className="empty-state-header">
+        <span className="empty-state-kicker">
+          {workspaceName ? workspaceName : "No project selected"}
+        </span>
+        <h2>{workspaceName ? "What should Privora do first?" : "Open a project to start."}</h2>
+        {workspacePath && <p>{workspacePath}</p>}
+      </div>
+
+      <div className="empty-prompt-grid">
+        {promptCards.map((card) => (
+          <button
+            type="button"
+            key={card.title}
+            disabled={disabled}
+            onClick={() => onPrompt(card.prompt)}
+          >
+            {card.icon}
+            <span>{card.title}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

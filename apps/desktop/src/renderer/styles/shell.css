@@ -478,25 +478,101 @@
 }
 
 .empty-state {
-  max-width: 660px;
-  margin: 14vh auto 0;
-  border-top: 1px solid var(--privora-border);
-  padding-top: 24px;
+  display: grid;
+  width: min(780px, calc(100% - 52px));
+  max-width: 780px;
+  margin: 9vh auto 0;
+  gap: 18px;
+  border-top: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  padding-top: 22px;
+}
+
+.empty-state-header {
+  display: grid;
+  gap: 8px;
+}
+
+.empty-state-kicker {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .empty-state h2 {
-  margin: 0 0 10px;
+  margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(26px, 3.1vw, 38px);
+  font-size: clamp(25px, 3vw, 36px);
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1.08;
 }
 
 .empty-state p {
-  max-width: 680px;
+  overflow: hidden;
+  max-width: 100%;
+  margin: 0;
   color: var(--privora-muted);
-  font-size: 0.92rem;
-  line-height: 1.68;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-prompt-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.empty-prompt-grid button {
+  display: grid;
+  min-height: 82px;
+  align-content: center;
+  justify-items: start;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 58%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  padding: 13px;
+  text-align: left;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.14s ease;
+}
+
+.empty-prompt-grid button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--privora-border) 82%, transparent);
+  background: color-mix(in srgb, var(--privora-user-bubble) 38%, transparent);
+  color: var(--privora-text);
+  transform: translateY(-1px);
+}
+
+.empty-prompt-grid button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.empty-prompt-grid span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+@media (max-width: 920px) {
+  .empty-prompt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .empty-state {
+    width: min(100%, calc(100% - 22px));
+    margin-top: 5vh;
+  }
+
+  .empty-prompt-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
