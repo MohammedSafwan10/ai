@@ -4,9 +4,9 @@ import type { DesktopStore } from "../db/store";
 import type { ContextMentionRecord, ContextMentionSuggestion } from "../../shared/types";
 import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../security/pathSandbox";
 import { compactTextForModel } from "../terminal/outputBuffer";
+import { searchWorkspaceIndex } from "./workspaceIndex";
 
 const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", "out", ".vite", ".next", ".turbo"]);
-const MAX_SUGGESTION_WALK = 700;
 const MAX_SUGGESTIONS = 18;
 const MAX_FILE_CONTEXT_CHARS = 50_000;
 const MAX_FOLDER_TREE_LINES = 120;
@@ -60,13 +60,13 @@ export const searchContextMentions = async (
   const kind = parsed.kind;
   if (!kind) return [];
   const root = resolveWorkspacePath(workspace.path, ".");
-  const entries = await walkWorkspace(root.absolutePath, parsed.search, kind);
+  const entries = await searchWorkspaceIndex(root.absolutePath, parsed.search, kind, MAX_SUGGESTIONS);
   return entries.slice(0, MAX_SUGGESTIONS).map((entry) => ({
-    id: `${kind}:${entry.relativePath}`,
+    id: `${kind}:${entry.path}`,
     type: kind,
-    label: path.basename(entry.relativePath) || entry.relativePath,
-    sublabel: entry.relativePath,
-    path: entry.relativePath,
+    label: path.basename(entry.path) || entry.path,
+    sublabel: entry.path,
+    path: entry.path,
   }));
 };
 
@@ -118,32 +118,6 @@ const parseMentionQuery = (query: string): { kind: MentionKind | null; search: s
   if (!match) return { kind: null, search: query };
   return { kind: match[1] as MentionKind, search: match[2]?.trim() || "" };
 };
-
-const walkWorkspace = async (root: string, search: string, kind: "file" | "folder") => {
-  const results: Array<{ relativePath: string }> = [];
-  let visited = 0;
-  const normalizedSearch = search.replace(/\\/g, "/").toLowerCase();
-  const walk = async (dir: string, rel: string, depth: number) => {
-    if (visited > MAX_SUGGESTION_WALK || depth > 7) return;
-    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (visited > MAX_SUGGESTION_WALK) return;
-      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue;
-      const nextRel = rel ? path.join(rel, entry.name) : entry.name;
-      const display = nextRel.replace(/\\/g, "/");
-      visited += 1;
-      if ((kind === "folder" ? entry.isDirectory() : entry.isFile()) && matchesSearch(display, normalizedSearch)) {
-        results.push({ relativePath: display });
-      }
-      if (entry.isDirectory()) await walk(path.join(dir, entry.name), nextRel, depth + 1);
-    }
-  };
-  await walk(root, "", 0);
-  return results;
-};
-
-const matchesSearch = (value: string, search: string) =>
-  !search || value.toLowerCase().includes(search);
 
 const readFileContext = async (filePath: string) => {
   const stat = await fs.stat(filePath);
