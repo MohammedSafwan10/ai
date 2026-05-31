@@ -71,9 +71,7 @@ function ChatMessageComponent({
   useEffect(() => {
     if (runActive || activityNeedsAttention) {
       setActivityOpen(true);
-      return;
     }
-    setActivityOpen(false);
   }, [activityNeedsAttention, runActive]);
   const [copied, setCopied] = useState(false);
   const showCopyFeedback = () => {
