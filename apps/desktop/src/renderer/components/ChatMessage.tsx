@@ -527,10 +527,23 @@ function ProposedPlanCard({
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
       {!actionsHidden && (
         <div className="proposed-plan-actions" aria-label="Plan actions">
-          <button type="button" className="primary" onClick={() => onImplementPlan?.(text)}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              setActionsHidden(true);
+              onImplementPlan?.(text);
+            }}
+          >
             Implement plan
           </button>
-          <button type="button" onClick={() => onSuggestPlanChanges?.(text)}>
+          <button
+            type="button"
+            onClick={() => {
+              setActionsHidden(true);
+              onSuggestPlanChanges?.(text);
+            }}
+          >
             Suggest changes
           </button>
           <button type="button" onClick={() => setActionsHidden(true)}>

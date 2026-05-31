@@ -1,4 +1,4 @@
-import { Loader2, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Loader2, MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, ToolEventRecord } from "../../shared/types";
@@ -115,6 +115,10 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
                     expandedOutputIds.has(tool.id) && (
                       <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
                     )
+                  ) : isQuestionTool(tool) ? (
+                    expandedOutputIds.has(tool.id) && (
+                      <QuestionAnswerPanel tool={tool} />
+                    )
                   ) : (
                     isLiveOutput(tool)
                       ? <LiveOutput output={displayOutput(tool).slice(-9000)} />
@@ -183,8 +187,8 @@ function ToolTitleLine({
   live: boolean;
   onToggle: () => void;
 }) {
-  const canExpand = isTerminalOutputTool(tool) && hasUsefulOutput(output);
-  const preview = canExpand ? compactOutputPreview(output.trimEnd()) : "";
+  const canExpand = (isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output);
+  const preview = canExpand && !isQuestionTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
   if (!canExpand) {
     return (
       <div className="tool-title-line">
@@ -199,7 +203,7 @@ function ToolTitleLine({
       onClick={onToggle}
       title={expanded ? "Collapse output" : "Expand output"}
     >
-      <Terminal size={13} />
+      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : <Terminal size={13} />}
       <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       {preview && <code>{preview}</code>}
     </button>
@@ -219,6 +223,38 @@ function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: 
 
 function TerminalStats({ tool }: { tool: ToolEventRecord }) {
   return null;
+}
+
+function QuestionAnswerPanel({ tool }: { tool: ToolEventRecord }) {
+  const questions = normalizeQuestionArgs(tool.args.questions);
+  const answers = normalizeAnswerResult(tool.result?.data, tool.result?.output || tool.output || "");
+  const ids = Array.from(new Set([...questions.map((question) => question.id), ...Object.keys(answers)]));
+  if (ids.length === 0) {
+    return (
+      <div className="question-answer-panel">
+        <pre>{displayOutput(tool).trim() || "(no answers)"}</pre>
+      </div>
+    );
+  }
+  return (
+    <div className="question-answer-panel">
+      {ids.map((id, index) => {
+        const question = questions.find((item) => item.id === id);
+        const selected = answers[id] || [];
+        return (
+          <section key={id || index}>
+            <small>{question?.header || id || `Question ${index + 1}`}</small>
+            {question?.question && <p>{question.question}</p>}
+            <div className="question-answer-values">
+              {selected.length > 0 ? selected.map((answer) => (
+                <span key={answer}>{answer}</span>
+              )) : <span>No answer</span>}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
 }
 
 const liveLineClass = (line: string) => {
@@ -243,6 +279,9 @@ const isTerminalOutputTool = (tool: ToolEventRecord) =>
     "desktop_git_status",
     "desktop_git_diff",
   ].includes(tool.name);
+
+const isQuestionTool = (tool: ToolEventRecord) =>
+  tool.name === "request_user_input";
 
 const compactOutputPreview = (output: string) => {
   const line = output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1) || "";
@@ -309,6 +348,41 @@ const hasUsefulOutput = (output?: string) => {
 
 const displayOutput = (tool: ToolEventRecord) =>
   tool.output || tool.result?.output || tool.result?.error || "";
+
+const normalizeQuestionArgs = (value: unknown): Array<{ id: string; header: string; question: string }> => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return [{
+      id: String(record.id || ""),
+      header: String(record.header || ""),
+      question: String(record.question || ""),
+    }];
+  });
+};
+
+const normalizeAnswerResult = (data: unknown, output: string): Record<string, string[]> => {
+  const fromData = answersFromObject(data);
+  if (Object.keys(fromData).length > 0) return fromData;
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    return answersFromObject(parsed);
+  } catch {
+    return {};
+  }
+};
+
+const answersFromObject = (value: unknown): Record<string, string[]> => {
+  const root = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const answers = root.answers && typeof root.answers === "object" ? root.answers as Record<string, unknown> : root;
+  return Object.fromEntries(Object.entries(answers).flatMap(([id, raw]) => {
+    if (!raw || typeof raw !== "object") return [];
+    const answerValues = (raw as Record<string, unknown>).answers;
+    if (!Array.isArray(answerValues)) return [];
+    return [[id, answerValues.map((item) => String(item)).filter(Boolean)]];
+  }));
+};
 
 const isLiveOutput = (tool: ToolEventRecord) =>
   tool.status === "running" || tool.status === "preparing";
