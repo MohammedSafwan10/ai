@@ -4,6 +4,8 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high" | "extra_high";
 
 export type PermissionMode = "ask_risky" | "yolo";
 
+export type CollaborationMode = "default" | "plan";
+
 export interface ModelOption {
   id: string;
   label: string;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CollaborationMode } from "../../../shared/models";
 import type { DesktopToolCall, DesktopToolName } from "../../../shared/types";
 
 const textProperty = (description: string) => ({ type: "string", description });
@@ -27,6 +28,38 @@ const editOperationsProperty = (description: string) => ({
   },
 });
 
+const requestUserInputOptionsProperty = (description: string) => ({
+  type: "array",
+  description,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      label: textProperty("User-facing label, ideally 1-5 words."),
+      description: textProperty("One short sentence explaining impact or tradeoff if selected."),
+    },
+    required: ["label", "description"],
+  },
+});
+
+const requestUserInputQuestionsProperty = (description: string) => ({
+  type: "array",
+  description,
+  minItems: 1,
+  maxItems: 3,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      id: textProperty("Stable snake_case identifier for mapping answers."),
+      header: textProperty("Short header label shown in the UI, 12 or fewer characters."),
+      question: textProperty("Single-sentence prompt shown to the user."),
+      options: requestUserInputOptionsProperty("Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with (Recommended). Do not include Other; Privora adds it."),
+    },
+    required: ["id", "header", "question", "options"],
+  },
+});
+
 const schema = (properties: Record<string, unknown>, required: string[]) => ({
   type: "object",
   additionalProperties: false,
@@ -35,6 +68,15 @@ const schema = (properties: Record<string, unknown>, required: string[]) => ({
 });
 
 export const desktopToolDefinitions = [
+  {
+    type: "function",
+    name: "request_user_input",
+    planOnly: true,
+    description: "Request user input for one to three short Plan Mode questions and wait for the response. Use only when an important planning decision cannot be discovered from the workspace.",
+    parameters: schema({
+      questions: requestUserInputQuestionsProperty("Questions to show the user. Prefer 1 and do not exceed 3."),
+    }, ["questions"]),
+  },
   {
     type: "function",
     name: "desktop_read_file",
@@ -196,7 +238,15 @@ export const desktopToolDefinitions = [
   },
 ] as const;
 
-export const openRouterDesktopTools = desktopToolDefinitions.map((tool) => ({
+export const desktopToolDefinitionsForMode = (mode: CollaborationMode = "default") =>
+  desktopToolDefinitions
+    .filter((tool) => mode === "plan" || !("planOnly" in tool && tool.planOnly))
+    .map((tool) => {
+      const { planOnly: _planOnly, ...rest } = tool as typeof tool & { planOnly?: boolean };
+      return rest;
+    });
+
+export const openRouterDesktopTools = (mode: CollaborationMode = "default") => desktopToolDefinitionsForMode(mode).map((tool) => ({
   type: "function",
   function: {
     name: tool.name,
@@ -205,7 +255,7 @@ export const openRouterDesktopTools = desktopToolDefinitions.map((tool) => ({
   },
 }));
 
-export const geminiDesktopFunctionDeclarations = desktopToolDefinitions.map((tool) => ({
+export const geminiDesktopFunctionDeclarations = (mode: CollaborationMode = "default") => desktopToolDefinitionsForMode(mode).map((tool) => ({
   name: tool.name,
   description: tool.description,
   parametersJsonSchema: tool.parameters,

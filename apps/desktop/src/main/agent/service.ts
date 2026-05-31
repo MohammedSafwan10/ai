@@ -1,10 +1,11 @@
-import type { ApprovalDecisionInput, StartTurnInput } from "../../shared/types";
+import type { ApprovalDecisionInput, RequestUserInputResponseInput, StartTurnInput } from "../../shared/types";
 import type { AgentRuntime } from "./runtime";
 
 export interface AgentService {
   startTurn(input: StartTurnInput): Promise<void>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): void;
+  answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
   getActiveRun(threadId: string): ReturnType<AgentRuntime["getActiveRun"]>;
   listActiveRuns(): ReturnType<AgentRuntime["listActiveRuns"]>;
@@ -23,6 +24,10 @@ export class InProcessAgentService implements AgentService {
 
   stopTurn(threadId: string) {
     this.runtime.stopTurn(threadId);
+  }
+
+  answerRequestUserInput(input: RequestUserInputResponseInput) {
+    return this.runtime.answerRequestUserInput(input);
   }
 
   decideApproval(input: ApprovalDecisionInput) {

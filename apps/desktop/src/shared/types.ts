@@ -1,4 +1,4 @@
-import type { PermissionMode, ReasoningEffort } from "./models";
+import type { CollaborationMode, PermissionMode, ReasoningEffort } from "./models";
 
 export type MessageRole = "user" | "assistant";
 
@@ -74,6 +74,7 @@ export interface SettingsRecord {
   model: string;
   reasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
+  collaborationMode: CollaborationMode;
   theme: "light" | "dark" | "system";
   cliproxyBaseUrl: string;
   openRouterApiKeyStored: boolean;
@@ -164,6 +165,7 @@ export type ToolEventCategory =
   | "terminal"
   | "diagnostic"
   | "git"
+  | "question"
   | "approval"
   | "other";
 
@@ -402,6 +404,7 @@ export interface ActiveRunState {
 }
 
 export type DesktopToolName =
+  | "request_user_input"
   | "desktop_read_file"
   | "desktop_edit_file"
   | "desktop_write_file"
@@ -432,6 +435,37 @@ export interface ToolResult {
   data?: Record<string, unknown>;
 }
 
+export interface RequestUserInputOptionRecord {
+  label: string;
+  description: string;
+}
+
+export interface RequestUserInputQuestionRecord {
+  id: string;
+  header: string;
+  question: string;
+  isOther?: boolean;
+  options: RequestUserInputOptionRecord[];
+}
+
+export interface RequestUserInputRequestRecord {
+  threadId: string;
+  assistantMessageId: string;
+  callId: string;
+  questions: RequestUserInputQuestionRecord[];
+  createdAt: number;
+}
+
+export interface RequestUserInputAnswerRecord {
+  answers: string[];
+}
+
+export interface RequestUserInputResponseInput {
+  threadId: string;
+  callId: string;
+  answers: Record<string, RequestUserInputAnswerRecord>;
+}
+
 export interface DesktopEventMeta {
   sequence?: number;
   emittedAt?: number;
@@ -442,6 +476,8 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "message_updated"; message: ChatMessageRecord }
   | { type: "tool_updated"; tool: ToolEventRecord }
   | { type: "turn_undo_updated"; undo: TurnUndoRecord }
+  | { type: "request_user_input"; request: RequestUserInputRequestRecord }
+  | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }
   | { type: "run_state"; threadId: string; run: ActiveRunState | null }
   | { type: "toast"; tone: "info" | "error" | "success"; message: string }
@@ -474,6 +510,7 @@ export interface SaveSettingsInput {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   permissionMode?: PermissionMode;
+  collaborationMode?: CollaborationMode;
   theme?: "light" | "dark" | "system";
   cliproxyBaseUrl?: string;
   openRouterApiKey?: string;
@@ -492,6 +529,7 @@ export interface PrivoraDesktopApi {
   startTurn(input: StartTurnInput): Promise<void>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): Promise<void>;
+  answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
   prepareTurnUndo(input: PrepareTurnUndoInput): Promise<TurnUndoRecord | null>;
   undoTurnChanges(input: UndoTurnChangesInput): Promise<TurnUndoRecord | null>;

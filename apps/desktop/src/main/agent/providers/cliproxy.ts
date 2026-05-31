@@ -1,5 +1,5 @@
 import {
-  desktopToolDefinitions,
+  desktopToolDefinitionsForMode,
   parseDesktopToolCall,
   parsePartialDesktopToolCall,
 } from "../tools/definitions";
@@ -88,12 +88,12 @@ const completedFunctionCall = (event: string | undefined, data: any) => {
   const item = candidates.find((candidate) =>
     candidate &&
     typeof candidate?.arguments === "string" &&
-    (candidate?.name?.startsWith?.("desktop_") || candidate?.type === "function_call")
+    (candidate?.name?.startsWith?.("desktop_") || candidate?.name === "request_user_input" || candidate?.type === "function_call")
   );
   const name = item?.name || data?.name;
   const argumentsText = item?.arguments || data?.arguments;
   if (!type.includes("function_call") && item?.type !== "function_call") return null;
-  if (typeof name !== "string" || !name.startsWith("desktop_")) return null;
+  if (typeof name !== "string" || (!name.startsWith("desktop_") && name !== "request_user_input")) return null;
   if (typeof argumentsText !== "string") return null;
   return { id: item?.call_id || data?.call_id || item?.id || data?.id, name, argumentsText };
 };
@@ -114,7 +114,7 @@ export class CliproxyAdapter implements ProviderAdapter {
           : options.model,
         instructions: options.systemInstruction,
         input: toInput(options.messages),
-        tools: desktopToolDefinitions,
+        tools: desktopToolDefinitionsForMode(options.collaborationMode),
         parallel_tool_calls: true,
         ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),
         stream: true,
@@ -151,7 +151,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         const key = keyFor(data);
         const previous = buffers.get(key) || { argumentsText: "" };
         const itemName = data?.item?.name || data?.output_item?.name || data?.name;
-        const name = typeof itemName === "string" && itemName.startsWith("desktop_")
+        const name = typeof itemName === "string" && (itemName.startsWith("desktop_") || itemName === "request_user_input")
           ? itemName
           : previous.name;
         const itemId = data?.item?.call_id || data?.output_item?.call_id || data?.call_id || data?.item?.id || data?.output_item?.id || data?.id;

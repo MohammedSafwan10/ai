@@ -9,6 +9,7 @@ import type {
   ToolEventRecord,
   TurnUndoRecord,
   WorkspaceRecord,
+  RequestUserInputRequestRecord,
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID } from "../../shared/models";
 
@@ -17,6 +18,7 @@ const emptySettings: SettingsRecord = {
   model: GEMINI_35_FLASH_MODEL_ID,
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
+  collaborationMode: "default",
   theme: "system",
   cliproxyBaseUrl: "http://127.0.0.1:8317",
   openRouterApiKeyStored: false,
@@ -45,6 +47,8 @@ type DesktopUiSnapshot = AppSnapshot & {
   toolEventsByThread: ThreadBuckets<ToolEventRecord>;
   turnUndosByThread: ThreadBuckets<TurnUndoRecord>;
   activeRunsByThread: Record<string, ActiveRunState>;
+  pendingUserInputsByThread: Record<string, RequestUserInputRequestRecord>;
+  pendingUserInput: RequestUserInputRequestRecord | null;
 };
 
 const emptyUiSnapshot: DesktopUiSnapshot = {
@@ -53,6 +57,8 @@ const emptyUiSnapshot: DesktopUiSnapshot = {
   toolEventsByThread: {},
   turnUndosByThread: {},
   activeRunsByThread: {},
+  pendingUserInputsByThread: {},
+  pendingUserInput: null,
 };
 
 export const useDesktopState = () => {
@@ -155,6 +161,30 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       next = { ...next, activeRunsByThread, activeRuns, activeRun };
       continue;
     }
+    if (event.type === "request_user_input") {
+      const pendingUserInputsByThread = {
+        ...next.pendingUserInputsByThread,
+        [event.request.threadId]: event.request,
+      };
+      next = {
+        ...next,
+        pendingUserInputsByThread,
+        pendingUserInput: next.activeThreadId ? pendingUserInputsByThread[next.activeThreadId] || null : null,
+      };
+      continue;
+    }
+    if (event.type === "request_user_input_resolved") {
+      const pendingUserInputsByThread = { ...next.pendingUserInputsByThread };
+      if (pendingUserInputsByThread[event.threadId]?.callId === event.callId) {
+        delete pendingUserInputsByThread[event.threadId];
+      }
+      next = {
+        ...next,
+        pendingUserInputsByThread,
+        pendingUserInput: next.activeThreadId ? pendingUserInputsByThread[next.activeThreadId] || null : null,
+      };
+      continue;
+    }
     if (event.type === "command_output_delta") {
       const timestamp = Date.now();
       let changed = false;
@@ -203,6 +233,8 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): Deskt
     toolEventsByThread,
     turnUndosByThread,
     activeRunsByThread,
+    pendingUserInputsByThread: current.pendingUserInputsByThread,
+    pendingUserInput: activeThreadId ? current.pendingUserInputsByThread[activeThreadId] || null : null,
   };
 };
 

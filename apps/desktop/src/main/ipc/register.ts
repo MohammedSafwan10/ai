@@ -11,6 +11,7 @@ import { channels } from "./channels";
 import type {
   ApprovalDecisionInput,
   DesktopEvent,
+  RequestUserInputResponseInput,
   SaveSettingsInput,
   SearchContextMentionsInput,
   StartTurnInput,
@@ -118,6 +119,10 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
 
   handle(channels.stopTurn, z.tuple([idSchema]), (_event, threadId: string) => {
     runtime.stopTurn(threadId);
+  });
+
+  handle(channels.answerRequestUserInput, z.tuple([requestUserInputResponseSchema]), async (_event, input: RequestUserInputResponseInput) => {
+    await runtime.answerRequestUserInput(input);
   });
 
   handle(channels.decideApproval, z.tuple([approvalDecisionInputSchema]), async (_event, input: ApprovalDecisionInput) => {
@@ -258,8 +263,19 @@ const saveSettingsInputSchema = z.object({
   model: z.string().max(160).optional(),
   reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
+  collaborationMode: z.enum(["default", "plan"]).optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   cliproxyBaseUrl: z.string().max(500).optional(),
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
+});
+
+const requestUserInputAnswerSchema = z.object({
+  answers: z.array(z.string().max(4000)).max(4),
+});
+
+const requestUserInputResponseSchema = z.object({
+  threadId: idSchema,
+  callId: idSchema,
+  answers: z.record(z.string().max(120), requestUserInputAnswerSchema),
 });

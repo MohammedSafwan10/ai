@@ -7,6 +7,7 @@ import type {
   StartTurnInput,
   PrepareTurnUndoInput,
   UndoTurnChangesInput,
+  RequestUserInputResponseInput,
 } from "../shared/types";
 import { channels } from "../main/ipc/channels";
 
@@ -22,6 +23,7 @@ const api: PrivoraDesktopApi = {
   startTurn: (input: StartTurnInput) => ipcRenderer.invoke(channels.startTurn, input),
   continueRun: (threadId: string) => ipcRenderer.invoke(channels.continueRun, threadId),
   stopTurn: (threadId: string) => ipcRenderer.invoke(channels.stopTurn, threadId),
+  answerRequestUserInput: (input: RequestUserInputResponseInput) => ipcRenderer.invoke(channels.answerRequestUserInput, input),
   decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(channels.decideApproval, input),
   prepareTurnUndo: (input: PrepareTurnUndoInput) => ipcRenderer.invoke(channels.prepareTurnUndo, input),
   undoTurnChanges: (input: UndoTurnChangesInput) => ipcRenderer.invoke(channels.undoTurnChanges, input),

@@ -11,6 +11,8 @@ import type {
   ChatMessageRecord,
   DesktopEvent,
   DesktopToolCall,
+  RequestUserInputQuestionRecord,
+  RequestUserInputResponseInput,
   StartTurnInput,
   ToolDiffFileRecord,
   ToolEventRecord,
@@ -66,6 +68,15 @@ interface ApprovalBundle {
 interface ApprovalDecision {
   approved: boolean;
   scope: ApprovalDecisionScope;
+}
+
+interface PendingUserInput {
+  threadId: string;
+  assistantMessageId: string;
+  call: DesktopToolCall;
+  questions: RequestUserInputQuestionRecord[];
+  run: AgentRunTracker;
+  resolve: (result: ToolResult) => void;
 }
 
 interface ContinueOptions {
@@ -137,6 +148,7 @@ export class AgentRuntime {
   private tools = new DesktopToolOrchestrator();
   private activeRuns = new Map<string, AgentRunTracker>();
   private pendingApprovalByCallId = new Map<string, ApprovalBundle>();
+  private pendingUserInputByCallId = new Map<string, PendingUserInput>();
   private eventSequence = 0;
   private pendingToolOutput = new Map<string, {
     threadId: string;
@@ -159,6 +171,9 @@ export class AgentRuntime {
 
     const pending = Array.from(this.pendingApprovalByCallId.values()).find((item) => item.threadId === threadId);
     if (pending) return toActiveRunState(pending.run);
+    const pendingInput = Array.from(this.pendingUserInputByCallId.values()).find((item) => item.threadId === threadId);
+    const pendingInputRun = pendingInput ? this.activeRuns.get(threadId) : null;
+    if (pendingInputRun) return toActiveRunState(pendingInputRun);
 
     const checkpoint = this.store.getRunCheckpoint(threadId);
     if (!checkpoint) return null;
@@ -302,7 +317,28 @@ export class AgentRuntime {
         this.updateAssistant(message, assistantText, bundle.assistantThought, "stopped");
       }
     });
+    Array.from(this.pendingUserInputByCallId.values())
+      .filter((item) => item.threadId === threadId)
+      .forEach((item) => this.resolvePendingUserInput(item.call.id, {
+        success: false,
+        error: "Stopped before user input was answered.",
+        data: { answers: {}, interrupted: true },
+      }));
     this.emit({ type: "run_state", threadId, run: run ? toActiveRunState(run) : this.getActiveRun(threadId) });
+  }
+
+  async answerRequestUserInput(input: RequestUserInputResponseInput) {
+    const pending = this.pendingUserInputByCallId.get(input.callId);
+    if (!pending || pending.threadId !== input.threadId) return;
+    markRunProgress(pending.run);
+    this.resolvePendingUserInput(input.callId, {
+      success: true,
+      output: JSON.stringify({ answers: input.answers }, null, 2),
+      data: {
+        answers: input.answers,
+        summary: summarizeUserInputAnswers(input.answers),
+      },
+    });
   }
 
   async decideApproval(input: ApprovalDecisionInput) {
@@ -439,6 +475,13 @@ export class AgentRuntime {
             }
           });
         };
+        const scheduleBlockedTool = (call: DesktopToolCall, error: string) => {
+          scheduler.schedule(call, false, async (scheduledCall) => ({
+            call: scheduledCall,
+            result: { success: false, error, data: { blockedByPlanMode: true } },
+            response: { success: false, error, data: { blockedByPlanMode: true } },
+          }));
+        };
         const textStart = assistantText.length;
         const thoughtStart = assistantThought.length;
         let activeThoughtPart: AssistantThoughtPartRecord | null = null;
@@ -476,9 +519,11 @@ export class AgentRuntime {
             systemInstruction: buildDesktopSystemPrompt(
               options.workspaceRoot,
               buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+              settings.collaborationMode,
             ),
             messages: history,
             reasoning: settings.reasoningEffort,
+            collaborationMode: settings.collaborationMode,
             signal: controller.signal,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
             openRouterApiKey: this.store.getSecret("openrouter_api_key"),
@@ -523,6 +568,7 @@ export class AgentRuntime {
               markRunProgress(run);
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode);
+              const planBlock = planModeBlockReason(call, settings.collaborationMode, decision);
               const scope = decision.requiresApproval
                 ? this.findReusableApprovalScope(options.threadId, call)
                 : null;
@@ -537,17 +583,19 @@ export class AgentRuntime {
                   reason: "Matched saved approval scope.",
                 });
               }
-              const requiresApproval = decision.requiresApproval && !scope;
+              const requiresApproval = !planBlock && decision.requiresApproval && !scope;
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
-                status: requiresApproval ? "awaiting_approval" : "running",
-                risk: decision.risk,
+                status: planBlock ? "running" : requiresApproval ? "awaiting_approval" : "running",
+                risk: planBlock ? "blocked" : decision.risk,
                 approvalReason: scope ? `Auto-approved by saved ${scopeLabel(scope)} scope.` : decision.reason,
                 title: this.titleForTool(call),
                 textOffset: assistantText.length,
                 startedAt: now(),
               });
               this.emit({ type: "tool_updated", tool: event });
-              if (requiresApproval) {
+              if (planBlock) {
+                scheduleBlockedTool(call, planBlock);
+              } else if (requiresApproval) {
                 approvalCalls.push(call);
               } else {
                 scheduleTool(call);
@@ -912,6 +960,9 @@ export class AgentRuntime {
     threadId: string,
     messageId: string,
   ) {
+    if (call.name === "request_user_input") {
+      return await this.requestUserInput(call, controller, run, threadId, messageId);
+    }
     const result = await this.tools.execute(call, {
       workspaceRoot,
       signal: controller.signal,
@@ -923,6 +974,69 @@ export class AgentRuntime {
     this.flushToolOutput(call.id);
     this.emitRun(run);
     return result;
+  }
+
+  private async requestUserInput(
+    call: DesktopToolCall,
+    controller: AbortController,
+    run: AgentRunTracker,
+    threadId: string,
+    messageId: string,
+  ): Promise<ToolResult> {
+    const settings = this.store.getSettings();
+    if (settings.collaborationMode !== "plan") {
+      return { success: false, error: "request_user_input is only available in Plan Mode." };
+    }
+    const normalized = normalizeRequestUserInputQuestions(call.arguments.questions);
+    if (!normalized.success) return { success: false, error: normalized.error };
+
+    transitionRun(run, "waiting_tool", {
+      iteration: run.iteration,
+      toolCount: run.toolCount,
+      reason: "Waiting for your answer.",
+      resumable: false,
+    });
+    this.emitRun(run);
+
+    const result = await new Promise<ToolResult>((resolve) => {
+      const pending: PendingUserInput = {
+        threadId,
+        assistantMessageId: messageId,
+        call,
+        questions: normalized.questions,
+        run,
+        resolve,
+      };
+      this.pendingUserInputByCallId.set(call.id, pending);
+      const abort = () => {
+        this.resolvePendingUserInput(call.id, {
+          success: false,
+          error: "Stopped before user input was answered.",
+          data: { answers: {}, interrupted: true },
+        });
+      };
+      controller.signal.addEventListener("abort", abort, { once: true });
+      this.emit({
+        type: "request_user_input",
+        request: {
+          threadId,
+          assistantMessageId: messageId,
+          callId: call.id,
+          questions: normalized.questions,
+          createdAt: now(),
+        },
+      });
+    });
+    this.emitRun(run);
+    return result;
+  }
+
+  private resolvePendingUserInput(callId: string, result: ToolResult) {
+    const pending = this.pendingUserInputByCallId.get(callId);
+    if (!pending) return;
+    this.pendingUserInputByCallId.delete(callId);
+    this.emit({ type: "request_user_input_resolved", threadId: pending.threadId, callId });
+    pending.resolve(result);
   }
 
   private createRun(threadId: string, assistantMessageId: string, controller: AbortController): AgentRunTracker {
@@ -1185,6 +1299,8 @@ export class AgentRuntime {
         return `Stop process ${args.processId || ""}`.trim();
       case "desktop_run_diagnostics":
         return `Check ${args.kind || args.command || "workspace"}`;
+      case "request_user_input":
+        return `Questions`;
       default:
         return call.name;
     }
@@ -1194,6 +1310,7 @@ export class AgentRuntime {
     if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
     if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
     if (call.name === "desktop_run_diagnostics") return "diagnostic";
+    if (call.name === "request_user_input") return "question";
     if (call.name === "desktop_search") return "search";
     if (call.name === "desktop_git_status" || call.name === "desktop_git_diff") return "git";
     if (call.name === "desktop_read_file" || call.name === "desktop_list_dir") return "read";
@@ -1208,6 +1325,7 @@ export class AgentRuntime {
     if (call.name === "desktop_resize_process") return "Resizing process";
     if (call.name === "desktop_kill_process") return "Stopping process";
     if (call.name === "desktop_run_diagnostics") return "Checking workspace";
+    if (call.name === "request_user_input") return "Waiting for answer";
     if (call.name === "desktop_apply_patch") return "Applying patch";
     if (call.name === "desktop_edit_file") return "Editing file";
     if (call.name === "desktop_write_file") return "Writing file";
@@ -1279,6 +1397,64 @@ const textProviderMessage = (content: string): ProviderMessage => ({
 
 const historyHasRecentToolResults = (history: ProviderMessage[]) =>
   history.slice(-3).some((message) => message.parts?.some((part) => part.type === "function_response"));
+
+const planModeBlockReason = (
+  call: DesktopToolCall,
+  collaborationMode: string,
+  decision: { risk: string; requiresApproval: boolean },
+) => {
+  if (collaborationMode !== "plan") {
+    return call.name === "request_user_input" ? "request_user_input is only available in Plan Mode." : null;
+  }
+  if (call.name === "request_user_input") return null;
+  if (["desktop_read_file", "desktop_list_dir", "desktop_search", "desktop_git_status", "desktop_git_diff", "desktop_run_diagnostics"].includes(call.name)) return null;
+  if ((call.name === "desktop_apply_patch" || call.name === "desktop_edit_file") && call.arguments.dryRun === true) return null;
+  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) {
+    return decision.risk === "safe" && !decision.requiresApproval
+      ? null
+      : "Plan Mode blocks risky terminal actions. Use read-only inspection or diagnostics instead.";
+  }
+  return "Plan Mode blocks mutating tools. Use dryRun:true previews or produce a proposed plan instead.";
+};
+
+const normalizeRequestUserInputQuestions = (value: unknown): { success: true; questions: RequestUserInputQuestionRecord[] } | { success: false; error: string } => {
+  if (!Array.isArray(value)) return { success: false, error: "request_user_input requires a questions array." };
+  if (value.length < 1 || value.length > 3) return { success: false, error: "request_user_input requires one to three questions." };
+  const seen = new Set<string>();
+  const questions: RequestUserInputQuestionRecord[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") return { success: false, error: "Each question must be an object." };
+    const raw = item as Record<string, unknown>;
+    const id = String(raw.id || "").trim();
+    const header = String(raw.header || "").trim().slice(0, 24);
+    const question = String(raw.question || "").trim();
+    const rawOptions = raw.options;
+    if (!/^[a-z][a-z0-9_]*$/i.test(id)) return { success: false, error: "Each question needs a stable id." };
+    if (seen.has(id)) return { success: false, error: `Duplicate question id: ${id}` };
+    if (!header || !question) return { success: false, error: "Each question needs header and question text." };
+    if (!Array.isArray(rawOptions) || rawOptions.length < 2 || rawOptions.length > 3) {
+      return { success: false, error: "Each question needs two or three options." };
+    }
+    const options = rawOptions.map((option) => {
+      const optionRecord = option && typeof option === "object" ? option as Record<string, unknown> : {};
+      return {
+        label: String(optionRecord.label || "").trim().slice(0, 80),
+        description: String(optionRecord.description || "").trim().slice(0, 240),
+      };
+    });
+    if (options.some((option) => !option.label || !option.description)) {
+      return { success: false, error: "Each option needs label and description." };
+    }
+    seen.add(id);
+    questions.push({ id, header, question, options, isOther: true });
+  }
+  return { success: true, questions };
+};
+
+const summarizeUserInputAnswers = (answers: RequestUserInputResponseInput["answers"]) => {
+  const lines = Object.entries(answers).map(([id, answer]) => `${id}: ${answer.answers.join(", ") || "(no answer)"}`);
+  return lines.join("\n") || "No answers provided.";
+};
 
 export const resolveNoToolOutcome = (input: {
   iterationText: string;

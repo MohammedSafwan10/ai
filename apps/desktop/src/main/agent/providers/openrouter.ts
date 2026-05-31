@@ -77,7 +77,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
       body: JSON.stringify({
         model: options.model,
         messages: toMessages(options.systemInstruction, options.messages),
-        tools: openRouterDesktopTools,
+        tools: openRouterDesktopTools(options.collaborationMode),
         tool_choice: "auto",
         parallel_tool_calls: true,
         ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),

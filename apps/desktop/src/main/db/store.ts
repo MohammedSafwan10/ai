@@ -51,6 +51,7 @@ const defaultData = (): DesktopDataFile => ({
     model: GEMINI_35_FLASH_MODEL_ID,
     reasoningEffort: "medium",
     permissionMode: "ask_risky",
+    collaborationMode: "default",
     theme: "system",
     cliproxyBaseUrl: "http://127.0.0.1:8317",
   },
@@ -115,6 +116,7 @@ export class DesktopStore {
       model: input.model ? normalizeModelId(input.model) : normalizeModelId(this.data.settings.model),
       reasoningEffort: input.reasoningEffort ?? this.data.settings.reasoningEffort,
       permissionMode: input.permissionMode ?? this.data.settings.permissionMode,
+      collaborationMode: input.collaborationMode ?? this.data.settings.collaborationMode,
       theme: input.theme ?? this.data.settings.theme,
       cliproxyBaseUrl: input.cliproxyBaseUrl ?? this.data.settings.cliproxyBaseUrl,
     };

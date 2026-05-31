@@ -1,4 +1,4 @@
-import type { ProviderId, ReasoningEffort } from "../../../shared/models";
+import type { CollaborationMode, ProviderId, ReasoningEffort } from "../../../shared/models";
 import type { DesktopToolCall, ToolResult } from "../../../shared/types";
 
 export type ProviderPart =
@@ -19,6 +19,7 @@ export interface ProviderStreamOptions {
   systemInstruction: string;
   messages: ProviderMessage[];
   reasoning: ReasoningEffort;
+  collaborationMode: CollaborationMode;
   signal: AbortSignal;
   cliproxyBaseUrl: string;
   openRouterApiKey: string;

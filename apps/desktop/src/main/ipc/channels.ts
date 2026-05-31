@@ -9,6 +9,7 @@ export const channels = {
   startTurn: "desktop:startTurn",
   continueRun: "desktop:continueRun",
   stopTurn: "desktop:stopTurn",
+  answerRequestUserInput: "desktop:answerRequestUserInput",
   decideApproval: "desktop:decideApproval",
   prepareTurnUndo: "desktop:prepareTurnUndo",
   undoTurnChanges: "desktop:undoTurnChanges",

@@ -8,6 +8,7 @@ const baseSnapshot = () => ({
     model: "test-model",
     reasoningEffort: "medium" as const,
     permissionMode: "ask_risky" as const,
+    collaborationMode: "default" as const,
     theme: "system" as const,
     cliproxyBaseUrl: "http://127.0.0.1:8317",
     openRouterApiKeyStored: false,
@@ -33,6 +34,8 @@ const baseSnapshot = () => ({
   toolEventsByThread: {},
   turnUndosByThread: {},
   activeRunsByThread: {},
+  pendingUserInputsByThread: {},
+  pendingUserInput: null,
 });
 
 describe("renderer thread isolation", () => {

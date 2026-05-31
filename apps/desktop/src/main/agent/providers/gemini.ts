@@ -60,7 +60,7 @@ export class GeminiAdapter implements ProviderAdapter {
               },
             }
           : {}),
-        tools: [{ functionDeclarations: geminiDesktopFunctionDeclarations as any }],
+        tools: [{ functionDeclarations: geminiDesktopFunctionDeclarations(options.collaborationMode) as any }],
         toolConfig: { functionCallingConfig: { mode: "AUTO" } } as any,
       },
     });

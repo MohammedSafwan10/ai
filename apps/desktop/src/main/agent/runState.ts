@@ -3,6 +3,7 @@ import type { ActiveRunState, TurnStatus } from "../../shared/types";
 export type AgentRunPhase =
   | "sampling"
   | "executing_tool"
+  | "waiting_tool"
   | "awaiting_approval"
   | "draining"
   | "completed"
@@ -11,8 +12,9 @@ export type AgentRunPhase =
   | "failed";
 
 const allowedTransitions: Record<AgentRunPhase, AgentRunPhase[]> = {
-  sampling: ["executing_tool", "awaiting_approval", "draining", "completed", "stopped", "stalled", "failed", "sampling"],
-  executing_tool: ["sampling", "awaiting_approval", "draining", "completed", "stopped", "stalled", "failed"],
+  sampling: ["executing_tool", "waiting_tool", "awaiting_approval", "draining", "completed", "stopped", "stalled", "failed", "sampling"],
+  executing_tool: ["sampling", "waiting_tool", "awaiting_approval", "draining", "completed", "stopped", "stalled", "failed"],
+  waiting_tool: ["executing_tool", "draining", "stopped", "failed"],
   awaiting_approval: ["sampling", "executing_tool", "stopped", "failed"],
   draining: ["sampling", "completed", "stopped", "stalled", "failed"],
   completed: ["sampling"],
