@@ -5,6 +5,8 @@ import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
   ApprovalScopeRecord,
+  AssistantTextPartRecord,
+  AssistantTextPhase,
   AssistantThoughtPartRecord,
   ChatMessageRecord,
   DesktopEvent,
@@ -209,6 +211,7 @@ export class AgentRuntime {
       threadId: input.threadId,
       role: "assistant",
       content: "",
+      textParts: [],
       thought: "",
       thoughtParts: [],
       status: "running",
@@ -293,7 +296,11 @@ export class AgentRuntime {
         this.emit({ type: "tool_updated", tool: event });
       });
       const message = this.store.getMessage(bundle.assistantMessageId);
-      if (message) this.updateAssistant(message, bundle.assistantText || "Stopped. Completed tool changes were kept.", bundle.assistantThought, "stopped");
+      if (message) {
+        const assistantText = bundle.assistantText || "Stopped. Completed tool changes were kept.";
+        if (!bundle.assistantText) recordAssistantTextPart(message, "final_answer", 0, assistantText.length);
+        this.updateAssistant(message, assistantText, bundle.assistantThought, "stopped");
+      }
     });
     this.emit({ type: "run_state", threadId, run: run ? toActiveRunState(run) : this.getActiveRun(threadId) });
   }
@@ -480,7 +487,9 @@ export class AgentRuntime {
               endThoughtPart();
               const filtered = filterVisibleDelta(assistantText, delta, visibleFingerprints);
               if (!filtered) return;
+              const startOffset = assistantText.length;
               assistantText += filtered;
+              recordAssistantTextPart(options.assistantMessage, "commentary", startOffset, assistantText.length);
               markRunProgress(run);
               flushAssistant("running");
               this.emitRun(run);
@@ -569,7 +578,13 @@ export class AgentRuntime {
           }
           transitionRun(run, "draining", { iteration, toolCount });
           transitionRun(run, "completed", { iteration, toolCount });
-          if (!assistantText) assistantText = "Done.";
+          if (!assistantText) {
+            const startOffset = assistantText.length;
+            assistantText = "Done.";
+            recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
+          } else {
+            markAssistantTextRangePhase(options.assistantMessage, textStart, assistantText.length, "final_answer");
+          }
           flushAssistant("completed", true);
           this.store.clearRunCheckpoint(options.threadId);
           this.activeRuns.delete(options.threadId);
@@ -623,7 +638,11 @@ export class AgentRuntime {
       }
 
       const pauseText = "\n\nPaused after a long run. Completed changes were kept. Use Continue to resume from the last checkpoint.";
-      if (!assistantText.includes("Paused after a long run.")) assistantText += pauseText;
+      if (!assistantText.includes("Paused after a long run.")) {
+        const startOffset = assistantText.length;
+        assistantText += pauseText;
+        recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
+      }
       this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
       transitionRun(run, "stalled", {
         iteration,
@@ -660,7 +679,11 @@ export class AgentRuntime {
           return;
         }
         transitionRun(run, "stalled", { iteration, toolCount, reason: error.message, resumable: true });
-        if (!assistantText) assistantText = "The model connection stalled before it returned more Agent output.";
+        if (!assistantText) {
+          const startOffset = assistantText.length;
+          assistantText = "The model connection stalled before it returned more Agent output.";
+          recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
+        }
         flushAssistant("stalled", true);
         this.emitRun(run);
         handoff = true;
@@ -681,11 +704,13 @@ export class AgentRuntime {
         resumable: aborted,
       });
       if (!assistantText) {
+        const startOffset = assistantText.length;
         assistantText = aborted
           ? "Stopped. Completed tool changes were kept."
           : hasVisibleWork
             ? ""
             : `The run stopped before producing visible output.\n\n${errorMessage(error)}`;
+        recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
       }
       flushAssistant(aborted ? "stopped" : "failed", true);
       this.emitRun(run);
@@ -1421,6 +1446,129 @@ const buildVisibleFingerprints = (text: string) => {
   });
   return fingerprints;
 };
+
+const recordAssistantTextPart = (
+  message: ChatMessageRecord,
+  phase: AssistantTextPhase,
+  startOffset: number,
+  endOffset: number,
+) => {
+  if (endOffset <= startOffset) return;
+  const timestamp = now();
+  const parts = normalizeAssistantTextParts(message.textParts || [], endOffset);
+  const last = parts[parts.length - 1];
+  if (last && last.phase === phase && last.endOffset === startOffset) {
+    last.endOffset = endOffset;
+    last.updatedAt = timestamp;
+    message.textParts = parts;
+    return;
+  }
+  message.textParts = [
+    ...parts,
+    {
+      id: crypto.randomUUID(),
+      phase,
+      startOffset,
+      endOffset,
+      streamOrder: nextTextPartOrder(parts),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  ];
+};
+
+const markAssistantTextRangePhase = (
+  message: ChatMessageRecord,
+  startOffset: number,
+  endOffset: number,
+  phase: AssistantTextPhase,
+) => {
+  if (endOffset <= startOffset) return;
+  const timestamp = now();
+  const parts = normalizeAssistantTextParts(message.textParts || [], endOffset);
+  const next: AssistantTextPartRecord[] = [];
+  let coveredUntil = startOffset;
+  parts.forEach((part) => {
+    if (part.endOffset <= startOffset || part.startOffset >= endOffset) {
+      next.push(part);
+      return;
+    }
+    if (part.startOffset < startOffset) {
+      next.push({ ...part, endOffset: startOffset, updatedAt: timestamp });
+    }
+    const phaseStart = Math.max(part.startOffset, startOffset);
+    const phaseEnd = Math.min(part.endOffset, endOffset);
+    if (phaseStart > coveredUntil) {
+      next.push({
+        id: crypto.randomUUID(),
+        phase,
+        startOffset: coveredUntil,
+        endOffset: phaseStart,
+        streamOrder: nextTextPartOrder(next),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    next.push({
+      ...part,
+      id: part.startOffset < startOffset || part.endOffset > endOffset ? crypto.randomUUID() : part.id,
+      phase,
+      startOffset: phaseStart,
+      endOffset: phaseEnd,
+      updatedAt: timestamp,
+    });
+    coveredUntil = Math.max(coveredUntil, phaseEnd);
+    if (part.endOffset > endOffset) {
+      next.push({ ...part, id: crypto.randomUUID(), startOffset: endOffset, updatedAt: timestamp });
+    }
+  });
+  if (coveredUntil < endOffset) {
+    next.push({
+      id: crypto.randomUUID(),
+      phase,
+      startOffset: coveredUntil,
+      endOffset,
+      streamOrder: nextTextPartOrder(next),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+  message.textParts = mergeAdjacentTextParts(next);
+};
+
+const normalizeAssistantTextParts = (parts: AssistantTextPartRecord[], contentLength: number) =>
+  mergeAdjacentTextParts(
+    parts
+      .filter((part) =>
+        (part.phase === "commentary" || part.phase === "final_answer") &&
+        Number.isFinite(part.startOffset) &&
+        Number.isFinite(part.endOffset)
+      )
+      .map((part) => ({
+        ...part,
+        startOffset: Math.max(0, Math.min(contentLength, part.startOffset)),
+        endOffset: Math.max(0, Math.min(contentLength, part.endOffset)),
+      }))
+      .filter((part) => part.endOffset > part.startOffset)
+      .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt),
+  );
+
+const mergeAdjacentTextParts = (parts: AssistantTextPartRecord[]) => {
+  const merged: AssistantTextPartRecord[] = [];
+  parts.forEach((part) => {
+    const last = merged[merged.length - 1];
+    if (last && last.phase === part.phase && last.endOffset >= part.startOffset) {
+      last.endOffset = Math.max(last.endOffset, part.endOffset);
+      last.updatedAt = Math.max(last.updatedAt, part.updatedAt);
+      return;
+    }
+    merged.push({ ...part });
+  });
+  return merged;
+};
+
+const nextTextPartOrder = (parts: AssistantTextPartRecord[]) =>
+  Math.max(0, ...parts.map((part) => part.streamOrder ?? 0)) + 1;
 
 const filterVisibleDelta = (current: string, delta: string, fingerprints: Set<string>) => {
   if (!delta || isInsideMarkdownCodeFence(current)) return delta;

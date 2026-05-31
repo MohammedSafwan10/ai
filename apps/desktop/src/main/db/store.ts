@@ -6,6 +6,7 @@ import type {
   ApprovalHistoryRecord,
   ApprovalScopeRecord,
   AgentRunCheckpointRecord,
+  AssistantTextPartRecord,
   ChatMessageRecord,
   SettingsRecord,
   StoreRecoveryNoticeRecord,
@@ -426,8 +427,8 @@ export class DesktopStore {
         secrets: parsed.secrets || {},
         workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces : [],
         threads: Array.isArray(parsed.threads) ? parsed.threads : [],
-        messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeLegacyMessage) : [],
-        toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeLegacyToolEvent) : [],
+        messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeStoredMessage) : [],
+        toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeStoredToolEvent) : [],
         turnUndos: Array.isArray(parsed.turnUndos) ? parsed.turnUndos : [],
         approvalScopes: Array.isArray(parsed.approvalScopes) ? parsed.approvalScopes : [],
         approvalHistory: Array.isArray(parsed.approvalHistory) ? parsed.approvalHistory : [],
@@ -493,15 +494,50 @@ const upsertById = <T extends { id: string }>(items: T[], item: T) => {
     : [...items, item];
 };
 
-const normalizeLegacyMessage = (message: ChatMessageRecord): ChatMessageRecord => {
+const normalizeStoredMessage = (message: ChatMessageRecord): ChatMessageRecord => {
   const content = message.content?.replace(
     /I stopped because the model iteration budget was reached\./g,
     "Paused after a long run. Completed changes were kept. Use Continue to resume from the last checkpoint.",
   );
-  return content === message.content ? message : { ...message, content };
+  const normalized = content === message.content ? message : { ...message, content };
+  if (normalized.role !== "assistant" || !normalized.content.trim()) return normalized;
+  const textParts = normalizeAssistantTextParts(normalized.textParts, normalized.content.length);
+  if (textParts.length > 0) return textParts === normalized.textParts ? normalized : { ...normalized, textParts };
+  const timestamp = normalized.updatedAt || normalized.createdAt || now();
+  return {
+    ...normalized,
+    textParts: [{
+      id: `${normalized.id}-final-text`,
+      phase: "final_answer",
+      startOffset: 0,
+      endOffset: normalized.content.length,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }],
+  };
 };
 
-const normalizeLegacyToolEvent = (event: ToolEventRecord): ToolEventRecord => {
+const normalizeAssistantTextParts = (
+  parts: AssistantTextPartRecord[] | undefined,
+  contentLength: number,
+) => {
+  if (!parts?.length) return [];
+  return parts
+    .filter((part) =>
+      (part.phase === "commentary" || part.phase === "final_answer") &&
+      Number.isFinite(part.startOffset) &&
+      Number.isFinite(part.endOffset)
+    )
+    .map((part) => ({
+      ...part,
+      startOffset: Math.max(0, Math.min(contentLength, part.startOffset)),
+      endOffset: Math.max(0, Math.min(contentLength, part.endOffset)),
+    }))
+    .filter((part) => part.endOffset > part.startOffset)
+    .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt);
+};
+
+const normalizeStoredToolEvent = (event: ToolEventRecord): ToolEventRecord => {
   if (!isNoisyCommandReason(event.approvalReason)) return event;
   return { ...event, approvalReason: undefined };
 };

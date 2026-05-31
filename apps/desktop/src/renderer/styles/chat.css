@@ -41,6 +41,20 @@
   position: relative;
 }
 
+.assistant-activity-block {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-activity-text {
+  min-width: 0;
+  color: color-mix(in srgb, var(--privora-muted) 88%, var(--privora-text));
+}
+
+.assistant-activity-text p {
+  margin: 0.25rem 0;
+}
+
 .assistant-flow-text {
   min-width: 0;
 }

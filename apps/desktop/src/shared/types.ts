@@ -96,9 +96,22 @@ export interface ChatMessageRecord {
   content: string;
   attachments?: DesktopAttachmentRecord[];
   contextMentions?: ContextMentionRecord[];
+  textParts?: AssistantTextPartRecord[];
   thought?: string;
   thoughtParts?: AssistantThoughtPartRecord[];
   status: TurnStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type AssistantTextPhase = "commentary" | "final_answer";
+
+export interface AssistantTextPartRecord {
+  id: string;
+  phase: AssistantTextPhase;
+  startOffset: number;
+  endOffset: number;
+  streamOrder?: number;
   createdAt: number;
   updatedAt: number;
 }

@@ -4,6 +4,8 @@ import { Check, ChevronDown, Copy, Maximize2, Minimize2 } from "lucide-react";
 import clsx from "clsx";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AssistantTextPartRecord,
+  AssistantTextPhase,
   AssistantThoughtPartRecord,
   ApprovalDecisionScope,
   ChatMessageRecord,
@@ -49,6 +51,10 @@ function ChatMessageComponent({
     () => isUser ? [] : buildAssistantRenderParts(message, tools, runActive),
     [isUser, message, runActive, tools],
   );
+  const { activityParts, finalTextParts } = useMemo(
+    () => splitAssistantActivityAndFinalText(renderParts),
+    [renderParts],
+  );
   const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
   const activityNeedsAttention = renderParts.some((part) =>
     part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed")
@@ -90,29 +96,39 @@ function ChatMessageComponent({
               />
               <div className="assistant-flow">
                 {renderParts.length > 0 ? (
-                  renderParts.map((part) => {
-                    const showActivityPart = activityOpen;
-                    if (part.type === "thought") {
-                      return showActivityPart ? <ThoughtPanel key={part.key} thought={part.thought} active={part.active} /> : null;
-                    }
-                    if (part.type === "tools") {
-                      return showActivityPart ? (
-                        <ToolTimeline
-                          key={part.key}
-                          tools={part.tools}
-                          messageStatus={message.status}
-                          defaultOpen={part.defaultOpen}
-                          onApprove={onApprove}
-                          onApproveAll={onApproveAll}
-                        />
-                      ) : null;
-                    }
-                    return (
+                  <>
+                    {activityOpen && activityParts.length > 0 && (
+                      <div className="assistant-activity-block">
+                        {activityParts.map((part) => {
+                          if (part.type === "thought") {
+                            return <ThoughtPanel key={part.key} thought={part.thought} active={part.active} />;
+                          }
+                          if (part.type === "tools") {
+                            return (
+                              <ToolTimeline
+                                key={part.key}
+                                tools={part.tools}
+                                messageStatus={message.status}
+                                defaultOpen={part.defaultOpen}
+                                onApprove={onApprove}
+                                onApproveAll={onApproveAll}
+                              />
+                            );
+                          }
+                          return (
+                            <div key={part.key} className="assistant-activity-text markdown-body">
+                              <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {finalTextParts.map((part) => (
                       <div key={part.key} className={clsx("assistant-flow-text", message.status === "failed" && "is-error", "markdown-body")}>
                         <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} />
                       </div>
-                    );
-                  })
+                    ))}
+                  </>
                 ) : (
                   <ThoughtPanel thought="" active={runActive} />
                 )}
@@ -150,8 +166,10 @@ export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
 
 type AssistantRenderPart =
   | { type: "thought"; key: string; thought: string; active: boolean }
-  | { type: "text"; key: string; text: string }
+  | { type: "text"; key: string; text: string; phase: AssistantTextPhase; startOffset: number; endOffset: number }
   | { type: "tools"; key: string; tools: ToolEventRecord[]; defaultOpen: boolean };
+
+type AssistantTextRenderPart = Extract<AssistantRenderPart, { type: "text" }>;
 
 type AssistantTimelineItem =
   | {
@@ -206,10 +224,9 @@ function buildAssistantRenderParts(
 
   timelineItems.forEach((item, index) => {
     const offset = clampOffset(item.offset, content.length);
-    const text = content.slice(cursor, offset);
-    if (text.trim()) {
+    if (content.slice(cursor, offset).trim()) {
       flushPendingTools(`before-text-${index}`);
-      parts.push({ type: "text", key: `text-${index}-${cursor}`, text });
+      pushTextParts(parts, message, cursor, offset, `text-${index}`);
     }
     if (item.type === "thought") {
       flushPendingTools(`before-thought-${index}`);
@@ -222,8 +239,28 @@ function buildAssistantRenderParts(
   flushPendingTools("tail");
 
   const tail = content.slice(cursor);
-  if (tail.trim()) parts.push({ type: "text", key: `text-tail-${cursor}`, text: tail });
+  if (tail.trim()) pushTextParts(parts, message, cursor, content.length, "text-tail");
   return markDefaultOpenToolPart(parts, runActive);
+}
+
+function pushTextParts(
+  parts: AssistantRenderPart[],
+  message: ChatMessageRecord,
+  startOffset: number,
+  endOffset: number,
+  keyPrefix: string,
+) {
+  splitTextByPhase(message, startOffset, endOffset).forEach((part, index) => {
+    if (!part.text.trim()) return;
+    parts.push({
+      type: "text",
+      key: `${keyPrefix}-${part.startOffset}-${index}`,
+      text: part.text,
+      phase: part.phase,
+      startOffset: part.startOffset,
+      endOffset: part.endOffset,
+    });
+  });
 }
 
 function markDefaultOpenToolPart(parts: AssistantRenderPart[], runActive: boolean): AssistantRenderPart[] {
@@ -283,6 +320,54 @@ function normalizeThoughtParts(parts: AssistantThoughtPartRecord[]) {
   return [...parts]
     .filter((part) => Number.isFinite(part.textOffset) && Number.isFinite(part.thoughtOffset))
     .sort((a, b) => a.thoughtOffset - b.thoughtOffset || a.createdAt - b.createdAt);
+}
+
+function splitTextByPhase(message: ChatMessageRecord, startOffset: number, endOffset: number) {
+  const content = message.content || "";
+  const storedParts = normalizeTextParts(message.textParts || [], content.length);
+  if (storedParts.length === 0) {
+    return [{
+      text: content.slice(startOffset, endOffset),
+      phase: "final_answer" as const,
+      startOffset,
+      endOffset,
+    }];
+  }
+
+  const segments: Array<{
+    text: string;
+    phase: AssistantTextPhase;
+    startOffset: number;
+    endOffset: number;
+  }> = [];
+  storedParts.forEach((part) => {
+    const segmentStart = Math.max(startOffset, part.startOffset);
+    const segmentEnd = Math.min(endOffset, part.endOffset);
+    if (segmentEnd <= segmentStart) return;
+    segments.push({
+      text: content.slice(segmentStart, segmentEnd),
+      phase: part.phase,
+      startOffset: segmentStart,
+      endOffset: segmentEnd,
+    });
+  });
+  return segments;
+}
+
+function normalizeTextParts(parts: AssistantTextPartRecord[], contentLength: number) {
+  return [...parts]
+    .filter((part) =>
+      (part.phase === "commentary" || part.phase === "final_answer") &&
+      Number.isFinite(part.startOffset) &&
+      Number.isFinite(part.endOffset)
+    )
+    .map((part) => ({
+      ...part,
+      startOffset: Math.max(0, Math.min(contentLength, part.startOffset)),
+      endOffset: Math.max(0, Math.min(contentLength, part.endOffset)),
+    }))
+    .filter((part) => part.endOffset > part.startOffset)
+    .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt);
 }
 
 function compareTimelineItems(a: AssistantTimelineItem, b: AssistantTimelineItem) {
@@ -351,6 +436,15 @@ function AssistantTextPart({ text, active }: { text: string; active: boolean }) 
       {tail && <div className="streaming-text">{tail}</div>}
     </>
   );
+}
+
+function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[]) {
+  return {
+    activityParts: parts.filter((part) => part.type !== "text" || part.phase === "commentary"),
+    finalTextParts: parts.filter((part): part is AssistantTextRenderPart =>
+      part.type === "text" && part.phase === "final_answer"
+    ),
+  };
 }
 
 function useStreamingCommittedMarkdown(text: string, active: boolean) {
