@@ -1,10 +1,12 @@
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { z } from "zod";
 import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
 import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
+import { resolveExistingWorkspacePath } from "../security/pathSandbox";
 import { channels } from "./channels";
 import type {
   ApprovalDecisionInput,
@@ -37,28 +39,40 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return thread.id;
   };
 
-  ipcMain.handle(channels.getSnapshot, () => {
+  const handle = (
+    channel: string,
+    schema: z.ZodType<unknown>,
+    handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown,
+  ) => {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      const parsed = schema.parse(args);
+      return handler(event, ...(parsed as unknown[]));
+    });
+  };
+
+  handle(channels.getSnapshot, z.tuple([]), () => {
     ensureThread();
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     return snapshot;
   });
 
-  ipcMain.handle(channels.createThread, (_event, workspaceId?: string | null) => {
+  handle(channels.createThread, z.tuple([optionalNullableId.optional()]), (_event, workspaceId?: string | null) => {
+    if (workspaceId && !store.getWorkspace(workspaceId)) throw new Error("Workspace not found.");
     const thread = store.createThread(workspaceId ?? state.activeWorkspaceId ?? null);
     state.activeThreadId = thread.id;
     return thread;
   });
 
-  ipcMain.handle(channels.renameThread, (_event, threadId: string, title: string) => {
+  handle(channels.renameThread, z.tuple([idSchema, z.string().max(200)]), (_event, threadId: string, title: string) => {
     return store.updateThreadTitle(threadId, title);
   });
 
-  ipcMain.handle(channels.toggleThreadStar, (_event, threadId: string) => {
+  handle(channels.toggleThreadStar, z.tuple([idSchema]), (_event, threadId: string) => {
     return store.toggleThreadStar(threadId);
   });
 
-  ipcMain.handle(channels.deleteThread, (_event, threadId: string) => {
+  handle(channels.deleteThread, z.tuple([idSchema]), (_event, threadId: string) => {
     store.deleteThread(threadId);
     if (state.activeThreadId === threadId) {
       const nextThread = store.listThreads()[0] || store.createThread(state.activeWorkspaceId);
@@ -67,12 +81,13 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     }
   });
 
-  ipcMain.handle(channels.setActiveThread, (_event, threadId: string) => {
+  handle(channels.setActiveThread, z.tuple([idSchema]), (_event, threadId: string) => {
+    if (!store.getThread(threadId)) throw new Error("Thread not found.");
     state.activeThreadId = threadId;
     state.activeWorkspaceId = store.getThread(threadId)?.workspaceId ?? state.activeWorkspaceId;
   });
 
-  ipcMain.handle(channels.selectWorkspace, async () => {
+  handle(channels.selectWorkspace, z.tuple([]), async () => {
     const result = await dialog.showOpenDialog({
       title: "Select a project workspace",
       properties: ["openDirectory"],
@@ -87,29 +102,29 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return workspace;
   });
 
-  ipcMain.handle(channels.startTurn, async (_event, input: StartTurnInput) => {
+  handle(channels.startTurn, z.tuple([startTurnInputSchema]), async (_event, input: StartTurnInput) => {
     await runtime.startTurn(input);
   });
 
-  ipcMain.handle(channels.continueRun, async (_event, threadId: string) => {
+  handle(channels.continueRun, z.tuple([idSchema]), async (_event, threadId: string) => {
     await runtime.continueRun(threadId);
   });
 
-  ipcMain.handle(channels.stopTurn, (_event, threadId: string) => {
+  handle(channels.stopTurn, z.tuple([idSchema]), (_event, threadId: string) => {
     runtime.stopTurn(threadId);
   });
 
-  ipcMain.handle(channels.decideApproval, async (_event, input: ApprovalDecisionInput) => {
+  handle(channels.decideApproval, z.tuple([approvalDecisionInputSchema]), async (_event, input: ApprovalDecisionInput) => {
     await runtime.decideApproval(input);
   });
 
-  ipcMain.handle(channels.prepareTurnUndo, (_event, input: { messageId: string }) => {
+  handle(channels.prepareTurnUndo, z.tuple([messageIdInputSchema]), (_event, input: { messageId: string }) => {
     const undo = undoCoordinator.prepare(input.messageId);
     if (undo) emit({ type: "turn_undo_updated", undo });
     return undo;
   });
 
-  ipcMain.handle(channels.undoTurnChanges, async (_event, input: { messageId: string }) => {
+  handle(channels.undoTurnChanges, z.tuple([messageIdInputSchema]), async (_event, input: { messageId: string }) => {
     const undoing = undoCoordinator.prepare(input.messageId);
     if (undoing) emit({ type: "turn_undo_updated", undo: { ...undoing, status: "undoing", updatedAt: Date.now() } });
     const undo = await undoCoordinator.undo(input.messageId);
@@ -117,21 +132,22 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return undo;
   });
 
-  ipcMain.handle(channels.searchContextMentions, async (_event, input: SearchContextMentionsInput) => {
+  handle(channels.searchContextMentions, z.tuple([searchContextMentionsInputSchema]), async (_event, input: SearchContextMentionsInput) => {
     return searchContextMentions(store, input.threadId, input.query);
   });
 
-  ipcMain.handle(channels.saveSettings, (_event, input: SaveSettingsInput) => {
+  handle(channels.saveSettings, z.tuple([saveSettingsInputSchema]), (_event, input: SaveSettingsInput) => {
     return store.saveSettings(input);
   });
 
-  ipcMain.handle(channels.openPath, (_event, targetPath: string) => {
-    if (path.isAbsolute(targetPath)) return shell.openPath(targetPath);
+  handle(channels.openPath, z.tuple([workspacePathInputSchema]), (_event, targetPath: string) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
-    return shell.openPath(workspace ? path.resolve(workspace.path, targetPath) : targetPath);
+    if (!workspace) throw new Error("Choose a workspace first.");
+    const target = resolveExistingWorkspacePath(workspace.path, targetPath);
+    return shell.openPath(target.absolutePath);
   });
 
-  ipcMain.handle(channels.openWorkspaceTarget, async (_event, target: WorkspaceOpenTarget) => {
+  handle(channels.openWorkspaceTarget, z.tuple([workspaceOpenTargetSchema]), async (_event, target: WorkspaceOpenTarget) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (!workspace) throw new Error("Choose a workspace first.");
     await openWorkspaceTarget(target, workspace.path);
@@ -177,3 +193,67 @@ const spawnDetached = (command: string, args: string[]) => {
   });
   child.unref();
 };
+
+const idSchema = z.string().trim().min(1).max(200);
+const optionalNullableId = z.string().trim().min(1).max(200).nullable();
+const workspacePathInputSchema = z.string().trim().min(1).max(2000);
+const workspaceOpenTargetSchema = z.enum(["vscode", "file_explorer", "terminal", "git_bash"]);
+
+const attachmentSchema = z.object({
+  id: idSchema,
+  name: z.string().max(260),
+  mimeType: z.string().max(120),
+  size: z.number().nonnegative().max(20_000_000),
+  base64: z.string().max(30_000_000),
+  createdAt: z.number(),
+});
+
+const contextMentionSchema = z.object({
+  id: idSchema,
+  type: z.enum(["file", "folder", "terminal"]),
+  label: z.string().max(500),
+  path: z.string().max(2000).optional(),
+  createdAt: z.number(),
+});
+
+const startTurnInputSchema = z.object({
+  threadId: idSchema,
+  prompt: z.string().max(1_000_000),
+  attachments: z.array(attachmentSchema).max(12).optional(),
+  contextMentions: z.array(contextMentionSchema).max(24).optional(),
+});
+
+const approvalDecisionSchema = z.object({
+  callId: idSchema,
+  approved: z.boolean(),
+  scope: z.enum(["once", "this_thread", "this_workspace", "command_prefix"]).optional(),
+});
+
+const approvalDecisionInputSchema = z.object({
+  threadId: idSchema,
+  callId: idSchema.optional(),
+  approved: z.boolean().optional(),
+  scope: z.enum(["once", "this_thread", "this_workspace", "command_prefix"]).optional(),
+  decisions: z.array(approvalDecisionSchema).max(100).optional(),
+}).refine((input) => Boolean(input.decisions?.length) || (Boolean(input.callId) && typeof input.approved === "boolean"), {
+  message: "Approval decision must include callId/approved or decisions.",
+});
+
+const messageIdInputSchema = z.object({
+  messageId: idSchema,
+});
+
+const searchContextMentionsInputSchema = z.object({
+  threadId: idSchema,
+  query: z.string().max(500),
+});
+
+const saveSettingsInputSchema = z.object({
+  model: z.string().max(160).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
+  permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
+  theme: z.enum(["light", "dark", "system"]).optional(),
+  cliproxyBaseUrl: z.string().max(500).optional(),
+  openRouterApiKey: z.string().max(10_000).optional(),
+  geminiApiKey: z.string().max(10_000).optional(),
+});

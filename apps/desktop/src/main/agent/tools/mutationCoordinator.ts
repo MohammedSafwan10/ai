@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
-import { resolveWorkspacePath } from "../../security/pathSandbox";
+import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../../security/pathSandbox";
 import {
   createRenameDiff,
   createStructuredDiff,
@@ -40,11 +40,12 @@ export class FileMutationCoordinator {
     const target = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
     const content = String(call.arguments.content ?? "");
     context.onCommandOutput(call.id, `Writing ${target.relativePath}\n`);
-    const existed = await fs.stat(target.absolutePath).then(() => true).catch(() => false);
+    const existingTarget = await resolveIfExisting(context.workspaceRoot, String(call.arguments.path || ""));
+    const existed = Boolean(existingTarget);
     if (call.arguments.createOnly === true && existed) {
       return { success: false, error: "File already exists." };
     }
-    const previous = existed ? await fs.readFile(target.absolutePath, "utf8") : "";
+    const previous = existingTarget ? await fs.readFile(existingTarget.absolutePath, "utf8") : "";
     const undo: UndoOperation | undefined = !existed || Buffer.byteLength(previous, "utf8") <= MAX_UNDO_BYTES
       ? {
           type: "restore_file",
@@ -113,7 +114,7 @@ export class FileMutationCoordinator {
       }
 
       if (operation.kind === "delete") {
-        const target = resolveWorkspacePath(context.workspaceRoot, operation.path);
+        const target = resolveExistingWorkspacePath(context.workspaceRoot, operation.path);
         context.onCommandOutput(call.id, `Deleting ${target.relativePath}\n`);
         const previous = await fs.readFile(target.absolutePath, "utf8");
         const structured = createStructuredDiff({
@@ -139,7 +140,7 @@ export class FileMutationCoordinator {
         continue;
       }
 
-      const target = resolveWorkspacePath(context.workspaceRoot, operation.path);
+      const target = resolveExistingWorkspacePath(context.workspaceRoot, operation.path);
       context.onCommandOutput(call.id, `${operation.moveTo ? "Moving" : "Editing"} ${target.relativePath}\n`);
       operation.hunks.forEach((hunk) => emitPatchPreview(context, call.id, target.relativePath, hunk.lines));
       const previous = await fs.readFile(target.absolutePath, "utf8");
@@ -188,7 +189,7 @@ export class FileMutationCoordinator {
   }
 
   async deletePath(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
-    const target = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
+    const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
     context.onCommandOutput(call.id, `Deleting ${target.relativePath}\n`);
     const stat = await fs.stat(target.absolutePath);
     const previous = stat.isFile() ? await readUndoText(target.absolutePath) : "";
@@ -217,7 +218,7 @@ export class FileMutationCoordinator {
   }
 
   async renamePath(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
-    const from = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.fromPath || ""));
+    const from = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.fromPath || ""));
     const to = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.toPath || ""));
     context.onCommandOutput(call.id, `Renaming ${from.relativePath} -> ${to.relativePath}\n`);
     await fs.mkdir(path.dirname(to.absolutePath), { recursive: true });
@@ -239,6 +240,21 @@ const readUndoText = async (filePath: string) => {
   if (!stat.isFile() || stat.size > MAX_UNDO_BYTES) return null;
   return fs.readFile(filePath, "utf8");
 };
+
+const resolveIfExisting = async (workspaceRoot: string, userPath: string) => {
+  try {
+    return resolveExistingWorkspacePath(workspaceRoot, userPath);
+  } catch (error) {
+    if (isPathNotFound(error)) return null;
+    throw error;
+  }
+};
+
+const isPathNotFound = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: unknown }).code === "PATH_NOT_FOUND";
 
 const emitLiveDiff = (context: ToolExecutionContext, callId: string, diff: string) => {
   const lines = diff.split(/\r?\n/);

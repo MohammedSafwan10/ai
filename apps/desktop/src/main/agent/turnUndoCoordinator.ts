@@ -7,7 +7,7 @@ import type {
   TurnUndoRecord,
 } from "../../shared/types";
 import type { DesktopStore } from "../db/store";
-import { resolveWorkspacePath } from "../security/pathSandbox";
+import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../security/pathSandbox";
 
 const now = () => Date.now();
 
@@ -146,7 +146,7 @@ const undoRename = async (
   workspaceRoot: string,
   operation: Extract<TurnUndoOperationRecord, { type: "rename_path" }>,
 ): Promise<TurnUndoConflictRecord | null> => {
-  const from = resolveWorkspacePath(workspaceRoot, operation.fromPath);
+  const from = resolveExistingWorkspacePath(workspaceRoot, operation.fromPath);
   const to = resolveWorkspacePath(workspaceRoot, operation.toPath);
   const fromExists = await pathExists(from.absolutePath);
   const toExists = await pathExists(to.absolutePath);

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { DesktopStore } from "../db/store";
 import type { ContextMentionRecord, ContextMentionSuggestion } from "../../shared/types";
-import { resolveWorkspacePath } from "../security/pathSandbox";
+import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../security/pathSandbox";
 import { compactTextForModel } from "../terminal/outputBuffer";
 
 const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", "out", ".vite", ".next", ".turbo"]);
@@ -38,7 +38,7 @@ export const searchContextMentions = async (
     return store
       .listToolEvents(threadId)
       .filter((tool) =>
-        ["desktop_exec_command", "desktop_write_stdin", "desktop_run_diagnostics", "desktop_run_command"].includes(tool.name) &&
+        ["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(tool.name) &&
         (tool.output || tool.result?.output)
       )
       .slice(-10)
@@ -80,7 +80,7 @@ export const buildMentionContext = async (
   const blocks: string[] = [];
   for (const mention of mentions.slice(0, 12)) {
     if (mention.type === "file" && mention.path) {
-      const target = resolveWorkspacePath(workspaceRoot, mention.path);
+      const target = resolveExistingWorkspacePath(workspaceRoot, mention.path);
       const content = await readFileContext(target.absolutePath);
       blocks.push([
         `<attached_file path="${target.relativePath}">`,
@@ -90,7 +90,7 @@ export const buildMentionContext = async (
       continue;
     }
     if (mention.type === "folder" && mention.path) {
-      const target = resolveWorkspacePath(workspaceRoot, mention.path);
+      const target = resolveExistingWorkspacePath(workspaceRoot, mention.path);
       const tree = await folderTreeContext(target.absolutePath, target.relativePath);
       blocks.push([
         `<attached_folder path="${target.relativePath}">`,
