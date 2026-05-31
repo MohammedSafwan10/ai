@@ -157,7 +157,7 @@ export class DesktopToolExecutor {
 
   private async stopProcess(call: DesktopToolCall) {
     const result = await this.terminal.stopProcess({ processId: Number(call.arguments.processId) });
-    return terminalToolResult(result, `Stopped process ${call.arguments.processId}`);
+    return terminalToolResult(result, terminalFallbackOutput(result, Number(call.arguments.processId)));
   }
 
   private async gitStatus(call: DesktopToolCall, context: ToolExecutionContext) {
@@ -197,6 +197,7 @@ const terminalToolResult = (
     durationMs: number;
     timedOut: boolean;
     omittedBytes: number;
+    status: string;
   },
   fallbackOutput: string,
 ): ToolResult => ({
@@ -210,5 +211,22 @@ const terminalToolResult = (
     durationMs: result.durationMs,
     timedOut: result.timedOut,
     omittedBytes: result.omittedBytes,
+    status: result.status,
+    stopped: result.status === "stopped",
   },
 });
+
+const terminalFallbackOutput = (
+  result: {
+    processId: number | null;
+    exitCode: number | null;
+    status: string;
+  },
+  requestedProcessId?: number,
+) => {
+  if (result.status === "running") return `Process ${result.processId || requestedProcessId || ""} is still running.`.trim();
+  if (result.status === "stopped") return `Stopped process ${requestedProcessId || ""}.`.trim();
+  if (result.status === "not_found") return `Process ${requestedProcessId || ""} is not running.`.trim();
+  if (result.status === "timed_out") return "Command timed out.";
+  return `Process exited with code ${result.exitCode}`;
+};

@@ -33,14 +33,19 @@ export interface TerminalSessionResult {
   omittedBytes: number;
   timedOut: boolean;
   running: boolean;
+  status: TerminalSessionStatus;
 }
+
+export type TerminalSessionStatus = "running" | "exited" | "stopped" | "timed_out" | "not_found";
 
 const OUTPUT_DELTA_MAX_BYTES = 8192;
 const TERMINAL_OUTPUT_MAX_BYTES = 1024 * 1024;
 const MIN_YIELD_TIME_MS = 250;
-const DEFAULT_YIELD_TIME_MS = 1000;
-const MIN_EMPTY_POLL_YIELD_TIME_MS = 5000;
+const DEFAULT_YIELD_TIME_MS = 2000;
+const SHORT_COMMAND_CLOSE_GRACE_MS = 900;
+const DEFAULT_EMPTY_POLL_YIELD_TIME_MS = 5000;
 const MAX_YIELD_TIME_MS = 30_000;
+const STOP_GRACE_TIME_MS = 2000;
 const MAX_BACKGROUND_TERMINAL_TIMEOUT_MS = 5 * 60_000;
 const MAX_PROCESSES = 64;
 
@@ -116,6 +121,7 @@ interface TerminalSession {
   unreadOutput: string;
   exitCode: number | null;
   timedOut: boolean;
+  stopRequested: boolean;
   closed: boolean;
   timeout: NodeJS.Timeout;
 }
@@ -149,6 +155,7 @@ export class TerminalSessionManager {
       unreadOutput: "",
       exitCode: null,
       timedOut: false,
+      stopRequested: false,
       closed: false,
       timeout: setTimeout(() => {
         session.timedOut = true;
@@ -171,11 +178,15 @@ export class TerminalSessionManager {
     });
 
     const abort = () => {
+      session.stopRequested = true;
       killProcessTree(child.pid);
     };
     options.signal.addEventListener("abort", abort, { once: true });
 
     await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, false));
+    if (!session.closed && session.unreadOutput) {
+      await this.waitForBoundary(session, SHORT_COMMAND_CLOSE_GRACE_MS);
+    }
     options.signal.removeEventListener("abort", abort);
     return this.resultForSession(session);
   }
@@ -190,6 +201,7 @@ export class TerminalSessionManager {
     }
 
     const abort = () => {
+      session.stopRequested = true;
       killProcessTree(session.child.pid);
     };
     options.signal.addEventListener("abort", abort, { once: true });
@@ -210,11 +222,20 @@ export class TerminalSessionManager {
         omittedBytes: 0,
         timedOut: false,
         running: false,
+        status: "not_found",
       };
     }
+    session.stopRequested = true;
     killProcessTree(session.child.pid);
-    await this.waitForBoundary(session, MIN_YIELD_TIME_MS);
-    return this.resultForSession(session);
+    await this.waitForBoundary(session, STOP_GRACE_TIME_MS);
+    const result = this.resultForSession(session);
+    return result.running
+      ? {
+          ...result,
+          success: false,
+          output: result.output || `Failed to stop process ${processId} within ${STOP_GRACE_TIME_MS}ms.`,
+        }
+      : result;
   }
 
   listSessions() {
@@ -276,6 +297,7 @@ export class TerminalSessionManager {
         resolve();
       };
       session.child.once("close", close);
+      timer.unref?.();
     });
   }
 
@@ -285,8 +307,9 @@ export class TerminalSessionManager {
     session.unreadOutput = "";
     const running = !session.closed;
     if (!running) this.sessions.delete(session.id);
+    const status = terminalStatus(session, running);
     return {
-      success: (running || session.exitCode === 0) && !session.timedOut,
+      success: terminalSuccess(status, session.exitCode),
       output,
       processId: running ? session.id : null,
       exitCode: running ? null : session.exitCode,
@@ -294,13 +317,26 @@ export class TerminalSessionManager {
       omittedBytes: stats.omittedBytes,
       timedOut: session.timedOut,
       running,
+      status,
     };
   }
 }
 
 const normalizeYield = (value: unknown, emptyPoll: boolean) => {
-  const fallback = emptyPoll ? MIN_EMPTY_POLL_YIELD_TIME_MS : DEFAULT_YIELD_TIME_MS;
+  const fallback = emptyPoll ? DEFAULT_EMPTY_POLL_YIELD_TIME_MS : DEFAULT_YIELD_TIME_MS;
   const requested = typeof value === "number" && Number.isFinite(value) ? value : fallback;
-  const min = emptyPoll ? MIN_EMPTY_POLL_YIELD_TIME_MS : MIN_YIELD_TIME_MS;
-  return Math.max(min, Math.min(MAX_YIELD_TIME_MS, requested));
+  return Math.max(MIN_YIELD_TIME_MS, Math.min(MAX_YIELD_TIME_MS, requested));
+};
+
+const terminalStatus = (session: TerminalSession, running: boolean): TerminalSessionStatus => {
+  if (running) return "running";
+  if (session.timedOut) return "timed_out";
+  if (session.stopRequested) return "stopped";
+  return "exited";
+};
+
+const terminalSuccess = (status: TerminalSessionStatus, exitCode: number | null) => {
+  if (status === "running" || status === "stopped" || status === "not_found") return true;
+  if (status === "timed_out") return false;
+  return exitCode === 0;
 };
