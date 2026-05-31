@@ -69,6 +69,8 @@ export interface WorkspaceRecord {
   lastOpenedAt: number;
 }
 
+export type ThreadTitleSource = "placeholder" | "agent" | "user" | "fallback";
+
 export interface SettingsRecord {
   id: "default";
   model: string;
@@ -84,6 +86,8 @@ export interface SettingsRecord {
 export interface ThreadRecord {
   id: string;
   title: string;
+  titleSource?: ThreadTitleSource;
+  titleUpdatedAt?: number;
   workspaceId: string | null;
   starred?: boolean;
   createdAt: number;

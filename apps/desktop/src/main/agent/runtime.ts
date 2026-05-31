@@ -1,5 +1,6 @@
 import type { BrowserWindow } from "electron";
 import type { DesktopStore } from "../db/store";
+import { isPlaceholderThreadTitle, normalizeThreadTitle } from "../db/store";
 import { getModelOption, getProviderForModel } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
@@ -236,7 +237,6 @@ export class AgentRuntime {
     };
     this.store.upsertMessage(userMessage);
     this.store.upsertMessage(assistantMessage);
-    if (input.prompt.trim()) this.store.updateThreadTitle(input.threadId, input.prompt.trim().replace(/\s+/g, " "));
     this.emitSnapshot();
 
     const priorMessages = buildProviderHistory(this.store, input.threadId, assistantMessage.id);
@@ -379,6 +379,8 @@ export class AgentRuntime {
     let history = options.history;
     let assistantText = options.assistantText;
     let assistantThought = options.assistantThought;
+    const thread = this.store.getThread(options.threadId);
+    const titleFilter = createThreadTitleFilterState(Boolean(thread && isPlaceholderThreadTitle(thread)));
     let iteration = options.iteration;
     let toolCount = options.toolCount;
     let recoveryAttempts = options.recoveryAttempts;
@@ -534,7 +536,11 @@ export class AgentRuntime {
             geminiApiKey: this.store.getSecret("gemini_api_key"),
             onTextDelta: (delta) => {
               endThoughtPart();
-              const filtered = filterVisibleDelta(assistantText, delta, visibleFingerprints);
+              const titleFiltered = filterThreadTitleDelta(delta, titleFilter, (title) => {
+                const updated = this.store.updatePlaceholderThreadTitle(options.threadId, title, "agent");
+                if (updated) this.emitSnapshot();
+              });
+              const filtered = filterVisibleDelta(assistantText, titleFiltered, visibleFingerprints);
               if (!filtered) return;
               const startOffset = assistantText.length;
               assistantText += filtered;
@@ -637,6 +643,7 @@ export class AgentRuntime {
           } else {
             markAssistantTextRangePhase(options.assistantMessage, textStart, assistantText.length, "final_answer");
           }
+          this.ensureFallbackThreadTitle(options.threadId);
           flushAssistant("completed", true);
           this.store.clearRunCheckpoint(options.threadId);
           this.activeRuns.delete(options.threadId);
@@ -1091,6 +1098,16 @@ export class AgentRuntime {
     message.updatedAt = now();
     this.store.upsertMessage(message);
     this.emit({ type: "message_updated", message });
+  }
+
+  private ensureFallbackThreadTitle(threadId: string) {
+    const thread = this.store.getThread(threadId);
+    if (!thread || !isPlaceholderThreadTitle(thread)) return;
+    const firstUserMessage = this.store.listMessages(threadId).find((message) => message.role === "user" && message.content.trim());
+    const fallbackTitle = firstUserMessage ? fallbackThreadTitle(firstUserMessage.content) : "";
+    if (!fallbackTitle) return;
+    const updated = this.store.updatePlaceholderThreadTitle(threadId, fallbackTitle, "fallback");
+    if (updated) this.emitSnapshot();
   }
 
   private updateToolEvent(
@@ -1757,6 +1774,92 @@ const mergeAdjacentTextParts = (parts: AssistantTextPartRecord[]) => {
 
 const nextTextPartOrder = (parts: AssistantTextPartRecord[]) =>
   Math.max(0, ...parts.map((part) => part.streamOrder ?? 0)) + 1;
+
+interface ThreadTitleFilterState {
+  enabled: boolean;
+  done: boolean;
+  mode: "normal" | "title";
+  buffer: string;
+  titleBuffer: string;
+}
+
+const THREAD_TITLE_OPEN = "<thread_title>";
+const THREAD_TITLE_CLOSE = "</thread_title>";
+const MAX_THREAD_TITLE_TAG_CONTENT = 240;
+
+export const createThreadTitleFilterState = (enabled: boolean): ThreadTitleFilterState => ({
+  enabled,
+  done: !enabled,
+  mode: "normal",
+  buffer: "",
+  titleBuffer: "",
+});
+
+export const filterThreadTitleDelta = (
+  delta: string,
+  state: ThreadTitleFilterState,
+  onTitle: (title: string) => void,
+) => {
+  if (!delta || state.done) return delta;
+  state.buffer += delta;
+  let visible = "";
+
+  while (state.buffer) {
+    if (state.mode === "title") {
+      const closeIndex = state.buffer.indexOf(THREAD_TITLE_CLOSE);
+      if (closeIndex === -1) {
+        state.titleBuffer += state.buffer;
+        state.buffer = "";
+        if (state.titleBuffer.length > MAX_THREAD_TITLE_TAG_CONTENT) {
+          state.done = true;
+          state.mode = "normal";
+          state.titleBuffer = "";
+        }
+        break;
+      }
+
+      state.titleBuffer += state.buffer.slice(0, closeIndex);
+      const title = normalizeThreadTitle(state.titleBuffer);
+      if (title) onTitle(title);
+      state.done = true;
+      state.mode = "normal";
+      state.titleBuffer = "";
+      visible += state.buffer.slice(closeIndex + THREAD_TITLE_CLOSE.length);
+      state.buffer = "";
+      break;
+    }
+
+    const openIndex = state.buffer.indexOf(THREAD_TITLE_OPEN);
+    if (openIndex !== -1) {
+      visible += state.buffer.slice(0, openIndex);
+      state.buffer = state.buffer.slice(openIndex + THREAD_TITLE_OPEN.length);
+      state.mode = "title";
+      continue;
+    }
+
+    const keep = partialTagPrefixLength(state.buffer, THREAD_TITLE_OPEN);
+    visible += state.buffer.slice(0, state.buffer.length - keep);
+    state.buffer = state.buffer.slice(state.buffer.length - keep);
+    break;
+  }
+
+  return visible;
+};
+
+const partialTagPrefixLength = (value: string, tag: string) => {
+  const max = Math.min(value.length, tag.length - 1);
+  for (let length = max; length > 0; length -= 1) {
+    if (tag.startsWith(value.slice(value.length - length))) return length;
+  }
+  return 0;
+};
+
+export const fallbackThreadTitle = (prompt: string) =>
+  normalizeThreadTitle(prompt
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[<>]/g, " ")
+    .replace(/\s+/g, " "));
 
 const filterVisibleDelta = (current: string, delta: string, fingerprints: Set<string>) => {
   if (!delta || isInsideMarkdownCodeFence(current)) return delta;

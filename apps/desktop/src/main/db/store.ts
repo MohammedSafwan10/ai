@@ -11,6 +11,7 @@ import type {
   SettingsRecord,
   StoreRecoveryNoticeRecord,
   ThreadRecord,
+  ThreadTitleSource,
   ToolEventRecord,
   TurnUndoRecord,
   WorkspaceRecord,
@@ -44,6 +45,8 @@ interface DesktopDataFile {
 }
 
 const now = () => Date.now();
+export const PLACEHOLDER_THREAD_TITLE = "New chat";
+const LEGACY_PLACEHOLDER_THREAD_TITLES = new Set(["New local agent chat", PLACEHOLDER_THREAD_TITLE]);
 
 const defaultData = (): DesktopDataFile => ({
   settings: {
@@ -167,7 +170,9 @@ export class DesktopStore {
     const timestamp = now();
     const thread: ThreadRecord = {
       id: crypto.randomUUID(),
-      title: "New local agent chat",
+      title: PLACEHOLDER_THREAD_TITLE,
+      titleSource: "placeholder",
+      titleUpdatedAt: timestamp,
       workspaceId,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -177,16 +182,23 @@ export class DesktopStore {
     return thread;
   }
 
-  updateThreadTitle(threadId: string, title: string) {
-    const trimmed = title.trim();
+  updateThreadTitle(threadId: string, title: string, source: ThreadTitleSource = "user") {
+    const trimmed = normalizeThreadTitle(title);
     if (!trimmed) return this.getThread(threadId);
+    const timestamp = now();
     this.data.threads = this.data.threads.map((thread) =>
       thread.id === threadId
-        ? { ...thread, title: trimmed.slice(0, 90), updatedAt: now() }
+        ? { ...thread, title: trimmed, titleSource: source, titleUpdatedAt: timestamp, updatedAt: timestamp }
         : thread,
     );
     this.writeData();
     return this.getThread(threadId);
+  }
+
+  updatePlaceholderThreadTitle(threadId: string, title: string, source: Extract<ThreadTitleSource, "agent" | "fallback">) {
+    const thread = this.getThread(threadId);
+    if (!thread || !isPlaceholderThreadTitle(thread)) return thread;
+    return this.updateThreadTitle(threadId, title, source);
   }
 
   toggleThreadStar(threadId: string) {
@@ -428,7 +440,7 @@ export class DesktopStore {
         },
         secrets: parsed.secrets || {},
         workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces : [],
-        threads: Array.isArray(parsed.threads) ? parsed.threads : [],
+        threads: Array.isArray(parsed.threads) ? parsed.threads.map(normalizeStoredThread) : [],
         messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeStoredMessage) : [],
         toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeStoredToolEvent) : [],
         turnUndos: Array.isArray(parsed.turnUndos) ? parsed.turnUndos : [],
@@ -494,6 +506,27 @@ const upsertById = <T extends { id: string }>(items: T[], item: T) => {
   return exists
     ? items.map((candidate) => candidate.id === item.id ? item : candidate)
     : [...items, item];
+};
+
+export const normalizeThreadTitle = (title: string) => {
+  const firstLine = title.replace(/\r/g, "\n").split("\n")[0] || "";
+  return firstLine.replace(/\s+/g, " ").trim().slice(0, 48);
+};
+
+export const isPlaceholderThreadTitle = (thread: Pick<ThreadRecord, "title" | "titleSource">) =>
+  thread.titleSource === "placeholder" || (!thread.titleSource && LEGACY_PLACEHOLDER_THREAD_TITLES.has(thread.title.trim()));
+
+const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
+  const title = thread.title?.trim() || PLACEHOLDER_THREAD_TITLE;
+  const titleSource: ThreadTitleSource =
+    thread.titleSource ||
+    (LEGACY_PLACEHOLDER_THREAD_TITLES.has(title) ? "placeholder" : "user");
+  return {
+    ...thread,
+    title: titleSource === "placeholder" ? PLACEHOLDER_THREAD_TITLE : normalizeThreadTitle(title) || PLACEHOLDER_THREAD_TITLE,
+    titleSource,
+    titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(),
+  };
 };
 
 const normalizeStoredMessage = (message: ChatMessageRecord): ChatMessageRecord => {

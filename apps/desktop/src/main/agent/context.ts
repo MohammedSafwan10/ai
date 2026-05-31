@@ -1,4 +1,5 @@
 import type { DesktopStore } from "../db/store";
+import { isPlaceholderThreadTitle } from "../db/store";
 import type { ProviderMessage } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
 import { detectProjectProfileSync } from "./diagnostics";
@@ -39,6 +40,10 @@ export const buildProviderHistory = (
 
 export const buildRuntimeContext = (store: DesktopStore, threadId: string, workspaceRoot: string) => {
   const profile = detectProjectProfileSync(workspaceRoot);
+  const thread = store.getThread(threadId);
+  const threadTitleInstruction = thread && isPlaceholderThreadTitle(thread)
+    ? "- Chat title: untitled. If the user's request has a clear topic, emit one hidden title tag early in the turn: <thread_title>Short task title</thread_title>. Keep it under 48 characters, no punctuation flourish, no newline, and do not mention this tag in normal chat text."
+    : `- Chat title: ${thread?.title ? `"${thread.title}"` : "already named"}. Do not emit a <thread_title> tag.`;
   const recentTools = store
     .listToolEvents(threadId)
     .filter((tool) => tool.status !== "preparing")
@@ -52,6 +57,7 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
   return [
     "Runtime context:",
     `- Workspace root: ${workspaceRoot}`,
+    threadTitleInstruction,
     `- Workspace profile: ${formatProfile(profile)}`,
     "- Terminal protocol: start commands with desktop_spawn_process. Prefer argv arrays for exact execution; use command strings only for shell syntax. Default tty:true gives native PTY fidelity and resize; use tty:false for reliable pipe stdin/stdout/stderr and closeStdin EOF. If a processId is returned, the process is still running; use desktop_write_process with empty input to poll, non-empty input to interact, closeStdin to close pipe input, desktop_resize_process for PTY resize, or desktop_kill_process to stop it.",
     "- Terminal output is streamed live to the user, but model-visible tool results may be head/tail compacted.",
