@@ -16,6 +16,7 @@ interface SidebarProps {
   onRenameThread: (threadId: string, title: string) => void;
   onToggleThreadStar: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
+  footer?: ReactNode;
 }
 
 export function Sidebar({
@@ -31,6 +32,7 @@ export function Sidebar({
   onRenameThread,
   onToggleThreadStar,
   onDeleteThread,
+  footer,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
@@ -43,7 +45,6 @@ export function Sidebar({
     workspace,
     threads: visibleThreads.filter((thread) => thread.workspaceId === workspace.id),
   }));
-  const ungroupedThreads = visibleThreads.filter((thread) => !thread.workspaceId);
   const toggleGroup = (groupId: string) => {
     setCollapsedGroups((current) => {
       const next = new Set(current);
@@ -113,27 +114,8 @@ export function Sidebar({
           </ProjectGroup>
         ))}
 
-        {ungroupedThreads.length > 0 && (
-          <ProjectGroup
-            id="ungrouped"
-            title="Chats"
-            collapsed={collapsedGroups.has("ungrouped")}
-            onToggle={toggleGroup}
-          >
-            {ungroupedThreads.map((thread) => (
-              <ThreadButton
-                key={thread.id}
-                thread={thread}
-                active={thread.id === activeThreadId}
-                onClick={() => onSelectThread(thread.id)}
-                onRename={onRenameThread}
-                onToggleStar={onToggleThreadStar}
-                onDelete={onDeleteThread}
-              />
-            ))}
-          </ProjectGroup>
-        )}
       </div>
+      {footer && <div className="sidebar-footer">{footer}</div>}
     </aside>
   );
 }

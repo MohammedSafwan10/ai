@@ -101,6 +101,7 @@ small {
 .sidebar-collapsed .brand-copy,
 .sidebar-collapsed .sidebar-top-actions button span,
 .sidebar-collapsed .sidebar-search input,
+.sidebar-collapsed .sidebar-settings-button span,
 .sidebar-collapsed .project-heading span,
 .sidebar-collapsed .project-list,
 .sidebar-collapsed .empty-project {
@@ -114,13 +115,15 @@ small {
 }
 
 .sidebar-collapsed .sidebar-top-actions,
-.sidebar-collapsed .project-heading {
+.sidebar-collapsed .project-heading,
+.sidebar-collapsed .sidebar-footer {
   width: 40px;
   justify-items: center;
 }
 
 .sidebar-collapsed .sidebar-top-actions button,
 .sidebar-collapsed .sidebar-search,
+.sidebar-collapsed .sidebar-settings-button,
 .sidebar-collapsed .project-heading button {
   width: 36px;
   justify-content: center;
@@ -185,6 +188,30 @@ small {
   gap: 10px;
   overflow: auto;
   padding-right: 2px;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  border-top: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  padding-top: 8px;
+}
+
+.sidebar-settings-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 7px 10px;
+}
+
+.sidebar-settings-button:hover {
+  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
 }
 
 .project-group {

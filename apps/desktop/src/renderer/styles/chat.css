@@ -45,7 +45,14 @@
   min-width: 0;
 }
 
+.assistant-flow-text.is-error {
+  border-left: 2px solid var(--danger);
+  color: var(--privora-text);
+  padding-left: 10px;
+}
+
 .streaming-text {
+  color: var(--privora-text);
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
@@ -79,20 +86,6 @@
   color: color-mix(in srgb, var(--privora-text) 72%, var(--privora-muted));
 }
 
-.assistant-run-chevron {
-  opacity: 0.7;
-  transform: rotate(0deg);
-  transition: transform 0.16s ease, opacity 0.16s ease;
-}
-
-.assistant-run-chevron.closed {
-  transform: rotate(-90deg);
-}
-
-.assistant-run-toggle:hover .assistant-run-chevron {
-  opacity: 1;
-}
-
 .chat-message.user .message-bubble {
   box-sizing: border-box;
   inline-size: fit-content;
@@ -100,11 +93,12 @@
   min-inline-size: 4.75rem;
   max-inline-size: min(620px, 74%);
   max-width: min(620px, 74%);
-  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
-  border-radius: 20px;
-  background: var(--privora-user-bubble);
-  padding: 8px 12px;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--privora-text) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 34%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 28%, transparent);
+  padding: 9px 12px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--privora-text) 3%, transparent);
+  backdrop-filter: blur(6px);
   overflow: visible;
   overflow-wrap: normal;
   white-space: pre-wrap;
@@ -124,29 +118,26 @@
 }
 
 .user-message-collapsible {
+  position: relative;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: min(360px, 100%);
-}
-
-.user-message-meta {
-  color: color-mix(in srgb, var(--privora-muted) 86%, transparent);
-  font-size: 11px;
-  line-height: 1.2;
 }
 
 .user-message-content {
   position: relative;
   min-width: 0;
+  overflow: hidden;
+  border-radius: 0;
 }
 
 .user-message-preview {
-  max-height: 14.5rem;
+  max-height: 14rem;
   margin: 0;
   overflow: hidden;
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 4px 0 0;
   color: inherit;
   font: inherit;
   line-height: inherit;
@@ -163,29 +154,35 @@
   background: linear-gradient(
     to bottom,
     color-mix(in srgb, var(--privora-user-bubble) 0%, transparent),
-    var(--privora-user-bubble) 78%
+    var(--privora-bg) 92%
   );
   content: "";
   pointer-events: none;
 }
 
 .user-message-toggle {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
   display: inline-flex;
-  width: fit-content;
+  width: 28px;
+  height: 28px;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--privora-surface) 44%, transparent);
-  color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
-  padding: 3px 7px;
-  font-size: 11px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 48%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 38%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 78%, var(--privora-muted));
+  padding: 0;
+  backdrop-filter: blur(8px);
   line-height: 1.2;
 }
 
 .user-message-toggle:hover {
   color: var(--privora-text);
-  border-color: color-mix(in srgb, var(--privora-border) 92%, transparent);
+  border-color: color-mix(in srgb, var(--privora-border) 76%, transparent);
+  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
 }
 
 .user-message-toggle-icon {

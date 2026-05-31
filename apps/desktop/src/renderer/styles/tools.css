@@ -123,11 +123,38 @@
 }
 
 .tool-title-line {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, auto);
   align-items: baseline;
   gap: 6px;
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
+}
+
+.tool-title-button {
+  grid-template-columns: auto minmax(0, auto) minmax(6rem, 1fr);
+  width: min(100%, 52rem);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  padding: 1px 3px 1px 0;
+  text-align: left;
+}
+
+.tool-title-button:hover,
+.tool-title-button.is-open {
+  background: color-mix(in srgb, var(--privora-surface) 35%, transparent);
+}
+
+.tool-title-button code {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--privora-muted) 82%, var(--privora-text));
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -361,6 +388,37 @@
   background: color-mix(in srgb, var(--privora-bg) 78%, var(--privora-surface));
 }
 
+.terminal-output-wrap {
+  display: grid;
+  gap: 4px;
+  margin: 5px 0 0 20px;
+  max-width: min(100%, 52rem);
+}
+
+.terminal-output-panel {
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 62%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--privora-bg) 54%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.terminal-output-stats {
+  color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .live-line {
   display: block;
   min-height: 1.45em;
@@ -401,6 +459,7 @@
 .approval-actions {
   display: flex;
   grid-column: 2;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

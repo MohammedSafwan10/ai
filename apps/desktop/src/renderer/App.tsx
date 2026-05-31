@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { AppLauncher } from "./components/AppLauncher";
+import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
 import type { ContextMentionRecord, DesktopAttachmentRecord, SaveSettingsInput } from "../shared/types";
 
@@ -20,6 +20,7 @@ export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
   const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
     text: string;
@@ -64,6 +65,28 @@ export default function App() {
     getItemKey: (index) => messages[index]?.id ?? index,
   });
 
+  const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
+    followBottomRef.current = true;
+    manualScrollHoldUntilRef.current = 0;
+    window.requestAnimationFrame(() => {
+      programmaticScrollRef.current = true;
+      if (messages.length > 0) {
+        messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+      } else {
+        scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior });
+      }
+      window.setTimeout(() => {
+        if (messages.length > 0) {
+          messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+        } else {
+          scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior });
+        }
+        programmaticScrollRef.current = false;
+      }, 90);
+      setShowJumpButton(false);
+    });
+  };
+
   const toolsByMessage = useMemo(() => {
     const map = new Map<string, typeof snapshot.toolEvents>();
     snapshot.toolEvents.forEach((tool) => {
@@ -94,6 +117,7 @@ export default function App() {
   }, [snapshot.settings.theme]);
 
   useEffect(() => {
+    if (settingsOpen) return;
     if (Date.now() < manualScrollHoldUntilRef.current) {
       setShowJumpButton((value) => value ? value : true);
       return;
@@ -114,7 +138,12 @@ export default function App() {
       }, 90);
       setShowJumpButton((value) => value && false);
     });
-  }, [latestActivityKey, messages.length]);
+  }, [latestActivityKey, messages.length, settingsOpen]);
+
+  useEffect(() => {
+    if (settingsOpen) return;
+    scrollToLatestMessage();
+  }, [activeThread?.id, settingsOpen, messages.length]);
 
   useEffect(() => {
     setComposerDraft(null);
@@ -133,8 +162,8 @@ export default function App() {
     }
   };
 
-  const startPrompt = (prompt: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => {
-    if (!activeThread) return;
+  const startPrompt = async (prompt: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => {
+    if (!activeThread) return false;
     if (running) {
       setQueuedPrompts((current) => [
         ...current,
@@ -145,9 +174,19 @@ export default function App() {
           contextMentions,
         },
       ]);
-      return;
+      return true;
     }
-    void window.privoraDesktop.startTurn({ threadId: activeThread.id, prompt, attachments, contextMentions });
+    void window.privoraDesktop.startTurn({ threadId: activeThread.id, prompt, attachments, contextMentions })
+      .catch((error) => {
+        console.error(error);
+        setComposerDraft({
+          id: Date.now(),
+          text: prompt,
+          attachments,
+          contextMentions,
+        });
+      });
+    return true;
   };
 
   useEffect(() => {
@@ -200,19 +239,36 @@ export default function App() {
           await window.privoraDesktop.deleteThread(threadId);
           await refresh();
         }}
+        footer={(
+          <SettingsPanel
+            settings={snapshot.settings}
+            workspaceDisabled={!activeWorkspace}
+            open={settingsOpen}
+            onOpen={() => setSettingsOpen(true)}
+            onClose={() => setSettingsOpen(false)}
+            onSave={saveSettings}
+          />
+        )}
       />
-      <main className="chat-shell">
-        <header className="topbar">
-          <div className="topbar-title">
-            <h1>{activeThread?.title || "New chat"}</h1>
-          </div>
-          <div className="topbar-actions">
-            <AppLauncher disabled={!activeWorkspace} />
-            <SettingsPanel settings={snapshot.settings} onSave={saveSettings} />
-          </div>
-        </header>
+      <main className={settingsOpen ? "chat-shell settings-mode" : "chat-shell"}>
+        {settingsOpen ? (
+          <SettingsScreen
+            settings={snapshot.settings}
+            workspaceDisabled={!activeWorkspace}
+            open={settingsOpen}
+            onOpen={() => setSettingsOpen(true)}
+            onClose={() => setSettingsOpen(false)}
+            onSave={saveSettings}
+          />
+        ) : (
+          <>
+            <header className="topbar">
+              <div className="topbar-title">
+                <h1>{activeThread?.title || "New chat"}</h1>
+              </div>
+            </header>
 
-        <div
+            <div
           className="message-list"
           ref={scrollerRef}
           onWheel={(event) => {
@@ -263,9 +319,9 @@ export default function App() {
                           ? snapshot.activeRun.status
                           : null
                       }
-                      onApprove={(callId, approved) => {
+                      onApprove={(callId, approved, scope) => {
                         if (!activeThread) return;
-                        void window.privoraDesktop.decideApproval({ threadId: activeThread.id, callId, approved });
+                        void window.privoraDesktop.decideApproval({ threadId: activeThread.id, callId, approved, scope });
                       }}
                       onApproveAll={(callIds) => {
                         if (!activeThread) return;
@@ -284,25 +340,25 @@ export default function App() {
               })}
             </div>
           )}
-        </div>
+            </div>
 
-        <div className="composer-stack">
+            <div className="composer-stack">
+          {snapshot.recoveryNotice && (
+            <div className="recovery-notice" role="status">
+              <strong>Data recovery used</strong>
+              <span>{snapshot.recoveryNotice.message}</span>
+              <code>{snapshot.recoveryNotice.backupPath}</code>
+            </div>
+          )}
           {showJumpButton && (
             <button
               type="button"
               className="jump-to-bottom"
               onClick={() => {
-                followBottomRef.current = true;
-                manualScrollHoldUntilRef.current = 0;
-                programmaticScrollRef.current = true;
-                scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
-                window.setTimeout(() => {
-                  programmaticScrollRef.current = false;
-                }, 180);
-                setShowJumpButton(false);
+                scrollToLatestMessage("smooth");
               }}
             >
-              v
+              <ArrowDown size={15} />
             </button>
           )}
           {resumable && activeThread && (
@@ -363,7 +419,9 @@ export default function App() {
             }}
             onSettings={saveSettings}
           />
-        </div>
+            </div>
+          </>
+        )}
         {toast && <div className="toast">{toast}</div>}
       </main>
       <ReviewPanel tools={reviewTools} open={Boolean(reviewMessageId)} onClose={() => setReviewMessageId(null)} />
