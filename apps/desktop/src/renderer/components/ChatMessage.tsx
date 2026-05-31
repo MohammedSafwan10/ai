@@ -1,10 +1,11 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, Copy } from "lucide-react";
+import { Check, ChevronDown, Copy, Maximize2, Minimize2 } from "lucide-react";
 import clsx from "clsx";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AssistantThoughtPartRecord,
+  ApprovalDecisionScope,
   ChatMessageRecord,
   DesktopAttachmentRecord,
   ToolEventRecord,
@@ -16,12 +17,13 @@ import { TurnReviewCard } from "./ReviewPanel";
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
 const USER_MESSAGE_COLLAPSE_LINES = 16;
+const STREAM_MARKDOWN_THROTTLE_MS = 90;
 
 interface ChatMessageProps {
   message: ChatMessageRecord;
   tools: ToolEventRecord[];
   activeRunStatus: string | null;
-  onApprove: (callId: string, approved: boolean) => void;
+  onApprove: (callId: string, approved: boolean, scope?: ApprovalDecisionScope) => void;
   onApproveAll: (callIds: string[]) => void;
   onOpenReview: (messageId: string) => void;
   turnUndo: TurnUndoRecord | null;
@@ -89,7 +91,7 @@ function ChatMessageComponent({
               <div className="assistant-flow">
                 {renderParts.length > 0 ? (
                   renderParts.map((part) => {
-                    const showActivityPart = runActive || activityOpen || activityNeedsAttention;
+                    const showActivityPart = activityOpen;
                     if (part.type === "thought") {
                       return showActivityPart ? <ThoughtPanel key={part.key} thought={part.thought} active={part.active} /> : null;
                     }
@@ -106,8 +108,8 @@ function ChatMessageComponent({
                       ) : null;
                     }
                     return (
-                      <div key={part.key} className="assistant-flow-text markdown-body">
-                        <AssistantTextPart text={part.text} active={runActive} />
+                      <div key={part.key} className={clsx("assistant-flow-text", message.status === "failed" && "is-error", "markdown-body")}>
+                        <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} />
                       </div>
                     );
                   })
@@ -330,7 +332,6 @@ function AssistantRunMeta({
       {hasActivity ? (
         <button type="button" className="assistant-run-toggle" onClick={onToggleActivity}>
           <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
-          <ChevronDown className={clsx("assistant-run-chevron", !activityOpen && "closed")} size={14} />
         </button>
       ) : (
         <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
@@ -340,11 +341,73 @@ function AssistantRunMeta({
 }
 
 function AssistantTextPart({ text, active }: { text: string; active: boolean }) {
-  if (active) {
-    return <div className="streaming-text">{text}</div>;
-  }
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
+  const committedMarkdown = useStreamingCommittedMarkdown(text, active);
+  if (!active) return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
+
+  const tail = text.slice(committedMarkdown.length);
+  return (
+    <>
+      {committedMarkdown && <ReactMarkdown remarkPlugins={[remarkGfm]}>{committedMarkdown}</ReactMarkdown>}
+      {tail && <div className="streaming-text">{tail}</div>}
+    </>
+  );
 }
+
+function useStreamingCommittedMarkdown(text: string, active: boolean) {
+  const [committed, setCommitted] = useState(() => active ? completeLinePrefix(text) : text);
+  const committedRef = useRef(committed);
+  const latestPrefixRef = useRef(committed);
+  const lastFlushRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    committedRef.current = committed;
+  }, [committed]);
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const flush = (value: string) => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      latestPrefixRef.current = value;
+      committedRef.current = value;
+      lastFlushRef.current = Date.now();
+      setCommitted(value);
+    };
+
+    if (!active) {
+      flush(text);
+      return;
+    }
+
+    const next = completeLinePrefix(text);
+    latestPrefixRef.current = next;
+    if (next === committedRef.current) return;
+
+    const elapsed = Date.now() - lastFlushRef.current;
+    if (elapsed >= STREAM_MARKDOWN_THROTTLE_MS || next.length < committedRef.current.length) {
+      flush(next);
+      return;
+    }
+
+    if (timerRef.current !== null) return;
+    timerRef.current = window.setTimeout(() => {
+      flush(latestPrefixRef.current);
+    }, STREAM_MARKDOWN_THROTTLE_MS - elapsed);
+  }, [active, text]);
+
+  return committed;
+}
+
+const completeLinePrefix = (text: string) => {
+  const end = text.lastIndexOf("\n");
+  return end < 0 ? "" : text.slice(0, end + 1);
+};
 
 function useElapsedTime(startedAt: number, endedAt?: number) {
   const [now, setNow] = useState(Date.now());
@@ -393,9 +456,6 @@ function UserMessageContent({ content }: { content: string }) {
 
   return (
     <div className={clsx("user-message-collapsible", open && "open")}>
-      <div className="user-message-meta">
-        Long prompt · {content.length.toLocaleString()} chars · {lineCount.toLocaleString()} lines
-      </div>
       <div className="user-message-content">
         {open ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
@@ -406,11 +466,11 @@ function UserMessageContent({ content }: { content: string }) {
       <button
         type="button"
         className="user-message-toggle"
+        title={open ? "Collapse prompt" : "Show full prompt"}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        <span>{open ? "Collapse prompt" : "Show full prompt"}</span>
-        <ChevronDown className={clsx("user-message-toggle-icon", !open && "closed")} size={14} />
+        {open ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
       </button>
     </div>
   );

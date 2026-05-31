@@ -1,30 +1,32 @@
-import { Loader2, ShieldAlert, XCircle } from "lucide-react";
+import { Loader2, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import clsx from "clsx";
-import type { ToolEventRecord } from "../../shared/types";
+import type { ApprovalDecisionScope, ToolEventRecord } from "../../shared/types";
 import { InlineFileChangeList } from "./InlineDiff";
 
 interface ToolTimelineProps {
   tools: ToolEventRecord[];
   messageStatus: string;
   defaultOpen?: boolean;
-  onApprove: (callId: string, approved: boolean) => void;
+  onApprove: (callId: string, approved: boolean, scope?: ApprovalDecisionScope) => void;
   onApproveAll: (callIds: string[]) => void;
 }
 
 export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onApprove, onApproveAll }: ToolTimelineProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [showAllSteps, setShowAllSteps] = useState(false);
-  const messageActive = messageStatus === "running" || messageStatus === "awaiting_approval";
+  const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
+  const messageActive = isActiveMessageStatus(messageStatus);
   const normalizedTools = useMemo(() => normalizeStaleTools(tools, messageActive), [tools, messageActive]);
   const compactedTools = useMemo(() => compactTimelineTools(normalizedTools), [normalizedTools]);
+  const hasLive = normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing");
+  const hasBlockingAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval");
+  const liveGroupOpen = messageActive && (defaultOpen || hasLive);
   const displayTools = useMemo(
-    () => showAllSteps ? compactedTools : visibleTimelineTools(compactedTools),
-    [compactedTools, showAllSteps],
+    () => liveGroupOpen ? normalizedTools : showAllSteps ? compactedTools : visibleTimelineTools(compactedTools),
+    [compactedTools, liveGroupOpen, normalizedTools, showAllSteps],
   );
   const hiddenStepCount = Math.max(0, compactedTools.length - displayTools.length);
-  const hasLive = normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing");
-  const hasAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed");
   const summary = useMemo(() => {
     const pending = normalizedTools.filter((tool) => tool.status === "awaiting_approval").length;
     const failed = normalizedTools.filter((tool) => tool.status === "failed").length;
@@ -50,10 +52,18 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
   const shouldShowRows =
     userOpen ?? (
       defaultOpen ||
-      hasAttention ||
+      hasBlockingAttention ||
       messageStatus === "awaiting_approval"
     );
   const pendingCallIds = normalizedTools.filter((tool) => tool.status === "awaiting_approval").map((tool) => tool.callId);
+  const toggleOutput = (toolId: string) => {
+    setExpandedOutputIds((current) => {
+      const next = new Set(current);
+      if (next.has(toolId)) next.delete(toolId);
+      else next.add(toolId);
+      return next;
+    });
+  };
 
   return (
     <div className="tool-timeline">
@@ -84,9 +94,12 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
               <StatusIcon status={tool.status} />
               <div className="tool-main">
                 {!hasFileDiffs(tool) && (
-                  <div className="tool-title-line">
-                    <strong>{primaryToolLabel(tool)}</strong>
-                  </div>
+                  <ToolTitleLine
+                    tool={tool}
+                    output={displayOutput(tool)}
+                    expanded={expandedOutputIds.has(tool.id)}
+                    onToggle={() => toggleOutput(tool.id)}
+                  />
                 )}
                 {hasFileDiffs(tool) ? (
                   <InlineFileChangeList
@@ -96,14 +109,20 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
                 {hasUsefulOutput(displayOutput(tool)) && (
-                  isLiveOutput(tool)
-                    ? <LiveOutput output={displayOutput(tool).slice(-9000)} />
-                    : shouldShowOutputDetail(tool) && (
-                      <details className="tool-detail">
-                        <summary>Output</summary>
-                        <pre>{displayOutput(tool).slice(0, 5000)}</pre>
-                      </details>
+                  isTerminalOutputTool(tool) ? (
+                    expandedOutputIds.has(tool.id) && (
+                      <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
                     )
+                  ) : (
+                    isLiveOutput(tool)
+                      ? <LiveOutput output={displayOutput(tool).slice(-9000)} />
+                      : shouldShowOutputDetail(tool) && (
+                        <details className="tool-detail">
+                          <summary>Output</summary>
+                          <pre>{displayOutput(tool).slice(0, 5000)}</pre>
+                        </details>
+                      )
+                  )
                 )}
                 {tool.diff && shouldShowDiffDetail(tool) && !hasFileDiffs(tool) && (
                   <details className="tool-detail">
@@ -114,7 +133,11 @@ export function ToolTimeline({ tools, messageStatus, defaultOpen = false, onAppr
               </div>
               {tool.status === "awaiting_approval" && (
                 <div className="approval-actions">
-                  <button onClick={() => onApprove(tool.callId, true)}>Approve</button>
+                  <button onClick={() => onApprove(tool.callId, true, "once")}>Approve once</button>
+                  <button onClick={() => onApprove(tool.callId, true, "this_workspace")}>Trust tool</button>
+                  {isTerminalApproval(tool) && (
+                    <button onClick={() => onApprove(tool.callId, true, "command_prefix")}>Trust command</button>
+                  )}
                   <button onClick={() => onApprove(tool.callId, false)}>Cancel</button>
                 </div>
               )}
@@ -145,6 +168,68 @@ function LiveOutput({ output }: { output: string }) {
   );
 }
 
+function ToolTitleLine({
+  tool,
+  output,
+  expanded,
+  onToggle,
+}: {
+  tool: ToolEventRecord;
+  output: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const canExpand = isTerminalOutputTool(tool) && hasUsefulOutput(output);
+  const preview = canExpand ? compactOutputPreview(output.trimEnd()) : "";
+  if (!canExpand) {
+    return (
+      <div className="tool-title-line">
+        <strong>{primaryToolLabel(tool)}</strong>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={clsx("tool-title-line", "tool-title-button", expanded && "is-open")}
+      onClick={onToggle}
+      title={expanded ? "Collapse output" : "Expand output"}
+    >
+      <Terminal size={13} />
+      <strong>{primaryToolLabel(tool)}</strong>
+      {preview && <code>{preview}</code>}
+    </button>
+  );
+}
+
+function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: string }) {
+  return (
+    <div className="terminal-output-wrap">
+      <pre className="terminal-output-panel">
+        {output.trimEnd() || "(no output)"}
+      </pre>
+      <TerminalStats tool={tool} />
+    </div>
+  );
+}
+
+function TerminalStats({ tool }: { tool: ToolEventRecord }) {
+  const terminal = tool.terminal;
+  if (!terminal) return null;
+  const parts = [
+    terminal.status ? terminal.status.replace(/_/g, " ") : "",
+    typeof terminal.processId === "number" ? `pid ${terminal.processId}` : "",
+    typeof terminal.exitCode === "number" || terminal.exitCode === null ? `exit ${terminal.exitCode ?? "none"}` : "",
+    typeof terminal.operationDurationMs === "number" ? `op ${formatDuration(terminal.operationDurationMs)}` : "",
+    typeof terminal.processDurationMs === "number" ? `proc ${formatDuration(terminal.processDurationMs)}` : typeof terminal.durationMs === "number" ? formatDuration(terminal.durationMs) : "",
+    terminal.backend ? terminal.backend : "",
+    terminal.tty ? "pty" : "",
+    terminal.omittedBytes ? `${formatBytes(terminal.omittedBytes)} omitted` : "",
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return <div className="terminal-output-stats">{parts.join(" · ")}</div>;
+}
+
 const liveLineClass = (line: string) => {
   if (line.startsWith("+ ") || line.startsWith("+")) return "live-add";
   if (line.startsWith("- ") || line.startsWith("-")) return "live-del";
@@ -153,6 +238,36 @@ const liveLineClass = (line: string) => {
 };
 
 const cleanTitle = (title: string) => title.replace(/\s+\.$/, "").trim() || "Tool";
+
+const isTerminalApproval = (tool: ToolEventRecord) =>
+  tool.name === "desktop_spawn_process" || tool.name === "desktop_write_process";
+
+const isTerminalOutputTool = (tool: ToolEventRecord) =>
+  [
+    "desktop_spawn_process",
+    "desktop_write_process",
+    "desktop_kill_process",
+    "desktop_resize_process",
+    "desktop_run_diagnostics",
+    "desktop_git_status",
+    "desktop_git_diff",
+  ].includes(tool.name);
+
+const compactOutputPreview = (output: string) => {
+  const line = output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1) || "";
+  return line.length <= 140 ? line : `${line.slice(0, 139)}...`;
+};
+
+const formatDuration = (durationMs: number) => {
+  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))}ms`;
+  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
+};
+
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+};
 
 const primaryToolLabel = (tool: ToolEventRecord) => {
   if (tool.diffFiles?.length === 1) {
@@ -199,10 +314,21 @@ const hasUsefulOutput = (output?: string) => {
 };
 
 const displayOutput = (tool: ToolEventRecord) =>
-  tool.output || tool.result?.error || "";
+  tool.output || tool.result?.output || tool.result?.error || "";
 
 const isLiveOutput = (tool: ToolEventRecord) =>
   tool.status === "running" || tool.status === "preparing";
+
+const isActiveMessageStatus = (status: string) =>
+  [
+    "sampling",
+    "running",
+    "executing_tool",
+    "waiting_tool",
+    "awaiting_approval",
+    "draining",
+    "completing",
+  ].includes(status);
 
 const hasFileDiffs = (tool: ToolEventRecord) =>
   Boolean(tool.diffFiles?.length);
@@ -359,7 +485,7 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
   ).length;
   const commands = tools.filter((tool) =>
     tool.status === "done" &&
-    ["desktop_exec_command", "desktop_write_stdin", "desktop_stop_process", "desktop_run_diagnostics", "desktop_run_command", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
+    ["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
   ).length;
   const reads = tools.filter((tool) =>
     tool.status === "done" &&

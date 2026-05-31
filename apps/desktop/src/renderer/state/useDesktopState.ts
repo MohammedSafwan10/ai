@@ -29,6 +29,8 @@ const emptySnapshot: AppSnapshot = {
   messages: [],
   toolEvents: [],
   turnUndos: [],
+  approvalScopes: [],
+  approvalHistory: [],
   activeThreadId: null,
   activeWorkspaceId: null,
   activeRun: null,

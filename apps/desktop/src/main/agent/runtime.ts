@@ -3,6 +3,8 @@ import type { DesktopStore } from "../db/store";
 import { getModelOption, getProviderForModel } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
+  ApprovalDecisionScope,
+  ApprovalScopeRecord,
   AssistantThoughtPartRecord,
   ChatMessageRecord,
   DesktopEvent,
@@ -16,7 +18,7 @@ import { buildDesktopSystemPrompt } from "./systemPrompt";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
-import { buildProviderHistory, buildRuntimeContext, compactToolResultForModel } from "./context";
+import { buildProviderHistory, buildRuntimeContext, compactProviderHistory, compactToolResultForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
 import {
   markRunProgress,
@@ -29,6 +31,7 @@ import {
   diffStatsFromFiles,
   parseUnifiedDiffFiles,
 } from "./tools/diffFormatter";
+import { approvalCommandPrefix, approvalCwd, findMatchingApprovalScope } from "./tools/permissions";
 
 const MAX_CONTINUOUS_MODEL_ITERATIONS = 512;
 const MAX_TOOL_CALLS = 500;
@@ -48,7 +51,7 @@ interface ApprovalBundle {
   assistantMessageId: string;
   workspaceRoot: string;
   calls: DesktopToolCall[];
-  decisions: Map<string, boolean>;
+  decisions: Map<string, ApprovalDecision>;
   history: ProviderMessage[];
   assistantText: string;
   assistantThought: string;
@@ -56,6 +59,11 @@ interface ApprovalBundle {
   iteration: number;
   recoveryAttempts: number;
   run: AgentRunTracker;
+}
+
+interface ApprovalDecision {
+  approved: boolean;
+  scope: ApprovalDecisionScope;
 }
 
 interface ContinueOptions {
@@ -285,7 +293,10 @@ export class AgentRuntime {
     decisions.forEach((decision) => {
       const bundle = this.pendingApprovalByCallId.get(decision.callId);
       if (!bundle) return;
-      bundle.decisions.set(decision.callId, decision.approved);
+      bundle.decisions.set(decision.callId, {
+        approved: decision.approved,
+        scope: decision.scope || input.scope || "once",
+      });
       bundles.add(bundle);
       const call = bundle.calls.find((item) => item.id === decision.callId);
       if (call && !decision.approved) {
@@ -354,6 +365,7 @@ export class AgentRuntime {
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
         continuousIterations += 1;
         iteration += 1;
+        history = compactProviderHistory(history);
         run.iteration = iteration;
         run.toolCount = toolCount;
         transitionRun(run, "sampling", { iteration, toolCount, resumable: false, reason: undefined });
@@ -490,16 +502,31 @@ export class AgentRuntime {
               markRunProgress(run);
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode);
+              const scope = decision.requiresApproval
+                ? this.findReusableApprovalScope(options.threadId, call)
+                : null;
+              if (scope) {
+                this.store.markApprovalScopeUsed(scope.id);
+                this.recordApprovalHistory({
+                  threadId: options.threadId,
+                  messageId: options.assistantMessage.id,
+                  call,
+                  approved: true,
+                  scope,
+                  reason: "Matched saved approval scope.",
+                });
+              }
+              const requiresApproval = decision.requiresApproval && !scope;
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
-                status: decision.requiresApproval ? "awaiting_approval" : "running",
+                status: requiresApproval ? "awaiting_approval" : "running",
                 risk: decision.risk,
-                approvalReason: decision.reason,
+                approvalReason: scope ? `Auto-approved by saved ${scopeLabel(scope)} scope.` : decision.reason,
                 title: this.titleForTool(call),
                 textOffset: assistantText.length,
                 startedAt: now(),
               });
               this.emit({ type: "tool_updated", tool: event });
-              if (decision.requiresApproval) {
+              if (requiresApproval) {
                 approvalCalls.push(call);
               } else {
                 scheduleTool(call);
@@ -538,7 +565,7 @@ export class AgentRuntime {
           return;
         }
 
-        history = appendAssistantToolCalls(history, assistantText, calls);
+        history = appendAssistantToolCalls(history, assistantText.slice(textStart), calls);
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
 
         const scheduledResults = await scheduler.drainOrdered();
@@ -646,7 +673,7 @@ export class AgentRuntime {
           ? "Stopped. Completed tool changes were kept."
           : hasVisibleWork
             ? ""
-            : "The run stopped before producing visible output.";
+            : `The run stopped before producing visible output.\n\n${errorMessage(error)}`;
       }
       flushAssistant(aborted ? "stopped" : "failed", true);
       this.emitRun(run);
@@ -675,9 +702,20 @@ export class AgentRuntime {
     const results: Array<{ id: string; name: string; response: ToolResult }> = [];
     let toolCount = bundle.toolCount;
     for (const call of bundle.calls) {
-      const approved = bundle.decisions.get(call.id) === true;
+      const decision = bundle.decisions.get(call.id) || { approved: false, scope: "once" as const };
+      const approved = decision.approved;
       let result: ToolResult;
+      let scope: ApprovalScopeRecord | undefined;
       if (approved) {
+        scope = this.createApprovalScope(bundle, call, decision.scope);
+        this.recordApprovalHistory({
+          threadId: bundle.threadId,
+          messageId: bundle.assistantMessageId,
+          call,
+          approved: true,
+          scope,
+          reason: this.tools.assess(call, this.store.getSettings().permissionMode).reason,
+        });
         const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
           status: "running",
           startedAt: now(),
@@ -686,6 +724,13 @@ export class AgentRuntime {
         result = await this.executeTool(call, bundle.workspaceRoot, bundle.run.controller, bundle.run, bundle.threadId, bundle.assistantMessageId);
         toolCount += 1;
       } else {
+        this.recordApprovalHistory({
+          threadId: bundle.threadId,
+          messageId: bundle.assistantMessageId,
+          call,
+          approved: false,
+          reason: "User cancelled this action.",
+        });
         result = { success: false, error: "User cancelled this action." };
       }
       const finalToolEvent = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
@@ -751,6 +796,75 @@ export class AgentRuntime {
     });
     this.saveCheckpoint(params.options, params.history, params.assistantText, params.assistantThought, params.iteration, params.toolCount, params.recoveryAttempts, params.run);
     return bundle;
+  }
+
+  private findReusableApprovalScope(threadId: string, call: DesktopToolCall) {
+    const thread = this.store.getThread(threadId);
+    const scopes = this.store.listApprovalScopes(thread?.workspaceId ?? null, threadId);
+    return findMatchingApprovalScope(call, scopes);
+  }
+
+  private createApprovalScope(
+    bundle: ApprovalBundle,
+    call: DesktopToolCall,
+    decisionScope: ApprovalDecisionScope,
+  ): ApprovalScopeRecord | undefined {
+    if (decisionScope === "once") return undefined;
+    const thread = this.store.getThread(bundle.threadId);
+    const timestamp = now();
+    const boundedScope = approvalScopeBounds(decisionScope, timestamp);
+    const base = {
+      id: crypto.randomUUID(),
+      workspaceId: thread?.workspaceId ?? null,
+      expiresAt: boundedScope.expiresAt,
+      maxUses: boundedScope.maxUses,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      useCount: 0,
+    };
+
+    if (decisionScope === "command_prefix") {
+      const commandPrefix = approvalCommandPrefix(call);
+      if (!commandPrefix) return undefined;
+      return this.store.upsertApprovalScope({
+        ...base,
+        kind: "terminal_prefix",
+        commandPrefix,
+        cwd: approvalCwd(call),
+      });
+    }
+
+    return this.store.upsertApprovalScope({
+      ...base,
+      kind: decisionScope === "this_thread" ? "tool_thread" : "tool_workspace",
+      threadId: decisionScope === "this_thread" ? bundle.threadId : undefined,
+      toolName: call.name,
+    });
+  }
+
+  private recordApprovalHistory(input: {
+    threadId: string;
+    messageId: string;
+    call: DesktopToolCall;
+    approved: boolean;
+    scope?: ApprovalScopeRecord;
+    reason?: string;
+  }) {
+    const thread = this.store.getThread(input.threadId);
+    this.store.recordApprovalHistory({
+      id: crypto.randomUUID(),
+      threadId: input.threadId,
+      messageId: input.messageId,
+      workspaceId: thread?.workspaceId ?? null,
+      callId: input.call.id,
+      toolName: input.call.name,
+      approved: input.approved,
+      scopeId: input.scope?.id,
+      scopeKind: input.scope?.kind,
+      reason: input.reason,
+      argsSummary: summarizeArgs(input.call.arguments),
+      createdAt: now(),
+    });
   }
 
   private async executeTool(
@@ -860,7 +974,7 @@ export class AgentRuntime {
       diffFiles,
       diffStats: patch.diffStats || (hasNewDiffFiles ? computedDiffStats : existing?.diffStats || computedDiffStats),
       activities: patch.activities || (hasNewDiffFiles ? computedActivities : existing?.activities || computedActivities),
-      terminal: patch.terminal || existing?.terminal || terminal,
+      terminal: patch.terminal ?? (patch.result ? terminal : existing?.terminal ?? terminal),
       preview: patch.preview ?? existing?.preview ?? previewForTool(call, output, diff),
       approvalGroupId: patch.approvalGroupId ?? existing?.approvalGroupId,
       approvalReason: patch.approvalReason ?? existing?.approvalReason,
@@ -1018,12 +1132,13 @@ export class AgentRuntime {
         return `Delete ${args.path || "path"}`;
       case "desktop_rename_path":
         return `Rename ${args.fromPath || "path"}`;
-      case "desktop_exec_command":
-      case "desktop_run_command":
-        return `Run ${args.command || "command"}`;
-      case "desktop_write_stdin":
+      case "desktop_spawn_process":
+        return `Run ${terminalCommandLabel(call) || "command"}`;
+      case "desktop_write_process":
         return `Terminal input ${args.processId || ""}`.trim();
-      case "desktop_stop_process":
+      case "desktop_resize_process":
+        return `Resize process ${args.processId || ""}`.trim();
+      case "desktop_kill_process":
         return `Stop process ${args.processId || ""}`.trim();
       case "desktop_run_diagnostics":
         return `Check ${args.kind || args.command || "workspace"}`;
@@ -1034,7 +1149,7 @@ export class AgentRuntime {
 
   private categoryForTool(call: DesktopToolCall): ToolEventRecord["category"] {
     if (["desktop_write_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
-    if (["desktop_exec_command", "desktop_write_stdin", "desktop_stop_process", "desktop_run_command"].includes(call.name)) return "terminal";
+    if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
     if (call.name === "desktop_run_diagnostics") return "diagnostic";
     if (call.name === "desktop_search") return "search";
     if (call.name === "desktop_git_status" || call.name === "desktop_git_diff") return "git";
@@ -1045,9 +1160,10 @@ export class AgentRuntime {
   private liveStatusForTool(call: DesktopToolCall, status: ToolEventRecord["status"]) {
     if (status === "done") return undefined;
     if (status === "awaiting_approval") return "Waiting for approval";
-    if (call.name === "desktop_exec_command" || call.name === "desktop_run_command") return "Running command";
-    if (call.name === "desktop_write_stdin") return "Polling process";
-    if (call.name === "desktop_stop_process") return "Stopping process";
+    if (call.name === "desktop_spawn_process") return "Running command";
+    if (call.name === "desktop_write_process") return "Polling process";
+    if (call.name === "desktop_resize_process") return "Resizing process";
+    if (call.name === "desktop_kill_process") return "Stopping process";
     if (call.name === "desktop_run_diagnostics") return "Checking workspace";
     if (call.name === "desktop_apply_patch") return "Applying patch";
     if (call.name === "desktop_write_file") return "Writing file";
@@ -1058,16 +1174,22 @@ export class AgentRuntime {
   }
 
   private terminalMeta(call: DesktopToolCall, result?: ToolResult): ToolEventRecord["terminal"] | undefined {
-    if (!["desktop_exec_command", "desktop_write_stdin", "desktop_stop_process", "desktop_run_command", "desktop_run_diagnostics"].includes(call.name)) return undefined;
+    if (!["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) return undefined;
     return {
-      command: String(call.arguments.command || ""),
+      command: terminalCommandLabel(call),
       cwd: typeof call.arguments.cwd === "string" ? call.arguments.cwd : undefined,
       processId: typeof result?.data?.processId === "number" ? result.data.processId : typeof call.arguments.processId === "number" ? call.arguments.processId : undefined,
       running: result?.data?.running === true,
       exitCode: typeof result?.data?.exitCode === "number" || result?.data?.exitCode === null ? result.data.exitCode as number | null : undefined,
       durationMs: typeof result?.data?.durationMs === "number" ? result.data.durationMs : undefined,
+      processDurationMs: typeof result?.data?.processDurationMs === "number" ? result.data.processDurationMs : undefined,
+      operationDurationMs: typeof result?.data?.operationDurationMs === "number" ? result.data.operationDurationMs : undefined,
       timedOut: result?.data?.timedOut === true,
       omittedBytes: typeof result?.data?.omittedBytes === "number" ? result.data.omittedBytes : undefined,
+      status: typeof result?.data?.status === "string" ? result.data.status : undefined,
+      backend: typeof result?.data?.backend === "string" ? result.data.backend : undefined,
+      tty: result?.data?.tty === true,
+      streamsMerged: result?.data?.streamsMerged === true,
     };
   }
 
@@ -1098,7 +1220,9 @@ class StreamStalledError extends Error {}
 
 const normalizeApprovalDecisions = (input: ApprovalDecisionInput) => {
   if (input.decisions?.length) return input.decisions;
-  if (input.callId && typeof input.approved === "boolean") return [{ callId: input.callId, approved: input.approved }];
+  if (input.callId && typeof input.approved === "boolean") {
+    return [{ callId: input.callId, approved: input.approved, scope: input.scope }];
+  }
   return [];
 };
 
@@ -1209,11 +1333,20 @@ const diffStats = (diff?: string) => {
 
 const previewForTool = (call: DesktopToolCall, output?: string, diff?: string) => {
   if (diff) return diff.slice(0, 12_000);
-  if (["desktop_exec_command", "desktop_write_stdin", "desktop_stop_process", "desktop_run_command", "desktop_run_diagnostics"].includes(call.name)) {
+  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) {
     return output?.slice(-12_000);
   }
   return undefined;
 };
+
+const terminalCommandLabel = (call: DesktopToolCall) => {
+  const argv = call.arguments.argv;
+  if (Array.isArray(argv) && argv.length > 0) return argv.map((item) => displayArg(String(item))).join(" ");
+  return String(call.arguments.command || call.arguments.kind || "").trim();
+};
+
+const displayArg = (value: string) =>
+  /\s/.test(value) ? JSON.stringify(value) : value;
 
 const liveStatusFromOutput = (output: string) => {
   const last = output.trim().split(/\r?\n/).filter(Boolean).pop();
@@ -1241,6 +1374,28 @@ const sortObject = (value: unknown): unknown => {
 
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Unknown error";
+
+const summarizeArgs = (args: Record<string, unknown>) =>
+  JSON.stringify(sortObject(args)).slice(0, 600);
+
+const scopeLabel = (scope: ApprovalScopeRecord) => {
+  if (scope.kind === "terminal_prefix") return "command prefix";
+  if (scope.kind === "tool_thread") return "thread";
+  return "workspace";
+};
+
+const approvalScopeBounds = (decisionScope: ApprovalDecisionScope, timestamp: number) => {
+  if (decisionScope === "command_prefix") {
+    return {
+      expiresAt: timestamp + 24 * 60 * 60 * 1000,
+      maxUses: 20,
+    };
+  }
+  return {
+    expiresAt: timestamp + 7 * 24 * 60 * 60 * 1000,
+    maxUses: decisionScope === "this_thread" ? 20 : 50,
+  };
+};
 
 const windowlessInterval = (callback: () => void, ms: number) =>
   setInterval(callback, ms);

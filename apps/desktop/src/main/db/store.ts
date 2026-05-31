@@ -3,9 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import type {
   AppSnapshot,
+  ApprovalHistoryRecord,
+  ApprovalScopeRecord,
   AgentRunCheckpointRecord,
   ChatMessageRecord,
   SettingsRecord,
+  StoreRecoveryNoticeRecord,
   ThreadRecord,
   ToolEventRecord,
   TurnUndoRecord,
@@ -34,6 +37,8 @@ interface DesktopDataFile {
   messages: ChatMessageRecord[];
   toolEvents: ToolEventRecord[];
   turnUndos: TurnUndoRecord[];
+  approvalScopes: ApprovalScopeRecord[];
+  approvalHistory: ApprovalHistoryRecord[];
   agentRunCheckpoints: AgentRunCheckpointRecord[];
 }
 
@@ -54,6 +59,8 @@ const defaultData = (): DesktopDataFile => ({
   messages: [],
   toolEvents: [],
   turnUndos: [],
+  approvalScopes: [],
+  approvalHistory: [],
   agentRunCheckpoints: [],
 });
 
@@ -62,6 +69,7 @@ export class DesktopStore {
   private filePath: string;
   private writeTimer: NodeJS.Timeout | null = null;
   private dirty = false;
+  private recoveryNotice: StoreRecoveryNoticeRecord | undefined;
 
   constructor(userDataPath = app.getPath("userData")) {
     fs.mkdirSync(userDataPath, { recursive: true });
@@ -82,9 +90,12 @@ export class DesktopStore {
       messages: activeThreadId ? this.listMessages(activeThreadId) : [],
       toolEvents: activeThreadId ? this.listToolEvents(activeThreadId) : [],
       turnUndos: activeThreadId ? this.listTurnUndos(activeThreadId) : [],
+      approvalScopes: this.listApprovalScopes(activeWorkspaceId, activeThreadId),
+      approvalHistory: activeThreadId ? this.listApprovalHistory(activeThreadId).slice(-50) : [],
       activeThreadId,
       activeWorkspaceId,
       activeRun: null,
+      recoveryNotice: this.recoveryNotice,
     };
   }
 
@@ -189,6 +200,8 @@ export class DesktopStore {
     this.data.messages = this.data.messages.filter((message) => message.threadId !== threadId);
     this.data.toolEvents = this.data.toolEvents.filter((event) => event.threadId !== threadId);
     this.data.turnUndos = this.data.turnUndos.filter((undo) => undo.threadId !== threadId);
+    this.data.approvalHistory = this.data.approvalHistory.filter((item) => item.threadId !== threadId);
+    this.data.approvalScopes = this.data.approvalScopes.filter((item) => item.threadId !== threadId);
     this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => checkpoint.threadId !== threadId);
     this.writeData();
   }
@@ -263,6 +276,51 @@ export class DesktopStore {
   listTurnUndos(threadId: string): TurnUndoRecord[] {
     return this.data.turnUndos
       .filter((undo) => undo.threadId === threadId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  listApprovalScopes(workspaceId: string | null | undefined, threadId?: string | null): ApprovalScopeRecord[] {
+    const timestamp = now();
+    return this.data.approvalScopes
+      .filter((scope) => !scope.expiresAt || scope.expiresAt > timestamp)
+      .filter((scope) => !scope.maxUses || scope.useCount < scope.maxUses)
+      .filter((scope) => scope.workspaceId === null || scope.workspaceId === (workspaceId ?? null))
+      .filter((scope) => !scope.threadId || scope.threadId === threadId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  upsertApprovalScope(scope: ApprovalScopeRecord): ApprovalScopeRecord {
+    this.data.approvalScopes = upsertById(this.data.approvalScopes, scope);
+    this.scheduleWrite();
+    return scope;
+  }
+
+  markApprovalScopeUsed(scopeId: string): ApprovalScopeRecord | null {
+    const timestamp = now();
+    let updated: ApprovalScopeRecord | null = null;
+    this.data.approvalScopes = this.data.approvalScopes.map((scope) => {
+      if (scope.id !== scopeId) return scope;
+      updated = {
+        ...scope,
+        lastUsedAt: timestamp,
+        updatedAt: timestamp,
+        useCount: scope.useCount + 1,
+      };
+      return updated;
+    });
+    if (updated) this.scheduleWrite();
+    return updated;
+  }
+
+  recordApprovalHistory(record: ApprovalHistoryRecord): ApprovalHistoryRecord {
+    this.data.approvalHistory = [...this.data.approvalHistory, record].slice(-1000);
+    this.scheduleWrite();
+    return record;
+  }
+
+  listApprovalHistory(threadId: string): ApprovalHistoryRecord[] {
+    return this.data.approvalHistory
+      .filter((record) => record.threadId === threadId)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
@@ -370,10 +428,34 @@ export class DesktopStore {
         messages: Array.isArray(parsed.messages) ? parsed.messages.map(normalizeLegacyMessage) : [],
         toolEvents: Array.isArray(parsed.toolEvents) ? parsed.toolEvents.map(normalizeLegacyToolEvent) : [],
         turnUndos: Array.isArray(parsed.turnUndos) ? parsed.turnUndos : [],
+        approvalScopes: Array.isArray(parsed.approvalScopes) ? parsed.approvalScopes : [],
+        approvalHistory: Array.isArray(parsed.approvalHistory) ? parsed.approvalHistory : [],
         agentRunCheckpoints: Array.isArray(parsed.agentRunCheckpoints) ? parsed.agentRunCheckpoints : [],
       };
-    } catch {
+    } catch (error) {
+      this.recoveryNotice = this.backupCorruptDataFile(error);
       return defaultData();
+    }
+  }
+
+  private backupCorruptDataFile(error: unknown): StoreRecoveryNoticeRecord | undefined {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupPath = `${this.filePath}.corrupt-${timestamp}.bak`;
+    try {
+      fs.renameSync(this.filePath, backupPath);
+      return {
+        kind: "corrupt_store_backup",
+        message: "Privora recovered from a damaged local data file. The original file was backed up and a clean store was created.",
+        backupPath,
+        createdAt: now(),
+      };
+    } catch (backupError) {
+      return {
+        kind: "corrupt_store_backup",
+        message: `Privora could not read the local data file and could not move it aside: ${errorMessage(backupError || error)}`,
+        backupPath: this.filePath,
+        createdAt: now(),
+      };
     }
   }
 
@@ -428,3 +510,6 @@ const isNoisyCommandReason = (reason?: string) =>
     reason?.toLowerCase().includes("mutate files") &&
     reason.toLowerCase().includes("chain shell operations"),
   );
+
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error || "unknown error");
