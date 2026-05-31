@@ -31,8 +31,11 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, event));
   };
 
+  const threadsForWorkspace = (workspaceId: string | null) =>
+    store.listThreads().filter((thread) => thread.workspaceId === workspaceId);
+
   const ensureThread = () => {
-    const threads = store.listThreads();
+    const threads = threadsForWorkspace(state.activeWorkspaceId);
     if (state.activeThreadId && threads.some((thread) => thread.id === state.activeThreadId)) return state.activeThreadId;
     const thread = threads[0] || store.createThread(state.activeWorkspaceId);
     state.activeThreadId = thread.id;
@@ -74,11 +77,13 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   });
 
   handle(channels.deleteThread, z.tuple([idSchema]), (_event, threadId: string) => {
+    const deletedThread = store.getThread(threadId);
     store.deleteThread(threadId);
     if (state.activeThreadId === threadId) {
-      const nextThread = store.listThreads()[0] || store.createThread(state.activeWorkspaceId);
+      const workspaceId = deletedThread?.workspaceId ?? state.activeWorkspaceId;
+      state.activeWorkspaceId = workspaceId;
+      const nextThread = threadsForWorkspace(workspaceId)[0] || store.createThread(workspaceId);
       state.activeThreadId = nextThread.id;
-      state.activeWorkspaceId = nextThread.workspaceId ?? state.activeWorkspaceId;
     }
   });
 
@@ -98,7 +103,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     state.activeWorkspaceId = workspace.id;
     const currentThread = state.activeThreadId ? store.getThread(state.activeThreadId) : null;
     if (!currentThread || currentThread.workspaceId !== workspace.id) {
-      state.activeThreadId = store.createThread(workspace.id).id;
+      state.activeThreadId = threadsForWorkspace(workspace.id)[0]?.id ?? store.createThread(workspace.id).id;
     }
     return workspace;
   });
