@@ -1,155 +1,172 @@
-# 💻 Privora Desktop
+# Privora Desktop
 
-> **Privora Desktop** is a premium, local-first Electron application shell port designed to orchestrate secure agentic workflows directly on your machine. Equipped with a custom-engineered sandboxed environment, real-time tool timeline visualization, and strict user-controlled execution hooks, it provides a safe, seamless, and high-performance desktop hub for local workspace automation.
+Privora Desktop is a local-first Electron coding-agent app for working inside real project folders. It gives an AI agent controlled access to workspace files, search, git, terminal processes, diagnostics, approvals, and reviewable file changes from a desktop UI.
 
----
+The app is inspired by Codex-style local agent workflows, but is built as a desktop application with persistent workspaces, project chats, visual tool timelines, approvals, undo metadata, Plan Mode, and provider settings.
 
-## 🏗️ Architecture & System Design
+## What It Does
 
-Privora Desktop uses a robust multi-process architecture to decouple UI rendering, sandboxed bridge APIs, and agent execution runtimes.
+- Opens local workspaces and keeps project-scoped chats.
+- Lets the agent inspect files, search with ripgrep, edit files, run commands, and verify changes.
+- Shows live agent activity as readable tool/check rows instead of raw logs.
+- Supports approval gates for risky actions and reusable approval scopes.
+- Keeps file diffs, hashes, warnings, and undo metadata for review.
+- Provides Plan Mode for research/planning without mutating the workspace.
+- Stores settings, threads, workspaces, secrets, and recovery metadata locally.
 
-```mermaid
-graph TD
-    subgraph Renderer Process [Renderer Process React + Vite]
-        UI[App Layout / Composer]
-        TIMELINE[Tool Timeline UI]
-        STATE[State Machine / useDesktopState]
-    end
+## Agent Tools
 
-    subgraph Preload Bridge [Preload Script Context Isolated]
-        IPC_BRIDGE[Safe IPC Bridge API]
-    end
+Current desktop tools include:
 
-    subgraph Main Process [Main Process Electron + Node.js]
-        MAIN[Main App Lifecycle]
-        RUN[Agent Runtime Loop]
-        STORE[DesktopStore SQLite / Local DB]
-        EXEC[Desktop Tool Executor]
-        SANDBOX[Path Sandbox & Command Runner]
-    end
+- `desktop_read_file` - read text or base64 file content with hashes and line-range metadata.
+- `desktop_edit_file` - structured text edits such as replace range, replace text, insert, append, and delete range.
+- `desktop_write_file` - create or replace text/base64 files, including missing parent directories.
+- `desktop_apply_patch` - apply or dry-run Codex-style patch envelopes with better mismatch snippets.
+- `desktop_list_dir` - list workspace folders, optionally with metadata.
+- `desktop_search` - search workspace files with ripgrep.
+- `desktop_delete_path` and `desktop_rename_path` - controlled workspace mutations.
+- `desktop_spawn_process`, `desktop_write_process`, `desktop_resize_process`, `desktop_kill_process` - terminal lifecycle tools.
+- `desktop_run_diagnostics` - run the best detected project check.
+- `desktop_git_status` and `desktop_git_diff` - concise git inspection, including clean non-repo messages.
+- `request_user_input` - Plan Mode questions with user-selected answers.
 
-    UI -->|Invoke API| IPC_BRIDGE
-    TIMELINE -->|Request Approval| IPC_BRIDGE
-    IPC_BRIDGE -->|IPC Messages| MAIN
-    MAIN -->|Dispatch Turn| RUN
-    RUN -->|Query / Save| STORE
-    RUN -->|Assess Risk & Execute| EXEC
-    EXEC -->|Restricted Access| SANDBOX
-    SANDBOX -->|Run Command / FS Ops| Local[Local Workspace Files]
+## Plan Mode
+
+Plan Mode is for research and design before implementation.
+
+In Plan Mode, the agent can:
+
+- Read/list/search files.
+- Inspect git status and diffs.
+- Run safe diagnostics.
+- Use dry-run edits or patch previews.
+- Ask focused user questions with `request_user_input`.
+- Produce `<proposed_plan>...</proposed_plan>` blocks that render as plan cards.
+
+In Plan Mode, mutating tools and risky terminal actions are blocked. When a proposed plan is ready, the UI can switch back to default mode and start implementation.
+
+## Desktop UI
+
+The renderer includes:
+
+- Workspace sidebar with project-scoped chats.
+- Composer with prompt history, large-paste handling, image attachments, model/provider controls, permission mode, and Plan mode.
+- Tool timeline with live shimmer, compact activity grouping, expandable terminal output, file-change summaries, and answered-question details.
+- Review/undo surfaces for file changes.
+- Settings screen for providers, theme, workspace options, and shortcuts.
+- Recovery notice if the local JSON store is corrupt and Privora has to back it up.
+
+## Architecture
+
+```text
+src/
+  main/
+    agent/          Agent runtime, providers, tools, diagnostics, context, approvals
+    db/             Local JSON store, recovery, workspaces, threads, settings, secrets
+    ipc/            Main-process IPC channels and validation
+    security/       Workspace path checks and redaction helpers
+    terminal/       PTY/process session manager
+    main.ts         Electron lifecycle and BrowserWindow setup
+  preload/          Context-isolated desktop API bridge
+  renderer/         React UI, state hooks, components, styles
+  shared/           Shared models and TypeScript types
+tests/              Vitest coverage for runtime/tool/storage behavior
 ```
 
-### Key Pillars
-* **Strict Security Sandbox**: All file modifications and command executions run through a secure validation gate (`pathSandbox.ts`). Low-risk operations (e.g. reading files) can execute seamlessly, whereas high-risk operations (e.g. running arbitrary commands, modifying critical files) prompt an **interactive review panel** in the user interface.
-* **Streamed Tool Timeline**: Users can monitor agent activity in real-time, reviewing step-by-step logs, live terminal output deltas, and file diffs directly inside the interface.
-* **Persistent Session Store**: Context, workspaces, threads, settings, and secrets are managed locally using a fast SQL-backed database runtime (`store.ts`).
+## Providers
 
----
+Supported provider paths are configured in the app settings and shared model catalog:
 
-## 🛠️ Technology Stack
+- CLIProxy API, defaulting to `http://127.0.0.1:8317`
+- Gemini API
+- OpenRouter API
 
-* **Shell Runtime**: Electron `v36.4.0` with full context isolation and sandboxing enabled.
-* **Frontend View**: React `v19` + TypeScript compiled with Vite `v6.2.0`.
-* **Bundler & Packager**: Electron Forge `v7.8.1` with custom Vite plugins for main, preload, and renderer splits.
-* **Styling**: Modern, premium CSS styling with dynamic theme-aware properties (e.g. gold-accented dark mode).
-* **Testing**: Vitest `v3.1.4` for local unit testing.
+Secrets are stored through the local desktop store and are not exposed directly to the renderer.
 
----
+## Requirements
 
-## 📂 Project Structure
+- Node.js 18+ recommended
+- npm
+- Git
+- Windows is the primary development target right now
 
-```bash
-apps/desktop/
-├── src/
-│   ├── main/                  # Electron Main Process
-│   │   ├── agent/             # Core LLM Runtime, Prompting Context, & Provider adapters
-│   │   │   ├── providers/     # SSE, Gemini, and OpenRouter integration adapters
-│   │   │   └── tools/         # OS Tool definitions, Executors, and Permissions Engine
-│   │   ├── db/                # DesktopStore persistence engine (SQLite database wrapper)
-│   │   ├── ipc/               # IPC Main Channels registration
-│   │   ├── security/          # Sandbox restrictions, path validation, and redact patterns
-│   │   ├── terminal/          # Custom process runners and terminal output buffers
-│   │   └── main.ts            # App startup and primary BrowserWindow manager
-│   ├── preload/               # Preload script exposing context-isolated IPC bridge APIs
-│   ├── renderer/              # React App Frontend (UI Components, styling, and state hooks)
-│   └── shared/                # Universal TypeScript types and models shared across processes
-├── tests/                     # Isolated test cases for core Main process modules
-├── forge.config.ts            # Electron Forge configurations and build packaging hooks
-├── tsconfig.json              # TypeScript compilation parameters
-└── vite.main.config.ts        # Vite build pipelines for the Electron processes
-```
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-Ensure you have the following installed on your machine:
-* **Node.js**: `v18+` (LTS recommended)
-* **npm** or **yarn**
-* **Git** (Required for version control integration)
-
-### Installation
-
-Navigate to the desktop application directory and install dependencies:
+## Install
 
 ```bash
-cd apps/desktop
 npm install
 ```
 
----
+Run this from `apps/desktop`.
 
-## 👨‍💻 Development & Debugging
+## Development
 
-During development, Electron Forge compiles the frontend assets in hot-reload mode using Vite, then launches the Electron shell automatically.
-
-### Commands
-
-| Command | Action |
-| :--- | :--- |
-| `npm run dev` | Launch the app in development mode with HMR |
-| `npm run dev:log` | Launch the app and print detailed Electron logs inside your terminal |
-| `npm run dev:debug` | Run the application with active V8 inspect parameters enabled |
-| `npm run dev:debug:break` | Run application with breakpoints active on the first line of the main process |
-| `npm run lint` | Run compile check and validation inside the project |
-| `npm run test` | Execute the unit test suite inside `tests/` utilizing Vitest |
-
----
-
-## 🧪 Testing
-
-Privora Desktop includes comprehensive unit tests validating path sandboxing, permissions, patching tools, and terminal output buffers.
-
-To run the tests:
 ```bash
-npm run test
+npm run dev
 ```
 
----
+This starts Electron Forge with Vite bundles for the main process, preload, and renderer.
 
-## 📦 Packaging & Distribution
+Useful scripts:
 
-You can build and pack the application for production using Electron Forge.
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the desktop app in development mode |
+| `npm run dev:log` | Start with Electron logging |
+| `npm run dev:trace` | Start with `PRIVORA_DEBUG=1` and logging |
+| `npm run dev:debug` | Start with Electron inspect enabled |
+| `npm run dev:debug:break` | Start and break on first main-process line |
+| `npm run lint` | TypeScript check with `tsc --noEmit` |
+| `npm test` | Run Vitest tests |
+| `npm run build` | Package the Electron app |
+| `npm run make` | Build distributables/installers |
 
-### 1. Compile & Package Codebase
-Compiles all typescript files, bundles React renderer components via Vite, and wraps them inside an Electron application package:
+## Current Stack
+
+From `package.json`:
+
+- Electron `^42.3.0`
+- Electron Forge `^7.11.2`
+- React `^19.2.6`
+- TypeScript `^6.0.3`
+- Vite `^8.0.14`
+- Vitest `^4.1.7`
+- node-pty `^1.1.0`
+- `@vscode/ripgrep` for workspace search
+- `@google/genai`, OpenRouter-compatible API support, and CLIProxy-compatible responses
+
+## Testing
+
+Run:
+
 ```bash
-npm run build
+npm test
 ```
 
-### 2. Generate Installers
-Builds OS-specific native installers (e.g. `.exe` on Windows using Squirrel.Windows):
+The tests cover storage recovery, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, and runtime behavior.
+
+For a quick compile check:
+
 ```bash
-npm run make
+npm run lint
 ```
 
-The resulting installers and distributables will be placed in the `out/make` directory.
+## Safety Notes
 
----
+- File and directory operations are workspace-relative.
+- The app validates IPC payloads with typed schemas.
+- Risky edits and terminal commands can require approval depending on permission mode.
+- Plan Mode blocks mutating actions by design.
+- Store corruption is handled by backing up the damaged data file and starting with a clean store instead of silently losing state.
+- Do not commit local secrets or generated runtime data.
 
-## 🔒 Security Best Practices
+## Repository Hygiene
 
-1. **Context Isolation**: Always keep `contextIsolation: true` and `nodeIntegration: false` active in the `BrowserWindow` webPreferences.
-2. **Path Sanitization**: Ensure all file operations route through the `PathSandbox` check. Never expose direct, unvalidated node `fs` capabilities directly through the IPC preload bridge.
-3. **Sensitive Key Redaction**: Keep all API keys safely stored using `store.ts` secrets and mask key outputs in any logs using `redact.ts`.
+Before committing:
+
+```bash
+git status
+npm run lint
+npm test
+```
+
+Do not include local runtime folders such as `.antigravitycli/` unless intentionally needed.
