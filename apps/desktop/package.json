@@ -5,7 +5,8 @@
   "description": "Privora Desktop agent for local workspaces.",
   "main": ".vite/build/main.js",
   "scripts": {
-    "dev": "electron-forge start",
+    "dev": "set PRIVORA_SKIP_PTY_REBUILD=1&& electron-forge start",
+    "dev:pty": "electron-forge start",
     "dev:debug": "electron-forge start --inspect-electron",
     "dev:debug:break": "electron-forge start --inspect-brk-electron",
     "dev:log": "electron-forge start --enable-logging",

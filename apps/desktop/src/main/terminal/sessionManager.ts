@@ -73,7 +73,7 @@ const WINDOWS_STDIN_CLOSE_DELAY_MS = 75;
 const MAX_BACKGROUND_TERMINAL_TIMEOUT_MS = 5 * 60_000;
 const MAX_PROCESSES = 64;
 
-const pty = loadNativePty();
+const pty = tryLoadNativePty();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const lossyDecoder = new TextDecoder("utf-8");
 
@@ -420,10 +420,10 @@ export class TerminalSessionManager {
 }
 
 class NativeTerminalBackend implements TerminalBackend {
-  kind: TerminalBackendKind = "pty";
+  kind: TerminalBackendKind = pty ? "pty" : "process";
 
   spawn(options: ExecCommandOptions): TerminalBackendSession {
-    if (options.tty === false) return spawnProcessSession(options);
+    if (options.tty === false || !pty) return spawnProcessSession(options);
     const command = processCommand(options);
     const terminal = pty.spawn(command.file, command.args, {
       cwd: options.cwd,
@@ -690,7 +690,7 @@ const spawnErrorMessage = (command: string, cwd: string, error: unknown) => {
   ].filter(Boolean).join("\n");
 };
 
-function loadNativePty(): typeof NodePty {
+function tryLoadNativePty(): typeof NodePty | null {
   const loaderPaths = [
     path.join(process.cwd(), "package.json"),
     process.resourcesPath ? path.join(process.resourcesPath, "privora-native-loader.js") : "",
@@ -711,7 +711,8 @@ function loadNativePty(): typeof NodePty {
       }
     }
   }
-  throw new Error(`Native PTY backend is required but node-pty could not be loaded. ${errors.join(" | ")}`);
+  console.warn(`Native PTY backend unavailable; falling back to process terminal. ${errors.join(" | ")}`);
+  return null;
 }
 
 const getShellArgs = (command: string) => {

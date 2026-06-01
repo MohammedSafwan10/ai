@@ -14,7 +14,9 @@ const config: ForgeConfig = {
     executableName: "Privora",
     name: "Privora",
   },
-  rebuildConfig: {},
+  rebuildConfig: {
+    ignoreModules: process.env.PRIVORA_SKIP_PTY_REBUILD === "1" ? ["node-pty"] : [],
+  },
   makers: [
     new MakerSquirrel({
       name: "Privora",
