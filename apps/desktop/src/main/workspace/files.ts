@@ -34,7 +34,7 @@ export const listWorkspaceDirectory = async (workspaceRoot: string, userPath = "
   });
 
   return {
-    path: target.relativePath || ".",
+    path: target.relativePath ? normalizePath(target.relativePath) : ".",
     entries,
   };
 };
