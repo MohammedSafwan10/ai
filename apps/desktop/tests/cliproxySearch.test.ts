@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cliproxyToolsForModel } from "../src/main/agent/providers/cliproxy";
+import { cliproxyToolsForModel, webSearchEventFromResponse } from "../src/main/agent/providers/cliproxy";
 
 describe("CLIProxy hosted web search", () => {
   it("sends hosted web search beside desktop function tools", () => {
@@ -18,5 +18,24 @@ describe("CLIProxy hosted web search", () => {
 
     expect(tools.some((tool) => tool.type === "function" && "name" in tool && tool.name === "request_user_input")).toBe(true);
     expect(tools).toContainEqual(expect.objectContaining({ type: "web_search" }));
+  });
+
+  it("maps Responses web search calls into live UI events", () => {
+    const event = webSearchEventFromResponse("response.output_item.done", {
+      item: {
+        id: "ws_123",
+        type: "web_search_call",
+        status: "completed",
+        action: { type: "search", query: "OpenAI official website" },
+      },
+    });
+
+    expect(event).toEqual({
+      id: "ws_123",
+      status: "done",
+      query: "OpenAI official website",
+      title: "Searched web",
+      output: "Searched web for OpenAI official website",
+    });
   });
 });

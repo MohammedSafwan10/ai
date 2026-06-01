@@ -132,6 +132,7 @@ export class GeminiAdapter implements ProviderAdapter {
     let emittedText = "";
     let emittedThought = "";
     let groundingMetadata: GeminiGroundingMetadata | null = null;
+    let webSearchEventId = "";
     const emitIncrementalText = (text: string, thought = false) => {
       const previous = thought ? emittedThought : emittedText;
       const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
@@ -151,6 +152,17 @@ export class GeminiAdapter implements ProviderAdapter {
       const candidateGroundingMetadata = chunk.candidates?.[0]?.groundingMetadata;
       if (candidateGroundingMetadata?.groundingChunks?.length || candidateGroundingMetadata?.groundingSupports?.length) {
         groundingMetadata = candidateGroundingMetadata as GeminiGroundingMetadata;
+        const queries = groundingMetadata.webSearchQueries || [];
+        if (!webSearchEventId) {
+          webSearchEventId = createToolCallId().replace("desktop_call", "web_search");
+          options.onWebSearch?.({
+            id: webSearchEventId,
+            status: "running",
+            query: queries[0],
+            title: "Searching web",
+            output: queries[0] ? `Searching web for ${queries[0]}` : undefined,
+          });
+        }
       }
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
@@ -172,5 +184,16 @@ export class GeminiAdapter implements ProviderAdapter {
 
     const citedText = applyGeminiGroundingCitations(emittedText, groundingMetadata);
     if (citedText !== emittedText) options.onTextReplace?.(citedText);
+    if (webSearchEventId) {
+      const queries = groundingMetadata?.webSearchQueries || [];
+      const query = queries[0] || "";
+      options.onWebSearch?.({
+        id: webSearchEventId,
+        status: "done",
+        query,
+        title: "Searched web",
+        output: query ? `Searched web for ${query}` : "Searched web",
+      });
+    }
   }
 }

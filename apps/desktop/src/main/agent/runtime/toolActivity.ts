@@ -133,6 +133,8 @@ export const summarizeArgs = (args: Record<string, unknown>) =>
 export const titleForTool = (call: DesktopToolCall) => {
   const args = call.arguments;
   switch (call.name) {
+    case "web_search":
+      return String(args.query || "").trim() ? `Search web: ${args.query}` : "Search web";
     case "desktop_read_file":
       return `Read ${args.path || "file"}`;
     case "desktop_write_file":
@@ -184,7 +186,7 @@ export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["categor
   if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
   if (call.name === "desktop_run_diagnostics") return "diagnostic";
   if (call.name === "request_user_input") return "question";
-  if (call.name === "desktop_search") return "search";
+  if (call.name === "desktop_search" || call.name === "web_search") return "search";
   if (call.name === "desktop_git_status" || call.name === "desktop_git_diff") return "git";
   if (call.name === "desktop_read_file" || call.name === "desktop_list_dir") return "read";
   return "other";
@@ -210,6 +212,7 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "desktop_edit_file") return "Editing file";
     if (call.name === "desktop_write_file") return "Writing file";
     if (call.name === "desktop_search") return "Searching workspace";
+    if (call.name === "web_search") return "Searching web";
     if (call.name === "desktop_read_file") return "Reading file";
     if (call.name === "desktop_list_dir") return "Inspecting workspace";
     return status.replace(/_/g, " ");

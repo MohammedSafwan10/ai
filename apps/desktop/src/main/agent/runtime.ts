@@ -678,6 +678,33 @@ export class AgentRuntime {
               flushAssistant("running", true);
               this.emitRun(run);
             },
+            onWebSearch: (search) => {
+              endThoughtPart();
+              markRunProgress(run);
+              const call: DesktopToolCall = {
+                id: search.id,
+                name: "web_search" as DesktopToolCall["name"],
+                arguments: { query: search.query || "" },
+              };
+              const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
+                status: search.status === "done" ? "done" : search.status === "failed" ? "failed" : "running",
+                title: search.title || (search.status === "done" ? "Searched web" : "Searching web"),
+                category: "search",
+                risk: "safe",
+                textOffset: assistantText.length,
+                output: search.output,
+                result: search.status === "done"
+                  ? { success: true, output: search.output || "Searched web" }
+                  : search.status === "failed"
+                    ? { success: false, error: search.output || "Web search failed" }
+                    : undefined,
+                liveStatus: search.status === "done" ? undefined : (search.query ? `Searching ${search.query}` : "Searching web"),
+                startedAt: now(),
+                endedAt: search.status === "running" ? undefined : now(),
+              });
+              this.emit({ type: "tool_updated", tool: event });
+              this.emitRun(run);
+            },
           });
         } catch (error) {
           if (stalledAbortReason) throw new StreamStalledError(stalledAbortReason);

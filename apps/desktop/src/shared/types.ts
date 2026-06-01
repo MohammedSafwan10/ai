@@ -511,7 +511,8 @@ export type DesktopToolName =
   | "desktop_kill_process"
   | "desktop_run_diagnostics"
   | "desktop_git_status"
-  | "desktop_git_diff";
+  | "desktop_git_diff"
+  | "web_search";
 
 export interface DesktopToolCall {
   id: string;

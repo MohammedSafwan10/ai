@@ -33,4 +33,17 @@ describe("Gemini native Google Search", () => {
 
     expect(cited).toBe("Privora shipped today.[1](https://example.com/release)");
   });
+
+  it("keeps Gemini grounding query metadata available for web search UI", () => {
+    const cited = applyGeminiGroundingCitations("The docs are live.", {
+      webSearchQueries: ["Gemini Google Search grounding"],
+      groundingChunks: [
+        { web: { uri: "https://ai.google.dev/gemini-api/docs/google-search", title: "Google Search grounding" } },
+      ],
+      groundingSupports: [],
+    });
+
+    expect(cited).toContain("Sources:");
+    expect(cited).toContain("https://ai.google.dev/gemini-api/docs/google-search");
+  });
 });

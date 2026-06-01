@@ -360,6 +360,11 @@ const formatBytes = (bytes: number) => {
 };
 
 const primaryToolLabel = (tool: ToolEventRecord) => {
+  if (tool.name === "web_search") {
+    const query = typeof tool.args.query === "string" ? tool.args.query.trim() : "";
+    if (tool.status === "done") return query ? `Searched web for ${query}` : "Searched web";
+    return query ? `Searching web for ${query}` : "Searching web";
+  }
   if (tool.name === "request_user_input") {
     return tool.status === "done" ? "Answered questions" : cleanTitle(tool.title);
   }

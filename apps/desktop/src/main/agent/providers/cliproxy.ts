@@ -5,6 +5,7 @@ import {
   parsePartialDesktopToolCall,
 } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
+import type { ProviderWebSearchEvent } from "./types";
 import { readSse } from "./sse";
 import { normalizeProviderUsage } from "./usage";
 
@@ -112,6 +113,47 @@ const completedFunctionCall = (event: string | undefined, data: any) => {
   return { id: item?.call_id || data?.call_id || item?.id || data?.id, name, argumentsText };
 };
 
+export const webSearchEventFromResponse = (event: string | undefined, data: any) => {
+  const item = data?.item || data?.output_item || data;
+  if (item?.type !== "web_search_call" && data?.type !== "web_search_call") return null;
+  const id = String(item?.id || data?.item_id || data?.id || `web_search_${Date.now()}`);
+  const statusText = String(item?.status || data?.status || "");
+  const type = `${event || ""} ${data?.type || ""}`;
+  const status: ProviderWebSearchEvent["status"] = statusText === "failed" || type.includes("failed")
+    ? "failed"
+    : statusText === "completed" || type.includes(".done")
+      ? "done"
+      : "running";
+  const action = item?.action || data?.action || {};
+  const query = webSearchActionDetail(action);
+  return {
+    id,
+    status,
+    query,
+    title: status === "done" ? "Searched web" : "Searching web",
+    output: query ? (status === "done" ? `Searched web for ${query}` : `Searching web for ${query}`) : undefined,
+  };
+};
+
+const webSearchActionDetail = (action: any) => {
+  const type = action?.type;
+  if (type === "search") {
+    if (typeof action.query === "string" && action.query.trim()) return action.query.trim();
+    if (Array.isArray(action.queries) && action.queries.length > 0) {
+      const [first] = action.queries.map((item: unknown) => String(item || "").trim()).filter(Boolean);
+      return action.queries.length > 1 && first ? `${first} ...` : first || "";
+    }
+  }
+  if (type === "open_page" || type === "openPage") return String(action.url || "").trim();
+  if (type === "find_in_page" || type === "findInPage") {
+    const pattern = String(action.pattern || "").trim();
+    const url = String(action.url || "").trim();
+    if (pattern && url) return `'${pattern}' in ${url}`;
+    return pattern || url;
+  }
+  return "";
+};
+
 export class CliproxyAdapter implements ProviderAdapter {
   async stream(options: ProviderStreamOptions): Promise<void> {
     const response = await fetch(`${options.cliproxyBaseUrl.replace(/\/$/, "")}/v1/responses`, {
@@ -165,6 +207,8 @@ export class CliproxyAdapter implements ProviderAdapter {
         const data = JSON.parse(dataLine);
         const usage = normalizeProviderUsage(data?.usage || data?.response?.usage);
         if (usage) options.onUsage?.(usage);
+        const webSearch = webSearchEventFromResponse(event, data);
+        if (webSearch) options.onWebSearch?.(webSearch);
         const key = keyFor(data);
         const previous = buffers.get(key) || { argumentsText: "" };
         const itemName = data?.item?.name || data?.output_item?.name || data?.name;

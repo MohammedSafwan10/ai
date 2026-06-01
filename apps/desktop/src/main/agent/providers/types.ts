@@ -1,6 +1,14 @@
 import type { CollaborationMode, ProviderId, ReasoningEffort } from "../../../shared/models";
 import type { DesktopToolCall, TokenUsageRecord, ToolResult } from "../../../shared/types";
 
+export interface ProviderWebSearchEvent {
+  id: string;
+  status: "running" | "done" | "failed";
+  query?: string;
+  title?: string;
+  output?: string;
+}
+
 export type ProviderPart =
   | { type: "text"; text: string }
   | { type: "image"; name: string; mimeType: string; data: string }
@@ -31,6 +39,7 @@ export interface ProviderStreamOptions {
   onToolCall: (call: DesktopToolCall) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
   onTextReplace?: (text: string) => void;
+  onWebSearch?: (event: ProviderWebSearchEvent) => void;
 }
 
 export interface ProviderAdapter {
