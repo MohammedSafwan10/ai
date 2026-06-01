@@ -21,7 +21,10 @@ interface MacAppInfo {
 
 interface WindowsAppInfo {
   appPath: string;
+  launchPath?: string;
+  launchArgs?: string[];
   name: string;
+  productKey?: string;
   shortcutPath?: string;
 }
 
@@ -118,9 +121,9 @@ const openMacTarget = async (targetId: WorkspaceOpenTarget, workspacePath: strin
 
 const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: string) => {
   if (target.startsWith("win-app:")) {
-    const appPath = decodeWindowsAppId(target);
+    const productKey = decodeWindowsAppId(target);
     const apps = await discoverWindowsOpenableApps();
-    const appInfo = apps.find((item) => appPath && item.appPath.toLowerCase() === appPath.toLowerCase());
+    const appInfo = apps.find((item) => productKey && windowsAppIdentity(item) === productKey);
     if (appInfo) await openWindowsApp(appInfo, workspacePath);
     return;
   }
@@ -145,7 +148,7 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
   }
   if (target === "git_bash") {
     const gitBash = await findWindowsGitBashPath();
-    if (gitBash) startWindowsProcess(gitBash, [`--cd=${workspacePath}`], workspacePath);
+    if (gitBash) spawnDetached(gitBash, [`--cd=${workspacePath}`], workspacePath);
     return;
   }
   if (target === "wsl") {
@@ -172,10 +175,11 @@ const openLinuxTarget = (target: WorkspaceOpenTarget, workspacePath: string) => 
 
 const openWindowsApp = async (appInfo: WindowsAppInfo, workspacePath: string) => {
   const launch = await windowsLaunchForApp(appInfo, workspacePath);
-  startWindowsProcess(launch.command, launch.args, workspacePath);
+  spawnDetached(launch.command, launch.args, workspacePath);
 };
 
 const windowsLaunchForApp = async (appInfo: WindowsAppInfo, workspacePath: string) => {
+  if (appInfo.launchPath) return { command: appInfo.launchPath, args: [...(appInfo.launchArgs || []), workspacePath] };
   const lower = `${appInfo.name} ${appInfo.appPath}`.toLowerCase();
   if (lower.includes("zed")) {
     const zedCli = await findZedCliPath(appInfo.appPath);
@@ -227,10 +231,24 @@ const discoverWindowsPathApps = async (): Promise<WindowsAppInfo[]> => {
   for (const command of commands) {
     const commandPath = await firstCommandPath(command);
     const appPath = commandPath ? await resolveWindowsLauncherPath(commandPath) : null;
-    if (appPath) apps.push({ name: windowsAppNameFromPath(appPath), appPath });
+    if (appPath) {
+      apps.push({
+        appPath,
+        launchPath: commandPath || appPath,
+        name: windowsAppNameFromPath(appPath),
+        productKey: windowsProductKeyFromPath(appPath),
+      });
+    }
   }
   const visualStudioPath = await findWindowsVisualStudioPath();
-  if (visualStudioPath) apps.push({ name: windowsAppNameFromPath(visualStudioPath), appPath: visualStudioPath });
+  if (visualStudioPath) {
+    apps.push({
+      appPath: visualStudioPath,
+      launchPath: visualStudioPath,
+      name: windowsAppNameFromPath(visualStudioPath),
+      productKey: windowsProductKeyFromPath(visualStudioPath),
+    });
+  }
   return apps;
 };
 
@@ -245,7 +263,14 @@ const discoverWindowsInstallApps = async (): Promise<WindowsAppInfo[]> => {
       const appRoot = path.join(root, entry.name);
       if (!shouldInspectWindowsInstallDir(appRoot)) continue;
       const exePath = await bestWindowsAppExe(appRoot, 5);
-      if (exePath) apps.push({ name: windowsAppNameFromPath(exePath), appPath: exePath });
+      if (exePath) {
+        apps.push({
+          appPath: exePath,
+          launchPath: exePath,
+          name: windowsAppNameFromPath(exePath),
+          productKey: windowsProductKeyFromPath(exePath),
+        });
+      }
     }
   }
   return apps;
@@ -314,7 +339,14 @@ const windowsAppFromShortcut = (shortcut: WindowsShortcutInfo): WindowsAppInfo |
   const appPath = typeof shortcut.targetPath === "string" ? shortcut.targetPath.trim() : "";
   const name = typeof shortcut.name === "string" ? shortcut.name.trim() : "";
   if (!appPath || !name || !appPath.toLowerCase().endsWith(".exe")) return null;
-  return { appPath, name: normalizedWindowsAppName(name), shortcutPath: shortcut.shortcutPath };
+  const appName = normalizedWindowsAppName(name);
+  return {
+    appPath,
+    launchPath: appPath,
+    name: appName,
+    productKey: windowsProductKeyFromText(`${appName} ${appPath}`),
+    shortcutPath: shortcut.shortcutPath,
+  };
 };
 
 const normalizedWindowsAppName = (name: string) => {
@@ -361,7 +393,7 @@ const bestWindowsAppExe = async (root: string, depth: number) => {
 };
 
 const windowsExeExcludedPattern =
-  /\b(unins|uninstall|installer|setup|update|updater|helper|elevate|language_server|webm_encoder|openconsole|crashpad|service|daemon|cli|cmd)\b/;
+  /\b(unins|uninstall|installer|setup|update|updater|helper|elevate|elevator|launcher|restarter|fsnotifier|profiler|language_server|webm_encoder|openconsole|winprocesslisthelper|crashpad|service|daemon|cli|cmd)\b/;
 
 const windowsExeScore = (exePath: string, root: string) => {
   const lower = exePath.toLowerCase();
@@ -415,6 +447,7 @@ const dedupeWindowsApps = (apps: WindowsAppInfo[]) => {
 };
 
 const windowsAppIdentity = (item: WindowsAppInfo) => {
+  if (item.productKey) return item.productKey;
   const haystack = `${item.name} ${item.appPath}`.toLowerCase();
   const basename = path.basename(item.appPath).toLowerCase();
   if (isWindowsVsCode(item)) return "vscode";
@@ -427,18 +460,37 @@ const windowsAppIdentity = (item: WindowsAppInfo) => {
   return item.appPath.toLowerCase();
 };
 
+const windowsProductKeyFromPath = (appPath: string) => windowsProductKeyFromText(`${windowsAppNameFromPath(appPath)} ${appPath}`);
+
+const windowsProductKeyFromText = (value: string) => {
+  const lower = value.toLowerCase();
+  const basename = path.basename(lower);
+  if (lower.includes("visual studio code") || basename === "code.exe") return "vscode";
+  if (lower.includes("visual studio") || basename === "devenv.exe") return "visual-studio";
+  if (lower.includes("android studio") || basename === "studio64.exe") return "android-studio";
+  if (lower.includes("antigravity")) return "antigravity";
+  if (lower.includes("windsurf")) return "windsurf";
+  if (lower.includes("cursor")) return "cursor";
+  if (lower.includes("zed")) return "zed";
+  return lower;
+};
+
 const windowsAppCandidateScore = (item: WindowsAppInfo) => {
   const lower = item.appPath.toLowerCase();
+  const launchLower = (item.launchPath || "").toLowerCase();
   const basename = path.basename(lower);
   let score = 0;
   if (item.shortcutPath) score += 3;
+  if (item.launchPath) score += 4;
   if (lower.includes(`${path.sep}resources${path.sep}`)) score -= 8;
   if (windowsExeExcludedPattern.test(lower)) score -= 100;
   if (basename === "code.exe") score += 30;
   if (basename === "devenv.exe") score += 30;
   if (basename === "studio64.exe") score += 30;
+  if (basename === "studio.exe") score += 25;
   if (basename === "antigravity.exe") score += 30;
   if (basename === "zed.exe") score += lower.includes(`${path.sep}bin${path.sep}`) ? 20 : 30;
+  if (windowsAppIdentity(item) === "zed" && launchLower.includes(`${path.sep}bin${path.sep}`)) score += 12;
   if (basename === "cursor.exe" || basename === "windsurf.exe") score += 30;
   if (windowsWorkspaceAppPattern.test(lower)) score += 5;
   return score;
@@ -762,7 +814,7 @@ const firstCommandOutput = (command: string, args: string[]) => new Promise<stri
   });
 });
 
-const windowsAppId = (item: WindowsAppInfo) => isWindowsVsCode(item) ? "vscode" : `win-app:${encodeURIComponent(item.appPath)}`;
+const windowsAppId = (item: WindowsAppInfo) => isWindowsVsCode(item) ? "vscode" : `win-app:${encodeURIComponent(windowsAppIdentity(item))}`;
 const decodeWindowsAppId = (id: string) => id.startsWith("win-app:") ? decodeURIComponent(id.slice("win-app:".length)) : null;
 const isWindowsVsCode = (item: WindowsAppInfo) => {
   const haystack = `${item.name} ${item.appPath}`.toLowerCase();
@@ -863,36 +915,12 @@ const commandExists = (command: string) => new Promise<boolean>((resolve) => {
   child.on("exit", (code) => resolve(code === 0));
 });
 
-const spawnDetached = (command: string, args: string[]) => {
+const spawnDetached = (command: string, args: string[], cwd?: string) => {
   const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
-};
-
-const startWindowsProcess = (command: string, args: string[], cwd: string) => {
-  const argumentList = args.map(windowsCommandLineArg).join(" ");
-  const child = spawn("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    "$target = $args[0]; $cwd = $args[1]; $argv = $args[2]; Start-Process -FilePath $target -ArgumentList $argv -WorkingDirectory $cwd",
-    command,
     cwd,
-    argumentList,
-  ], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
   });
   child.unref();
-};
-
-const windowsCommandLineArg = (value: string) => {
-  const escaped = value.replace(/(["\\])/g, "\\$1");
-  return /[\s"]/.test(value) ? `"${escaped}"` : escaped;
 };
