@@ -121,7 +121,7 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
     const appPath = decodeWindowsAppId(target);
     const apps = await discoverWindowsOpenableApps();
     const appInfo = apps.find((item) => appPath && item.appPath.toLowerCase() === appPath.toLowerCase());
-    if (appInfo) spawnDetached(appInfo.appPath, [workspacePath]);
+    if (appInfo) await openWindowsApp(appInfo, workspacePath);
     return;
   }
   if (target === "vscode") {
@@ -136,7 +136,7 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
   if (target === "terminal") {
     const terminalPath = await findWindowsTerminalPath();
     if (terminalPath) {
-      spawnDetached(terminalPath, ["-d", workspacePath]);
+      openWindowsTerminal(workspacePath);
       return;
     }
     const powershellPath = windowsSystemPath(path.join("System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
@@ -145,7 +145,7 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
   }
   if (target === "git_bash") {
     const gitBash = await findWindowsGitBashPath();
-    if (gitBash) spawnDetached(gitBash, [`--cd=${workspacePath}`]);
+    if (gitBash) startWindowsProcess(gitBash, [`--cd=${workspacePath}`], workspacePath);
     return;
   }
   if (target === "wsl") {
@@ -153,7 +153,7 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
     if (!wslPath) return;
     const terminalPath = await findWindowsTerminalPath();
     if (terminalPath) {
-      spawnDetached(terminalPath, ["-d", workspacePath, wslPath, "--cd", workspacePath]);
+      openWindowsTerminal(workspacePath, [wslPath, "--cd", workspacePath]);
       return;
     }
     spawnDetached("cmd.exe", ["/c", "start", "", wslPath, "--cd", workspacePath]);
@@ -168,6 +168,28 @@ const openLinuxTarget = (target: WorkspaceOpenTarget, workspacePath: string) => 
   if (target === "terminal") {
     spawnDetached("x-terminal-emulator", ["--working-directory", workspacePath]);
   }
+};
+
+const openWindowsApp = async (appInfo: WindowsAppInfo, workspacePath: string) => {
+  const launch = await windowsLaunchForApp(appInfo, workspacePath);
+  startWindowsProcess(launch.command, launch.args, workspacePath);
+};
+
+const windowsLaunchForApp = async (appInfo: WindowsAppInfo, workspacePath: string) => {
+  const lower = `${appInfo.name} ${appInfo.appPath}`.toLowerCase();
+  if (lower.includes("zed")) {
+    const zedCli = await findZedCliPath(appInfo.appPath);
+    if (zedCli) return { command: zedCli, args: [workspacePath] };
+  }
+  if (lower.includes("visual studio") || path.basename(appInfo.appPath).toLowerCase() === "devenv.exe") {
+    const solutionPath = await findVisualStudioSolution(workspacePath);
+    return { command: appInfo.appPath, args: [solutionPath || workspacePath] };
+  }
+  return { command: appInfo.appPath, args: [workspacePath] };
+};
+
+const openWindowsTerminal = (workspacePath: string, commandArgs: string[] = []) => {
+  spawnDetached("cmd.exe", ["/c", "start", "", "wt.exe", "-d", workspacePath, ...commandArgs]);
 };
 
 const discoverMacApps = async () => {
@@ -634,6 +656,25 @@ const findWindowsExe = async (root: string, exeName: string, depth: number): Pro
   return null;
 };
 
+const findZedCliPath = async (appPath: string) => {
+  const candidates = [
+    path.join(path.dirname(appPath), "bin", "Zed.exe"),
+    path.join(path.dirname(appPath), "bin", "zed"),
+    await firstCommandPath("zed"),
+    await firstCommandPath("Zed"),
+  ];
+  return findFirstExistingPath(candidates);
+};
+
+const findVisualStudioSolution = async (workspacePath: string) => {
+  const entries = await readdir(workspacePath, { withFileTypes: true }).catch(() => []);
+  const solution = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".sln"))
+    .map((entry) => path.join(workspacePath, entry.name))
+    .sort()[0];
+  return solution || null;
+};
+
 const findWindowsExes = async (root: string, depth: number): Promise<string[]> => {
   if (depth < 0 || !(await exists(root))) return [];
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
@@ -792,6 +833,26 @@ const commandExists = (command: string) => new Promise<boolean>((resolve) => {
 
 const spawnDetached = (command: string, args: string[]) => {
   const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+};
+
+const startWindowsProcess = (command: string, args: string[], cwd: string) => {
+  const encodedArgs = JSON.stringify(args);
+  const child = spawn("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    "$target = $args[0]; $cwd = $args[1]; $argv = ConvertFrom-Json $args[2]; Start-Process -FilePath $target -ArgumentList $argv -WorkingDirectory $cwd",
+    command,
+    cwd,
+    encodedArgs,
+  ], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
