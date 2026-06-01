@@ -43,6 +43,10 @@ import { approvalCommandPrefix, approvalCwd, findMatchingApprovalScope } from ".
 const MAX_CONTINUOUS_MODEL_ITERATIONS = 512;
 const MAX_TOOL_CALLS = 500;
 const MAX_RECOVERY_NUDGES = 2;
+const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
+const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
+const MAX_SUBAGENT_DEPTH = 2;
+const MAX_FORKED_PARENT_CONTEXT_CHARS = 18_000;
 const STREAM_STALL_TIMEOUT_MS = 45_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 75_000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
@@ -68,6 +72,8 @@ interface ApprovalBundle {
   iteration: number;
   recoveryAttempts: number;
   run: AgentRunTracker;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 interface ApprovalDecision {
@@ -303,6 +309,7 @@ export class AgentRuntime {
     this.store.listSubagents(threadId).forEach((agent) => {
       const childRun = this.activeRuns.get(agent.threadId);
       childRun?.controller.abort();
+      this.cancelPendingApprovalsForThread(agent.threadId, "Stopped with parent run.");
       this.store.updateSubagent(agent.threadId, {
         status: childRun ? "stopped" : agent.status,
         lastPreview: childRun ? "Stopped with parent run." : agent.lastPreview,
@@ -332,6 +339,7 @@ export class AgentRuntime {
         this.updateAssistant(message, assistantText, bundle.assistantThought, "stopped");
       }
     });
+    this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
     Array.from(this.pendingUserInputByCallId.values())
       .filter((item) => item.threadId === threadId)
       .forEach((item) => this.resolvePendingUserInput(item.call.id, {
@@ -534,9 +542,10 @@ export class AgentRuntime {
 
         try {
           const subagent = this.store.getSubagentByThread(options.threadId);
+          const effectiveModel = getModelOption(options.model || settings.model).id;
           await streamProviderResponse({
-            provider: getProviderForModel(settings.model),
-            model: getModelOption(options.model || settings.model).id,
+            provider: getProviderForModel(effectiveModel),
+            model: effectiveModel,
             systemInstruction: buildDesktopSystemPrompt(
               options.workspaceRoot,
               [
@@ -615,7 +624,9 @@ export class AgentRuntime {
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
                 status: planBlock ? "running" : requiresApproval ? "awaiting_approval" : "running",
                 risk: planBlock ? "blocked" : decision.risk,
-                approvalReason: scope ? `Auto-approved by saved ${scopeLabel(scope)} scope.` : decision.reason,
+                approvalReason: scope
+                  ? `Auto-approved by saved ${scopeLabel(scope)} scope.`
+                  : decision.reason,
                 title: this.titleForTool(call),
                 textOffset: assistantText.length,
                 startedAt: now(),
@@ -873,6 +884,8 @@ export class AgentRuntime {
       iteration: bundle.iteration,
       toolCount,
       recoveryAttempts: bundle.recoveryAttempts,
+      model: bundle.model,
+      reasoningEffort: bundle.reasoningEffort,
     });
   }
 
@@ -902,6 +915,8 @@ export class AgentRuntime {
       iteration: params.iteration,
       recoveryAttempts: params.recoveryAttempts,
       run: params.run,
+      model: params.options.model,
+      reasoningEffort: params.options.reasoningEffort,
     };
     params.calls.forEach((call) => {
       this.pendingApprovalByCallId.set(call.id, bundle);
@@ -918,11 +933,25 @@ export class AgentRuntime {
   private markSubagentFinished(threadId: string, status: SubagentRecord["status"], text: string) {
     const agent = this.store.getSubagentByThread(threadId);
     if (!agent) return;
-    this.store.updateSubagent(threadId, {
+    if (agent.status === "closed") {
+      this.emitSnapshot();
+      return;
+    }
+    const updated = this.store.updateSubagent(threadId, {
       status,
       finalMessage: text,
       lastPreview: compactPreview(text, 240),
     });
+    if (status === "completed" && updated) {
+      const messages = this.store.listMessages(threadId);
+      const latestUser = [...messages].reverse().find((message) => message.role === "user");
+      const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+      const workspace = updated.workspaceId ? this.store.getWorkspace(updated.workspaceId)?.path : undefined;
+      if (latestUser && latestAssistant && latestUser.createdAt > latestAssistant.createdAt && workspace && !this.activeRuns.has(threadId)) {
+        this.store.updateSubagent(threadId, { status: "pending" });
+        this.startExistingSubagentTurn(updated, workspace);
+      }
+    }
     this.emitSnapshot();
   }
 
@@ -1054,8 +1083,19 @@ export class AgentRuntime {
     const message = String(call.arguments.message || "").trim();
     if (!taskName) return { success: false, error: "taskName must use lowercase letters, digits, and underscores." };
     if (!message) return { success: false, error: "message is required." };
-    const liveChildren = this.store.listSubagents(parentThreadId).filter((agent) => ["pending", "running", "waiting"].includes(agent.status));
-    if (liveChildren.length >= 3) return { success: false, error: "Subagent limit reached: at most 3 live child agents per chat." };
+    const parentAgent = this.store.getSubagentByThread(parentThreadId);
+    const rootThreadId = parentAgent?.parentThreadId || parentThreadId;
+    const liveChildren = this.store.listDirectSubagents(parentThreadId).filter(isLiveSubagent);
+    if (liveChildren.length >= MAX_LIVE_SUBAGENTS_PER_PARENT) {
+      return { success: false, error: `Subagent limit reached: at most ${MAX_LIVE_SUBAGENTS_PER_PARENT} live child agents per parent.` };
+    }
+    const liveTreeAgents = this.store.listSubagents(rootThreadId).filter(isLiveSubagent);
+    if (liveTreeAgents.length >= MAX_LIVE_SUBAGENTS_PER_TREE) {
+      return { success: false, error: `Subagent limit reached: at most ${MAX_LIVE_SUBAGENTS_PER_TREE} live child agents per chat tree.` };
+    }
+    if (parentAgent && subagentDepth(parentAgent.agentPath) >= MAX_SUBAGENT_DEPTH) {
+      return { success: false, error: `Subagent depth limit reached: max depth is ${MAX_SUBAGENT_DEPTH}.` };
+    }
     if (this.store.findSubagent(parentThreadId, taskName)) return { success: false, error: `A subagent named ${taskName} already exists.` };
 
     const roles = loadSubagentRoles(workspaceRoot);
@@ -1072,10 +1112,9 @@ export class AgentRuntime {
     if (!forkTurns.valid) {
       return { success: false, error: "forkTurns must be none, all, or a positive integer string." };
     }
-    const usedNicknames = new Set(this.store.listSubagents(parentThreadId).map((agent) => (agent.agentNickname || "").toLowerCase()).filter(Boolean));
+    const usedNicknames = new Set(this.store.listDirectSubagents(parentThreadId).map((agent) => (agent.agentNickname || "").toLowerCase()).filter(Boolean));
     const nickname = pickSubagentNickname(role, usedNicknames, taskName);
     const thread = this.store.getThread(parentThreadId);
-    const parentAgent = this.store.getSubagentByThread(parentThreadId);
     const agent = this.store.createSubagent({
       parentThreadId,
       parentMessageId,
@@ -1085,8 +1124,8 @@ export class AgentRuntime {
       agentRole: role?.name,
       agentNickname: nickname,
       prompt: message,
-      model: typeof call.arguments.model === "string" ? call.arguments.model : settings.model,
-      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || settings.reasoningEffort,
+      model: typeof call.arguments.model === "string" ? call.arguments.model : role?.model || settings.model,
+      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || settings.reasoningEffort,
     });
     this.startSubagentTurn(agent, workspaceRoot, message, role, forkTurns.value);
     this.emitSnapshot();
@@ -1105,16 +1144,22 @@ export class AgentRuntime {
     if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
     if (agent.status === "closed") return { success: false, error: `${formatSubagentLabel(agent)} is closed.` };
     this.appendSubagentUserMessage(agent.threadId, message);
-    this.store.updateSubagent(agent.threadId, { status: triggerTurn ? "pending" : agent.status, lastPreview: compactPreview(message, 180) });
+    const alreadyRunning = this.activeRuns.has(agent.threadId);
+    this.store.updateSubagent(agent.threadId, {
+      status: triggerTurn && !alreadyRunning ? "pending" : agent.status,
+      lastPreview: compactPreview(message, 180),
+    });
     if (triggerTurn) {
       const workspace = workspaceRoot || this.store.getWorkspace(agent.workspaceId)?.path;
       if (!workspace) return { success: false, error: "Workspace not found for subagent." };
-      this.startExistingSubagentTurn(agent, workspace);
+      if (!alreadyRunning) this.startExistingSubagentTurn(agent, workspace);
     }
     this.emitSnapshot();
     return {
       success: true,
-      output: `${triggerTurn ? "Assigned task to" : "Sent message to"} ${formatSubagentLabel(agent)}.`,
+      output: alreadyRunning && triggerTurn
+        ? `Queued task for ${formatSubagentLabel(agent)}. It will run after the current child turn finishes.`
+        : `${triggerTurn ? "Assigned task to" : "Sent message to"} ${formatSubagentLabel(agent)}.`,
       data: subagentToolData(agent),
     };
   }
@@ -1123,7 +1168,8 @@ export class AgentRuntime {
     const startedAt = Date.now();
     const timeoutMs = Math.max(0, Math.min(120_000, Number(call.arguments.timeoutMs || call.arguments.timeout_ms) || 30_000));
     const initialAgents = this.store.listSubagents(parentThreadId);
-    if (initialAgents.some((agent) => ["completed", "failed", "stopped", "closed"].includes(agent.status))) {
+    const initialLiveAgents = initialAgents.filter(isLiveSubagent);
+    if (initialLiveAgents.length === 0 && initialAgents.some((agent) => ["completed", "failed", "stopped", "closed"].includes(agent.status))) {
       return {
         success: true,
         output: subagentStatusSummary(initialAgents),
@@ -1169,6 +1215,7 @@ export class AgentRuntime {
     descendants.forEach((candidate) => {
       const childRun = this.activeRuns.get(candidate.threadId);
       childRun?.controller.abort();
+      this.cancelPendingApprovalsForThread(candidate.threadId, "Closed before approval.");
       this.store.updateSubagent(candidate.threadId, {
         status: "closed",
         closedAt: now(),
@@ -1249,6 +1296,29 @@ export class AgentRuntime {
     this.pendingUserInputByCallId.delete(callId);
     this.emit({ type: "request_user_input_resolved", threadId: pending.threadId, callId });
     pending.resolve(result);
+  }
+
+  private cancelPendingApprovalsForThread(threadId: string, reason: string) {
+    const bundles = Array.from(new Set(
+      Array.from(this.pendingApprovalByCallId.values()).filter((bundle) => bundle.threadId === threadId),
+    ));
+    for (const bundle of bundles) {
+      bundle.run.controller.abort();
+      bundle.calls.forEach((call) => {
+        this.pendingApprovalByCallId.delete(call.id);
+        const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
+          status: "stopped",
+          result: { success: false, error: reason },
+          output: reason,
+          endedAt: now(),
+        });
+        this.emit({ type: "tool_updated", tool: event });
+      });
+      const message = this.store.getMessage(bundle.assistantMessageId);
+      if (message && message.status === "awaiting_approval") {
+        this.updateAssistant(message, bundle.assistantText || reason, bundle.assistantThought, "stopped");
+      }
+    }
   }
 
   private createRun(threadId: string, assistantMessageId: string, controller: AbortController): AgentRunTracker {
@@ -1762,6 +1832,12 @@ const buildSubagentRuntimeContext = (agent: SubagentRecord, roles: Map<string, S
 const isSubagentTool = (name: string) =>
   ["spawn_agent", "send_message", "assign_task", "wait_agent", "list_agents", "close_agent"].includes(name);
 
+const isLiveSubagent = (agent: SubagentRecord) =>
+  ["pending", "running", "waiting"].includes(agent.status);
+
+const subagentDepth = (agentPath: string) =>
+  agentPath.split("/").filter((part) => part && part !== "root").length;
+
 const normalizeTaskName = (value: string) => {
   const normalized = value.trim().toLowerCase();
   return /^[a-z0-9_]+$/.test(normalized) ? normalized : "";
@@ -1786,7 +1862,7 @@ const buildForkedParentHistory = (store: DesktopStore, agent: SubagentRecord, fo
   const summary = selected
     .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${compactPreview(message.content, 1200)}`)
     .join("\n\n");
-  return [textProviderMessage(`Forked parent conversation context for ${agent.agentPath}:\n\n${summary}`)];
+  return [textProviderMessage(`Forked parent conversation context for ${agent.agentPath}:\n\n${compactLongText(summary, MAX_FORKED_PARENT_CONTEXT_CHARS)}`)];
 };
 
 const normalizeRoleName = (value: string) =>
@@ -1824,6 +1900,17 @@ const subagentStatusSummary = (agents: SubagentRecord[]) =>
 const compactPreview = (value: string, maxLength: number) => {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= maxLength ? compact : `${compact.slice(0, Math.max(0, maxLength - 1))}...`;
+};
+
+const compactLongText = (value: string, maxLength: number) => {
+  if (value.length <= maxLength) return value;
+  const headLength = Math.floor(maxLength * 0.62);
+  const tailLength = Math.max(0, maxLength - headLength - 80);
+  return [
+    value.slice(0, headLength).trimEnd(),
+    `\n\n[...forked parent context truncated: ${value.length - headLength - tailLength} chars omitted...]\n\n`,
+    value.slice(value.length - tailLength).trimStart(),
+  ].join("");
 };
 
 const delay = (ms: number) =>

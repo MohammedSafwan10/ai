@@ -250,7 +250,7 @@ export class DesktopStore {
     this.data.approvalHistory = this.data.approvalHistory.filter((item) => !removedThreadIds.has(item.threadId));
     this.data.approvalScopes = this.data.approvalScopes.filter((item) => !item.threadId || !removedThreadIds.has(item.threadId));
     this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => !removedThreadIds.has(checkpoint.threadId));
-    this.data.subagents = this.data.subagents.filter((agent) => agent.parentThreadId !== threadId && agent.threadId !== threadId);
+    this.data.subagents = this.data.subagents.filter((agent) => !removedThreadIds.has(agent.parentThreadId) && !removedThreadIds.has(agent.threadId));
   }
 
   listThreads(): ThreadRecord[] {
@@ -384,11 +384,21 @@ export class DesktopStore {
         : this.data.subagents.filter((agent) => agent.parentThreadId === parentThreadId);
       return this.data.subagents
         .filter((agent) =>
-          roots.some((root) => agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`))
+          roots.some((root) =>
+            parentAgent
+              ? agent.threadId !== root.threadId && agent.agentPath.startsWith(`${root.agentPath}/`)
+              : agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`),
+          )
         )
         .sort((a, b) => a.createdAt - b.createdAt);
     }
     return this.data.subagents
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  listDirectSubagents(parentThreadId: string): SubagentRecord[] {
+    return this.data.subagents
+      .filter((agent) => agent.parentThreadId === parentThreadId)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
