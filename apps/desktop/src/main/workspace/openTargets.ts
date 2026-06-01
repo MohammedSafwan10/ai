@@ -19,6 +19,19 @@ interface MacAppInfo {
   }>;
 }
 
+interface WindowsAppInfo {
+  appPath: string;
+  name: string;
+  shortcutPath?: string;
+}
+
+interface WindowsShortcutInfo {
+  shortcutPath?: string;
+  name?: string;
+  targetPath?: string;
+  arguments?: string;
+}
+
 export const listWorkspaceOpenTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
   const platform = process.platform;
   if (platform === "darwin") return macTargets();
@@ -67,10 +80,18 @@ const windowsTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
   const targets: WorkspaceOpenTargetInfo[] = [
     await nativeTarget("file_explorer", "File Explorer", "finder", explorerPath),
   ];
-  if (vscodePath) targets.push(await nativeTarget("vscode", "VS Code", "vscode", vscodePath, true));
+  const apps = await discoverWindowsApps();
+  for (const item of apps) {
+    targets.push(await nativeTarget(windowsAppId(item), item.name, inferredWindowsIcon(item), item.appPath, isWindowsVsCode(item)));
+  }
+  if (vscodePath && !apps.some(isWindowsVsCode)) {
+    targets.push(await nativeTarget("vscode", "VS Code", "vscode", vscodePath, true));
+  }
   targets.push(await nativeTarget("terminal", terminalPath ? "Terminal" : "PowerShell", "terminal", terminalPath || powershellPath));
-  if (gitBashPath) targets.push(await nativeTarget("git_bash", "Git Bash", "terminal", gitBashPath));
-  return ensureDefault(targets);
+  if (gitBashPath && !apps.some((item) => item.appPath.toLowerCase() === gitBashPath.toLowerCase())) {
+    targets.push(await nativeTarget("git_bash", "Git Bash", "terminal", gitBashPath));
+  }
+  return ensureDefault(sortTargets(dedupeTargets(targets)));
 };
 
 const linuxTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
@@ -94,6 +115,13 @@ const openMacTarget = async (targetId: WorkspaceOpenTarget, workspacePath: strin
 };
 
 const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: string) => {
+  if (target.startsWith("win-app:")) {
+    const appPath = decodeWindowsAppId(target);
+    const apps = await discoverWindowsApps();
+    const appInfo = apps.find((item) => appPath && item.appPath.toLowerCase() === appPath.toLowerCase());
+    if (appInfo) spawnDetached(appInfo.appPath, [workspacePath]);
+    return;
+  }
   if (target === "vscode") {
     const vscodePath = await findWindowsVsCodePath();
     if (vscodePath) {
@@ -138,6 +166,119 @@ const discoverMacApps = async () => {
   const appPaths = (await Promise.all(roots.map((root) => findMacApps(root, 2)))).flat();
   const apps = await Promise.all(appPaths.map(readMacAppInfo));
   return apps.filter((item): item is MacAppInfo => Boolean(item));
+};
+
+const discoverWindowsApps = async (): Promise<WindowsAppInfo[]> => {
+  const shortcuts = await readWindowsStartMenuShortcuts();
+  const apps: WindowsAppInfo[] = [];
+  for (const shortcut of shortcuts) {
+    const appInfo = windowsAppFromShortcut(shortcut);
+    if (!appInfo || !shouldShowWindowsApp(appInfo)) continue;
+    apps.push(appInfo);
+  }
+  return dedupeWindowsApps(apps);
+};
+
+const readWindowsStartMenuShortcuts = () => new Promise<WindowsShortcutInfo[]>((resolve) => {
+  const roots = windowsStartMenuRoots();
+  if (!roots.length) {
+    resolve([]);
+    return;
+  }
+  const child = spawn("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    windowsShortcutDiscoveryScript,
+    ...roots,
+  ], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.on("error", () => resolve([]));
+  child.on("exit", (code) => {
+    if (code !== 0 || !output.trim()) {
+      resolve([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(output);
+      resolve(Array.isArray(parsed) ? parsed : [parsed]);
+    } catch {
+      resolve([]);
+    }
+  });
+});
+
+const windowsShortcutDiscoveryScript = `
+$ErrorActionPreference = 'SilentlyContinue'
+$shell = New-Object -ComObject WScript.Shell
+$items = foreach ($root in $args) {
+  if (Test-Path -LiteralPath $root) {
+    Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse -File | ForEach-Object {
+      $shortcut = $shell.CreateShortcut($_.FullName)
+      [pscustomobject]@{
+        shortcutPath = $_.FullName
+        name = $_.BaseName
+        targetPath = $shortcut.TargetPath
+        arguments = $shortcut.Arguments
+      }
+    }
+  }
+}
+$items | ConvertTo-Json -Compress -Depth 3
+`;
+
+const windowsStartMenuRoots = () => [
+  process.env.APPDATA ? path.join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs") : null,
+  process.env.ProgramData ? path.join(process.env.ProgramData, "Microsoft", "Windows", "Start Menu", "Programs") : null,
+].filter((item): item is string => Boolean(item));
+
+const windowsAppFromShortcut = (shortcut: WindowsShortcutInfo): WindowsAppInfo | null => {
+  const appPath = typeof shortcut.targetPath === "string" ? shortcut.targetPath.trim() : "";
+  const name = typeof shortcut.name === "string" ? shortcut.name.trim() : "";
+  if (!appPath || !name || !appPath.toLowerCase().endsWith(".exe")) return null;
+  return { appPath, name: normalizedWindowsAppName(name), shortcutPath: shortcut.shortcutPath };
+};
+
+const normalizedWindowsAppName = (name: string) => {
+  const lower = name.toLowerCase();
+  if (lower === "visual studio code") return "VS Code";
+  return name.replace(/\s+\((?:64-bit|32-bit|x64|x86)\)$/i, "");
+};
+
+const shouldShowWindowsApp = (item: WindowsAppInfo) => {
+  const haystack = `${item.name} ${path.basename(item.appPath)} ${item.appPath}`.toLowerCase();
+  if (windowsExcludedAppPattern.test(haystack)) return false;
+  return windowsWorkspaceAppPattern.test(haystack);
+};
+
+const windowsWorkspaceAppPattern =
+  /\b(visual studio code|code\.exe|cursor|windsurf|zed|visual studio\b|devenv\.exe|android studio|studio64\.exe|intellij|idea64\.exe|webstorm|pycharm|clion|rider|datagrip|goland|phpstorm|rubymine|fleet|sublime text|sublime_text\.exe|notepad\+\+|nvim|neovim|vim|emacs)\b/;
+
+const windowsExcludedAppPattern =
+  /\b(uninstall|installer|install additional tools|manuals?|docs?|documentation|release notes|utility|media encoder|git cmd|git gui|node\.js|python|idle)\b/;
+
+const inferredWindowsIcon = (item: WindowsAppInfo): WorkspaceOpenTargetInfo["icon"] => {
+  const haystack = `${item.name} ${item.appPath}`.toLowerCase();
+  if (isWindowsVsCode(item)) return "vscode";
+  if (haystack.includes("android studio") || haystack.includes("studio64.exe")) return "android_studio";
+  if (haystack.includes("terminal") || haystack.includes("git-bash")) return "terminal";
+  return "app";
+};
+
+const dedupeWindowsApps = (apps: WindowsAppInfo[]) => {
+  const seen = new Set<string>();
+  return apps.filter((item) => {
+    const key = item.appPath.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 const findMacApps = async (root: string, depth: number): Promise<string[]> => {
@@ -361,6 +502,13 @@ const firstCommandPath = (command: string) => new Promise<string | null>((resolv
     resolve(first || null);
   });
 });
+
+const windowsAppId = (item: WindowsAppInfo) => isWindowsVsCode(item) ? "vscode" : `win-app:${encodeURIComponent(item.appPath)}`;
+const decodeWindowsAppId = (id: string) => id.startsWith("win-app:") ? decodeURIComponent(id.slice("win-app:".length)) : null;
+const isWindowsVsCode = (item: WindowsAppInfo) => {
+  const haystack = `${item.name} ${item.appPath}`.toLowerCase();
+  return haystack.includes("visual studio code") || path.basename(item.appPath).toLowerCase() === "code.exe";
+};
 
 const macAppId = (appPath: string) => `mac-app:${encodeURIComponent(appPath)}`;
 const decodeMacAppId = (id: string) => id.startsWith("mac-app:") ? decodeURIComponent(id.slice("mac-app:".length)) : null;
