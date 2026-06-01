@@ -1,7 +1,9 @@
 import { ChevronRight, Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ActiveRunState, ThreadRecord, WorkspaceRecord } from "../../shared/types";
+import { buildSidebarRows } from "../sidebarRows";
 
 interface SidebarProps {
   threads: ThreadRecord[];
@@ -36,15 +38,23 @@ export function Sidebar({
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
-  const visibleThreads = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return threads;
-    return threads.filter((thread) => thread.title.toLowerCase().includes(needle));
-  }, [query, threads]);
-  const grouped = workspaces.map((workspace) => ({
-    workspace,
-    threads: visibleThreads.filter((thread) => thread.workspaceId === workspace.id),
-  }));
+  const projectListRef = useRef<HTMLDivElement | null>(null);
+  const rows = useMemo(
+    () => buildSidebarRows({ threads, workspaces, collapsedGroups, query }),
+    [collapsedGroups, query, threads, workspaces],
+  );
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => projectListRef.current,
+    estimateSize: (index) => {
+      const row = rows[index];
+      if (row?.type === "project") return 39;
+      if (row?.type === "empty-project") return 30;
+      return 40;
+    },
+    overscan: 8,
+    getItemKey: (index) => rows[index]?.key || index,
+  });
   const toggleGroup = (groupId: string) => {
     setCollapsedGroups((current) => {
       const next = new Set(current);
@@ -76,46 +86,55 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="project-list">
-        {grouped.map(({ workspace, threads: workspaceThreads }) => (
-          <ProjectGroup
-            key={workspace.id}
-            id={workspace.id}
-            title={workspace.name}
-            active={workspace.id === activeWorkspace?.id}
-            collapsed={collapsedGroups.has(workspace.id)}
-            onToggle={toggleGroup}
-            onRemove={onRemoveWorkspace}
-            icon={
-              workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
-            }
-          >
-            {workspaceThreads.length === 0 ? (
-              <small className="empty-project">No chats</small>
-            ) : (
-              workspaceThreads.map((thread) => (
+      <div className="project-list" ref={projectListRef}>
+        <div className="sidebar-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+          {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+            const row = rows[virtualItem.index];
+            if (!row) return null;
+            return (
+              <div
+                key={row.key}
+                className="sidebar-virtual-row"
+                data-index={virtualItem.index}
+                ref={rowVirtualizer.measureElement}
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                {row.type === "project" ? (
+                  <ProjectRow
+                    id={row.workspace.id}
+                    title={row.workspace.name}
+                    active={row.workspace.id === activeWorkspace?.id}
+                    collapsed={collapsedGroups.has(row.workspace.id)}
+                    onToggle={toggleGroup}
+                    onRemove={onRemoveWorkspace}
+                    icon={
+                      row.workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
+                    }
+                  />
+                ) : row.type === "empty-project" ? (
+                  <small className="empty-project">No chats</small>
+                ) : (
                 <ThreadButton
-                  key={thread.id}
-                  thread={thread}
-                  active={thread.id === activeThreadId}
-                  run={activeRunsByThread[thread.id]}
-                  onClick={() => onSelectThread(thread.id)}
+                  thread={row.thread}
+                  active={row.thread.id === activeThreadId}
+                  run={activeRunsByThread[row.thread.id]}
+                  onClick={() => onSelectThread(row.thread.id)}
                   onRename={onRenameThread}
                   onToggleStar={onToggleThreadStar}
                   onDelete={onDeleteThread}
                 />
-              ))
-            )}
-          </ProjectGroup>
-        ))}
-
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
       {footer && <div className="sidebar-footer">{footer}</div>}
     </aside>
   );
 }
 
-function ProjectGroup({
+function ProjectRow({
   id,
   title,
   active,
@@ -123,7 +142,6 @@ function ProjectGroup({
   onToggle,
   onRemove,
   icon,
-  children,
 }: {
   id: string;
   title: string;
@@ -132,7 +150,6 @@ function ProjectGroup({
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   icon?: ReactNode;
-  children: ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -199,7 +216,6 @@ function ProjectGroup({
           )}
         </div>
       )}
-      {!collapsed && <div className="project-thread-list">{children}</div>}
     </section>
   );
 }

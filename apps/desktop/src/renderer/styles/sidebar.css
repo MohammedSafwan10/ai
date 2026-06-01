@@ -155,13 +155,24 @@ small {
 }
 
 .project-list {
-  display: flex;
+  position: relative;
+  display: block;
   min-height: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 12px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.sidebar-virtual-spacer {
+  position: relative;
+  min-width: 0;
+}
+
+.sidebar-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .project-list::-webkit-scrollbar-thumb {

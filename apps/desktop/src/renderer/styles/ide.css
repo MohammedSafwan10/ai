@@ -286,9 +286,22 @@
 }
 
 .workspace-tree {
+  position: relative;
   min-height: 0;
   overflow: auto;
   padding: 0 8px 14px;
+}
+
+.workspace-virtual-spacer {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .workspace-tree-row {

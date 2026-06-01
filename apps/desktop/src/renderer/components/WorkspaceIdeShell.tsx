@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, PanelRightClose, Search, X } from "lucide-react";
 import clsx from "clsx";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { WorkspaceDirectoryEntry, WorkspaceDirectoryListing, WorkspaceFileReadResult, WorkspaceRecord } from "../../shared/types";
 import type { ReviewFileModel, ReviewSession } from "../reviewModels";
 import { languageForPath } from "../reviewModels";
+import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows, type WorkspaceTreeVirtualRow } from "../workspaceTreeRows";
 
 loader.config({ monaco });
 
@@ -38,6 +40,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
   const [copied, setCopied] = useState(false);
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
+  const treeScrollerRef = useRef<HTMLDivElement | null>(null);
   const activeFileTab = activeTab.type === "file" ? tabs.find((tab) => tab.path === activeTab.path) || null : null;
   const activeReviewFile = reviewSession?.files.find((file) => file.path === selectedReviewPath) || reviewSession?.files[0] || null;
   const reviewActive = activeTab.type === "review" && Boolean(reviewSession);
@@ -72,6 +75,12 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
     if (!query) return [];
     return loadedEntries.filter((entry) => entry.path.toLowerCase().includes(query) || entry.name.toLowerCase().includes(query));
   }, [filter, loadedEntries]);
+  const treeRows = useMemo(
+    () => filter.trim()
+      ? buildFilteredWorkspaceRows(filteredEntries)
+      : buildWorkspaceTreeRows({ listings, expanded, loadingFolders }),
+    [expanded, filter, filteredEntries, listings, loadingFolders],
+  );
 
   async function loadDirectory(path: string) {
     if (!workspace || loadingFolders.has(path)) return;
@@ -270,17 +279,13 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
                 <input ref={filterRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter files..." />
               </div>
               {treeError && <div className="workspace-tree-error">{treeError}</div>}
-              <div className="workspace-tree">
+              <div className="workspace-tree" ref={treeScrollerRef}>
                 {!workspace && <div className="workspace-empty-tree">Open a project to browse files.</div>}
-                {workspace && filter.trim() ? (
-                  <FilteredEntries entries={filteredEntries} onOpen={openFile} />
-                ) : (
-                  <DirectoryRows
-                    path="."
-                    depth={0}
-                    listings={listings}
+                {workspace && (
+                  <VirtualWorkspaceTree
+                    rows={treeRows}
+                    scrollerRef={treeScrollerRef}
                     expanded={expanded}
-                    loadingFolders={loadingFolders}
                     onToggleDirectory={toggleDirectory}
                     onOpen={openFile}
                   />
@@ -371,27 +376,49 @@ function ReviewFileList({
   selectedPath: string | null;
   onSelect: (path: string) => void;
 }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: session.files.length,
+    getScrollElement: () => scrollerRef.current,
+    estimateSize: () => 34,
+    overscan: 12,
+    getItemKey: (index) => {
+      const file = session.files[index];
+      return file ? `${file.oldPath || ""}->${file.path}` : index;
+    },
+  });
   return (
     <div className="review-file-browser">
       <div className="review-file-browser-head">
         <span>{session.files.length} {session.files.length === 1 ? "file" : "files"}</span>
         <span><b className="delta-add">+{session.additions}</b> <b className="delta-del">-{session.deletions}</b></span>
       </div>
-      <div className="workspace-tree">
-        {session.files.map((file) => (
-          <button
-            type="button"
-            key={`${file.oldPath || ""}->${file.path}`}
-            className={clsx("workspace-tree-row review-file-row", selectedPath === file.path && "active")}
-            onClick={() => onSelect(file.path)}
-            title={file.oldPath && file.oldPath !== file.path ? `${file.oldPath} -> ${file.path}` : file.path}
-          >
-            <FileIcon name={file.path} />
-            <span>{file.path}</span>
-            <b className="delta-add">+{file.additions}</b>
-            <b className="delta-del">-{file.deletions}</b>
-          </button>
-        ))}
+      <div className="workspace-tree" ref={scrollerRef}>
+        <div className="workspace-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+          {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+            const file = session.files[virtualItem.index];
+            if (!file) return null;
+            return (
+              <div
+                key={`${file.oldPath || ""}->${file.path}`}
+                className="workspace-virtual-row"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                <button
+                  type="button"
+                  className={clsx("workspace-tree-row review-file-row", selectedPath === file.path && "active")}
+                  onClick={() => onSelect(file.path)}
+                  title={file.oldPath && file.oldPath !== file.path ? `${file.oldPath} -> ${file.path}` : file.path}
+                >
+                  <FileIcon name={file.path} />
+                  <span>{file.path}</span>
+                  <b className="delta-add">+{file.additions}</b>
+                  <b className="delta-del">-{file.deletions}</b>
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -451,72 +478,88 @@ function EditorSurface({ tab }: { tab: OpenTab | null }) {
   );
 }
 
-function DirectoryRows({
-  path,
-  depth,
-  listings,
+function VirtualWorkspaceTree({
+  rows,
+  scrollerRef,
   expanded,
-  loadingFolders,
   onToggleDirectory,
   onOpen,
 }: {
-  path: string;
-  depth: number;
-  listings: Record<string, WorkspaceDirectoryListing>;
+  rows: WorkspaceTreeVirtualRow[];
+  scrollerRef: RefObject<HTMLDivElement | null>;
   expanded: Set<string>;
-  loadingFolders: Set<string>;
   onToggleDirectory: (path: string) => void;
   onOpen: (entry: WorkspaceDirectoryEntry) => void;
 }) {
-  const listing = listings[path];
-  if (!listing) return <div className="workspace-tree-loading">Loading...</div>;
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollerRef.current,
+    estimateSize: () => 34,
+    overscan: 12,
+    getItemKey: (index) => rows[index]?.key || index,
+  });
   return (
-    <>
-      {listing.entries.map((entry) => (
-        <div key={entry.path}>
-          <button
-            type="button"
-            className="workspace-tree-row"
-            style={{ paddingLeft: 12 + depth * 16 }}
-            onClick={() => entry.kind === "directory" ? onToggleDirectory(entry.path) : onOpen(entry)}
-            title={entry.path}
+    <div className="workspace-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+      {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+        const row = rows[virtualItem.index];
+        if (!row) return null;
+        return (
+          <div
+            key={row.key}
+            className="workspace-virtual-row"
+            style={{ transform: `translateY(${virtualItem.start}px)` }}
           >
-            {entry.kind === "directory" ? (
-              expanded.has(entry.path) ? <ChevronDown size={16} /> : <ChevronRight size={16} />
-            ) : <span className="workspace-tree-spacer" />}
-            {entry.kind === "directory" ? expanded.has(entry.path) ? <FolderOpen size={16} /> : <Folder size={16} /> : <FileIcon name={entry.name} />}
-            <span>{entry.name}</span>
-          </button>
-          {entry.kind === "directory" && expanded.has(entry.path) && (
-            loadingFolders.has(entry.path)
-              ? <div className="workspace-tree-loading" style={{ paddingLeft: 34 + depth * 16 }}>Loading...</div>
-              : <DirectoryRows
-                  path={entry.path}
-                  depth={depth + 1}
-                  listings={listings}
-                  expanded={expanded}
-                  loadingFolders={loadingFolders}
-                  onToggleDirectory={onToggleDirectory}
-                  onOpen={onOpen}
-                />
-          )}
-        </div>
-      ))}
-    </>
+            <WorkspaceTreeRow
+              row={row}
+              expanded={expanded}
+              onToggleDirectory={onToggleDirectory}
+              onOpen={onOpen}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function FilteredEntries({ entries, onOpen }: { entries: WorkspaceDirectoryEntry[]; onOpen: (entry: WorkspaceDirectoryEntry) => void }) {
-  if (entries.length === 0) return <div className="workspace-empty-tree">No loaded files match.</div>;
+function WorkspaceTreeRow({
+  row,
+  expanded,
+  onToggleDirectory,
+  onOpen,
+}: {
+  row: WorkspaceTreeVirtualRow;
+  expanded: Set<string>;
+  onToggleDirectory: (path: string) => void;
+  onOpen: (entry: WorkspaceDirectoryEntry) => void;
+}) {
+  if (row.type === "empty") return <div className="workspace-empty-tree">{row.message}</div>;
+  if (row.type === "loading") {
+    return <div className="workspace-tree-loading" style={{ paddingLeft: 34 + row.depth * 16 }}>Loading...</div>;
+  }
+  const entry = row.entry;
+  if (row.type === "filtered-entry") {
+    return (
+      <button type="button" className="workspace-tree-row filtered" onClick={() => onOpen(entry)} title={entry.path}>
+        {entry.kind === "directory" ? <Folder size={16} /> : <FileIcon name={entry.name} />}
+        <span>{entry.path}</span>
+      </button>
+    );
+  }
   return (
-    <>
-      {entries.map((entry) => (
-        <button type="button" className="workspace-tree-row filtered" key={entry.path} onClick={() => onOpen(entry)} title={entry.path}>
-          {entry.kind === "directory" ? <Folder size={16} /> : <FileIcon name={entry.name} />}
-          <span>{entry.path}</span>
-        </button>
-      ))}
-    </>
+    <button
+      type="button"
+      className="workspace-tree-row"
+      style={{ paddingLeft: 12 + row.depth * 16 }}
+      onClick={() => entry.kind === "directory" ? onToggleDirectory(entry.path) : onOpen(entry)}
+      title={entry.path}
+    >
+      {entry.kind === "directory" ? (
+        expanded.has(entry.path) ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+      ) : <span className="workspace-tree-spacer" />}
+      {entry.kind === "directory" ? expanded.has(entry.path) ? <FolderOpen size={16} /> : <Folder size={16} /> : <FileIcon name={entry.name} />}
+      <span>{entry.name}</span>
+    </button>
   );
 }
 
