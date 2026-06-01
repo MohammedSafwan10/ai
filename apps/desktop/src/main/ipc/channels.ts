@@ -15,6 +15,8 @@ export const channels = {
   prepareTurnUndo: "desktop:prepareTurnUndo",
   undoTurnChanges: "desktop:undoTurnChanges",
   searchContextMentions: "desktop:searchContextMentions",
+  listWorkspaceDirectory: "desktop:listWorkspaceDirectory",
+  readWorkspaceFile: "desktop:readWorkspaceFile",
   saveSettings: "desktop:saveSettings",
   openPath: "desktop:openPath",
   openWorkspaceTarget: "desktop:openWorkspaceTarget",

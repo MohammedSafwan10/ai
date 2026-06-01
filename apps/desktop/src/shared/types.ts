@@ -69,6 +69,31 @@ export interface WorkspaceRecord {
   lastOpenedAt: number;
 }
 
+export interface WorkspaceDirectoryEntry {
+  name: string;
+  path: string;
+  kind: "file" | "directory" | "symlink";
+  sizeBytes: number;
+  modifiedAtMs: number;
+}
+
+export interface WorkspaceDirectoryListing {
+  path: string;
+  entries: WorkspaceDirectoryEntry[];
+}
+
+export interface WorkspaceFileReadResult {
+  path: string;
+  content: string;
+  encoding: "utf8" | "binary";
+  binary: boolean;
+  sizeBytes: number;
+  modifiedAtMs: number;
+  totalLines: number;
+  truncated: boolean;
+  truncatedBecauseSize: boolean;
+}
+
 export type ThreadTitleSource = "placeholder" | "agent" | "user" | "fallback";
 
 export interface SettingsRecord {
@@ -578,6 +603,8 @@ export interface PrivoraDesktopApi {
   prepareTurnUndo(input: PrepareTurnUndoInput): Promise<TurnUndoRecord | null>;
   undoTurnChanges(input: UndoTurnChangesInput): Promise<TurnUndoRecord | null>;
   searchContextMentions(input: SearchContextMentionsInput): Promise<ContextMentionSuggestion[]>;
+  listWorkspaceDirectory(input: { path: string }): Promise<WorkspaceDirectoryListing>;
+  readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   openPath(path: string): Promise<void>;
   openWorkspaceTarget(target: WorkspaceOpenTarget): Promise<void>;

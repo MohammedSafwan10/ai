@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, BookOpen, Bot, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bot, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
-import { ReviewPanel } from "./components/ReviewPanel";
+import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
+import { buildReviewSession, type ReviewSession } from "./reviewModels";
 import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, SubagentRecord } from "../shared/types";
 
 interface QueuedPrompt {
@@ -18,10 +20,12 @@ interface QueuedPrompt {
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
-  const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
+  const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [subagentDrawerOpen, setSubagentDrawerOpen] = useState(false);
+  const [ideCollapsed, setIdeCollapsed] = useState(true);
+  const [ideWidth, setIdeWidth] = useState(620);
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
     text: string;
@@ -106,10 +110,6 @@ export default function App() {
     return map;
   }, [snapshot.subagents, snapshot.toolEvents]);
 
-  const reviewTools = useMemo(
-    () => reviewMessageId ? (toolsByMessage.get(reviewMessageId) || []) : [],
-    [reviewMessageId, toolsByMessage],
-  );
   const undoByMessage = useMemo(() => {
     const map = new Map<string, typeof snapshot.turnUndos[number]>();
     snapshot.turnUndos.forEach((undo) => map.set(undo.messageId, undo));
@@ -161,7 +161,7 @@ export default function App() {
 
   useEffect(() => {
     setComposerDraft(null);
-    setReviewMessageId(null);
+    setReviewSession(null);
     setQueuedPrompts([]);
     setQueuePaused(false);
     setQueueExpanded(false);
@@ -292,8 +292,34 @@ export default function App() {
     setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
   };
 
+  const openReviewInIde = (messageId: string) => {
+    const tools = toolsByMessage.get(messageId) || [];
+    setReviewSession(buildReviewSession({
+      messageId,
+      title: messageId === messages[messages.length - 1]?.id ? "Last turn" : "Review",
+      tools,
+    }));
+    setIdeCollapsed(false);
+  };
+
   const queuedHead = queuedPrompts[0] || null;
   const queuedRest = queuedPrompts.slice(1);
+
+  const startIdeResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = ideWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      const nextWidth = Math.max(420, Math.min(920, startWidth - (moveEvent.clientX - startX)));
+      setIdeWidth(nextWidth);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   return (
     <div className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}>
@@ -344,23 +370,29 @@ export default function App() {
           />
         )}
       />
+      <div
+        className={ideCollapsed ? "main-workspace ide-collapsed" : "main-workspace"}
+        style={{ "--workspace-ide-width": `${ideWidth}px` } as CSSProperties}
+      >
       <main className={settingsOpen ? "chat-shell settings-open" : "chat-shell"}>
         <header className="topbar">
           <div className="topbar-title">
             <h1>{activeThread?.title || "New chat"}</h1>
           </div>
-          {snapshot.subagents.length > 0 && (
-            <button
-              type="button"
-              className="topbar-agent-button"
-              onClick={() => setSubagentDrawerOpen((value) => !value)}
-              title="Subagents"
-              aria-label="Subagents"
-            >
-              <Bot size={16} />
-              <span>{snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length || snapshot.subagents.length}</span>
-            </button>
-          )}
+          <div className="topbar-actions">
+            {snapshot.subagents.length > 0 && (
+              <button
+                type="button"
+                className="topbar-agent-button"
+                onClick={() => setSubagentDrawerOpen((value) => !value)}
+                title="Subagents"
+                aria-label="Subagents"
+              >
+                <Bot size={16} />
+                <span>{snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length || snapshot.subagents.length}</span>
+              </button>
+            )}
+          </div>
         </header>
 
         <div
@@ -441,7 +473,7 @@ export default function App() {
                           decisions: callIds.map((callId) => ({ callId, approved: true })),
                         });
                       }}
-                      onOpenReview={setReviewMessageId}
+                      onOpenReview={openReviewInIde}
                       turnUndo={undoByMessage.get(message.id) || null}
                       onPrepareTurnUndo={(messageId) => window.privoraDesktop.prepareTurnUndo({ messageId })}
                       onUndoTurnChanges={(messageId) => window.privoraDesktop.undoTurnChanges({ messageId })}
@@ -620,13 +652,38 @@ export default function App() {
         )}
         {toast && <div className="toast">{toast}</div>}
       </main>
+      <button
+        type="button"
+        className="ide-resizer"
+        aria-label="Resize workspace editor"
+        title="Resize workspace editor"
+        onPointerDown={startIdeResize}
+        disabled={ideCollapsed}
+      />
+      <WorkspaceIdeShell
+        workspace={activeWorkspace}
+        reviewSession={reviewSession}
+        onReviewClosed={() => setReviewSession(null)}
+        onToggleCollapsed={() => setIdeCollapsed((value) => !value)}
+      />
+      {ideCollapsed && (
+        <button
+          type="button"
+          className="ide-restore-button"
+          onClick={() => setIdeCollapsed(false)}
+          title="Show workspace"
+          aria-label="Show workspace"
+        >
+          <PanelRightOpen size={16} />
+        </button>
+      )}
+      </div>
       {subagentDrawerOpen && (
         <SubagentDrawer
           agents={snapshot.subagents}
           onClose={() => setSubagentDrawerOpen(false)}
         />
       )}
-      <ReviewPanel tools={reviewTools} open={Boolean(reviewMessageId)} onClose={() => setReviewMessageId(null)} />
     </div>
   );
 }

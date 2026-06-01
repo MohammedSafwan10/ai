@@ -1,0 +1,406 @@
+.main-workspace {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(360px, var(--workspace-ide-width, 620px));
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.main-workspace.ide-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.main-workspace.ide-collapsed .ide-resizer,
+.main-workspace.ide-collapsed .workspace-ide {
+  display: none;
+}
+
+.ide-restore-button {
+  position: absolute;
+  z-index: 12;
+  top: 10px;
+  right: 12px;
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+}
+
+.ide-restore-button:hover {
+  background: color-mix(in srgb, var(--privora-surface) 28%, transparent);
+  color: var(--privora-text);
+}
+
+.ide-resizer {
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.ide-resizer::before {
+  display: block;
+  width: 1px;
+  height: 100%;
+  margin: 0 auto;
+  background: color-mix(in srgb, var(--privora-border) 70%, transparent);
+  content: "";
+}
+
+.ide-resizer:hover::before {
+  background: color-mix(in srgb, var(--privora-muted) 70%, transparent);
+}
+
+.workspace-ide {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  background: color-mix(in srgb, var(--privora-bg) 88%, transparent);
+  overflow: hidden;
+}
+
+.workspace-icon-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+}
+
+.workspace-icon-button:hover:not(:disabled) {
+  color: var(--privora-text);
+  background: color-mix(in srgb, var(--privora-surface) 28%, transparent);
+}
+
+.workspace-icon-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.workspace-ide-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  padding: 8px 12px;
+}
+
+.workspace-ide-tabs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.workspace-open-file,
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  height: 38px;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0 10px;
+}
+
+.workspace-open-file {
+  color: var(--privora-text);
+  font-weight: 500;
+}
+
+.workspace-tab {
+  max-width: 190px;
+}
+
+.workspace-tab.active {
+  border-color: color-mix(in srgb, var(--privora-border) 56%, transparent);
+  background: color-mix(in srgb, var(--privora-surface) 28%, transparent);
+  color: var(--privora-text);
+}
+
+.workspace-open-file:hover,
+.workspace-tab:hover {
+  background: color-mix(in srgb, var(--privora-surface) 22%, transparent);
+  color: var(--privora-text);
+}
+
+.workspace-tab span:not(.workspace-tab-close) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab-close {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--privora-muted);
+}
+
+.workspace-tab-close:hover {
+  background: color-mix(in srgb, var(--privora-border) 62%, transparent);
+  color: var(--privora-text);
+}
+
+.workspace-ide-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.workspace-ide-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 32%);
+  min-height: 0;
+}
+
+.workspace-editor-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 48px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 65%, transparent);
+  color: var(--privora-muted);
+  font-size: 13px;
+  padding: 0 18px;
+  overflow: hidden;
+}
+
+.workspace-breadcrumb strong,
+.workspace-breadcrumb span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-breadcrumb strong {
+  color: var(--privora-text);
+  font-weight: 600;
+}
+
+.workspace-editor-empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  min-height: 0;
+  color: var(--privora-muted);
+  text-align: center;
+  padding: 24px;
+}
+
+.workspace-editor-empty strong {
+  color: var(--privora-text);
+  font-size: 17px;
+}
+
+.workspace-editor-empty.danger strong {
+  color: var(--danger);
+}
+
+.workspace-monaco-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+.workspace-file-notice {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 14px;
+  max-width: 360px;
+  border: 1px solid color-mix(in srgb, var(--pending) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #1f1f1f 90%, transparent);
+  color: #f3d28a;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.workspace-file-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  background: transparent;
+}
+
+.workspace-filter {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  margin: 12px 12px 8px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--privora-surface) 18%, transparent);
+  color: var(--privora-muted);
+  padding: 0 10px;
+}
+
+.workspace-filter input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--privora-text);
+  font: inherit;
+}
+
+.workspace-filter input::placeholder {
+  color: var(--privora-muted);
+}
+
+.workspace-tree {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 14px;
+}
+
+.workspace-tree-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  padding: 0 8px;
+  text-align: left;
+}
+
+.workspace-tree-row:hover {
+  background: color-mix(in srgb, var(--privora-surface) 24%, transparent);
+  color: var(--privora-text);
+}
+
+.workspace-tree-row svg {
+  color: color-mix(in srgb, var(--privora-muted) 86%, transparent);
+}
+
+.workspace-tree-row:hover svg {
+  color: var(--privora-text);
+}
+
+.workspace-tree-row.active {
+  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
+  color: var(--privora-text);
+}
+
+.workspace-tree-row b {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-tree-row b + b {
+  margin-left: 0;
+}
+
+.workspace-tree-row.filtered {
+  padding-left: 12px;
+}
+
+.workspace-tree-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tree-spacer {
+  width: 16px;
+  flex: 0 0 auto;
+}
+
+.workspace-tree-loading,
+.workspace-empty-tree,
+.workspace-tree-error {
+  color: var(--privora-muted);
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+.workspace-tree-error {
+  color: var(--danger);
+}
+
+.review-file-browser {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.review-file-browser-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 56%, transparent);
+  color: var(--privora-muted);
+  font-size: 13px;
+  padding: 0 12px;
+}
+
+.review-file-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.review-file-row .delta-add,
+.review-file-row .delta-del {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1180px) {
+  .main-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main-workspace:not(.ide-collapsed) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main-workspace:not(.ide-collapsed) .chat-shell,
+  .main-workspace:not(.ide-collapsed) .ide-resizer {
+    display: none;
+  }
+}

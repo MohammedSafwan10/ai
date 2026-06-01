@@ -7,6 +7,7 @@ import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
 import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
 import { resolveExistingWorkspacePath } from "../security/pathSandbox";
+import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { channels } from "./channels";
 import type {
   ApprovalDecisionInput,
@@ -163,6 +164,18 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return searchContextMentions(store, input.threadId, input.query);
   });
 
+  handle(channels.listWorkspaceDirectory, z.tuple([workspacePathObjectInputSchema]), async (_event, input: { path: string }) => {
+    const workspace = store.getWorkspace(state.activeWorkspaceId);
+    if (!workspace) throw new Error("Choose a workspace first.");
+    return listWorkspaceDirectory(workspace.path, input.path);
+  });
+
+  handle(channels.readWorkspaceFile, z.tuple([workspacePathObjectInputSchema]), async (_event, input: { path: string }) => {
+    const workspace = store.getWorkspace(state.activeWorkspaceId);
+    if (!workspace) throw new Error("Choose a workspace first.");
+    return readWorkspaceFile(workspace.path, input.path);
+  });
+
   handle(channels.saveSettings, z.tuple([saveSettingsInputSchema]), (_event, input: SaveSettingsInput) => {
     return store.saveSettings(input);
   });
@@ -224,6 +237,7 @@ const spawnDetached = (command: string, args: string[]) => {
 const idSchema = z.string().trim().min(1).max(200);
 const optionalNullableId = z.string().trim().min(1).max(200).nullable();
 const workspacePathInputSchema = z.string().trim().min(1).max(2000);
+const workspacePathObjectInputSchema = z.object({ path: z.string().trim().min(0).max(2000) });
 const workspaceOpenTargetSchema = z.enum(["vscode", "file_explorer", "terminal", "git_bash"]);
 
 const attachmentSchema = z.object({

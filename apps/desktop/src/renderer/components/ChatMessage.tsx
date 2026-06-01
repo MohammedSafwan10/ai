@@ -15,7 +15,7 @@ import type {
   TurnUndoRecord,
 } from "../../shared/types";
 import { ToolTimeline } from "./ToolTimeline";
-import { TurnReviewCard } from "./ReviewPanel";
+import { TurnReviewCard } from "./TurnReviewCard";
 
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
