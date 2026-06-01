@@ -568,6 +568,7 @@ export interface PrivoraDesktopApi {
   toggleThreadStar(threadId: string): Promise<ThreadRecord | null>;
   deleteThread(threadId: string): Promise<void>;
   selectWorkspace(): Promise<WorkspaceRecord | null>;
+  removeWorkspace(workspaceId: string): Promise<WorkspaceRecord | null>;
   setActiveThread(threadId: string): Promise<void>;
   startTurn(input: StartTurnInput): Promise<void>;
   continueRun(threadId: string): Promise<void>;

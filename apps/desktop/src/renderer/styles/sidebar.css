@@ -72,6 +72,7 @@ small {
 .workspace-button,
 .thread-row,
 .thread-menu-button,
+.project-menu-button,
 .tool-summary,
 .tool-pill,
 .model-button,
@@ -133,6 +134,7 @@ small {
 .sidebar-search:focus-within,
 .thread-row-wrap:hover,
 .thread-row-wrap.menu-open,
+.project-group.menu-open,
 .project-heading button:hover,
 .floating-menu button:hover,
 .settings-panel > button:hover,
@@ -214,6 +216,7 @@ small {
 }
 
 .project-group {
+  position: relative;
   display: grid;
   gap: 3px;
 }
@@ -227,7 +230,7 @@ small {
   background: transparent;
   color: var(--privora-muted);
   font-size: 13px;
-  padding: 7px 8px;
+  padding: 7px 36px 7px 8px;
   text-align: left;
   transition: background-color 0.14s ease, color 0.14s ease;
 }
@@ -267,6 +270,35 @@ small {
 .project-thread-list {
   display: grid;
   gap: 3px;
+}
+
+.project-menu-button {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--privora-muted);
+  opacity: 0;
+  transition: opacity 0.14s ease, background-color 0.14s ease, color 0.14s ease;
+}
+
+.project-group:hover .project-menu-button,
+.project-group.menu-open .project-menu-button,
+.project-name.active + .project-menu-button {
+  opacity: 1;
+}
+
+.project-menu-button:hover {
+  background: color-mix(in srgb, var(--privora-surface) 76%, transparent);
+  color: var(--privora-text);
+}
+
+.project-menu {
+  top: 31px;
 }
 
 .empty-project {
@@ -386,4 +418,3 @@ small {
 .thread-menu button.danger {
   color: var(--danger);
 }
-

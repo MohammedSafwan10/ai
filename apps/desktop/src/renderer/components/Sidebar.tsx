@@ -17,6 +17,7 @@ interface SidebarProps {
   onRenameThread: (threadId: string, title: string) => void;
   onToggleThreadStar: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
+  onRemoveWorkspace: (workspaceId: string) => void;
   footer?: ReactNode;
 }
 
@@ -34,6 +35,7 @@ export function Sidebar({
   onRenameThread,
   onToggleThreadStar,
   onDeleteThread,
+  onRemoveWorkspace,
   footer,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
@@ -94,6 +96,7 @@ export function Sidebar({
             active={workspace.id === activeWorkspace?.id}
             collapsed={collapsedGroups.has(workspace.id)}
             onToggle={toggleGroup}
+            onRemove={onRemoveWorkspace}
             icon={
               workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
             }
@@ -129,6 +132,7 @@ function ProjectGroup({
   active,
   collapsed,
   onToggle,
+  onRemove,
   icon,
   children,
 }: {
@@ -137,11 +141,33 @@ function ProjectGroup({
   active?: boolean;
   collapsed: boolean;
   onToggle: (id: string) => void;
+  onRemove: (id: string) => void;
   icon?: ReactNode;
   children: ReactNode;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: MouseEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      setMenuOpen(false);
+      setConfirmRemove(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [menuOpen]);
+
+  const remove = () => {
+    onRemove(id);
+    setMenuOpen(false);
+    setConfirmRemove(false);
+  };
+
   return (
-    <section className={clsx("project-group", collapsed && "collapsed")}>
+    <section className={clsx("project-group", collapsed && "collapsed", menuOpen && "menu-open")} ref={menuRef}>
       <button
         type="button"
         className={clsx("project-name", active && "active")}
@@ -152,6 +178,38 @@ function ProjectGroup({
         {icon && <span className="project-icon">{icon}</span>}
         <span>{title}</span>
       </button>
+      <button
+        type="button"
+        className="project-menu-button"
+        title="Project options"
+        onClick={(event) => {
+          event.stopPropagation();
+          setMenuOpen((open) => !open);
+          setConfirmRemove(false);
+        }}
+      >
+        <MoreHorizontal size={15} />
+      </button>
+      {menuOpen && (
+        <div className="thread-menu project-menu">
+          {confirmRemove ? (
+            <>
+              <button type="button" className="danger" onClick={remove}>
+                <Trash2 size={15} />
+                <span>Remove now</span>
+              </button>
+              <button type="button" onClick={() => setConfirmRemove(false)}>
+                <span>Cancel</span>
+              </button>
+            </>
+          ) : (
+            <button type="button" className="danger" onClick={() => setConfirmRemove(true)}>
+              <Trash2 size={15} />
+              <span>Remove project</span>
+            </button>
+          )}
+        </div>
+      )}
       {!collapsed && <div className="project-thread-list">{children}</div>}
     </section>
   );

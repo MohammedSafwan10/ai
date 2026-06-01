@@ -171,6 +171,19 @@ export class DesktopStore {
     return this.data.workspaces.find((workspace) => workspace.id === id) || null;
   }
 
+  removeWorkspace(workspaceId: string): WorkspaceRecord | null {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) return null;
+    this.data.threads
+      .filter((thread) => thread.workspaceId === workspaceId)
+      .forEach((thread) => this.removeThreadRecords(thread.id));
+    this.data.workspaces = this.data.workspaces.filter((item) => item.id !== workspaceId);
+    this.data.approvalScopes = this.data.approvalScopes.filter((item) => item.workspaceId !== workspaceId);
+    this.data.approvalHistory = this.data.approvalHistory.filter((item) => item.workspaceId !== workspaceId);
+    this.writeData();
+    return workspace;
+  }
+
   createThread(workspaceId: string | null, options: { hidden?: boolean; title?: string } = {}): ThreadRecord {
     const timestamp = now();
     const thread: ThreadRecord = {
@@ -218,6 +231,11 @@ export class DesktopStore {
   }
 
   deleteThread(threadId: string) {
+    this.removeThreadRecords(threadId);
+    this.writeData();
+  }
+
+  private removeThreadRecords(threadId: string) {
     const rootAgents = this.data.subagents.filter((agent) => agent.parentThreadId === threadId);
     const childThreadIds = this.data.subagents
       .filter((agent) =>
@@ -233,7 +251,6 @@ export class DesktopStore {
     this.data.approvalScopes = this.data.approvalScopes.filter((item) => !item.threadId || !removedThreadIds.has(item.threadId));
     this.data.agentRunCheckpoints = this.data.agentRunCheckpoints.filter((checkpoint) => !removedThreadIds.has(checkpoint.threadId));
     this.data.subagents = this.data.subagents.filter((agent) => agent.parentThreadId !== threadId && agent.threadId !== threadId);
-    this.writeData();
   }
 
   listThreads(): ThreadRecord[] {

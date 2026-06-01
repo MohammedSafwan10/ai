@@ -6,6 +6,7 @@ export const channels = {
   deleteThread: "desktop:deleteThread",
   setActiveThread: "desktop:setActiveThread",
   selectWorkspace: "desktop:selectWorkspace",
+  removeWorkspace: "desktop:removeWorkspace",
   startTurn: "desktop:startTurn",
   continueRun: "desktop:continueRun",
   stopTurn: "desktop:stopTurn",

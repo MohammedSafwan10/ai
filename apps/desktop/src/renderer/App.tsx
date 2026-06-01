@@ -329,6 +329,10 @@ export default function App() {
           await window.privoraDesktop.deleteThread(threadId);
           await refresh();
         }}
+        onRemoveWorkspace={async (workspaceId) => {
+          await window.privoraDesktop.removeWorkspace(workspaceId);
+          await refresh();
+        }}
         footer={(
           <SettingsPanel
             settings={snapshot.settings}

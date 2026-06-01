@@ -109,6 +109,22 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return workspace;
   });
 
+  handle(channels.removeWorkspace, z.tuple([idSchema]), (_event, workspaceId: string) => {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error("Workspace not found.");
+    const workspaceThreadIds = new Set(threadsForWorkspace(workspaceId).map((thread) => thread.id));
+    const hasActiveRun = runtime.listActiveRuns().some((run) => workspaceThreadIds.has(run.threadId));
+    if (hasActiveRun) throw new Error("Stop running chats in this project before removing it.");
+
+    const removed = store.removeWorkspace(workspaceId);
+    if (state.activeWorkspaceId === workspaceId || (state.activeThreadId && workspaceThreadIds.has(state.activeThreadId))) {
+      const nextWorkspace = store.listWorkspaces()[0] || null;
+      state.activeWorkspaceId = nextWorkspace?.id ?? null;
+      state.activeThreadId = threadsForWorkspace(state.activeWorkspaceId)[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
+    }
+    return removed;
+  });
+
   handle(channels.startTurn, z.tuple([startTurnInputSchema]), async (_event, input: StartTurnInput) => {
     await runtime.startTurn(input);
   });

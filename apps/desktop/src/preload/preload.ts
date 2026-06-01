@@ -19,6 +19,7 @@ const api: PrivoraDesktopApi = {
   toggleThreadStar: (threadId: string) => ipcRenderer.invoke(channels.toggleThreadStar, threadId),
   deleteThread: (threadId: string) => ipcRenderer.invoke(channels.deleteThread, threadId),
   selectWorkspace: () => ipcRenderer.invoke(channels.selectWorkspace),
+  removeWorkspace: (workspaceId: string) => ipcRenderer.invoke(channels.removeWorkspace, workspaceId),
   setActiveThread: (threadId: string) => ipcRenderer.invoke(channels.setActiveThread, threadId),
   startTurn: (input: StartTurnInput) => ipcRenderer.invoke(channels.startTurn, input),
   continueRun: (threadId: string) => ipcRenderer.invoke(channels.continueRun, threadId),
