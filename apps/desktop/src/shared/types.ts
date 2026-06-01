@@ -633,6 +633,7 @@ export interface PrivoraDesktopApi {
   readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   openPath(path: string): Promise<void>;
+  openExternalUrl(url: string): Promise<void>;
   listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;
   openWorkspaceTarget(target: WorkspaceOpenTarget): Promise<void>;
   onEvent(callback: (event: DesktopEvent) => void): () => void;

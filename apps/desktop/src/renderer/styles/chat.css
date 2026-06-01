@@ -510,6 +510,14 @@
   text-underline-offset: 0.18em;
 }
 
+.markdown-body a:hover {
+  color: color-mix(in srgb, var(--privora-accent) 72%, var(--privora-text));
+}
+
+.markdown-invalid-link {
+  color: color-mix(in srgb, var(--privora-text) 80%, var(--privora-muted));
+}
+
 .markdown-body strong {
   color: color-mix(in srgb, var(--privora-text) 92%, var(--privora-muted));
   font-weight: 600;

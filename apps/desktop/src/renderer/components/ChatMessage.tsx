@@ -24,6 +24,9 @@ const USER_MESSAGE_COLLAPSE_LINES = 16;
 const PROPOSED_PLAN_COLLAPSE_CHARS = 1800;
 const PROPOSED_PLAN_COLLAPSE_LINES = 26;
 const STREAM_MARKDOWN_THROTTLE_MS = 90;
+const markdownComponents = {
+  a: MarkdownExternalLink,
+};
 
 interface ChatMessageProps {
   message: ChatMessageRecord;
@@ -537,7 +540,11 @@ function AssistantMarkdownWithPlan({
           onSuggestPlanChanges={onSuggestPlanChanges}
         />
       ) : (
-        part.text.trim() && <ReactMarkdown key={`text-${index}`} remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+        part.text.trim() && (
+          <ReactMarkdown key={`text-${index}`} remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {part.text}
+          </ReactMarkdown>
+        )
       ))}
     </>
   );
@@ -562,7 +569,7 @@ function ProposedPlanCard({
     <section className={clsx("proposed-plan-card markdown-body", shouldCollapse && !expanded && "is-collapsed")}>
       <div className="proposed-plan-label">Proposed plan</div>
       <div className="proposed-plan-content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
       </div>
       {shouldCollapse && (
         <button
@@ -604,6 +611,41 @@ function ProposedPlanCard({
     </section>
   );
 }
+
+function MarkdownExternalLink({
+  href,
+  children,
+  ...props
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const externalHref = typeof href === "string" && isExternalHttpUrl(href) ? href : "";
+  if (!externalHref) {
+    return <span className="markdown-invalid-link">{children}</span>;
+  }
+  return (
+    <a
+      {...props}
+      href={externalHref}
+      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        void window.privoraDesktop.openExternalUrl(externalHref).catch((error) => {
+          console.error("Could not open external URL", error);
+        });
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+const isExternalHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+};
 
 const splitProposedPlan = (text: string): Array<{ type: "text" | "plan"; text: string }> => {
   const open = "<proposed_plan>";
@@ -726,14 +768,14 @@ function UserMessageContent({ content }: { content: string }) {
   const preview = useMemo(() => buildUserMessagePreview(content), [content]);
 
   if (!shouldCollapse) {
-    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
+    return <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>;
   }
 
   return (
     <div className={clsx("user-message-collapsible", open && "open")}>
       <div className="user-message-content">
         {open ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>
         ) : (
           <pre className="user-message-preview">{preview}</pre>
         )}
@@ -888,7 +930,7 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
       {open && hasThought && (
         <div className="privora-thought-panel">
           <div className="privora-thought-content markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{thought}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thought}</ReactMarkdown>
           </div>
         </div>
       )}

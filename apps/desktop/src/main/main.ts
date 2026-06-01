@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, nativeTheme } from "electron";
+import { app, BrowserWindow, nativeImage, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { DesktopStore } from "./db/store";
 import { AgentRuntime } from "./agent/runtime";
@@ -48,6 +48,31 @@ const installWindowShortcuts = (window: BrowserWindow) => {
   });
 };
 
+const isHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+};
+
+const installExternalNavigationGuards = (window: BrowserWindow) => {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    const allowedAppUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL)
+      : url.startsWith("file://");
+    if (allowedAppUrl) return;
+    event.preventDefault();
+    if (isHttpUrl(url)) void shell.openExternal(url);
+  });
+};
+
 const createWindow = async () => {
   const icon = appIcon();
   mainWindow = new BrowserWindow({
@@ -81,6 +106,7 @@ const createWindow = async () => {
     console.error(`[renderer:gone] ${details.reason}`);
   });
   installWindowShortcuts(mainWindow);
+  installExternalNavigationGuards(mainWindow);
 
   mainWindow.on("closed", () => {
     mainWindow = null;

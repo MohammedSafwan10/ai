@@ -33,6 +33,7 @@ const api: PrivoraDesktopApi = {
   readWorkspaceFile: (input) => ipcRenderer.invoke(channels.readWorkspaceFile, input),
   saveSettings: (input: SaveSettingsInput) => ipcRenderer.invoke(channels.saveSettings, input),
   openPath: (path: string) => ipcRenderer.invoke(channels.openPath, path),
+  openExternalUrl: (url: string) => ipcRenderer.invoke(channels.openExternalUrl, url),
   listWorkspaceOpenTargets: () => ipcRenderer.invoke(channels.listWorkspaceOpenTargets),
   openWorkspaceTarget: (target) => ipcRenderer.invoke(channels.openWorkspaceTarget, target),
   onEvent: (callback: (event: DesktopEvent) => void) => {

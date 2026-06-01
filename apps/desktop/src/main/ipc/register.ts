@@ -186,6 +186,10 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return shell.openPath(target.absolutePath);
   });
 
+  handle(channels.openExternalUrl, z.tuple([externalUrlSchema]), (_event, url: string) => {
+    return shell.openExternal(url);
+  });
+
   handle(channels.listWorkspaceOpenTargets, z.tuple([]), async () => {
     return listWorkspaceOpenTargets();
   });
@@ -202,6 +206,14 @@ const optionalNullableId = z.string().trim().min(1).max(200).nullable();
 const workspacePathInputSchema = z.string().trim().min(1).max(2000);
 const workspacePathObjectInputSchema = z.object({ path: z.string().trim().min(0).max(2000) });
 const workspaceOpenTargetSchema = z.string().trim().min(1).max(2000);
+const externalUrlSchema = z.string().trim().max(4096).refine((value) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}, "Only valid http and https URLs can be opened externally.");
 
 const attachmentSchema = z.object({
   id: idSchema,
