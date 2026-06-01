@@ -666,6 +666,18 @@ export class AgentRuntime {
               totalProviderUsage = addTokenUsage(totalProviderUsage, usage);
               this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
             },
+            onTextReplace: (text) => {
+              endThoughtPart();
+              const previousIterationText = assistantText.slice(textStart);
+              if (text === previousIterationText) return;
+              const previousParts = options.assistantMessage.textParts || [];
+              assistantText = `${assistantText.slice(0, textStart)}${text}`;
+              options.assistantMessage.textParts = previousParts.filter((part) => part.endOffset <= textStart);
+              recordAssistantTextPart(options.assistantMessage, "commentary", textStart, assistantText.length);
+              markRunProgress(run);
+              flushAssistant("running", true);
+              this.emitRun(run);
+            },
           });
         } catch (error) {
           if (stalledAbortReason) throw new StreamStalledError(stalledAbortReason);

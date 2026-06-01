@@ -4,6 +4,15 @@ import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./
 import { createToolCallId } from "./types";
 import { normalizeProviderUsage } from "./usage";
 
+interface GeminiGroundingMetadata {
+  webSearchQueries?: string[];
+  groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+  groundingSupports?: Array<{
+    segment?: { endIndex?: number };
+    groundingChunkIndices?: number[];
+  }>;
+}
+
 const geminiThinkingLevel = (effort: ProviderStreamOptions["reasoning"]) => {
   if (effort === "low") return "low";
   if (effort === "medium") return "medium";
@@ -41,6 +50,59 @@ const toGeminiContents = (messages: ProviderMessage[]) =>
     };
   });
 
+export const supportsGeminiGoogleSearch = (model: string) =>
+  /^gemini-(?:2|3)(?:\.|-)/.test(model);
+
+export const geminiToolsForModel = (
+  model: string,
+  collaborationMode: ProviderStreamOptions["collaborationMode"],
+) => {
+  const tools: Array<Record<string, unknown>> = [
+    { functionDeclarations: geminiDesktopFunctionDeclarations(collaborationMode) as any },
+  ];
+  if (supportsGeminiGoogleSearch(model)) {
+    tools.push({ googleSearch: {} });
+  }
+  return tools;
+};
+
+export const applyGeminiGroundingCitations = (text: string, metadata?: GeminiGroundingMetadata | null) => {
+  const chunks = metadata?.groundingChunks || [];
+  const supports = metadata?.groundingSupports || [];
+  if (!text.trim() || chunks.length === 0) return text;
+
+  const cited = [...supports]
+    .filter((support) =>
+      Number.isFinite(support.segment?.endIndex) &&
+      (support.segment?.endIndex || 0) > 0 &&
+      (support.segment?.endIndex || 0) <= text.length &&
+      (support.groundingChunkIndices || []).length > 0
+    )
+    .sort((a, b) => (b.segment?.endIndex || 0) - (a.segment?.endIndex || 0))
+    .reduce((current, support) => {
+      const endIndex = support.segment?.endIndex || 0;
+      const links = (support.groundingChunkIndices || [])
+        .map((index) => {
+          const uri = chunks[index]?.web?.uri;
+          return uri ? `[${index + 1}](${uri})` : "";
+        })
+        .filter(Boolean);
+      if (links.length === 0) return current;
+      const citation = links.join(", ");
+      if (current.slice(Math.max(0, endIndex - 40), endIndex + 80).includes(citation)) return current;
+      return `${current.slice(0, endIndex)}${citation}${current.slice(endIndex)}`;
+    }, text);
+
+  if (cited !== text) return cited;
+
+  const sources = chunks
+    .map((chunk, index) => ({ index: index + 1, title: chunk.web?.title || chunk.web?.uri || "Source", uri: chunk.web?.uri }))
+    .filter((source) => source.uri)
+    .map((source) => `${source.index}. [${source.title}](${source.uri})`);
+  if (sources.length === 0) return text;
+  return `${text.trimEnd()}\n\nSources:\n${sources.join("\n")}`;
+};
+
 export class GeminiAdapter implements ProviderAdapter {
   async stream(options: ProviderStreamOptions): Promise<void> {
     if (!options.geminiApiKey) {
@@ -62,13 +124,14 @@ export class GeminiAdapter implements ProviderAdapter {
               },
             }
           : {}),
-        tools: [{ functionDeclarations: geminiDesktopFunctionDeclarations(options.collaborationMode) as any }],
+        tools: geminiToolsForModel(options.model, options.collaborationMode) as any,
         toolConfig: { functionCallingConfig: { mode: "AUTO" } } as any,
       },
     });
 
     let emittedText = "";
     let emittedThought = "";
+    let groundingMetadata: GeminiGroundingMetadata | null = null;
     const emitIncrementalText = (text: string, thought = false) => {
       const previous = thought ? emittedThought : emittedText;
       const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
@@ -85,6 +148,10 @@ export class GeminiAdapter implements ProviderAdapter {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
       const usage = normalizeProviderUsage((chunk as any).usageMetadata || (chunk as any).usage);
       if (usage) options.onUsage?.(usage);
+      const candidateGroundingMetadata = chunk.candidates?.[0]?.groundingMetadata;
+      if (candidateGroundingMetadata?.groundingChunks?.length || candidateGroundingMetadata?.groundingSupports?.length) {
+        groundingMetadata = candidateGroundingMetadata as GeminiGroundingMetadata;
+      }
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
         if (part.functionCall?.name) {
@@ -102,5 +169,8 @@ export class GeminiAdapter implements ProviderAdapter {
       }
       if (parts.length === 0 && chunk.text) emitIncrementalText(chunk.text);
     }
+
+    const citedText = applyGeminiGroundingCitations(emittedText, groundingMetadata);
+    if (citedText !== emittedText) options.onTextReplace?.(citedText);
   }
 }

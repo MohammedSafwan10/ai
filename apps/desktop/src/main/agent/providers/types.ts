@@ -30,6 +30,7 @@ export interface ProviderStreamOptions {
   onToolDraft: (draft: { id?: string; name: string; arguments: Record<string, unknown> }) => void;
   onToolCall: (call: DesktopToolCall) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
+  onTextReplace?: (text: string) => void;
 }
 
 export interface ProviderAdapter {
