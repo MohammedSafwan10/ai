@@ -688,10 +688,17 @@ export function Composer({
             )}
           </div>
           {settings.collaborationMode === "plan" && (
-            <span className="composer-mode-status" title="Plan mode is on">
+            <button
+              type="button"
+              className="composer-mode-status"
+              title="Turn off Plan mode"
+              aria-label="Turn off Plan mode"
+              onClick={() => onSettings({ collaborationMode: "default" })}
+            >
               <ClipboardList size={15} />
-              Plan
-            </span>
+              <span>Plan</span>
+              <X className="composer-mode-dismiss" size={13} />
+            </button>
           )}
         </div>
         <div className="toolbar-right">

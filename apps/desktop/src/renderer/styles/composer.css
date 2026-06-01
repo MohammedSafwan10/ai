@@ -873,15 +873,44 @@
   align-items: center;
   gap: 7px;
   min-height: 30px;
+  border: 0;
   border-left: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
+  background: transparent;
   color: color-mix(in srgb, var(--privora-text) 62%, var(--privora-muted));
   padding: 0 0 0 12px;
   font-size: 12.5px;
   white-space: nowrap;
+  transition: color 0.14s ease;
 }
 
 .composer-mode-status svg {
   color: var(--privora-muted);
+}
+
+.composer-mode-status:hover,
+.composer-mode-status:focus-visible {
+  color: var(--privora-text);
+}
+
+.composer-mode-status:focus-visible {
+  outline: 0;
+}
+
+.composer-mode-dismiss {
+  width: 16px;
+  height: 16px;
+  margin-left: -1px;
+  border-radius: 999px;
+  opacity: 0;
+  padding: 2px;
+  transition: background-color 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+}
+
+.composer-mode-status:hover .composer-mode-dismiss,
+.composer-mode-status:focus-visible .composer-mode-dismiss {
+  background: color-mix(in srgb, var(--privora-text) 12%, transparent);
+  color: var(--privora-text);
+  opacity: 1;
 }
 
 .mode-pill {
