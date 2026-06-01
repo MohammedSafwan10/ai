@@ -178,6 +178,15 @@ export default function App() {
 
   return (
     <div className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}>
+      <button
+        type="button"
+        className="app-sidebar-toggle"
+        onClick={() => setSidebarCollapsed((value) => !value)}
+        title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+        aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      >
+        {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+      </button>
       <Sidebar
         threads={snapshot.threads}
         workspaces={snapshot.workspaces}
@@ -231,17 +240,6 @@ export default function App() {
         title={activeThread?.title || "New chat"}
         settingsOpen={settingsOpen}
         toast={toast}
-        topbarLeading={(
-          <button
-            type="button"
-            className="topbar-icon-button topbar-sidebar-toggle"
-            onClick={() => setSidebarCollapsed((value) => !value)}
-            title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-            aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-          >
-            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </button>
-        )}
         messageList={(
         <div
           className="message-list"

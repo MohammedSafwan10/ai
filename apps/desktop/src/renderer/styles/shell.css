@@ -1,4 +1,5 @@
 .app-shell {
+  position: relative;
   display: grid;
   grid-template-columns: 292px minmax(0, 1fr);
   height: 100vh;
@@ -9,6 +10,34 @@
 
 .app-shell.sidebar-collapsed {
   grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.app-sidebar-toggle {
+  position: fixed;
+  z-index: 80;
+  top: 14px;
+  left: 14px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.app-sidebar-toggle:hover,
+.app-sidebar-toggle:focus-visible {
+  background: color-mix(in srgb, var(--privora-surface) 32%, transparent);
+  color: var(--privora-text);
+}
+
+.app-sidebar-toggle:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--privora-text) 24%, transparent);
+  outline-offset: 2px;
 }
 
 
