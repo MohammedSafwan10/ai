@@ -23,7 +23,6 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode): P
     return {
       risk: "risky",
       requiresApproval: mode !== "yolo",
-      reason: "Deleting files can remove user work.",
     };
   }
 
