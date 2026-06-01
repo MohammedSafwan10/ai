@@ -403,13 +403,45 @@ const inferredWindowsIcon = (item: WindowsAppInfo): WorkspaceOpenTargetInfo["ico
 };
 
 const dedupeWindowsApps = (apps: WindowsAppInfo[]) => {
-  const seen = new Set<string>();
-  return apps.filter((item) => {
-    const key = item.appPath.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const byIdentity = new Map<string, WindowsAppInfo>();
+  for (const item of apps) {
+    const key = windowsAppIdentity(item);
+    const current = byIdentity.get(key);
+    if (!current || windowsAppCandidateScore(item) > windowsAppCandidateScore(current)) {
+      byIdentity.set(key, item);
+    }
+  }
+  return [...byIdentity.values()];
+};
+
+const windowsAppIdentity = (item: WindowsAppInfo) => {
+  const haystack = `${item.name} ${item.appPath}`.toLowerCase();
+  const basename = path.basename(item.appPath).toLowerCase();
+  if (isWindowsVsCode(item)) return "vscode";
+  if (haystack.includes("visual studio") || basename === "devenv.exe") return "visual-studio";
+  if (haystack.includes("android studio") || basename === "studio64.exe") return "android-studio";
+  if (haystack.includes("antigravity")) return "antigravity";
+  if (haystack.includes("windsurf")) return "windsurf";
+  if (haystack.includes("cursor")) return "cursor";
+  if (haystack.includes("zed")) return "zed";
+  return item.appPath.toLowerCase();
+};
+
+const windowsAppCandidateScore = (item: WindowsAppInfo) => {
+  const lower = item.appPath.toLowerCase();
+  const basename = path.basename(lower);
+  let score = 0;
+  if (item.shortcutPath) score += 3;
+  if (lower.includes(`${path.sep}resources${path.sep}`)) score -= 8;
+  if (windowsExeExcludedPattern.test(lower)) score -= 100;
+  if (basename === "code.exe") score += 30;
+  if (basename === "devenv.exe") score += 30;
+  if (basename === "studio64.exe") score += 30;
+  if (basename === "antigravity.exe") score += 30;
+  if (basename === "zed.exe") score += lower.includes(`${path.sep}bin${path.sep}`) ? 20 : 30;
+  if (basename === "cursor.exe" || basename === "windsurf.exe") score += 30;
+  if (windowsWorkspaceAppPattern.test(lower)) score += 5;
+  return score;
 };
 
 const findMacApps = async (root: string, depth: number): Promise<string[]> => {
@@ -841,21 +873,26 @@ const spawnDetached = (command: string, args: string[]) => {
 };
 
 const startWindowsProcess = (command: string, args: string[], cwd: string) => {
-  const encodedArgs = JSON.stringify(args);
+  const argumentList = args.map(windowsCommandLineArg).join(" ");
   const child = spawn("powershell.exe", [
     "-NoProfile",
     "-NonInteractive",
     "-ExecutionPolicy",
     "Bypass",
     "-Command",
-    "$target = $args[0]; $cwd = $args[1]; $argv = ConvertFrom-Json $args[2]; Start-Process -FilePath $target -ArgumentList $argv -WorkingDirectory $cwd",
+    "$target = $args[0]; $cwd = $args[1]; $argv = $args[2]; Start-Process -FilePath $target -ArgumentList $argv -WorkingDirectory $cwd",
     command,
     cwd,
-    encodedArgs,
+    argumentList,
   ], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
   });
   child.unref();
+};
+
+const windowsCommandLineArg = (value: string) => {
+  const escaped = value.replace(/(["\\])/g, "\\$1");
+  return /[\s"]/.test(value) ? `"${escaped}"` : escaped;
 };
