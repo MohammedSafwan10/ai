@@ -1,4 +1,4 @@
-import { ChevronRight, Edit3, Folder, FolderOpen, Menu, MoreHorizontal, Pencil, Search, Star, Trash2 } from "lucide-react";
+import { ChevronRight, Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ActiveRunState, ThreadRecord, WorkspaceRecord } from "../../shared/types";
@@ -9,8 +9,6 @@ interface SidebarProps {
   activeThreadId: string | null;
   activeRunsByThread?: Record<string, ActiveRunState>;
   activeWorkspace: WorkspaceRecord | null;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
   onSelectWorkspace: () => void;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
@@ -27,8 +25,6 @@ export function Sidebar({
   activeThreadId,
   activeRunsByThread = {},
   activeWorkspace,
-  collapsed,
-  onToggleCollapsed,
   onSelectWorkspace,
   onNewThread,
   onSelectThread,
@@ -60,14 +56,7 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <div className="brand-copy">
-          <strong>Privora</strong>
-        </div>
-        <button className="sidebar-collapse" onClick={onToggleCollapsed} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-          <Menu size={16} />
-        </button>
-      </div>
+      <div className="sidebar-window-spacer" aria-hidden="true" />
 
       <div className="sidebar-top-actions">
         <button onClick={onNewThread} title="New chat">

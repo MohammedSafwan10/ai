@@ -26,7 +26,7 @@ export function ContextMeter({
         style={ringStyle}
         aria-label={`Context ${percent}% left`}
       >
-        <span>{percent}</span>
+        <span className="context-meter-dot" aria-hidden="true" />
       </button>
       <div className="context-meter-popover" role="tooltip">
         <div className="context-meter-popover-title">

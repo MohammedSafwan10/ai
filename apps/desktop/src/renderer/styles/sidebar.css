@@ -22,52 +22,13 @@
   border-right-color: color-mix(in srgb, #fff 12%, transparent);
 }
 
-.brand {
+.sidebar-window-spacer {
   display: flex;
   align-items: center;
-  gap: 9px;
   min-height: 32px;
-  padding: 0 8px 4px 48px;
+  padding: 0 8px 4px;
 }
 
-.brand strong,
-.brand span {
-  display: block;
-}
-
-.brand strong {
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.brand-copy {
-  min-width: 0;
-}
-
-.sidebar-collapse {
-  position: absolute;
-  top: 15px;
-  left: 18px;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--privora-muted);
-  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
-}
-
-.sidebar-collapse:hover {
-  border-color: color-mix(in srgb, var(--privora-border) 34%, transparent);
-  background: color-mix(in srgb, #fff 9%, transparent);
-  color: var(--privora-text);
-}
-
-.brand span,
 small {
   color: var(--privora-muted);
 }
@@ -115,12 +76,11 @@ small {
   pointer-events: none;
 }
 
-.sidebar-collapsed .brand {
+.sidebar-collapsed .sidebar-window-spacer {
   justify-content: center;
   padding-inline: 0;
 }
 
-.sidebar-collapsed .brand-copy,
 .sidebar-collapsed .sidebar-top-actions button span,
 .sidebar-collapsed .sidebar-search input,
 .sidebar-collapsed .sidebar-settings-button span,
