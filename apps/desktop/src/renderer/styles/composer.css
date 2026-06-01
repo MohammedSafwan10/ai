@@ -835,29 +835,32 @@
 .composer-tools-menu {
   top: auto;
   right: auto;
-  bottom: 40px;
+  bottom: 36px;
   left: 0;
-  width: 248px;
-  padding: 7px;
+  width: 188px;
+  padding: 5px;
+  border-radius: 12px;
 }
 
 .composer-tools-menu .composer-menu-row {
   display: flex;
-  min-height: 36px;
-  border-radius: 10px;
-  padding: 7px 9px;
-  font-size: 13px;
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 5px 7px;
+  font-size: 12px;
   justify-content: space-between;
 }
 
 .composer-tools-menu .composer-menu-row span:first-child {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   min-width: 0;
 }
 
 .composer-tools-menu .composer-menu-row svg {
+  width: 15px;
+  height: 15px;
   color: color-mix(in srgb, var(--privora-text) 76%, var(--privora-muted));
   flex: 0 0 auto;
 }
@@ -873,27 +876,27 @@
 
 .composer-menu-divider {
   height: 1px;
-  margin: 5px 9px;
+  margin: 4px 7px;
   background: color-mix(in srgb, var(--privora-border) 72%, transparent);
 }
 
 .composer-toggle {
   position: relative;
   display: inline-flex;
-  width: 38px;
-  height: 22px;
+  width: 31px;
+  height: 18px;
   flex: 0 0 auto;
   align-items: center;
   border-radius: 999px;
   background: color-mix(in srgb, var(--privora-muted) 28%, transparent);
-  padding: 3px;
+  padding: 2px;
   transition: background-color 0.14s ease;
 }
 
 .composer-toggle i {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--privora-text) 96%, transparent);
   box-shadow: 0 2px 7px color-mix(in srgb, #000 28%, transparent);
@@ -905,7 +908,7 @@
 }
 
 .composer-toggle.checked i {
-  transform: translateX(16px);
+  transform: translateX(13px);
 }
 
 .model-menu {
@@ -933,8 +936,8 @@
 }
 
 .composer .composer-tools-menu .composer-menu-row {
-  min-height: 36px;
-  font-size: 13px;
+  min-height: 30px;
+  font-size: 12px;
 }
 
 .composer .floating-menu button:hover {

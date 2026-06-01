@@ -347,35 +347,6 @@ export function Composer({
     }
   };
 
-  const attachLatestTerminal = async () => {
-    if (!activeThreadId) {
-      setAttachmentError("Open a thread before attaching terminal output.");
-      return;
-    }
-    try {
-      const suggestions = await window.privoraDesktop.searchContextMentions({ threadId: activeThreadId, query: "terminal:" });
-      const terminal = suggestions.find((suggestion) => suggestion.type === "terminal");
-      if (!terminal) {
-        setAttachmentError("No terminal output is available to attach yet.");
-        setActiveMenu(null);
-        return;
-      }
-      setContextMentions((current) => current.some((item) => item.id === terminal.id) ? current : [
-        ...current,
-        {
-          id: terminal.id,
-          type: "terminal",
-          label: terminal.label,
-          createdAt: Date.now(),
-        },
-      ]);
-      setAttachmentError(null);
-      setActiveMenu(null);
-    } catch (error) {
-      setAttachmentError(error instanceof Error ? error.message : "Could not attach terminal output.");
-    }
-  };
-
   return (
     <form
       ref={composerRef}
@@ -599,14 +570,6 @@ export function Composer({
                 >
                   <span><Paperclip size={18} /> Add photos & files</span>
                 </button>
-                <button
-                  type="button"
-                  className="composer-menu-row"
-                  onClick={() => void attachLatestTerminal()}
-                >
-                  <span><TerminalSquare size={18} /> Attach Terminal</span>
-                </button>
-                <div className="composer-menu-divider" />
                 <button
                   type="button"
                   className="composer-menu-row"
