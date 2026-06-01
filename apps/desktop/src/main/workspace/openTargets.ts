@@ -59,14 +59,17 @@ const macTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
 };
 
 const windowsTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
+  const explorerPath = windowsSystemPath("explorer.exe");
+  const vscodePath = await findWindowsVsCodePath();
+  const terminalPath = await findWindowsTerminalPath();
+  const powershellPath = windowsSystemPath(path.join("System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+  const gitBashPath = await findWindowsGitBashPath();
   const targets: WorkspaceOpenTargetInfo[] = [
-    target("file_explorer", "File Explorer", "finder"),
+    await nativeTarget("file_explorer", "File Explorer", "finder", explorerPath),
   ];
-  if (await commandExists("code")) targets.push(target("vscode", "VS Code", "vscode", true));
-  targets.push(target("terminal", await commandExists("wt") ? "Terminal" : "PowerShell", "terminal"));
-  if (await exists(path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "git-bash.exe"))) {
-    targets.push(target("git_bash", "Git Bash", "terminal"));
-  }
+  if (vscodePath) targets.push(await nativeTarget("vscode", "VS Code", "vscode", vscodePath, true));
+  targets.push(await nativeTarget("terminal", terminalPath ? "Terminal" : "PowerShell", "terminal", terminalPath || powershellPath));
+  if (gitBashPath) targets.push(await nativeTarget("git_bash", "Git Bash", "terminal", gitBashPath));
   return ensureDefault(targets);
 };
 
@@ -92,20 +95,27 @@ const openMacTarget = async (targetId: WorkspaceOpenTarget, workspacePath: strin
 
 const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: string) => {
   if (target === "vscode") {
+    const vscodePath = await findWindowsVsCodePath();
+    if (vscodePath) {
+      spawnDetached(vscodePath, [workspacePath]);
+      return;
+    }
     spawnDetached("cmd.exe", ["/c", "start", "", "code", workspacePath]);
     return;
   }
   if (target === "terminal") {
-    if (await commandExists("wt")) {
-      spawnDetached("cmd.exe", ["/c", "start", "", "wt.exe", "-d", workspacePath]);
+    const terminalPath = await findWindowsTerminalPath();
+    if (terminalPath) {
+      spawnDetached(terminalPath, ["-d", workspacePath]);
       return;
     }
-    spawnDetached("powershell.exe", ["-NoExit", "-Command", "Set-Location", "-LiteralPath", workspacePath]);
+    const powershellPath = windowsSystemPath(path.join("System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+    spawnDetached(powershellPath, ["-NoExit", "-NoLogo", "-Command", "Set-Location -LiteralPath $args[0]", workspacePath]);
     return;
   }
   if (target === "git_bash") {
-    const gitBash = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "git-bash.exe");
-    spawnDetached("cmd.exe", ["/c", "start", "", gitBash, `--cd=${workspacePath}`]);
+    const gitBash = await findWindowsGitBashPath();
+    if (gitBash) spawnDetached(gitBash, [`--cd=${workspacePath}`]);
   }
 };
 
@@ -288,6 +298,68 @@ const runQuiet = (command: string, args: string[]) => new Promise<boolean>((reso
   const child = spawn(command, args, { stdio: "ignore", windowsHide: true });
   child.on("error", () => resolve(false));
   child.on("exit", (code) => resolve(code === 0));
+});
+
+const findWindowsVsCodePath = async () => {
+  const candidates = [
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "Code.exe"),
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "Microsoft VS Code", "Code.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Microsoft VS Code", "Code.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code Insiders", "Code - Insiders.exe"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  const commandPath = await firstCommandPath("code");
+  if (!commandPath) return null;
+  if (path.basename(commandPath).toLowerCase() === "code.exe") return commandPath;
+  const inferred = path.resolve(path.dirname(commandPath), "..", "Code.exe");
+  return await exists(inferred) ? inferred : null;
+};
+
+const findWindowsTerminalPath = async () => {
+  const commandPath = await firstCommandPath("wt");
+  if (commandPath) return commandPath;
+  const candidates = [
+    path.join(process.env.LOCALAPPDATA || "", "Microsoft", "WindowsApps", "wt.exe"),
+    windowsSystemPath(path.join("System32", "wt.exe")),
+  ];
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+};
+
+const findWindowsGitBashPath = async () => {
+  const candidates = [
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "git-bash.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Git", "git-bash.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Git", "git-bash.exe"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  return firstCommandPath("git-bash");
+};
+
+const windowsSystemPath = (relativePath: string) => path.join(process.env.SystemRoot || "C:\\Windows", relativePath);
+
+const firstCommandPath = (command: string) => new Promise<string | null>((resolve) => {
+  const child = spawn("where.exe", [command], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.on("error", () => resolve(null));
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      resolve(null);
+      return;
+    }
+    const first = output.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    resolve(first || null);
+  });
 });
 
 const macAppId = (appPath: string) => `mac-app:${encodeURIComponent(appPath)}`;
