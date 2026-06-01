@@ -238,7 +238,10 @@
   background: color-mix(in srgb, var(--privora-surface) 68%, transparent);
   padding: 6px;
   color: var(--privora-muted);
+  cursor: zoom-in;
+  font: inherit;
   text-decoration: none;
+  text-align: left;
 }
 
 .message-attachment img {
@@ -253,6 +256,154 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.image-lightbox {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: color-mix(in srgb, #000 88%, transparent);
+  padding: 18px;
+}
+
+.image-lightbox-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  color: #f3f3f3;
+  pointer-events: none;
+}
+
+.image-lightbox-title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  opacity: 0.86;
+}
+
+.image-lightbox-title strong,
+.image-lightbox-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-lightbox-title strong {
+  max-width: min(560px, 54vw);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.image-lightbox-title span {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 12px;
+}
+
+.image-lightbox-actions {
+  display: inline-flex;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.image-lightbox-actions a,
+.image-lightbox-actions button,
+.image-lightbox-zoom button {
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f4f4f4;
+  padding: 0;
+  text-decoration: none;
+}
+
+.image-lightbox-actions a:hover,
+.image-lightbox-actions button:hover,
+.image-lightbox-zoom button:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.image-lightbox-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: auto;
+  padding: 22px 8px 74px;
+}
+
+.image-lightbox-stage img {
+  display: block;
+  max-width: min(92vw, 1400px);
+  max-height: min(78vh, 900px);
+  border-radius: 8px;
+  box-shadow: 0 24px 100px rgba(0, 0, 0, 0.58);
+  object-fit: contain;
+  transform-origin: center;
+  transition: transform 0.12s ease;
+}
+
+.image-lightbox-strip {
+  position: fixed;
+  left: 50%;
+  bottom: 82px;
+  display: flex;
+  max-width: min(520px, calc(100vw - 48px));
+  gap: 8px;
+  overflow-x: auto;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 8px;
+  transform: translateX(-50%);
+}
+
+.image-lightbox-strip button {
+  width: 54px;
+  height: 42px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  padding: 0;
+}
+
+.image-lightbox-strip button.active {
+  border-color: rgba(255, 255, 255, 0.82);
+}
+
+.image-lightbox-strip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.image-lightbox-zoom {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 7px;
+  color: #f4f4f4;
+  transform: translateX(-50%);
+}
+
+.image-lightbox-zoom span {
+  min-width: 54px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  text-align: center;
 }
 
 .message-actions {
@@ -553,4 +704,3 @@
     background: none;
   }
 }
-

@@ -6,6 +6,7 @@ interface ChatShellProps {
   settingsLayer: ReactNode;
   settingsOpen: boolean;
   title: string;
+  topbarLeading?: ReactNode;
   toast?: string | null;
 }
 
@@ -15,11 +16,13 @@ export function ChatShell({
   settingsLayer,
   settingsOpen,
   title,
+  topbarLeading,
   toast,
 }: ChatShellProps) {
   return (
     <main className={settingsOpen ? "chat-shell settings-open" : "chat-shell"}>
       <header className="topbar">
+        {topbarLeading}
         <div className="topbar-title">
           <h1>{title}</h1>
         </div>

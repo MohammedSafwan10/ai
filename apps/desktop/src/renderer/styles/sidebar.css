@@ -3,19 +3,31 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
-  border-right: 1px solid var(--privora-border);
-  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
-  padding: 14px 8px;
-  transition: padding 0.2s ease;
+  gap: 14px;
+  border-right: 1px solid color-mix(in srgb, var(--privora-border) 42%, transparent);
+  background:
+    linear-gradient(118deg, color-mix(in srgb, #17333b 18%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--privora-surface) 58%, transparent), color-mix(in srgb, var(--privora-surface) 38%, transparent));
+  box-shadow: inset -1px 0 0 color-mix(in srgb, #fff 7%, transparent);
+  padding: 16px 10px 14px;
+  backdrop-filter: blur(28px) saturate(1.18);
+  overflow: hidden;
+  transition: opacity 0.18s ease, padding 0.2s ease;
+}
+
+:root[data-theme="dark"] .sidebar {
+  background:
+    linear-gradient(116deg, color-mix(in srgb, #1f5660 22%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, #303030 78%, transparent), color-mix(in srgb, #252525 86%, transparent));
+  border-right-color: color-mix(in srgb, #fff 12%, transparent);
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-height: 34px;
-  padding: 2px 8px 10px 48px;
+  min-height: 32px;
+  padding: 0 8px 4px 48px;
 }
 
 .brand strong,
@@ -36,7 +48,7 @@
 
 .sidebar-collapse {
   position: absolute;
-  top: 16px;
+  top: 15px;
   left: 18px;
   display: grid;
   width: 30px;
@@ -50,8 +62,8 @@
 }
 
 .sidebar-collapse:hover {
-  border-color: color-mix(in srgb, var(--privora-border) 52%, transparent);
-  background: color-mix(in srgb, var(--privora-user-bubble) 46%, transparent);
+  border-color: color-mix(in srgb, var(--privora-border) 34%, transparent);
+  background: color-mix(in srgb, #fff 9%, transparent);
   color: var(--privora-text);
 }
 
@@ -78,7 +90,7 @@ small {
 .model-button,
 .icon-tool {
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
   color: var(--privora-text);
 }
@@ -89,14 +101,18 @@ small {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 9px;
-  min-height: 34px;
-  padding: 7px 10px;
+  gap: 12px;
+  min-height: 38px;
+  padding: 7px 12px;
+  color: color-mix(in srgb, var(--privora-text) 90%, var(--privora-muted));
+  font-size: 15px;
 }
 
 .sidebar-collapsed .sidebar {
-  align-items: center;
-  padding-inline: 8px;
+  padding: 0;
+  border-right: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-collapsed .brand {
@@ -130,18 +146,15 @@ small {
   padding-inline: 0;
 }
 
-.sidebar-top-actions button:hover,
-.sidebar-search:focus-within,
-.thread-row-wrap:hover,
-.thread-row-wrap.menu-open,
-.project-group.menu-open,
-.project-heading button:hover,
-.floating-menu button:hover,
-.settings-panel > button:hover,
-.app-launcher > button:hover,
-.model-button:hover,
-.tool-pill:hover {
-  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+.sidebar .sidebar-top-actions button:hover,
+.sidebar .sidebar-search:focus-within,
+.sidebar .thread-row-wrap:hover,
+.sidebar .thread-row-wrap.menu-open,
+.sidebar .project-group.menu-open,
+.sidebar .project-heading button:hover,
+.sidebar .settings-panel > button:hover,
+.sidebar .app-launcher > button:hover {
+  background: color-mix(in srgb, #fff 8%, transparent);
 }
 
 .sidebar-search {
@@ -166,9 +179,9 @@ small {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 8px 2px;
-  color: var(--privora-muted);
-  font-size: 12px;
+  padding: 8px 12px 1px;
+  color: color-mix(in srgb, var(--privora-muted) 82%, transparent);
+  font-size: 14px;
 }
 
 .project-heading button {
@@ -186,14 +199,18 @@ small {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   overflow: auto;
-  padding-right: 2px;
+  padding-right: 4px;
+}
+
+.project-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--privora-text) 16%, transparent);
 }
 
 .sidebar-footer {
   margin-top: auto;
-  border-top: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--privora-border) 34%, transparent);
   padding-top: 8px;
 }
 
@@ -201,18 +218,19 @@ small {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 9px;
+  gap: 12px;
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
   color: var(--privora-text);
-  padding: 7px 10px;
+  padding: 7px 12px;
+  font-size: 15px;
 }
 
 .sidebar-settings-button:hover {
-  background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
+  background: color-mix(in srgb, #fff 8%, transparent);
 }
 
 .project-group {
@@ -224,19 +242,19 @@ small {
 .project-name {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 10px;
   width: 100%;
-  border-radius: 8px;
+  border-radius: 12px;
   background: transparent;
-  color: var(--privora-muted);
-  font-size: 13px;
-  padding: 7px 36px 7px 8px;
+  color: color-mix(in srgb, var(--privora-text) 70%, var(--privora-muted));
+  font-size: 15px;
+  padding: 7px 36px 7px 12px;
   text-align: left;
   transition: background-color 0.14s ease, color 0.14s ease;
 }
 
 .project-name:hover {
-  background: color-mix(in srgb, var(--privora-user-bubble) 55%, transparent);
+  background: color-mix(in srgb, #fff 7%, transparent);
   color: var(--privora-text);
 }
 
@@ -269,7 +287,7 @@ small {
 
 .project-thread-list {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .project-menu-button {
@@ -293,7 +311,7 @@ small {
 }
 
 .project-menu-button:hover {
-  background: color-mix(in srgb, var(--privora-surface) 76%, transparent);
+  background: color-mix(in srgb, #fff 10%, transparent);
   color: var(--privora-text);
 }
 
@@ -302,20 +320,27 @@ small {
 }
 
 .empty-project {
-  padding: 4px 8px 8px 42px;
+  padding: 4px 8px 8px 46px;
+  font-size: 14px;
 }
 
 .thread-row-wrap {
   position: relative;
   width: 100%;
-  border-radius: 8px;
+  border-radius: 14px;
 }
 
 .thread-row {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 2px;
   width: 100%;
-  padding: 8px 36px 8px 42px;
+  column-gap: 10px;
+  padding: 8px 46px 8px 46px;
+  color: color-mix(in srgb, var(--privora-text) 86%, var(--privora-muted));
+  font-size: 15px;
+  line-height: 1.25;
   text-align: left;
 }
 
@@ -336,7 +361,15 @@ small {
 }
 
 .thread-row-wrap.active {
-  background: color-mix(in srgb, var(--privora-user-bubble) 82%, transparent);
+  background: color-mix(in srgb, #fff 12%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 5%, transparent),
+    0 8px 24px color-mix(in srgb, #000 10%, transparent);
+}
+
+:root[data-theme="light"] .thread-row-wrap.active {
+  background: color-mix(in srgb, #fff 42%, var(--privora-user-bubble));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 58%, transparent);
 }
 
 .thread-row span,
@@ -352,6 +385,29 @@ small {
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+
+.thread-title-line > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-time {
+  justify-self: end;
+  color: color-mix(in srgb, var(--privora-muted) 72%, transparent);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.thread-row-wrap.active .thread-time {
+  color: color-mix(in srgb, var(--privora-text) 62%, var(--privora-muted));
+}
+
+.thread-row-wrap:hover .thread-time,
+.thread-row-wrap.menu-open .thread-time {
+  opacity: 0;
 }
 
 .thread-title-line svg {
@@ -380,7 +436,7 @@ small {
 }
 
 .thread-menu-button:hover {
-  background: color-mix(in srgb, var(--privora-surface) 76%, transparent);
+  background: color-mix(in srgb, #fff 10%, transparent);
   color: var(--privora-text);
 }
 

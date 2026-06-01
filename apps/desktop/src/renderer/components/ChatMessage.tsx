@@ -1,8 +1,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, Copy, Maximize2, Minimize2 } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
 import clsx from "clsx";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   AssistantTextPartRecord,
   AssistantTextPhase,
@@ -759,24 +760,99 @@ const buildUserMessagePreview = (content: string) => {
 };
 
 function AttachmentGrid({ attachments }: { attachments: DesktopAttachmentRecord[] }) {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const selected = selectedIndex === null ? null : attachments[selectedIndex] || null;
+  const selectedSrc = selected ? attachmentSrc(selected) : "";
+  useEffect(() => {
+    if (!selected) return;
+    setZoom(1);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedIndex(null);
+      if (event.key === "ArrowLeft") setSelectedIndex((index) => index === null ? index : Math.max(0, index - 1));
+      if (event.key === "ArrowRight") setSelectedIndex((index) => index === null ? index : Math.min(attachments.length - 1, index + 1));
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [attachments.length, selected]);
+
   if (attachments.length === 0) return null;
   return (
-    <div className="message-attachment-grid">
-      {attachments.map((attachment) => (
-        <a
-          key={attachment.id}
-          className="message-attachment"
-          href={`data:${attachment.mimeType};base64,${attachment.base64}`}
-          download={attachment.name}
-          title={attachment.name}
+    <>
+      <div className="message-attachment-grid">
+        {attachments.map((attachment, index) => (
+          <button
+            type="button"
+            key={attachment.id}
+            className="message-attachment"
+            title={attachment.name}
+            onClick={() => setSelectedIndex(index)}
+          >
+            <img src={attachmentSrc(attachment)} alt={attachment.name} />
+            <span>{attachment.name}</span>
+          </button>
+        ))}
+      </div>
+      {selected && createPortal(
+        <div
+          className="image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={selected.name}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedIndex(null);
+          }}
         >
-          <img src={`data:${attachment.mimeType};base64,${attachment.base64}`} alt={attachment.name} />
-          <span>{attachment.name}</span>
-        </a>
-      ))}
-    </div>
+          <div className="image-lightbox-topbar">
+            <div className="image-lightbox-title">
+              <strong>{selected.name}</strong>
+              <span>{selectedIndex! + 1} of {attachments.length}</span>
+            </div>
+            <div className="image-lightbox-actions">
+              <a href={selectedSrc} download={selected.name} title="Download image" aria-label="Download image">
+                <Download size={18} />
+              </a>
+              <button type="button" onClick={() => setSelectedIndex(null)} title="Close" aria-label="Close">
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          <div className="image-lightbox-stage">
+            <img src={selectedSrc} alt={selected.name} style={{ transform: `scale(${zoom})` }} />
+          </div>
+          {attachments.length > 1 && (
+            <div className="image-lightbox-strip" aria-label="Attached images">
+              {attachments.map((attachment, index) => (
+                <button
+                  type="button"
+                  key={attachment.id}
+                  className={clsx(index === selectedIndex && "active")}
+                  onClick={() => setSelectedIndex(index)}
+                  title={attachment.name}
+                >
+                  <img src={attachmentSrc(attachment)} alt="" />
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="image-lightbox-zoom" aria-label="Image zoom">
+            <button type="button" onClick={() => setZoom((value) => Math.max(0.5, Number((value - 0.1).toFixed(2))))} title="Zoom out">
+              <Minus size={18} />
+            </button>
+            <span>{Math.round(zoom * 100)}%</span>
+            <button type="button" onClick={() => setZoom((value) => Math.min(2.5, Number((value + 0.1).toFixed(2))))} title="Zoom in">
+              <Plus size={18} />
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
+
+const attachmentSrc = (attachment: DesktopAttachmentRecord) =>
+  `data:${attachment.mimeType};base64,${attachment.base64}`;
 
 function ThoughtPanel({ thought, active }: { thought: string; active: boolean }) {
   const hasThought = thought.trim().length > 0;

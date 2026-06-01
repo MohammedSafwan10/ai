@@ -1,6 +1,7 @@
-import { ArrowUp, AtSign, Blocks, Brain, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, FileText, FolderOpen, Maximize2, Minimize2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, FileText, FolderOpen, Maximize2, Minimize2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 import { ContextMeter } from "./ContextMeter";
@@ -33,7 +34,7 @@ interface PastedBlock {
   createdAt: number;
 }
 
-type ComposerMenu = "tools" | "access" | "model" | "reasoning";
+type ComposerMenu = "tools" | "access" | "model";
 
 export function Composer({
   settings,
@@ -66,7 +67,9 @@ export function Composer({
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
+  const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
   const [pursueGoal, setPursueGoal] = useState(false);
+  const [confirmFullAccessOpen, setConfirmFullAccessOpen] = useState(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -85,7 +88,11 @@ export function Composer({
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
   const toggleMenu = (menu: ComposerMenu) => {
-    setActiveMenu((current) => current === menu ? null : menu);
+    setActiveMenu((current) => {
+      const next = current === menu ? null : menu;
+      setModelSubmenuOpen(next === "model");
+      return next;
+    });
     setHistorySearchOpen(false);
     setMentionToken(null);
     setMentionSuggestions([]);
@@ -93,9 +100,20 @@ export function Composer({
 
   const closeComposerPopovers = () => {
     setActiveMenu(null);
+    setModelSubmenuOpen(false);
     setHistorySearchOpen(false);
     setMentionToken(null);
     setMentionSuggestions([]);
+  };
+
+  const choosePermissionMode = (mode: PermissionMode) => {
+    if (mode === "yolo" && settings.permissionMode !== "yolo") {
+      setActiveMenu(null);
+      setConfirmFullAccessOpen(true);
+      return;
+    }
+    onSettings({ permissionMode: mode });
+    setActiveMenu(null);
   };
 
   useEffect(() => {
@@ -107,7 +125,10 @@ export function Composer({
       if (!composerRef.current?.contains(event.target as Node)) closeComposerPopovers();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeComposerPopovers();
+      if (event.key === "Escape") {
+        closeComposerPopovers();
+        setConfirmFullAccessOpen(false);
+      }
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown);
@@ -532,6 +553,49 @@ export function Composer({
         </div>
       )}
       {(attachmentError || submitError) && <div className="attachment-error">{attachmentError || submitError}</div>}
+      {confirmFullAccessOpen && createPortal(
+        <div
+          className="full-access-dialog-layer"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmFullAccessOpen(false);
+          }}
+        >
+          <div className="full-access-dialog" role="dialog" aria-modal="true" aria-labelledby="full-access-title">
+            <button
+              type="button"
+              className="full-access-dialog-close"
+              onClick={() => setConfirmFullAccessOpen(false)}
+              title="Close"
+              aria-label="Close"
+            >
+              <X size={22} />
+            </button>
+            <h2 id="full-access-title">Enable full access?</h2>
+            <p>
+              Full access lets Privora run commands, use the network, and edit files without asking before risky actions.
+              This can move faster, but it also increases the chance of unintended changes or unsafe tool output.
+            </p>
+            <div className="full-access-dialog-actions">
+              <button type="button" className="full-access-cancel" onClick={() => setConfirmFullAccessOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="full-access-confirm"
+                onClick={() => {
+                  onSettings({ permissionMode: "yolo" });
+                  setConfirmFullAccessOpen(false);
+                }}
+              >
+                <AlertTriangle size={18} />
+                Turn on full access
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
       <div className="composer-toolbar">
         <div className="toolbar-left">
           <div className="menu-anchor">
@@ -613,8 +677,7 @@ export function Composer({
                     key={option.id}
                     type="button"
                     onClick={() => {
-                      onSettings({ permissionMode: option.id });
-                      setActiveMenu(null);
+                      choosePermissionMode(option.id);
                     }}
                   >
                     <span>{option.label}</span>
@@ -635,15 +698,48 @@ export function Composer({
           <div className="menu-anchor">
             <button
               type="button"
-              className="model-button"
+              className="model-reasoning-button"
               onClick={() => toggleMenu("model")}
             >
-              <span className="model-short">{activeModel.label}</span>
+              <span className="model-short">{shortModelLabel(activeModel.label)}</span>
+              <span className="reasoning-short">{reasoningLabel(settings.reasoningEffort)}</span>
               <ChevronDown size={13} />
             </button>
             {activeMenu === "model" && (
-              <div className="floating-menu model-menu">
-                <section>
+              <>
+              <div className="floating-menu model-reasoning-menu">
+                <small>Reasoning</small>
+                {reasoningOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      onSettings({ reasoningEffort: option.id });
+                      setActiveMenu(null);
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    {settings.reasoningEffort === option.id && <Check size={14} />}
+                  </button>
+                ))}
+                <div className="composer-menu-divider" />
+                <button
+                  type="button"
+                  className={clsx("model-branch-row", modelSubmenuOpen && "active")}
+                  onMouseEnter={() => setModelSubmenuOpen(true)}
+                  onFocus={() => setModelSubmenuOpen(true)}
+                  onClick={() => setModelSubmenuOpen((open) => !open)}
+                >
+                  <span>{activeModel.label}</span>
+                  <ChevronRight size={17} />
+                </button>
+              </div>
+              {modelSubmenuOpen && (
+                <div
+                  className="floating-menu model-picker-submenu"
+                  onMouseEnter={() => setModelSubmenuOpen(true)}
+                >
+                  <small>Model</small>
                   {modelProviderGroups.map((group) => (
                     <div className="model-group" key={group.id}>
                       <small>{group.label}</small>
@@ -662,37 +758,9 @@ export function Composer({
                       ))}
                     </div>
                   ))}
-                </section>
-              </div>
-            )}
-          </div>
-          <div className="menu-anchor">
-            <button
-              type="button"
-              className="reasoning-button"
-              onClick={() => toggleMenu("reasoning")}
-            >
-              <Brain size={15} className={running ? "reasoning-spin" : undefined} />
-              <span>{reasoningLabel(settings.reasoningEffort)}</span>
-              <ChevronDown size={13} />
-            </button>
-            {activeMenu === "reasoning" && (
-              <div className="floating-menu reasoning-menu">
-                <small>Thinking</small>
-                {reasoningOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => {
-                      onSettings({ reasoningEffort: option.id });
-                      setActiveMenu(null);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    {settings.reasoningEffort === option.id && <Check size={14} />}
-                  </button>
-                ))}
-              </div>
+                </div>
+              )}
+              </>
             )}
           </div>
           <ContextMeter usage={contextUsage} modelContextWindow={activeModel.contextWindowTokens} attachedContextCount={contextMentions.length} />
@@ -730,6 +798,13 @@ const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
 
 const reasoningLabel = (value: ReasoningEffort) =>
   reasoningOptions.find((option) => option.id === value)?.label || "Medium";
+
+const shortModelLabel = (label: string) =>
+  label
+    .replace(/^GPT-/, "")
+    .replace(/\s*\(CLIProxy\)$/i, "")
+    .replace(/^Gemini\s+/i, "Gemini ")
+    .trim();
 
 const MAX_ATTACHMENTS = 15;
 const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;

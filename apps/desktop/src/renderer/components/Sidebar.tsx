@@ -295,6 +295,7 @@ function ThreadButton({
             {thread.starred && <Star size={12} fill="currentColor" />}
             <span className={clsx(run && isLiveRun(run) && "active-text-shimmer")}>{thread.title}</span>
           </span>
+          <small className="thread-time">{formatRelativeThreadTime(thread.updatedAt || thread.createdAt)}</small>
         </button>
       )}
       <button
@@ -354,4 +355,21 @@ function isLiveRun(run: ActiveRunState) {
     "draining",
     "completing",
   ].includes(run.status);
+}
+
+function formatRelativeThreadTime(value: number) {
+  const elapsedMs = Math.max(0, Date.now() - value);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+  const year = 365 * day;
+  if (elapsedMs < minute) return "now";
+  if (elapsedMs < hour) return `${Math.max(1, Math.floor(elapsedMs / minute))}m`;
+  if (elapsedMs < day) return `${Math.floor(elapsedMs / hour)}h`;
+  if (elapsedMs < week) return `${Math.floor(elapsedMs / day)}d`;
+  if (elapsedMs < month) return `${Math.floor(elapsedMs / week)}w`;
+  if (elapsedMs < year) return `${Math.floor(elapsedMs / month)}mo`;
+  return `${Math.floor(elapsedMs / year)}y`;
 }

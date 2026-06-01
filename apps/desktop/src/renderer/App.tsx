@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -233,6 +233,17 @@ export default function App() {
         title={activeThread?.title || "New chat"}
         settingsOpen={settingsOpen}
         toast={toast}
+        topbarLeading={sidebarCollapsed ? (
+          <button
+            type="button"
+            className="topbar-icon-button topbar-sidebar-toggle"
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show sidebar"
+            aria-label="Show sidebar"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        ) : null}
         messageList={(
         <div
           className="message-list"
