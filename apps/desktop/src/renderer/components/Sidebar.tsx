@@ -1,6 +1,7 @@
 import { ChevronRight, Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ActiveRunState, ThreadRecord, WorkspaceRecord } from "../../shared/types";
 import { buildSidebarRows } from "../sidebarRows";
@@ -153,11 +154,15 @@ function ProjectRow({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const rootRef = useRef<HTMLElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuStyle = useFloatingMenuStyle(menuOpen, buttonRef);
 
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: MouseEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
       if (menuRef.current?.contains(event.target as Node)) return;
       setMenuOpen(false);
       setConfirmRemove(false);
@@ -173,7 +178,7 @@ function ProjectRow({
   };
 
   return (
-    <section className={clsx("project-group", collapsed && "collapsed", menuOpen && "menu-open")} ref={menuRef}>
+    <section className={clsx("project-group", collapsed && "collapsed", menuOpen && "menu-open")} ref={rootRef}>
       <button
         type="button"
         className={clsx("project-name", active && "active")}
@@ -185,6 +190,7 @@ function ProjectRow({
         <span>{title}</span>
       </button>
       <button
+        ref={buttonRef}
         type="button"
         className="project-menu-button"
         title="Project options"
@@ -196,8 +202,8 @@ function ProjectRow({
       >
         <MoreHorizontal size={15} />
       </button>
-      {menuOpen && (
-        <div className="thread-menu project-menu">
+      {menuOpen && createPortal(
+        <div className="thread-menu project-menu floating-thread-menu" ref={menuRef} style={menuStyle}>
           {confirmRemove ? (
             <>
               <button type="button" className="danger" onClick={remove}>
@@ -214,7 +220,8 @@ function ProjectRow({
               <span>Remove project</span>
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </section>
   );
@@ -241,11 +248,15 @@ function ThreadButton({
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(thread.title);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuStyle = useFloatingMenuStyle(menuOpen, buttonRef);
 
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: MouseEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
       if (menuRef.current?.contains(event.target as Node)) return;
       setMenuOpen(false);
     };
@@ -272,7 +283,7 @@ function ThreadButton({
   };
 
   return (
-    <div className={clsx("thread-row-wrap", active && "active", menuOpen && "menu-open")} ref={menuRef}>
+    <div className={clsx("thread-row-wrap", active && "active", menuOpen && "menu-open")} ref={rootRef}>
       {renameOpen ? (
         <form
           className="thread-rename-form"
@@ -304,6 +315,7 @@ function ThreadButton({
         </button>
       )}
       <button
+        ref={buttonRef}
         type="button"
         className="thread-menu-button"
         title="Chat options"
@@ -314,8 +326,8 @@ function ThreadButton({
       >
         <MoreHorizontal size={15} />
       </button>
-      {menuOpen && (
-        <div className="thread-menu">
+      {menuOpen && createPortal(
+        <div className="thread-menu floating-thread-menu" ref={menuRef} style={menuStyle}>
           {confirmDelete ? (
             <>
               <button type="button" className="danger" onClick={remove}>
@@ -345,10 +357,44 @@ function ThreadButton({
               </button>
             </>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
+}
+
+function useFloatingMenuStyle(open: boolean, buttonRef: RefObject<HTMLElement | null>) {
+  const [style, setStyle] = useState<CSSProperties>({ visibility: "hidden" });
+
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const button = buttonRef.current;
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      const menuWidth = 156;
+      const menuHeight = 124;
+      const gap = 6;
+      const top = rect.bottom + menuHeight + gap > window.innerHeight
+        ? Math.max(8, rect.top - menuHeight - gap)
+        : rect.bottom + gap;
+      const left = Math.min(
+        Math.max(8, rect.right - menuWidth),
+        Math.max(8, window.innerWidth - menuWidth - 8),
+      );
+      setStyle({ top, left, minWidth: menuWidth });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [buttonRef, open]);
+
+  return style;
 }
 
 function isLiveRun(run: ActiveRunState) {

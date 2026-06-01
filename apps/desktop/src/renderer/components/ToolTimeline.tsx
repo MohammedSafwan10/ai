@@ -239,30 +239,39 @@ function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagen
       {visibleAgents.map((agent) => {
         const preview = usefulSubagentPreview(agent, tool);
         const compactSingleAgent = visibleAgents.length === 1 && tool.name !== "list_agents" && tool.name !== "wait_agent";
+        const showHeading = !compactSingleAgent && hasMeaningfulSubagentHeading(agent);
+        const showPath = !compactSingleAgent && hasMeaningfulSubagentPath(agent);
+        const showTask = hasMeaningfulSubagentPrompt(agent);
+        const showEmptyState = !showHeading && !showPath && !showTask && !preview;
         return (
           <section key={agent.id || agent.threadId || agent.agentPath}>
-            {!compactSingleAgent && (
+            {showHeading && (
               <div className="subagent-inspector-head">
                 <span className={clsx("subagent-dot", agent.status)} />
                 <strong>{formatSubagentName(agent)}</strong>
                 <code>{agent.status}</code>
               </div>
             )}
-            <dl>
-              {!compactSingleAgent && (
-                <div>
-                  <dt>Path</dt>
-                  <dd>{agent.agentPath}</dd>
-                </div>
-              )}
-              <div>
-                <dt>Task</dt>
-                <dd>{agent.prompt}</dd>
-              </div>
-            </dl>
+            {(showPath || showTask) && (
+              <dl>
+                {showPath && (
+                  <div>
+                    <dt>Path</dt>
+                    <dd>{agent.agentPath}</dd>
+                  </div>
+                )}
+                {showTask && (
+                  <div>
+                    <dt>Task</dt>
+                    <dd>{agent.prompt}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
             {preview && (
               <pre>{compactSubagentPreview(preview)}</pre>
             )}
+            {showEmptyState && <p className="subagent-empty">No agent updates yet.</p>}
           </section>
         );
       })}
@@ -567,6 +576,15 @@ const compactSubagentPreview = (value: string) => {
   const trimmed = value.trim();
   return trimmed.length <= 1600 ? trimmed : `${trimmed.slice(0, 1599)}...`;
 };
+
+const hasMeaningfulSubagentHeading = (agent: SubagentRecord) =>
+  Boolean(agent.agentNickname || agent.agentRole || agent.taskName !== "agent");
+
+const hasMeaningfulSubagentPath = (agent: SubagentRecord) =>
+  Boolean(agent.agentPath && agent.agentPath !== "agent" && agent.agentPath !== agent.taskName);
+
+const hasMeaningfulSubagentPrompt = (agent: SubagentRecord) =>
+  Boolean(agent.prompt.trim() && agent.prompt.trim() !== "agent");
 
 const usefulSubagentPreview = (agent: SubagentRecord, tool: ToolEventRecord) => {
   const preview = (agent.finalMessage || agent.lastPreview || "").trim();
