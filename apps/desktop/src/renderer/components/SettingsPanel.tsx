@@ -1,7 +1,8 @@
-import { Check, Code2, FolderOpen, GitBranch, KeyRound, Keyboard, Monitor, Moon, Settings, Sun, TerminalSquare, Trash2, X } from "lucide-react";
+import { Check, Code2, KeyRound, Keyboard, Monitor, Moon, Settings, Sun, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState, type ReactNode } from "react";
-import type { SaveSettingsInput, SettingsRecord, WorkspaceOpenTarget } from "../../shared/types";
+import type { SaveSettingsInput, SettingsRecord, WorkspaceOpenTargetInfo } from "../../shared/types";
+import { TargetIcon } from "./AppLauncher";
 
 interface SettingsPanelProps {
   settings: SettingsRecord;
@@ -14,13 +15,6 @@ interface SettingsPanelProps {
 }
 
 type SettingsTab = "general" | "providers" | "workspace" | "shortcuts";
-
-const workspaceTargets: Array<{ id: WorkspaceOpenTarget; label: string; icon: typeof Code2 }> = [
-  { id: "vscode", label: "VS Code", icon: Code2 },
-  { id: "file_explorer", label: "File Explorer", icon: FolderOpen },
-  { id: "terminal", label: "Terminal", icon: TerminalSquare },
-  { id: "git_bash", label: "Git Bash", icon: GitBranch },
-];
 
 export function SettingsPanel({ open, onOpen, onClose }: SettingsPanelProps) {
   useEffect(() => {
@@ -50,6 +44,7 @@ export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onCl
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
+  const [workspaceTargets, setWorkspaceTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
 
@@ -82,6 +77,21 @@ export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onCl
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose, onOpen, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void window.privoraDesktop.listWorkspaceOpenTargets()
+      .then((targets) => {
+        if (alive) setWorkspaceTargets(targets);
+      })
+      .catch(() => {
+        if (alive) setWorkspaceTargets([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   return (
     <div className="settings-screen">
@@ -218,7 +228,6 @@ export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onCl
               {activeTab === "workspace" && (
                 <div className="settings-section settings-action-grid">
                   {workspaceTargets.map((target) => {
-                    const Icon = target.icon;
                     return (
                       <button
                         type="button"
@@ -226,7 +235,7 @@ export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onCl
                         disabled={workspaceDisabled}
                         onClick={() => void window.privoraDesktop.openWorkspaceTarget(target.id)}
                       >
-                        <Icon size={16} />
+                        <TargetIcon target={target} size={16} />
                         <span>{target.label}</span>
                       </button>
                     );

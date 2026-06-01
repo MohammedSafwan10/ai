@@ -7,6 +7,7 @@ interface ChatShellProps {
   settingsOpen: boolean;
   title: string;
   topbarLeading?: ReactNode;
+  topbarTrailing?: ReactNode;
   toast?: string | null;
 }
 
@@ -17,6 +18,7 @@ export function ChatShell({
   settingsOpen,
   title,
   topbarLeading,
+  topbarTrailing,
   toast,
 }: ChatShellProps) {
   return (
@@ -26,6 +28,7 @@ export function ChatShell({
         <div className="topbar-title">
           <h1>{title}</h1>
         </div>
+        {topbarTrailing && <div className="topbar-actions">{topbarTrailing}</div>}
       </header>
 
       {messageList}

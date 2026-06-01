@@ -633,8 +633,19 @@ export interface PrivoraDesktopApi {
   readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   openPath(path: string): Promise<void>;
+  listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;
   openWorkspaceTarget(target: WorkspaceOpenTarget): Promise<void>;
   onEvent(callback: (event: DesktopEvent) => void): () => void;
 }
 
-export type WorkspaceOpenTarget = "vscode" | "file_explorer" | "terminal" | "git_bash";
+export type WorkspaceOpenTarget = string;
+
+export interface WorkspaceOpenTargetInfo {
+  id: WorkspaceOpenTarget;
+  label: string;
+  icon: "app" | "vscode" | "finder" | "terminal" | "xcode" | "android_studio";
+  iconDataUrl?: string;
+  platform: NodeJS.Platform;
+  preferred?: boolean;
+  isDefault?: boolean;
+}

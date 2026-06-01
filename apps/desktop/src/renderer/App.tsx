@@ -7,6 +7,7 @@ import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
+import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue } from "./features/chat/usePromptQueue";
@@ -240,6 +241,7 @@ export default function App() {
         title={activeThread?.title || "New chat"}
         settingsOpen={settingsOpen}
         toast={toast}
+        topbarTrailing={<AppLauncher disabled={!activeWorkspace} />}
         messageList={(
         <div
           className="message-list"

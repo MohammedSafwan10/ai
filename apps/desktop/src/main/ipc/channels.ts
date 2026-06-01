@@ -19,6 +19,7 @@ export const channels = {
   readWorkspaceFile: "desktop:readWorkspaceFile",
   saveSettings: "desktop:saveSettings",
   openPath: "desktop:openPath",
+  listWorkspaceOpenTargets: "desktop:listWorkspaceOpenTargets",
   openWorkspaceTarget: "desktop:openWorkspaceTarget",
   event: "desktop:event",
 } as const;

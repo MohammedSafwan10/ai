@@ -204,6 +204,23 @@
   justify-content: flex-start;
 }
 
+.launcher-menu {
+  max-height: min(420px, calc(100vh - 96px));
+  overflow: auto;
+}
+
+.launcher-show-more small {
+  margin-left: auto;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.native-app-icon {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 4px;
+}
+
 .settings-popover label {
   display: grid;
   gap: 6px;

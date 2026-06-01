@@ -1,6 +1,4 @@
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { spawn } from "node:child_process";
-import path from "node:path";
 import { z } from "zod";
 import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
@@ -8,6 +6,7 @@ import { searchContextMentions } from "../agent/contextMentions";
 import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
 import { resolveExistingWorkspacePath } from "../security/pathSandbox";
 import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
+import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
 import { channels } from "./channels";
 import type {
   ApprovalDecisionInput,
@@ -187,6 +186,10 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return shell.openPath(target.absolutePath);
   });
 
+  handle(channels.listWorkspaceOpenTargets, z.tuple([]), async () => {
+    return listWorkspaceOpenTargets();
+  });
+
   handle(channels.openWorkspaceTarget, z.tuple([workspaceOpenTargetSchema]), async (_event, target: WorkspaceOpenTarget) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (!workspace) throw new Error("Choose a workspace first.");
@@ -194,51 +197,11 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   });
 };
 
-const openWorkspaceTarget = async (target: WorkspaceOpenTarget, workspacePath: string) => {
-  if (target === "file_explorer") {
-    await shell.openPath(workspacePath);
-    return;
-  }
-
-  if (target === "vscode") {
-    spawnDetached("cmd.exe", ["/c", "start", "", "code", workspacePath]);
-    return;
-  }
-
-  if (target === "terminal") {
-    spawnDetached("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      "Start-Process",
-      "powershell.exe",
-      "-ArgumentList",
-      "-NoExit",
-      "-WorkingDirectory",
-      workspacePath,
-    ]);
-    return;
-  }
-
-  if (target === "git_bash") {
-    const gitBash = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "git-bash.exe");
-    spawnDetached("cmd.exe", ["/c", "start", "", gitBash, `--cd=${workspacePath}`]);
-  }
-};
-
-const spawnDetached = (command: string, args: string[]) => {
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
-};
-
 const idSchema = z.string().trim().min(1).max(200);
 const optionalNullableId = z.string().trim().min(1).max(200).nullable();
 const workspacePathInputSchema = z.string().trim().min(1).max(2000);
 const workspacePathObjectInputSchema = z.object({ path: z.string().trim().min(0).max(2000) });
-const workspaceOpenTargetSchema = z.enum(["vscode", "file_explorer", "terminal", "git_bash"]);
+const workspaceOpenTargetSchema = z.string().trim().min(1).max(2000);
 
 const attachmentSchema = z.object({
   id: idSchema,

@@ -41,7 +41,6 @@ small {
 .sidebar-top-actions button,
 .sidebar-search,
 .settings-panel > button,
-.app-launcher > button,
 .workspace-button,
 .thread-row,
 .thread-menu-button,
@@ -113,7 +112,7 @@ small {
 .sidebar .project-group.menu-open,
 .sidebar .project-heading button:hover,
 .sidebar .settings-panel > button:hover,
-.sidebar .app-launcher > button:hover {
+.sidebar .workspace-button:hover {
   background: color-mix(in srgb, #fff 8%, transparent);
 }
 
