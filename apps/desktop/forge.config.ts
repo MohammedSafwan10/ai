@@ -12,6 +12,7 @@ const config: ForgeConfig = {
       "node_modules/node-pty",
     ],
     executableName: "Privora",
+    icon: "assets/icon",
     name: "Privora",
   },
   rebuildConfig: {
@@ -20,6 +21,7 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({
       name: "Privora",
+      setupIcon: "assets/icon.ico",
       setupExe: "PrivoraSetup.exe",
     }),
     new MakerZIP({}, ["win32"]),

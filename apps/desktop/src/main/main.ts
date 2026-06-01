@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme } from "electron";
+import { app, BrowserWindow, nativeImage, nativeTheme } from "electron";
 import path from "node:path";
 import { DesktopStore } from "./db/store";
 import { AgentRuntime } from "./agent/runtime";
@@ -22,6 +22,7 @@ const state: IpcState = {
 const singleInstanceLock = app.requestSingleInstanceLock();
 
 const clampZoomFactor = (zoomFactor: number) => Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
+const appIcon = () => nativeImage.createFromPath(path.join(process.cwd(), "assets", "icon.png"));
 
 const installWindowShortcuts = (window: BrowserWindow) => {
   window.webContents.on("before-input-event", (event, input) => {
@@ -48,12 +49,14 @@ const installWindowShortcuts = (window: BrowserWindow) => {
 };
 
 const createWindow = async () => {
+  const icon = appIcon();
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 860,
     minWidth: 920,
     minHeight: 640,
     title: "Privora",
+    icon: icon.isEmpty() ? undefined : icon,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#12100d" : "#f4efe7",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -106,6 +109,8 @@ if (!singleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    const icon = appIcon();
+    if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
     store = new DesktopStore();
     const workspaces = store.listWorkspaces();
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
