@@ -14,6 +14,8 @@ export interface ToolExecutionContext {
   workspaceRoot: string;
   signal: AbortSignal;
   onCommandOutput: (callId: string, delta: string) => void;
+  onTerminalProcessStarted?: (processId: number) => void;
+  onTerminalProcessEnded?: (processId: number) => void;
 }
 
 const runProcess = (command: string, args: string[], cwd: string, signal: AbortSignal) =>
@@ -30,11 +32,35 @@ const runProcess = (command: string, args: string[], cwd: string, signal: AbortS
 const isNotGitRepository = (output: string) =>
   /not a git repository|not a git repo/i.test(output);
 
+const MAX_METADATA_HASH_BYTES = 10 * 1024 * 1024;
+
 export class DesktopToolExecutor {
+  private static mutationLocks = new Map<string, Promise<void>>();
   private files = new FileOperationService();
   private terminal = new TerminalSessionManager();
   private mutations = new FileMutationCoordinator();
   private diagnostics = new DiagnosticsEngine(this.terminal);
+
+  async stopTerminalProcess(processId: number) {
+    return await this.terminal.stopProcess({ processId });
+  }
+
+  private async withMutationLock<T>(workspaceRoot: string, operation: () => Promise<T>) {
+    const previous = DesktopToolExecutor.mutationLocks.get(workspaceRoot) || Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const next = previous.then(() => current);
+    DesktopToolExecutor.mutationLocks.set(workspaceRoot, next);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (DesktopToolExecutor.mutationLocks.get(workspaceRoot) === next) {
+        DesktopToolExecutor.mutationLocks.delete(workspaceRoot);
+      }
+    }
+  }
 
   async execute(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     try {
@@ -42,25 +68,25 @@ export class DesktopToolExecutor {
         case "desktop_read_file":
           return await this.readFile(call, context);
         case "desktop_edit_file":
-          return await this.mutations.editFile(call, context);
+          return await this.withMutationLock(context.workspaceRoot, () => this.mutations.editFile(call, context));
         case "desktop_write_file":
-          return await this.mutations.writeFile(call, context);
+          return await this.withMutationLock(context.workspaceRoot, () => this.mutations.writeFile(call, context));
         case "desktop_apply_patch":
-          return await this.mutations.applyPatch(call, context);
+          return await this.withMutationLock(context.workspaceRoot, () => this.mutations.applyPatch(call, context));
         case "desktop_list_dir":
           return await this.listDir(call, context);
         case "desktop_search":
           return await this.search(call, context);
         case "desktop_delete_path":
-          return await this.mutations.deletePath(call, context);
+          return await this.withMutationLock(context.workspaceRoot, () => this.mutations.deletePath(call, context));
         case "desktop_rename_path":
-          return await this.mutations.renamePath(call, context);
+          return await this.withMutationLock(context.workspaceRoot, () => this.mutations.renamePath(call, context));
         case "desktop_spawn_process":
           return await this.execCommand(call, context);
         case "desktop_write_process":
           return await this.writeStdin(call, context);
         case "desktop_kill_process":
-          return await this.stopProcess(call);
+          return await this.stopProcess(call, context);
         case "desktop_resize_process":
           return await this.resizeProcess(call);
         case "desktop_run_diagnostics":
@@ -99,7 +125,7 @@ export class DesktopToolExecutor {
     const depth = Math.max(1, Math.min(3, Number(call.arguments.depth) || 1));
     const includeMetadata = call.arguments.includeMetadata === true || call.arguments.include_metadata === true;
     const lines: string[] = [];
-    const entriesData: Array<{ path: string; type: "file" | "dir"; sizeBytes?: number; modifiedAt?: string; sha256?: string }> = [];
+    const entriesData: Array<{ path: string; type: "file" | "dir"; sizeBytes?: number; modifiedAt?: string; sha256?: string; metadataHashSkipped?: boolean }> = [];
     const walk = async (dir: string, prefix: string, currentDepth: number) => {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200)) {
@@ -109,7 +135,8 @@ export class DesktopToolExecutor {
         const type = entry.isDirectory() ? "dir" : "file";
         if (includeMetadata && entry.isFile()) {
           const stat = await fs.stat(absolutePath);
-          const content = await fs.readFile(absolutePath).catch(() => null);
+          const shouldHash = stat.size <= MAX_METADATA_HASH_BYTES;
+          const content = shouldHash ? await fs.readFile(absolutePath).catch(() => null) : null;
           const sha256 = content !== null ? hashBuffer(content) : undefined;
           entriesData.push({
             path: rel,
@@ -117,9 +144,10 @@ export class DesktopToolExecutor {
             sizeBytes: stat.size,
             modifiedAt: stat.mtime.toISOString(),
             sha256,
+            metadataHashSkipped: !shouldHash,
           });
           recordFileObservationData(context.workspaceRoot, rel, { sizeBytes: stat.size, modifiedAtMs: stat.mtimeMs, sha256 });
-          lines.push(`${type} ${rel} ${stat.size}B`);
+          lines.push(`${type} ${rel} ${stat.size}B${shouldHash ? "" : " (hash skipped: large file)"}`);
         } else {
           entriesData.push({ path: rel, type });
           lines.push(`${type} ${rel}`);
@@ -183,6 +211,8 @@ export class DesktopToolExecutor {
       signal: context.signal,
       onOutput: (delta) => context.onCommandOutput(call.id, delta),
     });
+    if (result.processId && result.running) context.onTerminalProcessStarted?.(result.processId);
+    if (result.processId && !result.running) context.onTerminalProcessEnded?.(result.processId);
     return terminalToolResult(result, result.processId
       ? `Command is still running as process ${result.processId}.`
       : `Command exited with code ${result.exitCode}`);
@@ -198,14 +228,17 @@ export class DesktopToolExecutor {
       signal: context.signal,
       onOutput: (delta) => context.onCommandOutput(call.id, delta),
     });
+    if (result.processId && !result.running) context.onTerminalProcessEnded?.(result.processId);
     return terminalToolResult(result, result.processId
       ? `Process ${result.processId} is still running.`
       : `Process exited with code ${result.exitCode}`);
   }
 
-  private async stopProcess(call: DesktopToolCall) {
-    const result = await this.terminal.stopProcess({ processId: Number(call.arguments.processId) });
-    return terminalToolResult(result, terminalFallbackOutput(result, Number(call.arguments.processId)));
+  private async stopProcess(call: DesktopToolCall, context: ToolExecutionContext) {
+    const processId = Number(call.arguments.processId);
+    const result = await this.terminal.stopProcess({ processId });
+    context.onTerminalProcessEnded?.(processId);
+    return terminalToolResult(result, terminalFallbackOutput(result, processId));
   }
 
   private async resizeProcess(call: DesktopToolCall) {

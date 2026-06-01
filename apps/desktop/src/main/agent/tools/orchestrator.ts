@@ -14,6 +14,10 @@ export class DesktopToolOrchestrator {
     return this.executor.execute(call, context);
   }
 
+  stopTerminalProcess(processId: number) {
+    return this.executor.stopTerminalProcess(processId);
+  }
+
   supportsParallelExecution(call: DesktopToolCall) {
     return supportsParallelExecution(call);
   }

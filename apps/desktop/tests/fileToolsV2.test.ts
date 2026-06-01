@@ -138,6 +138,29 @@ describe("file tools v2", () => {
     });
   });
 
+  it("skips metadata hashes for large directory entries", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
+    fs.writeFileSync(path.join(tempDir, "large.bin"), Buffer.alloc((10 * 1024 * 1024) + 1));
+
+    const result = await execute({
+      id: "list-large-metadata",
+      name: "desktop_list_dir",
+      arguments: { path: ".", includeMetadata: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("hash skipped: large file");
+    expect(result.data).toMatchObject({
+      entries: [
+        expect.objectContaining({
+          path: "large.bin",
+          type: "file",
+          metadataHashSkipped: true,
+        }),
+      ],
+    });
+  });
+
   it("writes with change metadata and soft stale-hash warning", async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
     fs.writeFileSync(path.join(tempDir, "app.ts"), "export const value = 1;\n", "utf8");

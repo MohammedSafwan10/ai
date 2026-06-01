@@ -126,6 +126,7 @@ interface PendingUserInput {
   call: DesktopToolCall;
   questions: RequestUserInputQuestionRecord[];
   run: AgentRunTracker;
+  cleanup?: () => void;
   resolve: (result: ToolResult) => void;
 }
 
@@ -150,6 +151,8 @@ export class AgentRuntime {
   private activeRuns = new Map<string, AgentRunTracker>();
   private pendingApprovalByCallId = new Map<string, ApprovalBundle>();
   private pendingUserInputByCallId = new Map<string, PendingUserInput>();
+  private startingThreads = new Set<string>();
+  private processIdsByThread = new Map<string, Set<number>>();
   private eventSequence = 0;
   private pendingToolOutput = new Map<string, {
     threadId: string;
@@ -203,70 +206,78 @@ export class AgentRuntime {
   }
 
   async startTurn(input: StartTurnInput) {
+    if (this.startingThreads.has(input.threadId) || this.isThreadBusy(input.threadId)) {
+      throw new Error("This chat is already running. Stop it before starting another turn.");
+    }
+    this.startingThreads.add(input.threadId);
     const thread = this.store.getThread(input.threadId);
-    if (!thread) throw new Error("Thread not found.");
-    const workspace = this.store.getWorkspace(thread.workspaceId);
-    if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
-    const settings = this.store.getSettings();
-    const budgetMode = runtimeBudgetModeForTurn(input);
-    const runtimeBudget = resolveModelRuntimeBudget(settings.model, budgetMode);
+    try {
+      if (!thread) throw new Error("Thread not found.");
+      const workspace = this.store.getWorkspace(thread.workspaceId);
+      if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
+      const settings = this.store.getSettings();
+      const budgetMode = runtimeBudgetModeForTurn(input);
+      const runtimeBudget = resolveModelRuntimeBudget(settings.model, budgetMode);
 
-    this.stopTurn(input.threadId);
-    this.store.clearRunCheckpoint(input.threadId);
-    const timestamp = now();
-    const userMessage: ChatMessageRecord = {
-      id: crypto.randomUUID(),
-      threadId: input.threadId,
-      role: "user",
-      content: input.prompt,
-      attachments: input.attachments,
-      contextMentions: input.contextMentions,
-      status: "completed",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const assistantMessage: ChatMessageRecord = {
-      id: crypto.randomUUID(),
-      threadId: input.threadId,
-      role: "assistant",
-      content: "",
-      textParts: [],
-      thought: "",
-      thoughtParts: [],
-      status: "running",
-      createdAt: Math.max(timestamp + 1, userMessage.createdAt + 1),
-      updatedAt: timestamp + 1,
-    };
-    this.store.upsertMessage(userMessage);
-    this.store.upsertMessage(assistantMessage);
-    this.emitSnapshot();
+      this.store.clearRunCheckpoint(input.threadId);
+      const timestamp = now();
+      const userMessage: ChatMessageRecord = {
+        id: crypto.randomUUID(),
+        threadId: input.threadId,
+        role: "user",
+        content: input.prompt,
+        attachments: input.attachments,
+        contextMentions: input.contextMentions,
+        status: "completed",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const assistantMessage: ChatMessageRecord = {
+        id: crypto.randomUUID(),
+        threadId: input.threadId,
+        role: "assistant",
+        content: "",
+        textParts: [],
+        thought: "",
+        thoughtParts: [],
+        status: "running",
+        createdAt: Math.max(timestamp + 1, userMessage.createdAt + 1),
+        updatedAt: timestamp + 1,
+      };
+      this.store.upsertMessage(userMessage);
+      this.store.upsertMessage(assistantMessage);
+      this.emitSnapshot();
 
-    const priorMessages = buildProviderHistory(this.store, input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
-    const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
-    const history = mentionContext
-      ? [...priorMessages, textProviderMessage(mentionContext)]
-      : priorMessages;
+      const priorMessages = buildProviderHistory(this.store, input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
+      const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
+      const history = mentionContext
+        ? [...priorMessages, textProviderMessage(mentionContext)]
+        : priorMessages;
 
-    const controller = new AbortController();
-    const run = this.createRun(input.threadId, assistantMessage.id, controller);
-    this.activeRuns.set(input.threadId, run);
-    this.emitRun(run);
+      const controller = new AbortController();
+      const run = this.createRun(input.threadId, assistantMessage.id, controller);
+      this.activeRuns.set(input.threadId, run);
+      this.emitRun(run);
 
-    await this.continueLoop({
-      threadId: input.threadId,
-      assistantMessage,
-      workspaceRoot: workspace.path,
-      history,
-      assistantText: "",
-      assistantThought: "",
-      controller,
-      iteration: 0,
-      toolCount: 0,
-      recoveryAttempts: 0,
-    });
+      await this.continueLoop({
+        threadId: input.threadId,
+        assistantMessage,
+        workspaceRoot: workspace.path,
+        history,
+        assistantText: "",
+        assistantThought: "",
+        controller,
+        iteration: 0,
+        toolCount: 0,
+        recoveryAttempts: 0,
+      });
+    } finally {
+      this.startingThreads.delete(input.threadId);
+    }
   }
 
   async continueRun(threadId: string) {
+    if (this.isThreadBusy(threadId)) return;
     const checkpoint = this.store.getRunCheckpoint(threadId);
     if (!checkpoint) return;
     const assistantMessage = this.store.getMessage(checkpoint.assistantMessageId);
@@ -293,12 +304,22 @@ export class AgentRuntime {
     });
   }
 
+  private isThreadBusy(threadId: string) {
+    if (this.activeRuns.has(threadId)) return true;
+    if (this.startingThreads.has(threadId)) return true;
+    if (Array.from(this.pendingApprovalByCallId.values()).some((item) => item.threadId === threadId)) return true;
+    if (Array.from(this.pendingUserInputByCallId.values()).some((item) => item.threadId === threadId)) return true;
+    return false;
+  }
+
   stopTurn(threadId: string) {
     const run = this.activeRuns.get(threadId);
     run?.controller.abort();
+    this.stopThreadProcesses(threadId);
     this.store.listSubagents(threadId).forEach((agent) => {
       const childRun = this.activeRuns.get(agent.threadId);
       childRun?.controller.abort();
+      this.stopThreadProcesses(agent.threadId);
       this.cancelPendingApprovalsForThread(agent.threadId, "Stopped with parent run.");
       this.store.updateSubagent(agent.threadId, {
         status: childRun ? "stopped" : agent.status,
@@ -1111,6 +1132,8 @@ export class AgentRuntime {
         markRunProgress(run);
         this.queueToolOutput(threadId, messageId, call, callId, delta);
       },
+      onTerminalProcessStarted: (processId) => this.trackThreadProcess(threadId, processId),
+      onTerminalProcessEnded: (processId) => this.untrackThreadProcess(threadId, processId),
     });
     this.flushToolOutput(call.id);
     this.emitRun(run);
@@ -1286,6 +1309,7 @@ export class AgentRuntime {
     descendants.forEach((candidate) => {
       const childRun = this.activeRuns.get(candidate.threadId);
       childRun?.controller.abort();
+      this.stopThreadProcesses(candidate.threadId);
       this.cancelPendingApprovalsForThread(candidate.threadId, "Closed before approval.");
       this.store.updateSubagent(candidate.threadId, {
         status: "closed",
@@ -1346,6 +1370,7 @@ export class AgentRuntime {
         });
       };
       controller.signal.addEventListener("abort", abort, { once: true });
+      pending.cleanup = () => controller.signal.removeEventListener("abort", abort);
       this.emit({
         type: "request_user_input",
         request: {
@@ -1365,8 +1390,31 @@ export class AgentRuntime {
     const pending = this.pendingUserInputByCallId.get(callId);
     if (!pending) return;
     this.pendingUserInputByCallId.delete(callId);
+    pending.cleanup?.();
     this.emit({ type: "request_user_input_resolved", threadId: pending.threadId, callId });
     pending.resolve(result);
+  }
+
+  private trackThreadProcess(threadId: string, processId: number) {
+    const processes = this.processIdsByThread.get(threadId) || new Set<number>();
+    processes.add(processId);
+    this.processIdsByThread.set(threadId, processes);
+  }
+
+  private untrackThreadProcess(threadId: string, processId: number) {
+    const processes = this.processIdsByThread.get(threadId);
+    if (!processes) return;
+    processes.delete(processId);
+    if (processes.size === 0) this.processIdsByThread.delete(threadId);
+  }
+
+  private stopThreadProcesses(threadId: string) {
+    const processes = this.processIdsByThread.get(threadId);
+    if (!processes) return;
+    this.processIdsByThread.delete(threadId);
+    for (const processId of processes) {
+      void this.tools.stopTerminalProcess(processId).catch(() => undefined);
+    }
   }
 
   private cancelPendingApprovalsForThread(threadId: string, reason: string) {

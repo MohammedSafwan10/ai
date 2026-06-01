@@ -35,6 +35,11 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   const threadsForWorkspace = (workspaceId: string | null) =>
     store.listThreads().filter((thread) => thread.workspaceId === workspaceId);
 
+  const hasBlockingRun = (threadId: string) => {
+    const run = runtime.listActiveRuns().find((candidate) => candidate.threadId === threadId);
+    return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
+  };
+
   const ensureThread = () => {
     const threads = threadsForWorkspace(state.activeWorkspaceId);
     if (state.activeThreadId && threads.some((thread) => thread.id === state.activeThreadId)) return state.activeThreadId;
@@ -78,6 +83,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   });
 
   handle(channels.deleteThread, z.tuple([idSchema]), (_event, threadId: string) => {
+    if (hasBlockingRun(threadId)) throw new Error("Stop this chat before deleting it.");
     const deletedThread = store.getThread(threadId);
     store.deleteThread(threadId);
     if (state.activeThreadId === threadId) {

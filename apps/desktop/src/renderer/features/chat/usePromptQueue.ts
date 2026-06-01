@@ -34,6 +34,7 @@ export const usePromptQueue = ({
   const [queuePaused, setQueuePaused] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
+  const directSubmitInFlightRef = useRef(false);
   const queuedSubmitInFlightRef = useRef(false);
 
   const stopping = Boolean(activeThreadId && stoppingThreadId === activeThreadId && running);
@@ -43,6 +44,7 @@ export const usePromptQueue = ({
     setQueuePaused(false);
     setQueueExpanded(false);
     setStoppingThreadId(null);
+    directSubmitInFlightRef.current = false;
     queuedSubmitInFlightRef.current = false;
   }, [activeThreadId]);
 
@@ -54,24 +56,40 @@ export const usePromptQueue = ({
     if (!running && stoppingThreadId === activeThreadId) setStoppingThreadId(null);
   }, [activeThreadId, running, stoppingThreadId]);
 
+  useEffect(() => {
+    if (running) {
+      directSubmitInFlightRef.current = false;
+      queuedSubmitInFlightRef.current = false;
+    }
+  }, [running]);
+
+  const enqueuePrompt = useCallback((
+    prompt: string,
+    attachments?: DesktopAttachmentRecord[],
+    contextMentions?: ContextMentionRecord[],
+  ) => {
+    setQueuedPrompts((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        prompt,
+        attachments,
+        contextMentions,
+      },
+    ]);
+  }, []);
+
   const startPrompt = useCallback(async (
     prompt: string,
     attachments?: DesktopAttachmentRecord[],
     contextMentions?: ContextMentionRecord[],
   ) => {
     if (!activeThreadId) return false;
-    if (running) {
-      setQueuedPrompts((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          prompt,
-          attachments,
-          contextMentions,
-        },
-      ]);
+    if (running || directSubmitInFlightRef.current) {
+      enqueuePrompt(prompt, attachments, contextMentions);
       return true;
     }
+    directSubmitInFlightRef.current = true;
     void startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions })
       .catch((error) => {
         console.error(error);
@@ -81,9 +99,12 @@ export const usePromptQueue = ({
           attachments,
           contextMentions,
         });
+      })
+      .finally(() => {
+        directSubmitInFlightRef.current = false;
       });
     return true;
-  }, [activeThreadId, onDraft, running, startTurn]);
+  }, [activeThreadId, enqueuePrompt, onDraft, running, startTurn]);
 
   useEffect(() => {
     if (running) queuedSubmitInFlightRef.current = false;

@@ -102,6 +102,42 @@ describe("subagent queued turns", () => {
   });
 });
 
+describe("runtime safety guards", () => {
+  it("rejects backend duplicate starts before creating extra messages", async () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const thread = store.createThread(workspace.id);
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: thread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+
+    (runtime as unknown as { startingThreads: Set<string> }).startingThreads.add(thread.id);
+
+    await expect(runtime.startTurn({ threadId: thread.id, prompt: "Hello" })).rejects.toThrow("already running");
+    expect(store.listMessages(thread.id)).toHaveLength(0);
+  });
+
+  it("stops tracked terminal processes when a thread is stopped", () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const thread = store.createThread(workspace.id);
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: thread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    const stopped: number[] = [];
+    (runtime as unknown as { tools: { stopTerminalProcess: (processId: number) => Promise<void> } }).tools.stopTerminalProcess = async (processId) => {
+      stopped.push(processId);
+    };
+
+    (runtime as unknown as { trackThreadProcess: (threadId: string, processId: number) => void }).trackThreadProcess(thread.id, 42);
+    runtime.stopTurn(thread.id);
+
+    expect(stopped).toEqual([42]);
+  });
+});
+
 describe("subagent waiting", () => {
   it("describes timeout as still waiting when child agents remain live", async () => {
     const store = createStore();
