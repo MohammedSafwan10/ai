@@ -1,4 +1,4 @@
-import type { CollaborationMode, PermissionMode, ReasoningEffort } from "./models";
+import type { CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
 
 export type MessageRole = "user" | "assistant";
 
@@ -442,7 +442,31 @@ export interface AppSnapshot {
   activeWorkspaceId: string | null;
   activeRun: ActiveRunState | null;
   activeRuns: ActiveRunState[];
+  contextUsage?: ContextUsageRecord;
   recoveryNotice?: StoreRecoveryNoticeRecord;
+}
+
+export interface TokenUsageRecord {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+}
+
+export interface ContextUsageRecord {
+  threadId: string;
+  modelId: string;
+  contextWindowTokens?: number;
+  usedTokens: number;
+  remainingPercent?: number;
+  outputReserveTokens?: number;
+  autoCompactAtTokens?: number;
+  budgetMode: ModelRuntimeBudgetMode;
+  estimated: boolean;
+  lastTokenUsage: TokenUsageRecord;
+  totalTokenUsage: TokenUsageRecord;
+  updatedAt: number;
 }
 
 export interface StoreRecoveryNoticeRecord {
@@ -544,6 +568,7 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "message_updated"; message: ChatMessageRecord }
   | { type: "tool_updated"; tool: ToolEventRecord }
   | { type: "turn_undo_updated"; undo: TurnUndoRecord }
+  | { type: "context_usage_updated"; usage: ContextUsageRecord }
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }

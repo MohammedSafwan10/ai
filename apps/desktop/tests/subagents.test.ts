@@ -7,13 +7,17 @@ import { DesktopStore } from "../src/main/db/store";
 import type { ChatMessageRecord, SubagentRecord } from "../src/shared/types";
 
 let tempDir = "";
+let currentStore: DesktopStore | null = null;
 
 const createStore = () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-subagents-"));
-  return new DesktopStore(tempDir);
+  currentStore = new DesktopStore(tempDir);
+  return currentStore;
 };
 
 afterEach(() => {
+  currentStore?.close();
+  currentStore = null;
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   tempDir = "";
 });
@@ -95,6 +99,31 @@ describe("subagent queued turns", () => {
 
     expect(started).toEqual([]);
     expect(store.getSubagentByThread(agent.threadId)?.status).toBe("completed");
+  });
+});
+
+describe("subagent waiting", () => {
+  it("describes timeout as still waiting when child agents remain live", async () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+    createSubagent(store, rootThread.id, "reviewer", "/root/reviewer");
+
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: rootThread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    const result = await (runtime as unknown as {
+      waitForSubagents: (
+        call: { arguments: Record<string, unknown> },
+        parentThreadId: string,
+        signal: AbortSignal,
+      ) => Promise<{ output?: string; data?: Record<string, unknown> }>;
+    }).waitForSubagents({ arguments: { timeoutMs: 1 } }, rootThread.id, new AbortController().signal);
+
+    expect(result.output).toContain("Still waiting on 1 live agent.");
+    expect(result.output).not.toContain("Wait timed out.");
+    expect(result.data?.timedOut).toBe(true);
   });
 });
 

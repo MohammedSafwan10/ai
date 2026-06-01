@@ -1,5 +1,5 @@
 import type { CollaborationMode, ProviderId, ReasoningEffort } from "../../../shared/models";
-import type { DesktopToolCall, ToolResult } from "../../../shared/types";
+import type { DesktopToolCall, TokenUsageRecord, ToolResult } from "../../../shared/types";
 
 export type ProviderPart =
   | { type: "text"; text: string }
@@ -21,6 +21,7 @@ export interface ProviderStreamOptions {
   reasoning: ReasoningEffort;
   collaborationMode: CollaborationMode;
   signal: AbortSignal;
+  maxOutputTokens?: number;
   cliproxyBaseUrl: string;
   openRouterApiKey: string;
   geminiApiKey: string;
@@ -28,6 +29,7 @@ export interface ProviderStreamOptions {
   onThoughtDelta: (delta: string) => void;
   onToolDraft: (draft: { id?: string; name: string; arguments: Record<string, unknown> }) => void;
   onToolCall: (call: DesktopToolCall) => void;
+  onUsage?: (usage: TokenUsageRecord) => void;
 }
 
 export interface ProviderAdapter {

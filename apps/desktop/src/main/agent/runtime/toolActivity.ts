@@ -1,0 +1,241 @@
+import type {
+  DesktopToolCall,
+  ToolDiffFileRecord,
+  ToolEventRecord,
+} from "../../../shared/types";
+import {
+  activityItemsFromDiffFiles,
+  diffStatsFromFiles,
+  parseUnifiedDiffFiles,
+} from "../tools/diffFormatter";
+
+const LIVE_OUTPUT_MAX_CHARS = 140_000;
+
+export const patchTargetLabel = (patch: string) => {
+  const normalized = patch
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, "\"");
+  const match = normalized.match(/^\*\*\* (?:Add|Update|Delete) File: ([^\n]+)/m);
+  return match?.[1]?.trim() || "files";
+};
+
+export const activityItemsForTool = (call: DesktopToolCall, diff?: string, diffFiles?: ToolDiffFileRecord[]): ToolEventRecord["activities"] => {
+  const fileItems = activityItemsFromDiffFiles(diffFiles);
+  if (fileItems.length > 0) return fileItems;
+  const diffItems = diffActivityItems(diff) || [];
+  if (diffItems.length > 0) return diffItems;
+  if (call.name === "desktop_apply_patch") return patchActivityItems(String(call.arguments.patch || ""));
+  if (call.name === "desktop_edit_file") return [{ verb: "Editing", path: String(call.arguments.path || "") }];
+  if (call.name === "desktop_write_file") return [{ verb: "Writing", path: String(call.arguments.path || "") }];
+  if (call.name === "desktop_delete_path") return [{ verb: "Deleting", path: String(call.arguments.path || "") }];
+  if (call.name === "desktop_rename_path") return [{ verb: "Renaming", path: `${call.arguments.fromPath || ""} -> ${call.arguments.toPath || ""}` }];
+  return [];
+};
+
+export const patchActivityItems = (patch: string): ToolEventRecord["activities"] => {
+  const normalized = patch
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, "\"");
+  return normalized
+    .split(/\r?\n/)
+    .map((line) => {
+      const add = line.match(/^\*\*\* Add File:\s*(.+)$/);
+      const update = line.match(/^\*\*\* Update File:\s*(.+)$/);
+      const del = line.match(/^\*\*\* Delete File:\s*(.+)$/);
+      if (add) return { verb: "Creating", path: add[1].trim() };
+      if (update) return { verb: "Editing", path: update[1].trim() };
+      if (del) return { verb: "Deleting", path: del[1].trim() };
+      return null;
+    })
+    .filter(Boolean) as ToolEventRecord["activities"];
+};
+
+export const diffActivityItems = (diff?: string): ToolEventRecord["activities"] => {
+  if (!diff) return [];
+  const parsed = parseUnifiedDiffFiles(diff);
+  const structured = activityItemsFromDiffFiles(parsed);
+  if (structured.length > 0) return structured;
+  return diff
+    .split(/\n(?=--- )/g)
+    .map((section) => {
+      const before = section.match(/^---\s+(.+)$/m)?.[1]?.trim() || "";
+      const after = section.match(/^\+\+\+\s+(.+)$/m)?.[1]?.trim() || before;
+      const additions = section.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length;
+      const deletions = section.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length;
+      if (!after && !before) return null;
+      return {
+        verb: !before || before === "/dev/null" ? "Created" : additions === 0 && deletions > 0 ? "Deleted" : "Edited",
+        path: after || before,
+        additions,
+        deletions,
+      };
+    })
+    .filter(Boolean) as ToolEventRecord["activities"];
+};
+
+export const diffStats = (diff?: string) => {
+  if (!diff) return undefined;
+  const parsed = parseUnifiedDiffFiles(diff);
+  const structuredStats = diffStatsFromFiles(parsed);
+  if (parsed.length > 0) return structuredStats;
+  return {
+    additions: diff.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length,
+    deletions: diff.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length,
+  };
+};
+
+export const previewForTool = (call: DesktopToolCall, output?: string, diff?: string) => {
+  if (diff) return diff.slice(0, 12_000);
+  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) {
+    return output?.slice(-12_000);
+  }
+  return undefined;
+};
+
+export const terminalCommandLabel = (call: DesktopToolCall) => {
+  const argv = call.arguments.argv;
+  if (Array.isArray(argv) && argv.length > 0) return argv.map((item) => displayArg(String(item))).join(" ");
+  return String(call.arguments.command || call.arguments.kind || "").trim();
+};
+
+const displayArg = (value: string) =>
+  /\s/.test(value) ? JSON.stringify(value) : value;
+
+export const liveStatusFromOutput = (output: string) => {
+  const last = output.trim().split(/\r?\n/).filter(Boolean).pop();
+  if (!last) return undefined;
+  if (/^(Reading|Writing|Editing|Creating|Deleting|Running|Live diff|Live patch)/i.test(last)) return last.slice(0, 120);
+  return undefined;
+};
+
+export const compactLiveOutput = (value: string, maxChars = LIVE_OUTPUT_MAX_CHARS) => {
+  if (value.length <= maxChars) return value;
+  const head = value.slice(0, 35_000);
+  const tail = value.slice(-(maxChars - 35_000));
+  return `${head}\n\n[... live output compacted ...]\n\n${tail}`;
+};
+
+export const sortObject = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map((item) => sortObject(item));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, sortObject(item)]),
+  );
+};
+
+export const summarizeArgs = (args: Record<string, unknown>) =>
+  JSON.stringify(sortObject(args)).slice(0, 600);
+
+export const titleForTool = (call: DesktopToolCall) => {
+  const args = call.arguments;
+  switch (call.name) {
+    case "desktop_read_file":
+      return `Read ${args.path || "file"}`;
+    case "desktop_write_file":
+      return `Write ${args.path || "file"}`;
+    case "desktop_edit_file":
+      return `Edit ${args.path || "file"}`;
+    case "desktop_apply_patch":
+      return `Patch ${patchTargetLabel(String(args.patch || ""))}`;
+    case "desktop_list_dir":
+      return `List ${args.path || "."}`;
+    case "desktop_search":
+      return `Search ${args.query || "workspace"}`;
+    case "desktop_delete_path":
+      return `Delete ${args.path || "path"}`;
+    case "desktop_rename_path":
+      return `Rename ${args.fromPath || "path"}`;
+    case "desktop_spawn_process":
+      return `Run ${terminalCommandLabel(call) || "command"}`;
+    case "desktop_write_process":
+      return `Terminal input ${args.processId || ""}`.trim();
+    case "desktop_resize_process":
+      return `Resize process ${args.processId || ""}`.trim();
+    case "desktop_kill_process":
+      return `Stop process ${args.processId || ""}`.trim();
+    case "desktop_run_diagnostics":
+      return `Check ${args.kind || args.command || "workspace"}`;
+    case "request_user_input":
+      return `Questions`;
+    case "spawn_agent":
+      return `Spawn ${args.taskName || args.task_name || "agent"}`;
+    case "send_message":
+      return `Message ${args.target || "agent"}`;
+    case "assign_task":
+      return `Assign ${args.target || "agent"}`;
+    case "wait_agent":
+      return "Wait for agents";
+    case "list_agents":
+      return "List agents";
+    case "close_agent":
+      return `Close ${args.target || "agent"}`;
+    default:
+      return call.name;
+  }
+};
+
+export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["category"] => {
+  if (isSubagentToolName(call.name)) return "agent";
+  if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
+  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
+  if (call.name === "desktop_run_diagnostics") return "diagnostic";
+  if (call.name === "request_user_input") return "question";
+  if (call.name === "desktop_search") return "search";
+  if (call.name === "desktop_git_status" || call.name === "desktop_git_diff") return "git";
+  if (call.name === "desktop_read_file" || call.name === "desktop_list_dir") return "read";
+  return "other";
+};
+
+export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord["status"]) => {
+  if (status === "done") return undefined;
+  if (status === "awaiting_approval") return "Waiting for approval";
+  if (status === "running") {
+    if (call.name === "desktop_spawn_process") return "Running command";
+    if (call.name === "desktop_write_process") return "Polling process";
+    if (call.name === "desktop_resize_process") return "Resizing process";
+    if (call.name === "desktop_kill_process") return "Stopping process";
+    if (call.name === "desktop_run_diagnostics") return "Checking workspace";
+    if (call.name === "request_user_input") return "Waiting for answer";
+    if (call.name === "spawn_agent") return "Spawning agent";
+    if (call.name === "send_message") return "Sending to agent";
+    if (call.name === "assign_task") return "Assigning agent";
+    if (call.name === "wait_agent") return "Waiting for agents";
+    if (call.name === "list_agents") return "Listing agents";
+    if (call.name === "close_agent") return "Closing agent";
+    if (call.name === "desktop_apply_patch") return "Applying patch";
+    if (call.name === "desktop_edit_file") return "Editing file";
+    if (call.name === "desktop_write_file") return "Writing file";
+    if (call.name === "desktop_search") return "Searching workspace";
+    if (call.name === "desktop_read_file") return "Reading file";
+    if (call.name === "desktop_list_dir") return "Inspecting workspace";
+    return status.replace(/_/g, " ");
+  }
+  return status.replace(/_/g, " ");
+};
+
+export const terminalMeta = (call: DesktopToolCall, result?: { data?: Record<string, unknown> }): ToolEventRecord["terminal"] | undefined => {
+  if (!["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) return undefined;
+  return {
+    command: terminalCommandLabel(call),
+    cwd: typeof call.arguments.cwd === "string" ? call.arguments.cwd : undefined,
+    processId: typeof result?.data?.processId === "number" ? result.data.processId : typeof call.arguments.processId === "number" ? call.arguments.processId : undefined,
+    running: result?.data?.running === true,
+    exitCode: typeof result?.data?.exitCode === "number" || result?.data?.exitCode === null ? result.data.exitCode as number | null : undefined,
+    durationMs: typeof result?.data?.durationMs === "number" ? result.data.durationMs : undefined,
+    processDurationMs: typeof result?.data?.processDurationMs === "number" ? result.data.processDurationMs : undefined,
+    operationDurationMs: typeof result?.data?.operationDurationMs === "number" ? result.data.operationDurationMs : undefined,
+    timedOut: result?.data?.timedOut === true,
+    omittedBytes: typeof result?.data?.omittedBytes === "number" ? result.data.omittedBytes : undefined,
+    status: typeof result?.data?.status === "string" ? result.data.status : undefined,
+    backend: typeof result?.data?.backend === "string" ? result.data.backend : undefined,
+    tty: result?.data?.tty === true,
+    streamsMerged: result?.data?.streamsMerged === true,
+  };
+};
+
+const isSubagentToolName = (name: string) =>
+  ["spawn_agent", "send_message", "assign_task", "wait_agent", "list_agents", "close_agent"].includes(name);

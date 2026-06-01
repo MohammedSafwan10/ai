@@ -1,6 +1,7 @@
 import { openRouterDesktopTools, parseDesktopToolCall, parsePartialDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
+import { normalizeProviderUsage } from "./usage";
 
 const openRouterReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
@@ -80,6 +81,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
         tools: openRouterDesktopTools(options.collaborationMode),
         tool_choice: "auto",
         parallel_tool_calls: true,
+        ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),
         stream: true,
         temperature: 0.35,
@@ -114,6 +116,8 @@ export class OpenRouterAdapter implements ProviderAdapter {
     await readSse(response, (_event, dataLine) => {
       const data = JSON.parse(dataLine);
       if (data?.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+      const usage = normalizeProviderUsage(data?.usage);
+      if (usage) options.onUsage?.(usage);
       const choice = data?.choices?.[0] || {};
       const delta = choice.delta || {};
       if (typeof delta.content === "string") options.onTextDelta(delta.content);

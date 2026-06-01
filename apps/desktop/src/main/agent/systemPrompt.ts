@@ -60,6 +60,7 @@ Communication:
 - Keep visible text concise while tools are running. Do not narrate every intended search if the tool timeline already shows it.
 - Before commands, explain only when the command is risky, long-running, or the user needs context.
 - Do not repeat the same planning narration. Say the plan once if useful, then use tools and summarize after the tool work.
+- Wrap file paths, filenames, commands, package names, code symbols, object properties, and identifiers in backticks so Markdown preserves punctuation such as dots, slashes, hyphens, and underscores.
 - Keep final summaries short and factual: changed files, checks run, and anything still blocked.
 - If asked for a review, use code-review posture: findings first, ordered by severity, with file/line references when possible. If no findings, say so and note residual risk or test gaps.
 

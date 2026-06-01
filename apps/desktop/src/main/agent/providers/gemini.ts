@@ -2,6 +2,7 @@ import { GoogleGenAI, type ThinkingLevel } from "@google/genai";
 import { geminiDesktopFunctionDeclarations, parseDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { createToolCallId } from "./types";
+import { normalizeProviderUsage } from "./usage";
 
 const geminiThinkingLevel = (effort: ProviderStreamOptions["reasoning"]) => {
   if (effort === "low") return "low";
@@ -52,6 +53,7 @@ export class GeminiAdapter implements ProviderAdapter {
       config: {
         systemInstruction: options.systemInstruction,
         temperature: 0.35,
+        ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none"
           ? {
               thinkingConfig: {
@@ -81,6 +83,8 @@ export class GeminiAdapter implements ProviderAdapter {
 
     for await (const chunk of responseStream) {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      const usage = normalizeProviderUsage((chunk as any).usageMetadata || (chunk as any).usage);
+      if (usage) options.onUsage?.(usage);
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
         if (part.functionCall?.name) {

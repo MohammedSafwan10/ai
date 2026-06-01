@@ -3,6 +3,7 @@ import { isPlaceholderThreadTitle } from "../db/store";
 import type { ProviderMessage } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
 import { detectProjectProfileSync } from "./diagnostics";
+import type { ModelRuntimeBudget } from "../../shared/models";
 
 const MAX_HISTORY_MESSAGES = 18;
 const MAX_MESSAGE_CHARS = 12_000;
@@ -14,13 +15,14 @@ export const buildProviderHistory = (
   store: DesktopStore,
   threadId: string,
   assistantMessageId: string,
+  messageCharLimit = MAX_MESSAGE_CHARS,
 ): ProviderMessage[] =>
   store
     .listMessages(threadId)
     .filter((message) => message.id !== assistantMessageId)
     .slice(-MAX_HISTORY_MESSAGES)
     .map((message): ProviderMessage => {
-      const content = compactTextForModel(message.content, MAX_MESSAGE_CHARS) || "";
+      const content = compactTextForModel(message.content, messageCharLimit) || "";
       const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/"));
       const parts: ProviderMessage["parts"] = [
         ...(content ? [{ type: "text" as const, text: content }] : []),
@@ -67,14 +69,19 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
   ].filter(Boolean).join("\n");
 };
 
-export const compactToolResultForModel = <T extends { output?: string; error?: string }>(result: T): T => ({
+export const compactToolResultForModel = <T extends { output?: string; error?: string }>(
+  result: T,
+  budget?: Pick<ModelRuntimeBudget, "toolResultCharLimit" | "toolErrorCharLimit">,
+): T => ({
   ...result,
-  output: compactTextForModel(result.output, 20_000),
-  error: compactTextForModel(result.error, 6_000),
+  output: compactTextForModel(result.output, budget?.toolResultCharLimit ?? 20_000),
+  error: compactTextForModel(result.error, budget?.toolErrorCharLimit ?? 6_000),
 });
 
 export const compactProviderHistory = (history: ProviderMessage[], maxTokens = MAX_PROVIDER_HISTORY_TOKENS): ProviderMessage[] => {
-  if (estimatedTokens(history) <= maxTokens || history.length <= MIN_RECENT_PROVIDER_MESSAGES) return history;
+  if (estimatedTokens(history) <= maxTokens || history.length <= MIN_RECENT_PROVIDER_MESSAGES) {
+    return repairProviderToolPairs(history);
+  }
 
   const recent: ProviderMessage[] = [];
   let recentTokens = 0;
@@ -87,8 +94,70 @@ export const compactProviderHistory = (history: ProviderMessage[], maxTokens = M
   }
 
   const omitted = history.slice(0, history.length - recent.length);
-  if (omitted.length === 0) return recent;
-  return [summaryMessage(omitted), ...recent];
+  if (omitted.length === 0) return repairProviderToolPairs(recent);
+  return repairProviderToolPairs([summaryMessage(omitted), ...recent]);
+};
+
+const repairProviderToolPairs = (messages: ProviderMessage[]): ProviderMessage[] => {
+  const outputIds = new Set<string>();
+  messages.forEach((message) => {
+    message.parts?.forEach((part) => {
+      if (part.type === "function_response") outputIds.add(part.id);
+    });
+  });
+
+  const seenCalls = new Set<string>();
+  return messages.map((message) => {
+    const parts = message.parts || [];
+    if (parts.length === 0) return message;
+
+    const repairedParts: NonNullable<ProviderMessage["parts"]> = [];
+    const repairedText: string[] = [];
+
+    parts.forEach((part) => {
+      if (part.type === "function_call") {
+        if (outputIds.has(part.id)) {
+          seenCalls.add(part.id);
+          repairedParts.push(part);
+        } else {
+          repairedText.push(`Tool call omitted during context compaction: ${part.name}.`);
+        }
+        return;
+      }
+
+      if (part.type === "function_response") {
+        if (seenCalls.has(part.id)) {
+          repairedParts.push(part);
+        } else {
+          const resultText = part.response.success
+            ? part.response.output || "success"
+            : part.response.error || "failed";
+          repairedText.push(`Tool result preserved from compacted history: ${part.name} returned ${compactTextForModel(resultText, 700) || ""}`);
+        }
+        return;
+      }
+
+      repairedParts.push(part);
+    });
+
+    if (repairedText.length === 0) {
+      return {
+        ...message,
+        parts: repairedParts.length ? repairedParts : undefined,
+      };
+    }
+
+    const content = [message.content, ...repairedText].filter(Boolean).join("\n\n");
+    const nonTextParts = repairedParts.filter((part) => part.type !== "text");
+    return {
+      ...message,
+      content,
+      parts: [
+        ...(content ? [{ type: "text" as const, text: content }] : []),
+        ...nonTextParts,
+      ],
+    };
+  });
 };
 
 const indent = (value: string) =>
@@ -111,8 +180,24 @@ const formatProfile = (profile: ReturnType<typeof detectProjectProfileSync>) => 
   return parts.length ? parts.join("; ") : "unknown";
 };
 
-const estimatedTokens = (messages: ProviderMessage[]) =>
+export const estimateProviderHistoryTokens = (messages: ProviderMessage[]) =>
   messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+
+export const compactProviderHistoryWithInfo = (
+  history: ProviderMessage[],
+  maxTokens = MAX_PROVIDER_HISTORY_TOKENS,
+) => {
+  const beforeTokens = estimateProviderHistoryTokens(history);
+  const compacted = compactProviderHistory(history, maxTokens);
+  return {
+    history: compacted,
+    beforeTokens,
+    afterTokens: estimateProviderHistoryTokens(compacted),
+    compacted: compacted !== history && compacted.length !== history.length || beforeTokens > maxTokens,
+  };
+};
+
+const estimatedTokens = estimateProviderHistoryTokens;
 
 const estimateMessageTokens = (message: ProviderMessage) => {
   const text = [

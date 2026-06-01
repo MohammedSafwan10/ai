@@ -6,6 +6,7 @@ import {
 } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
+import { normalizeProviderUsage } from "./usage";
 
 const responseReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
@@ -117,6 +118,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         input: toInput(options.messages),
         tools: desktopToolDefinitionsForMode(options.collaborationMode),
         parallel_tool_calls: true,
+        ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),
         stream: true,
         temperature: 0.35,
@@ -149,6 +151,8 @@ export class CliproxyAdapter implements ProviderAdapter {
     await readSse(response, (event, dataLine) => {
       try {
         const data = JSON.parse(dataLine);
+        const usage = normalizeProviderUsage(data?.usage || data?.response?.usage);
+        if (usage) options.onUsage?.(usage);
         const key = keyFor(data);
         const previous = buffers.get(key) || { argumentsText: "" };
         const itemName = data?.item?.name || data?.output_item?.name || data?.name;

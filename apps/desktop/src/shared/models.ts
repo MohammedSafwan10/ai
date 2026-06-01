@@ -11,6 +11,13 @@ export interface ModelOption {
   label: string;
   provider: ProviderId;
   supportsTools: boolean;
+  supportsImageInput: boolean;
+  supportsReasoning: boolean;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  defaultOutputTokens?: number;
+  upstreamModelId?: string;
+  deprecatedReplacementId?: string;
   description: string;
 }
 
@@ -22,13 +29,27 @@ export interface ModelProviderGroup {
 }
 
 export const GEMINI_35_FLASH_MODEL_ID = "gemini-3.5-flash";
+export const GEMINI_31_FLASH_LITE_MODEL_ID = "gemini-3.1-flash-lite";
 
 const legacyModelReplacements: Record<string, string> = {
   "gemini-3-flash-preview": GEMINI_35_FLASH_MODEL_ID,
+  "gemini-3.1-flash-lite-preview": GEMINI_31_FLASH_LITE_MODEL_ID,
   "anthropic/claude-3.7-sonnet": "gpt-5.5",
   "google/gemini-2.5-pro": "gemini-3.1-pro-preview",
   "deepseek/deepseek-chat": "deepseek/deepseek-v4-flash:free",
 };
+
+const GPT_55_CONTEXT_TOKENS = 1_050_000;
+const GPT_55_MAX_OUTPUT_TOKENS = 128_000;
+const GEMINI_LONG_CONTEXT_TOKENS = 1_048_576;
+const GEMINI_MAX_OUTPUT_TOKENS = 65_536;
+
+const geminiLongContext = {
+  supportsImageInput: true,
+  supportsReasoning: true,
+  contextWindowTokens: GEMINI_LONG_CONTEXT_TOKENS,
+  maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+} satisfies Partial<ModelOption>;
 
 export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   {
@@ -50,10 +71,12 @@ export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
 
 export const modelOptions: ModelOption[] = [
   {
-    id: "gemini-3.1-flash-lite-preview",
+    id: GEMINI_31_FLASH_LITE_MODEL_ID,
     label: "Gemini 3.1 Flash Lite",
     provider: "gemini",
     supportsTools: true,
+    ...geminiLongContext,
+    defaultOutputTokens: 16_000,
     description: "Lightweight Gemini option for quick local-agent turns.",
   },
   {
@@ -61,6 +84,8 @@ export const modelOptions: ModelOption[] = [
     label: "Gemini 3.5 Flash",
     provider: "gemini",
     supportsTools: true,
+    ...geminiLongContext,
+    defaultOutputTokens: 32_000,
     description: "Stable Gemini model for fast agentic, coding, and multimodal tasks.",
   },
   {
@@ -68,6 +93,8 @@ export const modelOptions: ModelOption[] = [
     label: "Gemini 3.1 Pro",
     provider: "gemini",
     supportsTools: true,
+    ...geminiLongContext,
+    defaultOutputTokens: 32_000,
     description: "Stronger Gemini model for harder prompts.",
   },
   {
@@ -75,6 +102,11 @@ export const modelOptions: ModelOption[] = [
     label: "GPT-5.5",
     provider: "cliproxy",
     supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    contextWindowTokens: GPT_55_CONTEXT_TOKENS,
+    maxOutputTokens: GPT_55_MAX_OUTPUT_TOKENS,
+    defaultOutputTokens: 32_000,
     description: "GPT-5.5 through CLIProxy.",
   },
   {
@@ -82,6 +114,9 @@ export const modelOptions: ModelOption[] = [
     label: "Gemini 3.5 Flash (CLIProxy)",
     provider: "cliproxy",
     supportsTools: true,
+    ...geminiLongContext,
+    defaultOutputTokens: 32_000,
+    upstreamModelId: "gemini-3-flash-agent",
     description: "Gemini 3.5 Flash through CLIProxy.",
   },
   {
@@ -89,6 +124,9 @@ export const modelOptions: ModelOption[] = [
     label: "Gemini 3.1 Pro (CLIProxy)",
     provider: "cliproxy",
     supportsTools: true,
+    ...geminiLongContext,
+    defaultOutputTokens: 32_000,
+    upstreamModelId: "gemini-pro-agent",
     description: "Gemini 3.1 Pro through CLIProxy.",
   },
   {
@@ -96,6 +134,9 @@ export const modelOptions: ModelOption[] = [
     label: "DeepSeek V4 Flash",
     provider: "openrouter",
     supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    contextWindowTokens: 1_000_000,
     description: "Free fast DeepSeek MoE model with 1M context for coding, chat, and agent workflows.",
   },
   {
@@ -103,6 +144,8 @@ export const modelOptions: ModelOption[] = [
     label: "Baidu CoBuddy",
     provider: "openrouter",
     supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
     description: "Free OpenRouter code-generation model for coding tasks and AI agent workflows.",
   },
   {
@@ -110,6 +153,8 @@ export const modelOptions: ModelOption[] = [
     label: "Nemotron 3 Super",
     provider: "openrouter",
     supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
     description: "Free OpenRouter 120B hybrid MoE model for long-context reasoning and agent workflows.",
   },
 ];
@@ -126,6 +171,53 @@ export const getModelOption = (modelId: string) =>
 
 export const getProviderForModel = (modelId: string): ProviderId =>
   getModelOption(modelId).provider;
+
+export type ModelRuntimeBudgetMode = "normal" | "large_context";
+
+export interface ModelRuntimeBudget {
+  mode: ModelRuntimeBudgetMode;
+  contextWindowTokens?: number;
+  outputTokens?: number;
+  hardInputBudgetTokens?: number;
+  inputBudgetTokens?: number;
+  messageCharLimit: number;
+  toolResultCharLimit: number;
+  toolErrorCharLimit: number;
+}
+
+export const resolveModelRuntimeBudget = (
+  modelId: string | undefined,
+  mode: ModelRuntimeBudgetMode = "normal",
+): ModelRuntimeBudget => {
+  const model = getModelOption(modelId || GEMINI_35_FLASH_MODEL_ID);
+  const contextWindowTokens = model.contextWindowTokens;
+  const maxOutputTokens = model.maxOutputTokens;
+  const defaultOutputTokens = model.defaultOutputTokens;
+  const outputTokens = maxOutputTokens && defaultOutputTokens
+    ? Math.min(defaultOutputTokens, maxOutputTokens)
+    : defaultOutputTokens;
+
+  const safetyReserve = contextWindowTokens ? Math.max(8_000, Math.floor(contextWindowTokens * 0.05)) : undefined;
+  const hardInputBudgetTokens = contextWindowTokens
+    ? Math.max(8_000, contextWindowTokens - (outputTokens || 0) - (safetyReserve || 0))
+    : undefined;
+  const inputBudgetTokens = hardInputBudgetTokens
+    ? mode === "large_context"
+      ? hardInputBudgetTokens
+      : Math.min(hardInputBudgetTokens, 350_000)
+    : 28_000;
+
+  return {
+    mode,
+    contextWindowTokens,
+    outputTokens,
+    hardInputBudgetTokens,
+    inputBudgetTokens,
+    messageCharLimit: mode === "large_context" ? 40_000 : 12_000,
+    toolResultCharLimit: mode === "large_context" ? 60_000 : 20_000,
+    toolErrorCharLimit: 6_000,
+  };
+};
 
 export const getModelProviderGroups = (): ModelProviderGroup[] =>
   modelProviderOrder

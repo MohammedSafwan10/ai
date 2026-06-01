@@ -1,13 +1,11 @@
 import type { BrowserWindow } from "electron";
 import type { DesktopStore } from "../db/store";
-import { isPlaceholderThreadTitle, normalizeThreadTitle } from "../db/store";
-import { getModelOption, getProviderForModel, type ReasoningEffort } from "../../shared/models";
+import { isPlaceholderThreadTitle } from "../db/store";
+import { getModelOption, getProviderForModel, resolveModelRuntimeBudget, type ReasoningEffort } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
   ApprovalScopeRecord,
-  AssistantTextPartRecord,
-  AssistantTextPhase,
   AssistantThoughtPartRecord,
   ChatMessageRecord,
   DesktopEvent,
@@ -16,6 +14,7 @@ import type {
   RequestUserInputResponseInput,
   StartTurnInput,
   SubagentRecord,
+  TokenUsageRecord,
   ToolDiffFileRecord,
   ToolEventRecord,
   ToolResult,
@@ -24,35 +23,80 @@ import { buildDesktopSystemPrompt } from "./systemPrompt";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
-import { buildProviderHistory, buildRuntimeContext, compactProviderHistory, compactToolResultForModel } from "./context";
+import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
-import { loadSubagentRoles, pickSubagentNickname, roleNamesForPrompt, type SubagentRoleConfig } from "./subagents";
+import { loadSubagentRoles, pickSubagentNickname, type SubagentRoleConfig } from "./subagents";
 import {
   markRunProgress,
   toActiveRunState,
   transitionRun,
   type AgentRunTracker,
 } from "./runState";
-import {
-  activityItemsFromDiffFiles,
-  diffStatsFromFiles,
-  parseUnifiedDiffFiles,
-} from "./tools/diffFormatter";
 import { approvalCommandPrefix, approvalCwd, findMatchingApprovalScope } from "./tools/permissions";
+import { diffStatsFromFiles, parseUnifiedDiffFiles } from "./tools/diffFormatter";
+import { normalizeApprovalDecisions, approvalScopeBounds, scopeLabel, type ApprovalDecision } from "./runtime/approvals";
+import { runtimeBudgetModeForHistory, runtimeBudgetModeForTurn } from "./runtime/budget";
+import { addTokenUsage, autoCompactTargetTokens, calculateContextUsage, shouldAutoCompactHistory } from "./runtime/contextUsage";
+import { StreamStalledError, delay, errorMessage, windowlessInterval } from "./runtime/errors";
+import { historyHasRecentToolResults, resolveNoToolOutcome } from "./runtime/recovery";
+import { ToolExecutionScheduler } from "./runtime/scheduler";
+import {
+  MAX_SUBAGENT_DEPTH,
+  buildForkedParentHistory,
+  buildSubagentRuntimeContext,
+  compactPreview,
+  formatSubagentLabel,
+  isLiveSubagent,
+  isSubagentTool,
+  normalizeForkTurns,
+  normalizeRoleName,
+  normalizeTaskName,
+  parseReasoningEffort,
+  subagentDepth,
+  subagentInstructionMessage,
+  subagentStatusSummary,
+  subagentToolData,
+  textProviderMessage,
+} from "./runtime/subagentRuntime";
+import {
+  activityItemsForTool,
+  categoryForTool,
+  compactLiveOutput,
+  diffStats,
+  liveStatusForTool,
+  liveStatusFromOutput,
+  patchTargetLabel,
+  previewForTool,
+  sortObject,
+  summarizeArgs,
+  terminalMeta,
+  titleForTool,
+} from "./runtime/toolActivity";
+import {
+  buildVisibleFingerprints,
+  createThreadTitleFilterState,
+  fallbackThreadTitle,
+  filterThreadTitleDelta,
+  filterVisibleDelta,
+  markAssistantTextRangePhase,
+  recordAssistantTextPart,
+} from "./runtime/textParts";
+import {
+  normalizeRequestUserInputQuestions,
+  planModeBlockReason,
+  summarizeUserInputAnswers,
+} from "./runtime/userInput";
+
+export { resolveNoToolOutcome } from "./runtime/recovery";
+export { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDelta } from "./runtime/textParts";
 
 const MAX_CONTINUOUS_MODEL_ITERATIONS = 512;
 const MAX_TOOL_CALLS = 500;
-const MAX_RECOVERY_NUDGES = 2;
 const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
 const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
-const MAX_SUBAGENT_DEPTH = 2;
-const MAX_FORKED_PARENT_CONTEXT_CHARS = 18_000;
 const STREAM_STALL_TIMEOUT_MS = 45_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 75_000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
-const REPEAT_FINGERPRINT_MIN_CHARS = 72;
-const RECENT_VISIBLE_TEXT_CHARS = 5000;
-const LIVE_OUTPUT_MAX_CHARS = 140_000;
 const TOOL_OUTPUT_FLUSH_MS = 120;
 const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 24_000;
 
@@ -74,11 +118,6 @@ interface ApprovalBundle {
   run: AgentRunTracker;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-}
-
-interface ApprovalDecision {
-  approved: boolean;
-  scope: ApprovalDecisionScope;
 }
 
 interface PendingUserInput {
@@ -104,58 +143,6 @@ interface ContinueOptions {
   parentThreadId?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
-}
-
-interface ScheduledToolExecution {
-  call: DesktopToolCall;
-  promise: Promise<ScheduledToolResult>;
-}
-
-interface ScheduledToolResult {
-  call: DesktopToolCall;
-  result: ToolResult;
-  response: ToolResult;
-}
-
-class ToolExecutionScheduler {
-  private barrier: Promise<void> = Promise.resolve();
-  private openParallel: Promise<unknown>[] = [];
-  private entries: ScheduledToolExecution[] = [];
-
-  schedule(call: DesktopToolCall, parallelSafe: boolean, runner: (call: DesktopToolCall) => Promise<ScheduledToolResult>) {
-    const run = () => runner(call);
-    let promise: Promise<ScheduledToolResult>;
-
-    if (parallelSafe) {
-      promise = this.barrier.then(run);
-      this.openParallel.push(promise.catch(() => undefined));
-    } else {
-      const waitForReads = Promise.allSettled(this.openParallel);
-      promise = this.barrier
-        .then(() => waitForReads)
-        .then(run);
-      this.openParallel = [];
-      this.barrier = promise.catch(() => undefined).then(() => undefined);
-    }
-
-    this.entries.push({ call, promise });
-    return promise;
-  }
-
-  async drainOrdered() {
-    const results: Array<{ id: string; name: string; response: ToolResult; call: DesktopToolCall; result: ToolResult }> = [];
-    for (const entry of this.entries) {
-      const scheduled = await entry.promise;
-      results.push({
-        id: scheduled.call.id,
-        name: scheduled.call.name,
-        response: scheduled.response,
-        call: scheduled.call,
-        result: scheduled.result,
-      });
-    }
-    return results;
-  }
 }
 
 export class AgentRuntime {
@@ -220,6 +207,9 @@ export class AgentRuntime {
     if (!thread) throw new Error("Thread not found.");
     const workspace = this.store.getWorkspace(thread.workspaceId);
     if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
+    const settings = this.store.getSettings();
+    const budgetMode = runtimeBudgetModeForTurn(input);
+    const runtimeBudget = resolveModelRuntimeBudget(settings.model, budgetMode);
 
     this.stopTurn(input.threadId);
     this.store.clearRunCheckpoint(input.threadId);
@@ -251,7 +241,7 @@ export class AgentRuntime {
     this.store.upsertMessage(assistantMessage);
     this.emitSnapshot();
 
-    const priorMessages = buildProviderHistory(this.store, input.threadId, assistantMessage.id);
+    const priorMessages = buildProviderHistory(this.store, input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
     const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
     const history = mentionContext
       ? [...priorMessages, textProviderMessage(mentionContext)]
@@ -398,6 +388,8 @@ export class AgentRuntime {
 
   private async continueLoop(options: ContinueOptions) {
     const settings = this.store.getSettings();
+    const effectiveModel = getModelOption(options.model || settings.model).id;
+    const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
     let history = options.history;
     let assistantText = options.assistantText;
     let assistantThought = options.assistantThought;
@@ -406,6 +398,8 @@ export class AgentRuntime {
     let iteration = options.iteration;
     let toolCount = options.toolCount;
     let recoveryAttempts = options.recoveryAttempts;
+    let lastProviderUsage: TokenUsageRecord | null = null;
+    let totalProviderUsage: TokenUsageRecord | null = null;
     const visibleFingerprints = buildVisibleFingerprints(assistantText);
     let handoff = false;
     let controller = options.controller;
@@ -445,7 +439,34 @@ export class AgentRuntime {
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
         continuousIterations += 1;
         iteration += 1;
-        history = compactProviderHistory(history);
+        const compactInfo = shouldAutoCompactHistory(history, runtimeBudget)
+          ? compactProviderHistoryWithInfo(history, autoCompactTargetTokens(runtimeBudget))
+          : compactProviderHistoryWithInfo(history, runtimeBudget.inputBudgetTokens);
+        history = compactInfo.history;
+        if (compactInfo.compacted && compactInfo.beforeTokens > compactInfo.afterTokens) {
+          const markerCall: DesktopToolCall = {
+            id: `context_compaction_${options.assistantMessage.id}_${iteration}`,
+            name: "context_compaction" as DesktopToolCall["name"],
+            arguments: {
+              beforeTokens: compactInfo.beforeTokens,
+              afterTokens: compactInfo.afterTokens,
+            },
+          };
+          const marker = this.updateToolEvent(options.threadId, options.assistantMessage.id, markerCall, {
+            title: "Context compacted",
+            category: "other",
+            status: "done",
+            result: {
+              success: true,
+              output: `Compacted older context from about ${compactInfo.beforeTokens.toLocaleString()} to ${compactInfo.afterTokens.toLocaleString()} tokens.`,
+            },
+            textOffset: assistantText.length,
+            startedAt: now(),
+            endedAt: now(),
+          });
+          this.emit({ type: "tool_updated", tool: marker });
+        }
+        this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
         run.iteration = iteration;
         run.toolCount = toolCount;
         transitionRun(run, "sampling", { iteration, toolCount, resumable: false, reason: undefined });
@@ -483,7 +504,7 @@ export class AgentRuntime {
                 endedAt: now(),
               });
               this.emit({ type: "tool_updated", tool: event });
-              return { call: scheduledCall, result, response: compactToolResultForModel(result) };
+              return { call: scheduledCall, result, response: compactToolResultForModel(result, runtimeBudget) };
             } catch (error) {
               const result: ToolResult = {
                 success: false,
@@ -496,7 +517,7 @@ export class AgentRuntime {
                 endedAt: now(),
               });
               this.emit({ type: "tool_updated", tool: event });
-              return { call: scheduledCall, result, response: compactToolResultForModel(result) };
+              return { call: scheduledCall, result, response: compactToolResultForModel(result, runtimeBudget) };
             }
           });
         };
@@ -542,7 +563,6 @@ export class AgentRuntime {
 
         try {
           const subagent = this.store.getSubagentByThread(options.threadId);
-          const effectiveModel = getModelOption(options.model || settings.model).id;
           await streamProviderResponse({
             provider: getProviderForModel(effectiveModel),
             model: effectiveModel,
@@ -561,6 +581,7 @@ export class AgentRuntime {
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
             openRouterApiKey: this.store.getSecret("openrouter_api_key"),
             geminiApiKey: this.store.getSecret("gemini_api_key"),
+            maxOutputTokens: runtimeBudget.outputTokens,
             onTextDelta: (delta) => {
               endThoughtPart();
               const titleFiltered = filterThreadTitleDelta(delta, titleFilter, (title) => {
@@ -594,7 +615,7 @@ export class AgentRuntime {
               };
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
                 status: "preparing",
-                title: this.titleForTool(call),
+                title: titleForTool(call),
                 textOffset: assistantText.length,
                 startedAt: now(),
               });
@@ -627,7 +648,7 @@ export class AgentRuntime {
                 approvalReason: scope
                   ? `Auto-approved by saved ${scopeLabel(scope)} scope.`
                   : decision.reason,
-                title: this.titleForTool(call),
+                title: titleForTool(call),
                 textOffset: assistantText.length,
                 startedAt: now(),
               });
@@ -639,6 +660,11 @@ export class AgentRuntime {
               } else {
                 scheduleTool(call);
               }
+            },
+            onUsage: (usage) => {
+              lastProviderUsage = usage;
+              totalProviderUsage = addTokenUsage(totalProviderUsage, usage);
+              this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
             },
           });
         } catch (error) {
@@ -820,6 +846,7 @@ export class AgentRuntime {
 
   private async resolveApprovalBundle(bundle: ApprovalBundle) {
     bundle.calls.forEach((call) => this.pendingApprovalByCallId.delete(call.id));
+    const runtimeBudget = resolveModelRuntimeBudget(bundle.model || this.store.getSettings().model, runtimeBudgetModeForHistory(bundle.history));
     const assistantMessage = this.store.getMessage(bundle.assistantMessageId);
     if (!assistantMessage) return;
     this.activeRuns.set(bundle.threadId, bundle.run);
@@ -870,7 +897,7 @@ export class AgentRuntime {
         endedAt: now(),
       });
       this.emit({ type: "tool_updated", tool: finalToolEvent });
-      results.push({ id: call.id, name: call.name, response: compactToolResultForModel(result) });
+      results.push({ id: call.id, name: call.name, response: compactToolResultForModel(result, runtimeBudget) });
     }
 
     await this.continueLoop({
@@ -1188,9 +1215,14 @@ export class AgentRuntime {
       await delay(500);
     }
     const agents = this.store.listSubagents(parentThreadId);
+    const liveAgents = agents.filter(isLiveSubagent);
     return {
       success: true,
-      output: timeoutMs === 0 ? subagentStatusSummary(agents) : `Wait timed out.\n${subagentStatusSummary(agents)}`,
+      output: timeoutMs === 0
+        ? subagentStatusSummary(agents)
+        : liveAgents.length > 0
+          ? `Still waiting on ${liveAgents.length} live ${liveAgents.length === 1 ? "agent" : "agents"}.\n${subagentStatusSummary(agents)}`
+          : `No child status change before timeout.\n${subagentStatusSummary(agents)}`,
       data: { timed_out: timeoutMs > 0, timedOut: timeoutMs > 0, agents: agents.map(subagentToolData) },
     };
   }
@@ -1369,6 +1401,8 @@ export class AgentRuntime {
   private startExistingSubagentTurn(agent: SubagentRecord, workspaceRoot: string) {
     if (this.activeRuns.has(agent.threadId)) return;
     const timestamp = now();
+    const latestUserMessage = [...this.store.listMessages(agent.threadId)].reverse()
+      .find((message) => message.role === "user" && message.content.trim());
     const assistantMessage: ChatMessageRecord = {
       id: crypto.randomUUID(),
       threadId: agent.threadId,
@@ -1382,7 +1416,10 @@ export class AgentRuntime {
       updatedAt: timestamp,
     };
     this.store.upsertMessage(assistantMessage);
-    this.store.updateSubagent(agent.threadId, { status: "running" });
+    this.store.updateSubagent(agent.threadId, {
+      status: "running",
+      lastPreview: latestUserMessage ? compactPreview(latestUserMessage.content, 180) : agent.lastPreview,
+    });
     const roles = loadSubagentRoles(workspaceRoot);
     const role = agent.agentRole ? roles.get(agent.agentRole) : undefined;
     this.runSubagentLoop(agent, workspaceRoot, assistantMessage, role, "all");
@@ -1399,10 +1436,11 @@ export class AgentRuntime {
     const run = this.createRun(agent.threadId, assistantMessage.id, controller);
     this.activeRuns.set(agent.threadId, run);
     this.emitRun(run);
+    const subagentBudget = resolveModelRuntimeBudget(agent.model || this.store.getSettings().model, "normal");
     const history = [
       subagentInstructionMessage(agent, role, forkTurns),
       ...buildForkedParentHistory(this.store, agent, forkTurns),
-      ...buildProviderHistory(this.store, agent.threadId, assistantMessage.id),
+      ...buildProviderHistory(this.store, agent.threadId, assistantMessage.id, subagentBudget.messageCharLimit),
     ];
     void this.continueLoop({
       threadId: agent.threadId,
@@ -1500,16 +1538,16 @@ export class AgentRuntime {
     const diffFiles = patch.diffFiles ?? resultDiffFiles ?? existing?.diffFiles ?? parseUnifiedDiffFiles(diff);
     const computedDiffStats = diffStatsFromFiles(diffFiles) || diffStats(diff);
     const computedActivities = activityItemsForTool(call, diff, diffFiles);
-    const terminal = this.terminalMeta(call, patch.result ?? existing?.result);
+    const terminal = terminalMeta(call, patch.result ?? existing?.result);
     const event: ToolEventRecord = {
       id: existing?.id || crypto.randomUUID(),
       threadId,
       messageId,
       callId: call.id,
       name: call.name,
-      title: patch.title || existing?.title || this.titleForTool(call),
-      category: patch.category || existing?.category || this.categoryForTool(call),
-      liveStatus: patch.liveStatus ?? this.liveStatusForTool(call, patch.status || existing?.status || "preparing"),
+      title: patch.title || existing?.title || titleForTool(call),
+      category: patch.category || existing?.category || categoryForTool(call),
+      liveStatus: patch.liveStatus ?? liveStatusForTool(call, patch.status || existing?.status || "preparing"),
       textOffset: patch.textOffset ?? existing?.textOffset,
       streamOrder: existing?.streamOrder ?? this.nextActivityOrder(),
       status: patch.status || existing?.status || "preparing",
@@ -1666,112 +1704,29 @@ export class AgentRuntime {
     return JSON.stringify(sortObject(value)).slice(0, 180);
   }
 
-  private titleForTool(call: DesktopToolCall) {
-    const args = call.arguments;
-    switch (call.name) {
-      case "desktop_read_file":
-        return `Read ${args.path || "file"}`;
-      case "desktop_write_file":
-        return `Write ${args.path || "file"}`;
-      case "desktop_edit_file":
-        return `Edit ${args.path || "file"}`;
-      case "desktop_apply_patch":
-        return `Patch ${patchTargetLabel(String(args.patch || ""))}`;
-      case "desktop_list_dir":
-        return `List ${args.path || "."}`;
-      case "desktop_search":
-        return `Search ${args.query || "workspace"}`;
-      case "desktop_delete_path":
-        return `Delete ${args.path || "path"}`;
-      case "desktop_rename_path":
-        return `Rename ${args.fromPath || "path"}`;
-      case "desktop_spawn_process":
-        return `Run ${terminalCommandLabel(call) || "command"}`;
-      case "desktop_write_process":
-        return `Terminal input ${args.processId || ""}`.trim();
-      case "desktop_resize_process":
-        return `Resize process ${args.processId || ""}`.trim();
-      case "desktop_kill_process":
-        return `Stop process ${args.processId || ""}`.trim();
-      case "desktop_run_diagnostics":
-        return `Check ${args.kind || args.command || "workspace"}`;
-      case "request_user_input":
-        return `Questions`;
-      case "spawn_agent":
-        return `Spawn ${args.taskName || args.task_name || "agent"}`;
-      case "send_message":
-        return `Message ${args.target || "agent"}`;
-      case "assign_task":
-        return `Assign ${args.target || "agent"}`;
-      case "wait_agent":
-        return "Wait for agents";
-      case "list_agents":
-        return "List agents";
-      case "close_agent":
-        return `Close ${args.target || "agent"}`;
-      default:
-        return call.name;
-    }
-  }
-
-  private categoryForTool(call: DesktopToolCall): ToolEventRecord["category"] {
-    if (isSubagentTool(call.name)) return "agent";
-    if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
-    if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
-    if (call.name === "desktop_run_diagnostics") return "diagnostic";
-    if (call.name === "request_user_input") return "question";
-    if (call.name === "desktop_search") return "search";
-    if (call.name === "desktop_git_status" || call.name === "desktop_git_diff") return "git";
-    if (call.name === "desktop_read_file" || call.name === "desktop_list_dir") return "read";
-    return "other";
-  }
-
-  private liveStatusForTool(call: DesktopToolCall, status: ToolEventRecord["status"]) {
-    if (status === "done") return undefined;
-    if (status === "awaiting_approval") return "Waiting for approval";
-    if (call.name === "desktop_spawn_process") return "Running command";
-    if (call.name === "desktop_write_process") return "Polling process";
-    if (call.name === "desktop_resize_process") return "Resizing process";
-    if (call.name === "desktop_kill_process") return "Stopping process";
-    if (call.name === "desktop_run_diagnostics") return "Checking workspace";
-    if (call.name === "request_user_input") return "Waiting for answer";
-    if (call.name === "spawn_agent") return "Spawning agent";
-    if (call.name === "send_message") return "Sending to agent";
-    if (call.name === "assign_task") return "Assigning agent";
-    if (call.name === "wait_agent") return "Waiting for agents";
-    if (call.name === "list_agents") return "Listing agents";
-    if (call.name === "close_agent") return "Closing agent";
-    if (call.name === "desktop_apply_patch") return "Applying patch";
-    if (call.name === "desktop_edit_file") return "Editing file";
-    if (call.name === "desktop_write_file") return "Writing file";
-    if (call.name === "desktop_search") return "Searching workspace";
-    if (call.name === "desktop_read_file") return "Reading file";
-    if (call.name === "desktop_list_dir") return "Inspecting workspace";
-    return status.replace(/_/g, " ");
-  }
-
-  private terminalMeta(call: DesktopToolCall, result?: ToolResult): ToolEventRecord["terminal"] | undefined {
-    if (!["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) return undefined;
-    return {
-      command: terminalCommandLabel(call),
-      cwd: typeof call.arguments.cwd === "string" ? call.arguments.cwd : undefined,
-      processId: typeof result?.data?.processId === "number" ? result.data.processId : typeof call.arguments.processId === "number" ? call.arguments.processId : undefined,
-      running: result?.data?.running === true,
-      exitCode: typeof result?.data?.exitCode === "number" || result?.data?.exitCode === null ? result.data.exitCode as number | null : undefined,
-      durationMs: typeof result?.data?.durationMs === "number" ? result.data.durationMs : undefined,
-      processDurationMs: typeof result?.data?.processDurationMs === "number" ? result.data.processDurationMs : undefined,
-      operationDurationMs: typeof result?.data?.operationDurationMs === "number" ? result.data.operationDurationMs : undefined,
-      timedOut: result?.data?.timedOut === true,
-      omittedBytes: typeof result?.data?.omittedBytes === "number" ? result.data.omittedBytes : undefined,
-      status: typeof result?.data?.status === "string" ? result.data.status : undefined,
-      backend: typeof result?.data?.backend === "string" ? result.data.backend : undefined,
-      tty: result?.data?.tty === true,
-      streamsMerged: result?.data?.streamsMerged === true,
-    };
-  }
-
   private emitRun(run: AgentRunTracker) {
     this.emit({ type: "run_state", threadId: run.threadId, run: toActiveRunState(run) });
+  }
+
+  private emitContextUsage(
+    threadId: string,
+    modelId: string,
+    history: ProviderMessage[],
+    runtimeBudget: ReturnType<typeof resolveModelRuntimeBudget>,
+    lastUsage: TokenUsageRecord | null,
+    totalUsage: TokenUsageRecord | null,
+  ) {
+    this.emit({
+      type: "context_usage_updated",
+      usage: calculateContextUsage({
+        threadId,
+        modelId,
+        history,
+        budget: runtimeBudget,
+        lastUsage,
+        totalUsage,
+      }),
+    });
   }
 
   private emit(event: DesktopEvent) {
@@ -1794,600 +1749,3 @@ export class AgentRuntime {
   }
 }
 
-class StreamStalledError extends Error {}
-
-const normalizeApprovalDecisions = (input: ApprovalDecisionInput) => {
-  if (input.decisions?.length) return input.decisions;
-  if (input.callId && typeof input.approved === "boolean") {
-    return [{ callId: input.callId, approved: input.approved, scope: input.scope }];
-  }
-  return [];
-};
-
-const textProviderMessage = (content: string): ProviderMessage => ({
-  role: "user",
-  content,
-  parts: [{ type: "text", text: content }],
-});
-
-const subagentInstructionMessage = (agent: SubagentRecord, role: SubagentRoleConfig | undefined, forkTurns: string): ProviderMessage =>
-  textProviderMessage([
-    `You are child agent ${formatSubagentLabel(agent)}.`,
-    `Canonical task name: ${agent.agentPath}.`,
-    `Parent thread: ${agent.parentThreadId}.`,
-    `Context fork mode requested by parent: ${forkTurns || "all"}.`,
-    role ? `Role instructions:\n${role.developerInstructions}` : "",
-    "Complete only the assigned child task. Report findings/results clearly in your final answer for the parent agent to use.",
-  ].filter(Boolean).join("\n\n"));
-
-const buildSubagentRuntimeContext = (agent: SubagentRecord, roles: Map<string, SubagentRoleConfig>) => [
-  "Subagent context:",
-  `- You are ${formatSubagentLabel(agent)}.`,
-  `- Canonical task name: ${agent.agentPath}.`,
-  `- Parent thread: ${agent.parentThreadId}.`,
-  `- Available subagent roles:\n${roleNamesForPrompt(roles)}`,
-  "- Child agents inherit workspace tools and approval rules. Keep work bounded to your assigned task and report final results back to the parent.",
-].join("\n");
-
-const isSubagentTool = (name: string) =>
-  ["spawn_agent", "send_message", "assign_task", "wait_agent", "list_agents", "close_agent"].includes(name);
-
-const isLiveSubagent = (agent: SubagentRecord) =>
-  ["pending", "running", "waiting"].includes(agent.status);
-
-const subagentDepth = (agentPath: string) =>
-  agentPath.split("/").filter((part) => part && part !== "root").length;
-
-const normalizeTaskName = (value: string) => {
-  const normalized = value.trim().toLowerCase();
-  return /^[a-z0-9_]+$/.test(normalized) ? normalized : "";
-};
-
-const normalizeForkTurns = (value: unknown): { valid: true; value: string } | { valid: false; value: string } => {
-  const normalized = String(value || "all").trim().toLowerCase();
-  if (normalized === "all" || normalized === "none") return { valid: true, value: normalized };
-  if (/^[1-9]\d*$/.test(normalized)) return { valid: true, value: normalized };
-  return { valid: false, value: normalized };
-};
-
-const buildForkedParentHistory = (store: DesktopStore, agent: SubagentRecord, forkTurns: string): ProviderMessage[] => {
-  if (forkTurns === "none") return [];
-  const parentMessages = store
-    .listMessages(agent.parentThreadId)
-    .filter((message) => message.createdAt <= agent.createdAt);
-  const selected = forkTurns === "all"
-    ? parentMessages
-    : parentMessages.slice(-Number(forkTurns));
-  if (selected.length === 0) return [];
-  const summary = selected
-    .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${compactPreview(message.content, 1200)}`)
-    .join("\n\n");
-  return [textProviderMessage(`Forked parent conversation context for ${agent.agentPath}:\n\n${compactLongText(summary, MAX_FORKED_PARENT_CONTEXT_CHARS)}`)];
-};
-
-const normalizeRoleName = (value: string) =>
-  value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
-
-const parseReasoningEffort = (value: unknown) => {
-  const normalized = String(value || "").trim().toLowerCase();
-  return ["none", "low", "medium", "high", "extra_high"].includes(normalized) ? normalized as ReasoningEffort : undefined;
-};
-
-const formatSubagentLabel = (agent: Pick<SubagentRecord, "agentNickname" | "agentRole" | "taskName">) => {
-  const name = agent.agentNickname || agent.taskName || "agent";
-  return agent.agentRole ? `${name} [${agent.agentRole}]` : name;
-};
-
-const subagentToolData = (agent: SubagentRecord) => ({
-  id: agent.id,
-  threadId: agent.threadId,
-  taskName: agent.taskName,
-  task_name: agent.agentPath,
-  agentPath: agent.agentPath,
-  agent_path: agent.agentPath,
-  nickname: agent.agentNickname,
-  role: agent.agentRole,
-  status: agent.status,
-  finalMessage: agent.finalMessage,
-  lastPreview: agent.lastPreview,
-});
-
-const subagentStatusSummary = (agents: SubagentRecord[]) =>
-  agents.length
-    ? agents.map((agent) => `${formatSubagentLabel(agent)}: ${agent.status}${agent.lastPreview ? ` - ${compactPreview(agent.lastPreview, 160)}` : ""}`).join("\n")
-    : "No child agents.";
-
-const compactPreview = (value: string, maxLength: number) => {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length <= maxLength ? compact : `${compact.slice(0, Math.max(0, maxLength - 1))}...`;
-};
-
-const compactLongText = (value: string, maxLength: number) => {
-  if (value.length <= maxLength) return value;
-  const headLength = Math.floor(maxLength * 0.62);
-  const tailLength = Math.max(0, maxLength - headLength - 80);
-  return [
-    value.slice(0, headLength).trimEnd(),
-    `\n\n[...forked parent context truncated: ${value.length - headLength - tailLength} chars omitted...]\n\n`,
-    value.slice(value.length - tailLength).trimStart(),
-  ].join("");
-};
-
-const delay = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-const historyHasRecentToolResults = (history: ProviderMessage[]) =>
-  history.slice(-3).some((message) => message.parts?.some((part) => part.type === "function_response"));
-
-const planModeBlockReason = (
-  call: DesktopToolCall,
-  collaborationMode: string,
-  decision: { risk: string; requiresApproval: boolean },
-) => {
-  if (collaborationMode !== "plan") {
-    return call.name === "request_user_input" ? "request_user_input is only available in Plan Mode." : null;
-  }
-  if (call.name === "request_user_input") return null;
-  if (["desktop_read_file", "desktop_list_dir", "desktop_search", "desktop_git_status", "desktop_git_diff", "desktop_run_diagnostics"].includes(call.name)) return null;
-  if ((call.name === "desktop_apply_patch" || call.name === "desktop_edit_file") && call.arguments.dryRun === true) return null;
-  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) {
-    return decision.risk === "safe" && !decision.requiresApproval
-      ? null
-      : "Plan Mode blocks risky terminal actions. Use read-only inspection or diagnostics instead.";
-  }
-  return "Plan Mode blocks mutating tools. Use dryRun:true previews or produce a proposed plan instead.";
-};
-
-const normalizeRequestUserInputQuestions = (value: unknown): { success: true; questions: RequestUserInputQuestionRecord[] } | { success: false; error: string } => {
-  if (!Array.isArray(value)) return { success: false, error: "request_user_input requires a questions array." };
-  if (value.length < 1 || value.length > 3) return { success: false, error: "request_user_input requires one to three questions." };
-  const seen = new Set<string>();
-  const questions: RequestUserInputQuestionRecord[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") return { success: false, error: "Each question must be an object." };
-    const raw = item as Record<string, unknown>;
-    const id = String(raw.id || "").trim();
-    const header = String(raw.header || "").trim().slice(0, 24);
-    const question = String(raw.question || "").trim();
-    const rawOptions = raw.options;
-    if (!/^[a-z][a-z0-9_]*$/i.test(id)) return { success: false, error: "Each question needs a stable id." };
-    if (seen.has(id)) return { success: false, error: `Duplicate question id: ${id}` };
-    if (!header || !question) return { success: false, error: "Each question needs header and question text." };
-    if (!Array.isArray(rawOptions) || rawOptions.length < 2 || rawOptions.length > 3) {
-      return { success: false, error: "Each question needs two or three options." };
-    }
-    const options = rawOptions.map((option) => {
-      const optionRecord = option && typeof option === "object" ? option as Record<string, unknown> : {};
-      return {
-        label: String(optionRecord.label || "").trim().slice(0, 80),
-        description: String(optionRecord.description || "").trim().slice(0, 240),
-      };
-    });
-    if (options.some((option) => !option.label || !option.description)) {
-      return { success: false, error: "Each option needs label and description." };
-    }
-    seen.add(id);
-    questions.push({ id, header, question, options, isOther: true });
-  }
-  return { success: true, questions };
-};
-
-const summarizeUserInputAnswers = (answers: RequestUserInputResponseInput["answers"]) => {
-  const lines = Object.entries(answers).map(([id, answer]) => `${id}: ${answer.answers.join(", ") || "(no answer)"}`);
-  return lines.join("\n") || "No answers provided.";
-};
-
-export const resolveNoToolOutcome = (input: {
-  iterationText: string;
-  iterationThought: string;
-  afterToolResults: boolean;
-  recoveryAttempts: number;
-}): { action: "recover"; message: string } | { action: "complete" } => {
-  const text = input.iterationText.trim();
-  const thought = input.iterationThought.trim();
-  if (text) return { action: "complete" };
-  if (input.recoveryAttempts >= MAX_RECOVERY_NUDGES) return { action: "complete" };
-  if (input.afterToolResults) {
-    return {
-      action: "recover",
-      message: "The last provider turn ended after tool results without visible assistant text or another tool call. Continue from the completed tool results and either call the next needed tool or provide the final user-facing answer.",
-    };
-  }
-  if (thought) {
-    return {
-      action: "recover",
-      message: "The last provider turn produced reasoning but no visible assistant text or tool call. Continue from the current turn state and either call a desktop tool or provide the final user-facing answer.",
-    };
-  }
-  return {
-    action: "recover",
-    message: "The last provider turn ended without visible assistant text or tool calls. Continue from the current conversation state and either call a desktop tool or provide the final user-facing answer.",
-  };
-};
-
-const patchTargetLabel = (patch: string) => {
-  const normalized = patch
-    .replace(/\\r\\n/g, "\n")
-    .replace(/\\n/g, "\n")
-    .replace(/\\"/g, "\"");
-  const match = normalized.match(/^\*\*\* (?:Add|Update|Delete) File: ([^\n]+)/m);
-  return match?.[1]?.trim() || "files";
-};
-
-const activityItemsForTool = (call: DesktopToolCall, diff?: string, diffFiles?: ToolDiffFileRecord[]): ToolEventRecord["activities"] => {
-  const fileItems = activityItemsFromDiffFiles(diffFiles);
-  if (fileItems.length > 0) return fileItems;
-  const diffItems = diffActivityItems(diff) || [];
-  if (diffItems.length > 0) return diffItems;
-  if (call.name === "desktop_apply_patch") return patchActivityItems(String(call.arguments.patch || ""));
-  if (call.name === "desktop_edit_file") return [{ verb: "Editing", path: String(call.arguments.path || "") }];
-  if (call.name === "desktop_write_file") return [{ verb: "Writing", path: String(call.arguments.path || "") }];
-  if (call.name === "desktop_delete_path") return [{ verb: "Deleting", path: String(call.arguments.path || "") }];
-  if (call.name === "desktop_rename_path") return [{ verb: "Renaming", path: `${call.arguments.fromPath || ""} -> ${call.arguments.toPath || ""}` }];
-  return [];
-};
-
-const patchActivityItems = (patch: string): ToolEventRecord["activities"] => {
-  const normalized = patch
-    .replace(/\\r\\n/g, "\n")
-    .replace(/\\n/g, "\n")
-    .replace(/\\"/g, "\"");
-  return normalized
-    .split(/\r?\n/)
-    .map((line) => {
-      const add = line.match(/^\*\*\* Add File:\s*(.+)$/);
-      const update = line.match(/^\*\*\* Update File:\s*(.+)$/);
-      const del = line.match(/^\*\*\* Delete File:\s*(.+)$/);
-      if (add) return { verb: "Creating", path: add[1].trim() };
-      if (update) return { verb: "Editing", path: update[1].trim() };
-      if (del) return { verb: "Deleting", path: del[1].trim() };
-      return null;
-    })
-    .filter(Boolean) as ToolEventRecord["activities"];
-};
-
-const diffActivityItems = (diff?: string): ToolEventRecord["activities"] => {
-  if (!diff) return [];
-  return diff
-    .split(/\n(?=--- )/g)
-    .map((section) => {
-      const before = section.match(/^---\s+(.+)$/m)?.[1]?.trim() || "";
-      const after = section.match(/^\+\+\+\s+(.+)$/m)?.[1]?.trim() || before;
-      const additions = section.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length;
-      const deletions = section.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length;
-      if (!after && !before) return null;
-      return {
-        verb: !before || before === "/dev/null" ? "Created" : additions === 0 && deletions > 0 ? "Deleted" : "Edited",
-        path: after || before,
-        additions,
-        deletions,
-      };
-    })
-    .filter(Boolean) as ToolEventRecord["activities"];
-};
-
-const diffStats = (diff?: string) => {
-  if (!diff) return undefined;
-  return {
-    additions: diff.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length,
-    deletions: diff.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length,
-  };
-};
-
-const previewForTool = (call: DesktopToolCall, output?: string, diff?: string) => {
-  if (diff) return diff.slice(0, 12_000);
-  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) {
-    return output?.slice(-12_000);
-  }
-  return undefined;
-};
-
-const terminalCommandLabel = (call: DesktopToolCall) => {
-  const argv = call.arguments.argv;
-  if (Array.isArray(argv) && argv.length > 0) return argv.map((item) => displayArg(String(item))).join(" ");
-  return String(call.arguments.command || call.arguments.kind || "").trim();
-};
-
-const displayArg = (value: string) =>
-  /\s/.test(value) ? JSON.stringify(value) : value;
-
-const liveStatusFromOutput = (output: string) => {
-  const last = output.trim().split(/\r?\n/).filter(Boolean).pop();
-  if (!last) return undefined;
-  if (/^(Reading|Writing|Editing|Creating|Deleting|Running|Live diff|Live patch)/i.test(last)) return last.slice(0, 120);
-  return undefined;
-};
-
-const compactLiveOutput = (value: string, maxChars = LIVE_OUTPUT_MAX_CHARS) => {
-  if (value.length <= maxChars) return value;
-  const head = value.slice(0, 35_000);
-  const tail = value.slice(-(maxChars - 35_000));
-  return `${head}\n\n[... live output compacted ...]\n\n${tail}`;
-};
-
-const sortObject = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map((item) => sortObject(item));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, item]) => [key, sortObject(item)]),
-  );
-};
-
-const errorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "Unknown error";
-
-const summarizeArgs = (args: Record<string, unknown>) =>
-  JSON.stringify(sortObject(args)).slice(0, 600);
-
-const scopeLabel = (scope: ApprovalScopeRecord) => {
-  if (scope.kind === "terminal_prefix") return "command prefix";
-  if (scope.kind === "tool_thread") return "thread";
-  return "workspace";
-};
-
-const approvalScopeBounds = (decisionScope: ApprovalDecisionScope, timestamp: number) => {
-  if (decisionScope === "command_prefix") {
-    return {
-      expiresAt: timestamp + 24 * 60 * 60 * 1000,
-      maxUses: 20,
-    };
-  }
-  return {
-    expiresAt: timestamp + 7 * 24 * 60 * 60 * 1000,
-    maxUses: decisionScope === "this_thread" ? 20 : 50,
-  };
-};
-
-const windowlessInterval = (callback: () => void, ms: number) =>
-  setInterval(callback, ms);
-
-const buildVisibleFingerprints = (text: string) => {
-  const fingerprints = new Set<string>();
-  splitVisibleUnits(text).forEach((unit) => {
-    const fingerprint = fingerprintVisibleText(unit);
-    if (fingerprint.length >= REPEAT_FINGERPRINT_MIN_CHARS) fingerprints.add(fingerprint);
-  });
-  return fingerprints;
-};
-
-const recordAssistantTextPart = (
-  message: ChatMessageRecord,
-  phase: AssistantTextPhase,
-  startOffset: number,
-  endOffset: number,
-) => {
-  if (endOffset <= startOffset) return;
-  const timestamp = now();
-  const parts = normalizeAssistantTextParts(message.textParts || [], endOffset);
-  const last = parts[parts.length - 1];
-  if (last && last.phase === phase && last.endOffset === startOffset) {
-    last.endOffset = endOffset;
-    last.updatedAt = timestamp;
-    message.textParts = parts;
-    return;
-  }
-  message.textParts = [
-    ...parts,
-    {
-      id: crypto.randomUUID(),
-      phase,
-      startOffset,
-      endOffset,
-      streamOrder: nextTextPartOrder(parts),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    },
-  ];
-};
-
-const markAssistantTextRangePhase = (
-  message: ChatMessageRecord,
-  startOffset: number,
-  endOffset: number,
-  phase: AssistantTextPhase,
-) => {
-  if (endOffset <= startOffset) return;
-  const timestamp = now();
-  const parts = normalizeAssistantTextParts(message.textParts || [], endOffset);
-  const next: AssistantTextPartRecord[] = [];
-  let coveredUntil = startOffset;
-  parts.forEach((part) => {
-    if (part.endOffset <= startOffset || part.startOffset >= endOffset) {
-      next.push(part);
-      return;
-    }
-    if (part.startOffset < startOffset) {
-      next.push({ ...part, endOffset: startOffset, updatedAt: timestamp });
-    }
-    const phaseStart = Math.max(part.startOffset, startOffset);
-    const phaseEnd = Math.min(part.endOffset, endOffset);
-    if (phaseStart > coveredUntil) {
-      next.push({
-        id: crypto.randomUUID(),
-        phase,
-        startOffset: coveredUntil,
-        endOffset: phaseStart,
-        streamOrder: nextTextPartOrder(next),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    }
-    next.push({
-      ...part,
-      id: part.startOffset < startOffset || part.endOffset > endOffset ? crypto.randomUUID() : part.id,
-      phase,
-      startOffset: phaseStart,
-      endOffset: phaseEnd,
-      updatedAt: timestamp,
-    });
-    coveredUntil = Math.max(coveredUntil, phaseEnd);
-    if (part.endOffset > endOffset) {
-      next.push({ ...part, id: crypto.randomUUID(), startOffset: endOffset, updatedAt: timestamp });
-    }
-  });
-  if (coveredUntil < endOffset) {
-    next.push({
-      id: crypto.randomUUID(),
-      phase,
-      startOffset: coveredUntil,
-      endOffset,
-      streamOrder: nextTextPartOrder(next),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-  }
-  message.textParts = mergeAdjacentTextParts(next);
-};
-
-const normalizeAssistantTextParts = (parts: AssistantTextPartRecord[], contentLength: number) =>
-  mergeAdjacentTextParts(
-    parts
-      .filter((part) =>
-        (part.phase === "commentary" || part.phase === "final_answer") &&
-        Number.isFinite(part.startOffset) &&
-        Number.isFinite(part.endOffset)
-      )
-      .map((part) => ({
-        ...part,
-        startOffset: Math.max(0, Math.min(contentLength, part.startOffset)),
-        endOffset: Math.max(0, Math.min(contentLength, part.endOffset)),
-      }))
-      .filter((part) => part.endOffset > part.startOffset)
-      .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt),
-  );
-
-const mergeAdjacentTextParts = (parts: AssistantTextPartRecord[]) => {
-  const merged: AssistantTextPartRecord[] = [];
-  parts.forEach((part) => {
-    const last = merged[merged.length - 1];
-    if (last && last.phase === part.phase && last.endOffset >= part.startOffset) {
-      last.endOffset = Math.max(last.endOffset, part.endOffset);
-      last.updatedAt = Math.max(last.updatedAt, part.updatedAt);
-      return;
-    }
-    merged.push({ ...part });
-  });
-  return merged;
-};
-
-const nextTextPartOrder = (parts: AssistantTextPartRecord[]) =>
-  Math.max(0, ...parts.map((part) => part.streamOrder ?? 0)) + 1;
-
-interface ThreadTitleFilterState {
-  enabled: boolean;
-  done: boolean;
-  mode: "normal" | "title";
-  buffer: string;
-  titleBuffer: string;
-}
-
-const THREAD_TITLE_OPEN = "<thread_title>";
-const THREAD_TITLE_CLOSE = "</thread_title>";
-const MAX_THREAD_TITLE_TAG_CONTENT = 240;
-
-export const createThreadTitleFilterState = (enabled: boolean): ThreadTitleFilterState => ({
-  enabled,
-  done: !enabled,
-  mode: "normal",
-  buffer: "",
-  titleBuffer: "",
-});
-
-export const filterThreadTitleDelta = (
-  delta: string,
-  state: ThreadTitleFilterState,
-  onTitle: (title: string) => void,
-) => {
-  if (!delta || state.done) return delta;
-  state.buffer += delta;
-  let visible = "";
-
-  while (state.buffer) {
-    if (state.mode === "title") {
-      const closeIndex = state.buffer.indexOf(THREAD_TITLE_CLOSE);
-      if (closeIndex === -1) {
-        state.titleBuffer += state.buffer;
-        state.buffer = "";
-        if (state.titleBuffer.length > MAX_THREAD_TITLE_TAG_CONTENT) {
-          state.done = true;
-          state.mode = "normal";
-          state.titleBuffer = "";
-        }
-        break;
-      }
-
-      state.titleBuffer += state.buffer.slice(0, closeIndex);
-      const title = normalizeThreadTitle(state.titleBuffer);
-      if (title) onTitle(title);
-      state.done = true;
-      state.mode = "normal";
-      state.titleBuffer = "";
-      visible += state.buffer.slice(closeIndex + THREAD_TITLE_CLOSE.length);
-      state.buffer = "";
-      break;
-    }
-
-    const openIndex = state.buffer.indexOf(THREAD_TITLE_OPEN);
-    if (openIndex !== -1) {
-      visible += state.buffer.slice(0, openIndex);
-      state.buffer = state.buffer.slice(openIndex + THREAD_TITLE_OPEN.length);
-      state.mode = "title";
-      continue;
-    }
-
-    const keep = partialTagPrefixLength(state.buffer, THREAD_TITLE_OPEN);
-    visible += state.buffer.slice(0, state.buffer.length - keep);
-    state.buffer = state.buffer.slice(state.buffer.length - keep);
-    break;
-  }
-
-  return visible;
-};
-
-const partialTagPrefixLength = (value: string, tag: string) => {
-  const max = Math.min(value.length, tag.length - 1);
-  for (let length = max; length > 0; length -= 1) {
-    if (tag.startsWith(value.slice(value.length - length))) return length;
-  }
-  return 0;
-};
-
-export const fallbackThreadTitle = (prompt: string) =>
-  normalizeThreadTitle(prompt
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/[<>]/g, " ")
-    .replace(/\s+/g, " "));
-
-const filterVisibleDelta = (current: string, delta: string, fingerprints: Set<string>) => {
-  if (!delta || isInsideMarkdownCodeFence(current)) return delta;
-  const recent = fingerprintVisibleText(current.slice(-RECENT_VISIBLE_TEXT_CHARS));
-  const accepted: string[] = [];
-  splitVisibleUnits(delta).forEach((unit) => {
-    const fingerprint = fingerprintVisibleText(unit);
-    if (
-      fingerprint.length >= REPEAT_FINGERPRINT_MIN_CHARS &&
-      (fingerprints.has(fingerprint) || recent.includes(fingerprint))
-    ) {
-      return;
-    }
-    if (fingerprint.length >= REPEAT_FINGERPRINT_MIN_CHARS) fingerprints.add(fingerprint);
-    accepted.push(unit);
-  });
-  return accepted.join("");
-};
-
-const splitVisibleUnits = (text: string) =>
-  text.match(/[^.!?\n]+[.!?\n]+|\n+|[^.!?\n]+$/g) || [text];
-
-const fingerprintVisibleText = (text: string) =>
-  text
-    .toLowerCase()
-    .replace(/[`*_#[\](){}<>.,!?;:'"\\/-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const isInsideMarkdownCodeFence = (text: string) =>
-  ((text.match(/```/g) || []).length % 2) === 1;

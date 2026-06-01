@@ -16,4 +16,31 @@ describe("provider history compaction", () => {
     expect(compacted[0].content).toContain("older messages compacted");
     expect(compacted.at(-1)?.content).toContain("message-29");
   });
+
+  it("does not leave orphan tool outputs in provider history", () => {
+    const older: ProviderMessage[] = Array.from({ length: 4 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `old-${index}`,
+      parts: [{ type: "text", text: `old-${index}` }],
+    }));
+    const history: ProviderMessage[] = [
+      ...older,
+      {
+        role: "user",
+        content: "",
+        parts: [{
+          type: "function_response",
+          id: "call_older",
+          name: "desktop_read_file",
+          response: { success: true, output: "file text" },
+        }],
+      },
+    ];
+
+    const compacted = compactProviderHistory(history, 10_000);
+    const flatParts = compacted.flatMap((message) => message.parts || []);
+
+    expect(flatParts.some((part) => part.type === "function_response" && part.id === "call_older")).toBe(false);
+    expect(compacted.some((message) => message.content.includes("Tool result preserved from compacted history"))).toBe(true);
+  });
 });

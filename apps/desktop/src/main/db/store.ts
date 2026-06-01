@@ -106,6 +106,7 @@ export class DesktopStore {
       activeWorkspaceId,
       activeRun: null,
       activeRuns: [],
+      contextUsage: undefined,
       recoveryNotice: this.recoveryNotice,
     };
   }
