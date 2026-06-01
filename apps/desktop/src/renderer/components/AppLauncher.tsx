@@ -4,10 +4,12 @@ import type { WorkspaceOpenTargetInfo } from "../../shared/types";
 
 export function AppLauncher({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState(false);
-  const [targets, setTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
+  const [targets, setTargets] = useState<WorkspaceOpenTargetInfo[] | null>(null);
+  const loadingTargets = targets === null;
+  const visibleTargets = targets || [];
   const defaultTarget = useMemo(
-    () => targets.find((target) => target.isDefault) || targets[0] || fallbackTarget,
-    [targets],
+    () => visibleTargets.find((target) => target.isDefault) || visibleTargets[0] || fallbackTarget,
+    [visibleTargets],
   );
 
   useEffect(() => {
@@ -23,21 +25,26 @@ export function AppLauncher({ disabled }: { disabled: boolean }) {
     return () => {
       alive = false;
     };
-  }, [open]);
+  }, []);
 
   return (
     <div className="app-launcher">
       <button
         disabled={disabled}
         onClick={() => setOpen((value) => !value)}
-        title={`Open workspace in ${defaultTarget.label}`}
+        title={loadingTargets ? "Finding installed apps…" : `Open workspace in ${defaultTarget.label}`}
       >
-        <TargetIcon target={defaultTarget} size={18} />
+        {loadingTargets ? <span className="app-launcher-loading" aria-hidden="true" /> : <TargetIcon target={defaultTarget} size={18} />}
         <ChevronDown size={13} />
       </button>
       {open && (
         <div className="floating-menu launcher-menu">
-          {targets.map((target) => {
+          {loadingTargets ? (
+            <div className="launcher-menu-loading">
+              <span className="app-launcher-loading" aria-hidden="true" />
+              <span>Finding apps…</span>
+            </div>
+          ) : visibleTargets.map((target) => {
             return (
               <button
                 key={target.id}

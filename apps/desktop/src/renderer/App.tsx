@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
@@ -21,6 +21,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideWidth, setIdeWidth] = useState(620);
+  const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
+  const zoomToastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
     text: string;
@@ -96,6 +98,32 @@ export default function App() {
     setComposerDraft(null);
     setReviewSession(null);
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    const clearZoomToastTimers = () => {
+      zoomToastTimers.current.forEach((timer) => clearTimeout(timer));
+      zoomToastTimers.current = [];
+    };
+
+    const unsubscribe = window.privoraDesktop.onZoomChanged((percent) => {
+      clearZoomToastTimers();
+      const id = Date.now();
+      setZoomToast({ id, percent, visible: true });
+      zoomToastTimers.current = [
+        setTimeout(() => {
+          setZoomToast((current) => (current?.id === id ? { ...current, visible: false } : current));
+        }, 900),
+        setTimeout(() => {
+          setZoomToast((current) => (current?.id === id ? null : current));
+        }, 1120),
+      ];
+    });
+
+    return () => {
+      clearZoomToastTimers();
+      unsubscribe();
+    };
+  }, []);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
     try {
@@ -188,6 +216,11 @@ export default function App() {
       >
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
+      {zoomToast && (
+        <div className={zoomToast.visible ? "zoom-toast visible" : "zoom-toast"} role="status" aria-live="polite">
+          Zoom {zoomToast.percent}%
+        </div>
+      )}
       <Sidebar
         threads={snapshot.threads}
         workspaces={snapshot.workspaces}

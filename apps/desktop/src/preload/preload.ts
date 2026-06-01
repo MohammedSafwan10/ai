@@ -36,6 +36,11 @@ const api: PrivoraDesktopApi = {
   openExternalUrl: (url: string) => ipcRenderer.invoke(channels.openExternalUrl, url),
   listWorkspaceOpenTargets: () => ipcRenderer.invoke(channels.listWorkspaceOpenTargets),
   openWorkspaceTarget: (target) => ipcRenderer.invoke(channels.openWorkspaceTarget, target),
+  onZoomChanged: (callback: (percent: number) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, percent: number) => callback(percent);
+    ipcRenderer.on(channels.zoomChanged, listener);
+    return () => ipcRenderer.off(channels.zoomChanged, listener);
+  },
   onEvent: (callback: (event: DesktopEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: DesktopEvent) => callback(payload);
     ipcRenderer.on(channels.event, listener);

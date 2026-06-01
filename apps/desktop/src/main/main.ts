@@ -1,9 +1,11 @@
-import { app, BrowserWindow, nativeImage, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell } from "electron";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { DesktopStore } from "./db/store";
 import { AgentRuntime } from "./agent/runtime";
 import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
+import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -15,14 +17,80 @@ let runtime: AgentService | null = null;
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 1.7;
 const ZOOM_STEP = 0.1;
+const COMPACT_ZOOM_FACTOR = 0.84;
+const MEDIUM_ZOOM_FACTOR = 0.9;
+const LARGE_ZOOM_FACTOR = 1;
 const state: IpcState = {
   activeThreadId: null,
   activeWorkspaceId: null,
 };
-const singleInstanceLock = app.requestSingleInstanceLock();
+const isDevMode = Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+
+if (isDevMode) {
+  app.setName("Privora Dev");
+  app.setPath("userData", path.join(app.getPath("appData"), "Privora Dev"));
+}
+const singleInstanceLock = isDevMode ? true : app.requestSingleInstanceLock();
 
 const clampZoomFactor = (zoomFactor: number) => Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
+const zoomFactorToPercent = (zoomFactor: number) => Math.round(zoomFactor * 100);
+
+const getDefaultZoomFactor = (window?: BrowserWindow | null) => {
+  const display = window ? screen.getDisplayMatching(window.getBounds()) : screen.getPrimaryDisplay();
+  const { width, height } = display.workAreaSize;
+  const shortestSide = Math.min(width, height);
+
+  if (shortestSide <= 1080) return COMPACT_ZOOM_FACTOR;
+  if (shortestSide <= 1440) return MEDIUM_ZOOM_FACTOR;
+  return LARGE_ZOOM_FACTOR;
+};
 const appIcon = () => nativeImage.createFromPath(path.join(process.cwd(), "assets", "icon.png"));
+
+const setWindowZoom = (window: BrowserWindow, zoomFactor: number) => {
+  const nextZoomFactor = clampZoomFactor(Number(zoomFactor.toFixed(2)));
+  window.webContents.setZoomFactor(nextZoomFactor);
+  window.webContents.send(channels.zoomChanged, zoomFactorToPercent(nextZoomFactor));
+};
+
+const zoomWindowBy = (window: BrowserWindow, delta: number) => {
+  setWindowZoom(window, window.webContents.getZoomFactor() + delta);
+};
+
+const installApplicationMenu = () => {
+  const isMac = process.platform === "darwin";
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    { role: "fileMenu" },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Zoom In    Ctrl+=",
+          click: (_menuItem, window) => {
+            if (window instanceof BrowserWindow) zoomWindowBy(window, ZOOM_STEP);
+          },
+        },
+        {
+          label: "Zoom Out    Ctrl+-",
+          click: (_menuItem, window) => {
+            if (window instanceof BrowserWindow) zoomWindowBy(window, -ZOOM_STEP);
+          },
+        },
+        {
+          label: "Reset Zoom    Ctrl+0",
+          click: (_menuItem, window) => {
+            if (window instanceof BrowserWindow) setWindowZoom(window, getDefaultZoomFactor(window));
+          },
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "toggleDevTools" },
+      ],
+    },
+    { role: "windowMenu" },
+  ]));
+};
 
 const installWindowShortcuts = (window: BrowserWindow) => {
   window.webContents.on("before-input-event", (event, input) => {
@@ -39,12 +107,11 @@ const installWindowShortcuts = (window: BrowserWindow) => {
     event.preventDefault();
 
     if (isResetZoom) {
-      window.webContents.setZoomFactor(1);
+      setWindowZoom(window, getDefaultZoomFactor(window));
       return;
     }
 
-    const nextZoomFactor = window.webContents.getZoomFactor() + (isZoomIn ? ZOOM_STEP : -ZOOM_STEP);
-    window.webContents.setZoomFactor(clampZoomFactor(Number(nextZoomFactor.toFixed(2))));
+    zoomWindowBy(window, isZoomIn ? ZOOM_STEP : -ZOOM_STEP);
   });
 };
 
@@ -57,7 +124,7 @@ const isHttpUrl = (value: string) => {
   }
 };
 
-const installExternalNavigationGuards = (window: BrowserWindow) => {
+const installExternalNavigationGuards = (window: BrowserWindow, allowedProductionFileUrl?: string) => {
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -66,7 +133,7 @@ const installExternalNavigationGuards = (window: BrowserWindow) => {
   window.webContents.on("will-navigate", (event, url) => {
     const allowedAppUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
       ? url.startsWith(MAIN_WINDOW_VITE_DEV_SERVER_URL)
-      : url.startsWith("file://");
+      : Boolean(allowedProductionFileUrl && (url === allowedProductionFileUrl || url.startsWith(`${allowedProductionFileUrl}#`)));
     if (allowedAppUrl) return;
     event.preventDefault();
     if (isHttpUrl(url)) void shell.openExternal(url);
@@ -106,7 +173,9 @@ const createWindow = async () => {
     console.error(`[renderer:gone] ${details.reason}`);
   });
   installWindowShortcuts(mainWindow);
-  installExternalNavigationGuards(mainWindow);
+  setWindowZoom(mainWindow, getDefaultZoomFactor(mainWindow));
+  const rendererEntryPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
+  installExternalNavigationGuards(mainWindow, MAIN_WINDOW_VITE_DEV_SERVER_URL ? undefined : pathToFileURL(rendererEntryPath).toString());
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -117,7 +186,7 @@ const createWindow = async () => {
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
       await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
     } else {
-      await mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+      await mainWindow.loadFile(rendererEntryPath);
     }
   } catch (error) {
     if ((error as { code?: string })?.code === "ERR_ABORTED") return;
@@ -135,6 +204,7 @@ if (!singleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    installApplicationMenu();
     const icon = appIcon();
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
     store = new DesktopStore();

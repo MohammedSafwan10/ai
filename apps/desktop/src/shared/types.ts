@@ -636,6 +636,7 @@ export interface PrivoraDesktopApi {
   openExternalUrl(url: string): Promise<void>;
   listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;
   openWorkspaceTarget(target: WorkspaceOpenTarget): Promise<void>;
+  onZoomChanged(callback: (percent: number) => void): () => void;
   onEvent(callback: (event: DesktopEvent) => void): () => void;
 }
 

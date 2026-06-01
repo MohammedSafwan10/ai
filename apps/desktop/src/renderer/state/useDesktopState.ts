@@ -71,6 +71,7 @@ export const useDesktopState = () => {
   const [toast, setToast] = useState<string | null>(null);
   const queuedEventsRef = useRef<DesktopEvent[]>([]);
   const frameRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const eventStatsRef = useRef({ startedAt: performance.now(), events: 0, bytes: 0, flushes: 0 });
 
   const refresh = useCallback(async () => {
@@ -90,8 +91,12 @@ export const useDesktopState = () => {
 
   const enqueueEvent = useCallback((event: DesktopEvent) => {
     if (event.type === "toast") {
+      if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
       setToast(event.message);
-      window.setTimeout(() => setToast(null), 4500);
+      toastTimerRef.current = window.setTimeout(() => {
+        setToast(null);
+        toastTimerRef.current = null;
+      }, 4500);
       return;
     }
     queuedEventsRef.current.push(event);
@@ -109,6 +114,10 @@ export const useDesktopState = () => {
         frameRef.current = null;
       }
       queuedEventsRef.current = [];
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
     };
   }, [enqueueEvent, refresh]);
 

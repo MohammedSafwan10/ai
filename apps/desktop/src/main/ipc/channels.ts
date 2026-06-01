@@ -22,5 +22,6 @@ export const channels = {
   openExternalUrl: "desktop:openExternalUrl",
   listWorkspaceOpenTargets: "desktop:listWorkspaceOpenTargets",
   openWorkspaceTarget: "desktop:openWorkspaceTarget",
+  zoomChanged: "desktop:zoomChanged",
   event: "desktop:event",
 } as const;
