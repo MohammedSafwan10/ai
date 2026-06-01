@@ -75,12 +75,13 @@ const windowsTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
   const explorerPath = windowsSystemPath("explorer.exe");
   const vscodePath = await findWindowsVsCodePath();
   const terminalPath = await findWindowsTerminalPath();
+  const wslPath = await findWindowsWslPath();
   const powershellPath = windowsSystemPath(path.join("System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
   const gitBashPath = await findWindowsGitBashPath();
   const targets: WorkspaceOpenTargetInfo[] = [
     await nativeTarget("file_explorer", "File Explorer", "finder", explorerPath),
   ];
-  const apps = await discoverWindowsApps();
+  const apps = dedupeWindowsApps([...await discoverWindowsApps(), ...await discoverKnownWindowsApps()]);
   for (const item of apps) {
     targets.push(await nativeTarget(windowsAppId(item), item.name, inferredWindowsIcon(item), item.appPath, isWindowsVsCode(item)));
   }
@@ -91,6 +92,7 @@ const windowsTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
   if (gitBashPath && !apps.some((item) => item.appPath.toLowerCase() === gitBashPath.toLowerCase())) {
     targets.push(await nativeTarget("git_bash", "Git Bash", "terminal", gitBashPath));
   }
+  if (wslPath) targets.push(await nativeTarget("wsl", "WSL", "terminal", wslPath));
   return ensureDefault(sortTargets(dedupeTargets(targets)));
 };
 
@@ -144,6 +146,11 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
   if (target === "git_bash") {
     const gitBash = await findWindowsGitBashPath();
     if (gitBash) spawnDetached(gitBash, [`--cd=${workspacePath}`]);
+    return;
+  }
+  if (target === "wsl") {
+    const wslPath = await findWindowsWslPath();
+    if (wslPath) spawnDetached(wslPath, ["--cd", workspacePath]);
   }
 };
 
@@ -177,6 +184,25 @@ const discoverWindowsApps = async (): Promise<WindowsAppInfo[]> => {
     apps.push(appInfo);
   }
   return dedupeWindowsApps(apps);
+};
+
+const discoverKnownWindowsApps = async (): Promise<WindowsAppInfo[]> => {
+  const candidates: Array<{ name: string; appPath: string | null }> = [
+    { name: "VS Code", appPath: await findWindowsVsCodePath() },
+    { name: "Visual Studio", appPath: await findWindowsVisualStudioPath() },
+    { name: "Zed", appPath: await findWindowsZedPath() },
+    { name: "Antigravity", appPath: await findWindowsAntigravityPath() },
+    { name: "Android Studio", appPath: await findWindowsAndroidStudioPath() },
+    { name: "Cursor", appPath: await findWindowsNamedAppPath("Cursor", "Cursor.exe") },
+    { name: "Windsurf", appPath: await findWindowsNamedAppPath("Windsurf", "Windsurf.exe") },
+  ];
+  const apps: WindowsAppInfo[] = [];
+  for (const candidate of candidates) {
+    if (candidate.appPath && await exists(candidate.appPath)) {
+      apps.push({ name: candidate.name, appPath: candidate.appPath });
+    }
+  }
+  return apps;
 };
 
 const readWindowsStartMenuShortcuts = () => new Promise<WindowsShortcutInfo[]>((resolve) => {
@@ -258,7 +284,7 @@ const shouldShowWindowsApp = (item: WindowsAppInfo) => {
 };
 
 const windowsWorkspaceAppPattern =
-  /\b(visual studio code|code\.exe|cursor|windsurf|zed|visual studio\b|devenv\.exe|android studio|studio64\.exe|intellij|idea64\.exe|webstorm|pycharm|clion|rider|datagrip|goland|phpstorm|rubymine|fleet|sublime text|sublime_text\.exe|notepad\+\+|nvim|neovim|vim|emacs)\b/;
+  /\b(visual studio code|code\.exe|cursor|windsurf|zed|antigravity|visual studio\b|devenv\.exe|android studio|studio64\.exe|intellij|idea64\.exe|webstorm|pycharm|clion|rider|datagrip|goland|phpstorm|rubymine|fleet|sublime text|sublime_text\.exe|notepad\+\+|nvim|neovim|vim|emacs)\b/;
 
 const windowsExcludedAppPattern =
   /\b(uninstall|installer|install additional tools|manuals?|docs?|documentation|release notes|utility|media encoder|git cmd|git gui|node\.js|python|idle)\b/;
@@ -483,10 +509,111 @@ const findWindowsGitBashPath = async () => {
   return firstCommandPath("git-bash");
 };
 
+const findWindowsWslPath = async () => {
+  const candidates = [
+    windowsSystemPath(path.join("System32", "wsl.exe")),
+    windowsSystemPath(path.join("Sysnative", "wsl.exe")),
+    await firstCommandPath("wsl"),
+  ].filter((item): item is string => Boolean(item));
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+};
+
+const findWindowsVisualStudioPath = async () => {
+  const vswhere = path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe");
+  if (await exists(vswhere)) {
+    const productPath = await firstCommandOutput(vswhere, ["-latest", "-products", "*", "-property", "productPath"]);
+    if (productPath && await exists(productPath)) return productPath;
+  }
+  const roots = [
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "Microsoft Visual Studio"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Microsoft Visual Studio"),
+  ];
+  for (const root of roots) {
+    const match = await findWindowsExe(root, "devenv.exe", 5);
+    if (match) return match;
+  }
+  return firstCommandPath("devenv");
+};
+
+const findWindowsZedPath = async () =>
+  findFirstExistingPath([
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Zed", "Zed.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Zed", "bin", "Zed.exe"),
+    await firstCommandPath("zed"),
+    await firstCommandPath("Zed"),
+  ]);
+
+const findWindowsAntigravityPath = async () =>
+  findFirstExistingPath([
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Antigravity", "Antigravity.exe"),
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "Antigravity", "Antigravity.exe"),
+    await firstCommandPath("antigravity"),
+    await firstCommandPath("Antigravity"),
+  ]);
+
+const findWindowsAndroidStudioPath = async () =>
+  findFirstExistingPath([
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "Android", "Android Studio", "bin", "studio64.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Android", "Android Studio", "bin", "studio64.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Android", "Android Studio", "bin", "studio64.exe"),
+    await firstCommandPath("studio64"),
+  ]);
+
+const findWindowsNamedAppPath = async (folderName: string, exeName: string) =>
+  findFirstExistingPath([
+    path.join(process.env.LOCALAPPDATA || "", "Programs", folderName, exeName),
+    path.join(process.env.ProgramFiles || "C:\\Program Files", folderName, exeName),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", folderName, exeName),
+    await firstCommandPath(path.basename(exeName, ".exe")),
+  ]);
+
+const findFirstExistingPath = async (candidates: Array<string | null>) => {
+  for (const candidate of candidates) {
+    if (candidate && await exists(candidate)) return candidate;
+  }
+  return null;
+};
+
+const findWindowsExe = async (root: string, exeName: string, depth: number): Promise<string | null> => {
+  if (depth < 0 || !(await exists(root))) return null;
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === exeName.toLowerCase()) return fullPath;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const found = await findWindowsExe(path.join(root, entry.name), exeName, depth - 1);
+    if (found) return found;
+  }
+  return null;
+};
+
 const windowsSystemPath = (relativePath: string) => path.join(process.env.SystemRoot || "C:\\Windows", relativePath);
 
 const firstCommandPath = (command: string) => new Promise<string | null>((resolve) => {
   const child = spawn("where.exe", [command], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.on("error", () => resolve(null));
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      resolve(null);
+      return;
+    }
+    const first = output.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    resolve(first || null);
+  });
+});
+
+const firstCommandOutput = (command: string, args: string[]) => new Promise<string | null>((resolve) => {
+  const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
   let output = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -545,10 +672,16 @@ const preferredMacAppNames = new Set([
 const targetPriority = (target: WorkspaceOpenTargetInfo) => {
   const label = target.label.toLowerCase();
   if (target.preferred || label === "visual studio code" || label === "vs code" || label === "code") return 0;
-  if (target.id === "file_explorer") return 1;
-  if (target.id === "terminal" || label.includes("terminal") || label.includes("ghostty") || label.includes("iterm")) return 2;
-  if (label.includes("xcode") || label.includes("android studio")) return 3;
-  return 4;
+  if (label === "visual studio") return 1;
+  if (label === "zed") return 2;
+  if (label === "antigravity") return 3;
+  if (label.includes("cursor") || label.includes("windsurf")) return 4;
+  if (target.id === "file_explorer") return 5;
+  if (target.id === "terminal" || label.includes("terminal") || label.includes("ghostty") || label.includes("iterm")) return 6;
+  if (target.id === "git_bash" || label.includes("git bash")) return 7;
+  if (target.id === "wsl" || label === "wsl") return 8;
+  if (label.includes("xcode") || label.includes("android studio")) return 9;
+  return 10;
 };
 
 const sortTargets = (targets: WorkspaceOpenTargetInfo[]) => [...targets].sort((left, right) => {

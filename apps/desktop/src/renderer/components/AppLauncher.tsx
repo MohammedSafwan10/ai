@@ -4,28 +4,26 @@ import type { WorkspaceOpenTargetInfo } from "../../shared/types";
 
 export function AppLauncher({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [targets, setTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
   const defaultTarget = useMemo(
     () => targets.find((target) => target.isDefault) || targets[0] || fallbackTarget,
     [targets],
   );
-  const visibleTargets = expanded ? targets : targets.slice(0, 6);
-  const hiddenCount = Math.max(0, targets.length - visibleTargets.length);
 
   useEffect(() => {
     let alive = true;
-    void window.privoraDesktop.listWorkspaceOpenTargets()
+    const refreshTargets = () => window.privoraDesktop.listWorkspaceOpenTargets()
       .then((items) => {
         if (alive) setTargets(items);
       })
       .catch(() => {
         if (alive) setTargets([fallbackTarget]);
       });
+    void refreshTargets();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [open]);
 
   return (
     <div className="app-launcher">
@@ -39,7 +37,7 @@ export function AppLauncher({ disabled }: { disabled: boolean }) {
       </button>
       {open && (
         <div className="floating-menu launcher-menu">
-          {visibleTargets.map((target) => {
+          {targets.map((target) => {
             return (
               <button
                 key={target.id}
@@ -54,16 +52,6 @@ export function AppLauncher({ disabled }: { disabled: boolean }) {
               </button>
             );
           })}
-          {hiddenCount > 0 && (
-            <button
-              type="button"
-              className="launcher-show-more"
-              onClick={() => setExpanded(true)}
-            >
-              <span>Show more</span>
-              <small>{hiddenCount}</small>
-            </button>
-          )}
         </div>
       )}
     </div>
