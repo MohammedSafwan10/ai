@@ -11,6 +11,18 @@ import { normalizeProviderUsage } from "./usage";
 const responseReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
 
+export const cliproxyToolsForModel = (
+  _model: string,
+  collaborationMode: ProviderStreamOptions["collaborationMode"],
+) => [
+  ...desktopToolDefinitionsForMode(collaborationMode),
+  {
+    type: "web_search",
+    external_web_access: true,
+    search_content_types: ["text", "image"],
+  },
+];
+
 const toInput = (messages: ProviderMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
   messages.forEach((message) => {
@@ -116,7 +128,7 @@ export class CliproxyAdapter implements ProviderAdapter {
           : options.model,
         instructions: options.systemInstruction,
         input: toInput(options.messages),
-        tools: desktopToolDefinitionsForMode(options.collaborationMode),
+        tools: cliproxyToolsForModel(options.model, options.collaborationMode),
         parallel_tool_calls: true,
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),
