@@ -2,7 +2,8 @@ import { ArrowUp, AtSign, Blocks, Brain, Check, ChevronDown, ChevronRight, Clipb
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
-import type { ContextMentionRecord, ContextMentionSuggestion, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
+import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
+import { ContextMeter } from "./ContextMeter";
 
 interface ComposerProps {
   settings: SettingsRecord;
@@ -12,6 +13,7 @@ interface ComposerProps {
   stopping?: boolean;
   activeThreadId: string | null;
   promptHistory: string[];
+  contextUsage?: ContextUsageRecord;
   draft?: {
     id: number;
     text: string;
@@ -41,6 +43,7 @@ export function Composer({
   stopping = false,
   activeThreadId,
   promptHistory,
+  contextUsage,
   draft,
   onSubmit,
   onStop,
@@ -729,6 +732,7 @@ export function Composer({
               </div>
             )}
           </div>
+          <ContextMeter usage={contextUsage} modelContextWindow={activeModel.contextWindowTokens} attachedContextCount={contextMentions.length} />
           <button
             type="button"
             className={clsx("send-button", stopping && "is-stopping")}

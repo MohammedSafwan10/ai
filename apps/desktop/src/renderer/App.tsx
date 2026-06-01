@@ -1,29 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, BookOpen, Bot, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
+import { ChatShell } from "./features/chat/ChatShell";
+import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
+import { usePromptQueue } from "./features/chat/usePromptQueue";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
-import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, SubagentRecord } from "../shared/types";
-
-interface QueuedPrompt {
-  id: string;
-  prompt: string;
-  attachments?: DesktopAttachmentRecord[];
-  contextMentions?: ContextMentionRecord[];
-}
+import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput } from "../shared/types";
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [subagentDrawerOpen, setSubagentDrawerOpen] = useState(false);
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideWidth, setIdeWidth] = useState(620);
   const [composerDraft, setComposerDraft] = useState<{
@@ -32,17 +26,6 @@ export default function App() {
     attachments?: DesktopAttachmentRecord[];
     contextMentions?: ContextMentionRecord[];
   } | null>(null);
-  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
-  const [queuePaused, setQueuePaused] = useState(false);
-  const [queueExpanded, setQueueExpanded] = useState(false);
-  const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
-  const [showJumpButton, setShowJumpButton] = useState(false);
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const followBottomRef = useRef(true);
-  const manualScrollHoldUntilRef = useRef(0);
-  const userScrollLockRef = useRef(false);
-  const programmaticScrollRef = useRef(false);
-  const queuedSubmitInFlightRef = useRef(false);
   const runStatus = snapshot.activeRun?.status;
   const running =
     runStatus === "sampling" ||
@@ -52,7 +35,6 @@ export default function App() {
     runStatus === "awaiting_approval" ||
     runStatus === "draining" ||
     runStatus === "completing";
-  const stopping = Boolean(activeThread?.id && stoppingThreadId === activeThread.id && running);
   const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
   const messages = snapshot.messages;
   const promptHistory = useMemo(
@@ -67,36 +49,20 @@ export default function App() {
     [snapshot.toolEvents],
   );
   const latestActivityKey = `${messages[messages.length - 1]?.id || ""}:${messages[messages.length - 1]?.updatedAt || 0}:${lastToolUpdatedAt}:${snapshot.activeRun?.updatedAt || 0}`;
-  const messageVirtualizer = useVirtualizer({
-    count: messages.length,
-    getScrollElement: () => scrollerRef.current,
-    estimateSize: () => 190,
-    overscan: 6,
-    getItemKey: (index) => messages[index]?.id ?? index,
+  const {
+    handleMessagePointerDown,
+    handleMessageScroll,
+    handleMessageWheel,
+    messageVirtualizer,
+    scrollToLatestMessage,
+    scrollerRef,
+    showJumpButton,
+  } = useMessageAutoScroll({
+    activeThreadId: activeThread?.id || null,
+    latestActivityKey,
+    messages,
+    settingsOpen,
   });
-
-  const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
-    followBottomRef.current = true;
-    userScrollLockRef.current = false;
-    manualScrollHoldUntilRef.current = 0;
-    window.requestAnimationFrame(() => {
-      programmaticScrollRef.current = true;
-      if (messages.length > 0) {
-        messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-      } else {
-        scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior });
-      }
-      window.setTimeout(() => {
-        if (messages.length > 0) {
-          messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-        } else {
-          scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior });
-        }
-        programmaticScrollRef.current = false;
-      }, 90);
-      setShowJumpButton(false);
-    });
-  };
 
   const toolsByMessage = useMemo(() => {
     const map = new Map<string, typeof snapshot.toolEvents>();
@@ -126,52 +92,9 @@ export default function App() {
   }, [snapshot.settings.theme]);
 
   useEffect(() => {
-    if (settingsOpen) return;
-    if (userScrollLockRef.current) {
-      setShowJumpButton((value) => value ? value : true);
-      return;
-    }
-    if (Date.now() < manualScrollHoldUntilRef.current) {
-      setShowJumpButton((value) => value ? value : true);
-      return;
-    }
-    if (!followBottomRef.current || !scrollerRef.current) {
-      setShowJumpButton((value) => value ? value : true);
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      programmaticScrollRef.current = true;
-      if (messages.length > 0) {
-        messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-      } else {
-        scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-      }
-      window.setTimeout(() => {
-        programmaticScrollRef.current = false;
-      }, 90);
-      setShowJumpButton((value) => value && false);
-    });
-  }, [latestActivityKey, messages.length, settingsOpen]);
-
-  useEffect(() => {
-    if (settingsOpen) return;
-    if (userScrollLockRef.current) return;
-    scrollToLatestMessage();
-  }, [activeThread?.id, settingsOpen, messages.length]);
-
-  useEffect(() => {
     setComposerDraft(null);
     setReviewSession(null);
-    setQueuedPrompts([]);
-    setQueuePaused(false);
-    setQueueExpanded(false);
-    setStoppingThreadId(null);
-    queuedSubmitInFlightRef.current = false;
   }, [activeThread?.id]);
-
-  useEffect(() => {
-    if (queuedPrompts.length <= 1) setQueueExpanded(false);
-  }, [queuedPrompts.length]);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
     try {
@@ -183,32 +106,26 @@ export default function App() {
     }
   };
 
-  const startPrompt = async (prompt: string, attachments?: DesktopAttachmentRecord[], contextMentions?: ContextMentionRecord[]) => {
-    if (!activeThread) return false;
-    if (running) {
-      setQueuedPrompts((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          prompt,
-          attachments,
-          contextMentions,
-        },
-      ]);
-      return true;
-    }
-    void window.privoraDesktop.startTurn({ threadId: activeThread.id, prompt, attachments, contextMentions })
-      .catch((error) => {
-        console.error(error);
-        setComposerDraft({
-          id: Date.now(),
-          text: prompt,
-          attachments,
-          contextMentions,
-        });
-      });
-    return true;
-  };
+  const {
+    editQueuedPrompt,
+    queueExpanded,
+    queuePaused,
+    queuedHead,
+    queuedPrompts,
+    queuedRest,
+    removeQueuedPrompt,
+    runQueuedPrompt,
+    setQueueExpanded,
+    startPrompt,
+    stopActiveTurn,
+    stopping,
+  } = usePromptQueue({
+    activeThreadId: activeThread?.id || null,
+    running,
+    onDraft: setComposerDraft,
+    startTurn: window.privoraDesktop.startTurn,
+    stopTurn: window.privoraDesktop.stopTurn,
+  });
 
   const implementPlan = useCallback((plan: string) => {
     if (!activeThread) return;
@@ -233,65 +150,6 @@ export default function App() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!running && stoppingThreadId === activeThread?.id) setStoppingThreadId(null);
-  }, [activeThread?.id, running, stoppingThreadId]);
-
-  useEffect(() => {
-    if (running) queuedSubmitInFlightRef.current = false;
-    if (!activeThread || running || queuePaused || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
-    const [next, ...rest] = queuedPrompts;
-    queuedSubmitInFlightRef.current = true;
-    setQueuedPrompts(rest);
-    void window.privoraDesktop.startTurn({
-      threadId: activeThread.id,
-      prompt: next.prompt,
-      attachments: next.attachments,
-      contextMentions: next.contextMentions,
-    }).catch(() => {
-      queuedSubmitInFlightRef.current = false;
-      setQueuedPrompts((current) => [next, ...current]);
-    });
-  }, [activeThread, queuePaused, queuedPrompts, running]);
-
-  const runQueuedPrompt = (item: QueuedPrompt) => {
-    if (!activeThread || running || queuedSubmitInFlightRef.current) return;
-    queuedSubmitInFlightRef.current = true;
-    setQueuePaused(false);
-    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-    void window.privoraDesktop.startTurn({
-      threadId: activeThread.id,
-      prompt: item.prompt,
-      attachments: item.attachments,
-      contextMentions: item.contextMentions,
-    }).catch(() => {
-      queuedSubmitInFlightRef.current = false;
-      setQueuedPrompts((current) => [item, ...current]);
-      setQueuePaused(true);
-    });
-  };
-
-  const stopActiveTurn = () => {
-    if (!activeThread || stoppingThreadId === activeThread.id) return;
-    setStoppingThreadId(activeThread.id);
-    if (queuedPrompts.length > 0) setQueuePaused(true);
-    void window.privoraDesktop.stopTurn(activeThread.id);
-  };
-
-  const editQueuedPrompt = (item: QueuedPrompt) => {
-    setComposerDraft({
-      id: Date.now(),
-      text: item.prompt,
-      attachments: item.attachments,
-      contextMentions: item.contextMentions,
-    });
-    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-  };
-
-  const removeQueuedPrompt = (item: QueuedPrompt) => {
-    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-  };
-
   const openReviewInIde = (messageId: string) => {
     const tools = toolsByMessage.get(messageId) || [];
     setReviewSession(buildReviewSession({
@@ -301,9 +159,6 @@ export default function App() {
     }));
     setIdeCollapsed(false);
   };
-
-  const queuedHead = queuedPrompts[0] || null;
-  const queuedRest = queuedPrompts.slice(1);
 
   const startIdeResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -374,61 +229,17 @@ export default function App() {
         className={ideCollapsed ? "main-workspace ide-collapsed" : "main-workspace"}
         style={{ "--workspace-ide-width": `${ideWidth}px` } as CSSProperties}
       >
-      <main className={settingsOpen ? "chat-shell settings-open" : "chat-shell"}>
-        <header className="topbar">
-          <div className="topbar-title">
-            <h1>{activeThread?.title || "New chat"}</h1>
-          </div>
-          <div className="topbar-actions">
-            {snapshot.subagents.length > 0 && (
-              <button
-                type="button"
-                className="topbar-agent-button"
-                onClick={() => setSubagentDrawerOpen((value) => !value)}
-                title="Subagents"
-                aria-label="Subagents"
-              >
-                <Bot size={16} />
-                <span>{snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length || snapshot.subagents.length}</span>
-              </button>
-            )}
-          </div>
-        </header>
-
+      <ChatShell
+        title={activeThread?.title || "New chat"}
+        settingsOpen={settingsOpen}
+        toast={toast}
+        messageList={(
         <div
           className="message-list"
           ref={scrollerRef}
-          onWheel={(event) => {
-            if (event.deltaY < 0) {
-              userScrollLockRef.current = true;
-              manualScrollHoldUntilRef.current = Date.now() + 1200;
-              followBottomRef.current = false;
-            }
-          }}
-          onPointerDown={() => {
-            manualScrollHoldUntilRef.current = Date.now() + 900;
-          }}
-          onScroll={() => {
-            const scroller = scrollerRef.current;
-            if (!scroller) return;
-            const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-            if (!programmaticScrollRef.current) {
-              if (userScrollLockRef.current) {
-                if (distance < 24 && Date.now() >= manualScrollHoldUntilRef.current) {
-                  userScrollLockRef.current = false;
-                  followBottomRef.current = true;
-                } else {
-                  followBottomRef.current = false;
-                  setShowJumpButton((value) => value || distance > 96);
-                  return;
-                }
-              }
-              followBottomRef.current = distance < 96;
-              if (distance >= 96) manualScrollHoldUntilRef.current = Date.now() + 900;
-            }
-            const shouldShow = distance > 220;
-            setShowJumpButton((value) => value === shouldShow ? value : shouldShow);
-          }}
+          onWheel={handleMessageWheel}
+          onPointerDown={handleMessagePointerDown}
+          onScroll={handleMessageScroll}
         >
           {messages.length === 0 && (
             <EmptyThreadState
@@ -487,8 +298,9 @@ export default function App() {
             </div>
           )}
         </div>
-
-        <div className="composer-stack">
+        )}
+        composerStack={(
+        <>
           {snapshot.recoveryNotice && (
             <div className="recovery-notice" role="status">
               <strong>Data recovery used</strong>
@@ -629,6 +441,7 @@ export default function App() {
             stopping={stopping}
             activeThreadId={activeThread?.id || null}
             promptHistory={promptHistory}
+            contextUsage={snapshot.contextUsage}
             draft={composerDraft}
             onDraftConsumed={() => setComposerDraft(null)}
             onSubmit={startPrompt}
@@ -637,21 +450,19 @@ export default function App() {
             }}
             onSettings={saveSettings}
           />
-        </div>
-        {settingsOpen && (
-          <div className="settings-screen-layer">
-            <SettingsScreen
-              settings={snapshot.settings}
-              workspaceDisabled={!activeWorkspace}
-              open={settingsOpen}
-              onOpen={() => setSettingsOpen(true)}
-              onClose={() => setSettingsOpen(false)}
-              onSave={saveSettings}
-            />
-          </div>
+        </>
         )}
-        {toast && <div className="toast">{toast}</div>}
-      </main>
+        settingsLayer={(
+          <SettingsScreen
+            settings={snapshot.settings}
+            workspaceDisabled={!activeWorkspace}
+            open={settingsOpen}
+            onOpen={() => setSettingsOpen(true)}
+            onClose={() => setSettingsOpen(false)}
+            onSave={saveSettings}
+          />
+        )}
+      />
       <button
         type="button"
         className="ide-resizer"
@@ -678,44 +489,7 @@ export default function App() {
         </button>
       )}
       </div>
-      {subagentDrawerOpen && (
-        <SubagentDrawer
-          agents={snapshot.subagents}
-          onClose={() => setSubagentDrawerOpen(false)}
-        />
-      )}
     </div>
-  );
-}
-
-function SubagentDrawer({ agents, onClose }: { agents: SubagentRecord[]; onClose: () => void }) {
-  return (
-    <aside className="subagent-drawer" aria-label="Subagents">
-      <header>
-        <div>
-          <strong>Subagents</strong>
-          <span>{agents.length} child {agents.length === 1 ? "agent" : "agents"}</span>
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close subagents">
-          <X size={15} />
-        </button>
-      </header>
-      <div className="subagent-list">
-        {agents.map((agent) => (
-          <section className="subagent-card" key={agent.id}>
-            <div className="subagent-card-head">
-              <span className={`subagent-dot ${agent.status}`} />
-              <div>
-                <strong>{agent.agentNickname || agent.taskName}</strong>
-                <span>{agent.agentRole ? `${agent.agentRole} · ${agent.taskName}` : agent.taskName}</span>
-              </div>
-              <code>{agent.status}</code>
-            </div>
-            <p>{agent.lastPreview || agent.finalMessage || agent.prompt}</p>
-          </section>
-        ))}
-      </div>
-    </aside>
   );
 }
 

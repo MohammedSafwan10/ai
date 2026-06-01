@@ -104,6 +104,16 @@
   color: color-mix(in srgb, var(--privora-text) 72%, var(--privora-muted));
 }
 
+.assistant-run-chevron {
+  flex: 0 0 auto;
+  opacity: 0.8;
+  transition: transform 0.16s ease;
+}
+
+.assistant-run-chevron.closed {
+  transform: rotate(-90deg);
+}
+
 .chat-message.user .message-bubble {
   box-sizing: border-box;
   inline-size: fit-content;

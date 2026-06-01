@@ -1,0 +1,160 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput } from "../../../shared/types";
+
+export interface ComposerDraft {
+  id: number;
+  text: string;
+  attachments?: DesktopAttachmentRecord[];
+  contextMentions?: ContextMentionRecord[];
+}
+
+export interface QueuedPrompt {
+  id: string;
+  prompt: string;
+  attachments?: DesktopAttachmentRecord[];
+  contextMentions?: ContextMentionRecord[];
+}
+
+interface PromptQueueInput {
+  activeThreadId: string | null;
+  running: boolean;
+  onDraft: (draft: ComposerDraft | null) => void;
+  startTurn: (input: StartTurnInput) => Promise<void>;
+  stopTurn: (threadId: string) => Promise<void>;
+}
+
+export const usePromptQueue = ({
+  activeThreadId,
+  running,
+  onDraft,
+  startTurn,
+  stopTurn,
+}: PromptQueueInput) => {
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const [queuePaused, setQueuePaused] = useState(false);
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
+  const queuedSubmitInFlightRef = useRef(false);
+
+  const stopping = Boolean(activeThreadId && stoppingThreadId === activeThreadId && running);
+
+  useEffect(() => {
+    setQueuedPrompts([]);
+    setQueuePaused(false);
+    setQueueExpanded(false);
+    setStoppingThreadId(null);
+    queuedSubmitInFlightRef.current = false;
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (queuedPrompts.length <= 1) setQueueExpanded(false);
+  }, [queuedPrompts.length]);
+
+  useEffect(() => {
+    if (!running && stoppingThreadId === activeThreadId) setStoppingThreadId(null);
+  }, [activeThreadId, running, stoppingThreadId]);
+
+  const startPrompt = useCallback(async (
+    prompt: string,
+    attachments?: DesktopAttachmentRecord[],
+    contextMentions?: ContextMentionRecord[],
+  ) => {
+    if (!activeThreadId) return false;
+    if (running) {
+      setQueuedPrompts((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          prompt,
+          attachments,
+          contextMentions,
+        },
+      ]);
+      return true;
+    }
+    void startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions })
+      .catch((error) => {
+        console.error(error);
+        onDraft({
+          id: Date.now(),
+          text: prompt,
+          attachments,
+          contextMentions,
+        });
+      });
+    return true;
+  }, [activeThreadId, onDraft, running, startTurn]);
+
+  useEffect(() => {
+    if (running) queuedSubmitInFlightRef.current = false;
+    if (!activeThreadId || running || queuePaused || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
+    const [next, ...rest] = queuedPrompts;
+    queuedSubmitInFlightRef.current = true;
+    setQueuedPrompts(rest);
+    void startTurn({
+      threadId: activeThreadId,
+      prompt: next.prompt,
+      attachments: next.attachments,
+      contextMentions: next.contextMentions,
+    }).catch(() => {
+      queuedSubmitInFlightRef.current = false;
+      setQueuedPrompts((current) => [next, ...current]);
+    });
+  }, [activeThreadId, queuePaused, queuedPrompts, running, startTurn]);
+
+  const runQueuedPrompt = useCallback((item: QueuedPrompt) => {
+    if (!activeThreadId || running || queuedSubmitInFlightRef.current) return;
+    queuedSubmitInFlightRef.current = true;
+    setQueuePaused(false);
+    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+    void startTurn({
+      threadId: activeThreadId,
+      prompt: item.prompt,
+      attachments: item.attachments,
+      contextMentions: item.contextMentions,
+    }).catch(() => {
+      queuedSubmitInFlightRef.current = false;
+      setQueuedPrompts((current) => [item, ...current]);
+      setQueuePaused(true);
+    });
+  }, [activeThreadId, running, startTurn]);
+
+  const stopActiveTurn = useCallback(() => {
+    if (!activeThreadId || stoppingThreadId === activeThreadId) return;
+    setStoppingThreadId(activeThreadId);
+    if (queuedPrompts.length > 0) setQueuePaused(true);
+    void stopTurn(activeThreadId);
+  }, [activeThreadId, queuedPrompts.length, stoppingThreadId, stopTurn]);
+
+  const editQueuedPrompt = useCallback((item: QueuedPrompt) => {
+    onDraft({
+      id: Date.now(),
+      text: item.prompt,
+      attachments: item.attachments,
+      contextMentions: item.contextMentions,
+    });
+    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+  }, [onDraft]);
+
+  const removeQueuedPrompt = useCallback((item: QueuedPrompt) => {
+    setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+  }, []);
+
+  const queuedHead = queuedPrompts[0] || null;
+  const queuedRest = useMemo(() => queuedPrompts.slice(1), [queuedPrompts]);
+
+  return {
+    editQueuedPrompt,
+    queueExpanded,
+    queuePaused,
+    queuedHead,
+    queuedPrompts,
+    queuedRest,
+    removeQueuedPrompt,
+    runQueuedPrompt,
+    setQueueExpanded,
+    startPrompt,
+    stopActiveTurn,
+    stopping,
+  };
+};

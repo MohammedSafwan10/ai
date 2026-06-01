@@ -66,10 +66,6 @@ function ChatMessageComponent({
     () => splitAssistantActivityAndFinalText(renderParts),
     [renderParts],
   );
-  const pinnedToolActivityParts = useMemo(
-    () => activityParts.filter((part): part is Extract<AssistantRenderPart, { type: "tools" }> => part.type === "tools"),
-    [activityParts],
-  );
   const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
   const activityNeedsAttention = renderParts.some((part) =>
     part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed")
@@ -152,21 +148,6 @@ function ChatMessageComponent({
                             </div>
                           );
                         })}
-                      </div>
-                    )}
-                    {!activityOpen && pinnedToolActivityParts.length > 0 && (
-                      <div className="assistant-activity-block assistant-activity-pinned">
-                        {pinnedToolActivityParts.map((part) => (
-                          <ToolTimeline
-                            key={part.key}
-                            tools={part.tools}
-                            subagents={subagents}
-                            messageStatus={message.status}
-                            defaultOpen
-                            onApprove={onApprove}
-                            onApproveAll={onApproveAll}
-                          />
-                        ))}
                       </div>
                     )}
                     {finalTextParts.map((part) => (
@@ -475,8 +456,14 @@ function AssistantRunMeta({
   return (
     <div className="assistant-run-meta">
       {hasActivity ? (
-        <button type="button" className="assistant-run-toggle" onClick={onToggleActivity}>
+        <button
+          type="button"
+          className="assistant-run-toggle"
+          aria-expanded={activityOpen}
+          onClick={onToggleActivity}
+        >
           <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
+          <ChevronDown className={clsx("assistant-run-chevron", !activityOpen && "closed")} size={14} />
         </button>
       ) : (
         <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>

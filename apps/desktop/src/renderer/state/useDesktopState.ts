@@ -40,6 +40,7 @@ const emptySnapshot: AppSnapshot = {
   activeWorkspaceId: null,
   activeRun: null,
   activeRuns: [],
+  contextUsage: undefined,
 };
 
 type ThreadBuckets<T> = Record<string, T[]>;
@@ -160,6 +161,12 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       if (turnUndosByThread !== next.turnUndosByThread || turnUndos !== next.turnUndos) next = { ...next, turnUndosByThread, turnUndos };
       continue;
     }
+    if (event.type === "context_usage_updated") {
+      if (event.usage.threadId === next.activeThreadId) {
+        next = { ...next, contextUsage: event.usage };
+      }
+      continue;
+    }
     if (event.type === "run_state") {
       const activeRunsByThread = { ...next.activeRunsByThread };
       if (next.activeRun) activeRunsByThread[next.activeRun.threadId] = next.activeRun;
@@ -250,6 +257,9 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): Deskt
     toolEvents: activeThreadId ? toolEventsByThread[activeThreadId] || [] : [],
     turnUndos: activeThreadId ? turnUndosByThread[activeThreadId] || [] : [],
     subagents: activeThreadId ? subagentsByThread[activeThreadId] || [] : [],
+    contextUsage: snapshot.contextUsage || (
+      current.contextUsage?.threadId === activeThreadId ? current.contextUsage : undefined
+    ),
     activeRun: activeThreadId ? activeRunsByThread[activeThreadId] || null : null,
     activeRuns: Object.values(activeRunsByThread),
     messagesByThread,
@@ -267,6 +277,7 @@ export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] =>
   let messages = new Map<string, ChatMessageRecord>();
   let tools = new Map<string, ToolEventRecord>();
   let undos = new Map<string, TurnUndoRecord>();
+  let contextUsage: Extract<DesktopEvent, { type: "context_usage_updated" }> | null = null;
   let runStates = new Map<string, Extract<DesktopEvent, { type: "run_state" }>>();
   const commandDeltas = new Map<string, string>();
 
@@ -274,11 +285,13 @@ export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] =>
     messages.forEach((message) => coalesced.push({ type: "message_updated", message }));
     tools.forEach((tool) => coalesced.push({ type: "tool_updated", tool }));
     undos.forEach((undo) => coalesced.push({ type: "turn_undo_updated", undo }));
+    if (contextUsage) coalesced.push(contextUsage);
     commandDeltas.forEach((delta, callId) => coalesced.push({ type: "command_output_delta", callId, delta }));
     runStates.forEach((event) => coalesced.push(event));
     messages = new Map();
     tools = new Map();
     undos = new Map();
+    contextUsage = null;
     runStates = new Map();
     commandDeltas.clear();
   };
@@ -299,6 +312,10 @@ export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] =>
     }
     if (event.type === "turn_undo_updated") {
       undos.set(event.undo.id, event.undo);
+      continue;
+    }
+    if (event.type === "context_usage_updated") {
+      contextUsage = event;
       continue;
     }
     if (event.type === "run_state") {

@@ -603,6 +603,124 @@
   justify-content: flex-end;
 }
 
+.context-meter-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.context-meter {
+  --context-ring: #15b97a;
+  --context-percent: 100%;
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 66%, transparent);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, var(--privora-surface) 90%, transparent) 58%, transparent 60%),
+    conic-gradient(var(--context-ring) var(--context-percent), color-mix(in srgb, var(--privora-border) 42%, transparent) 0);
+  color: color-mix(in srgb, var(--privora-text) 82%, var(--privora-muted));
+  padding: 0;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.context-meter.tone-warn {
+  --context-ring: #d4951b;
+}
+
+.context-meter.tone-danger {
+  --context-ring: var(--danger);
+}
+
+.context-meter-wrap.is-estimated .context-meter {
+  opacity: 0.78;
+  filter: saturate(0.82);
+}
+
+.context-meter-popover {
+  position: absolute;
+  right: 0;
+  bottom: 42px;
+  display: grid;
+  width: 250px;
+  gap: 8px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 64%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--privora-surface) 96%, transparent);
+  box-shadow: 0 16px 42px color-mix(in srgb, var(--privora-text) 12%, transparent);
+  padding: 10px;
+  backdrop-filter: blur(14px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 30;
+}
+
+.context-meter-wrap:hover .context-meter-popover,
+.context-meter-wrap:focus-within .context-meter-popover {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.context-meter-popover-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.context-meter-popover-title strong {
+  color: var(--privora-text);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.context-meter-popover-title span {
+  color: var(--privora-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.context-meter-popover dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.context-meter-popover dl > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.context-meter-popover dt,
+.context-meter-popover dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.context-meter-popover dt {
+  color: var(--privora-muted);
+}
+
+.context-meter-popover dd {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tool-pill,
 .model-button,
 .reasoning-button {
