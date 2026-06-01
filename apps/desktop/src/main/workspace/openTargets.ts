@@ -81,7 +81,7 @@ const windowsTargets = async (): Promise<WorkspaceOpenTargetInfo[]> => {
   const targets: WorkspaceOpenTargetInfo[] = [
     await nativeTarget("file_explorer", "File Explorer", "finder", explorerPath),
   ];
-  const apps = dedupeWindowsApps([...await discoverWindowsApps(), ...await discoverKnownWindowsApps()]);
+  const apps = await discoverWindowsOpenableApps();
   for (const item of apps) {
     targets.push(await nativeTarget(windowsAppId(item), item.name, inferredWindowsIcon(item), item.appPath, isWindowsVsCode(item)));
   }
@@ -119,7 +119,7 @@ const openMacTarget = async (targetId: WorkspaceOpenTarget, workspacePath: strin
 const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: string) => {
   if (target.startsWith("win-app:")) {
     const appPath = decodeWindowsAppId(target);
-    const apps = await discoverWindowsApps();
+    const apps = await discoverWindowsOpenableApps();
     const appInfo = apps.find((item) => appPath && item.appPath.toLowerCase() === appPath.toLowerCase());
     if (appInfo) spawnDetached(appInfo.appPath, [workspacePath]);
     return;
@@ -150,7 +150,13 @@ const openWindowsTarget = async (target: WorkspaceOpenTarget, workspacePath: str
   }
   if (target === "wsl") {
     const wslPath = await findWindowsWslPath();
-    if (wslPath) spawnDetached(wslPath, ["--cd", workspacePath]);
+    if (!wslPath) return;
+    const terminalPath = await findWindowsTerminalPath();
+    if (terminalPath) {
+      spawnDetached(terminalPath, ["-d", workspacePath, wslPath, "--cd", workspacePath]);
+      return;
+    }
+    spawnDetached("cmd.exe", ["/c", "start", "", wslPath, "--cd", workspacePath]);
   }
 };
 
@@ -186,20 +192,38 @@ const discoverWindowsApps = async (): Promise<WindowsAppInfo[]> => {
   return dedupeWindowsApps(apps);
 };
 
-const discoverKnownWindowsApps = async (): Promise<WindowsAppInfo[]> => {
-  const candidates: Array<{ name: string; appPath: string | null }> = [
-    { name: "VS Code", appPath: await findWindowsVsCodePath() },
-    { name: "Visual Studio", appPath: await findWindowsVisualStudioPath() },
-    { name: "Zed", appPath: await findWindowsZedPath() },
-    { name: "Antigravity", appPath: await findWindowsAntigravityPath() },
-    { name: "Android Studio", appPath: await findWindowsAndroidStudioPath() },
-    { name: "Cursor", appPath: await findWindowsNamedAppPath("Cursor", "Cursor.exe") },
-    { name: "Windsurf", appPath: await findWindowsNamedAppPath("Windsurf", "Windsurf.exe") },
-  ];
+const discoverWindowsOpenableApps = async () =>
+  dedupeWindowsApps([
+    ...await discoverWindowsApps(),
+    ...await discoverWindowsPathApps(),
+    ...await discoverWindowsInstallApps(),
+  ]).filter(shouldShowWindowsApp);
+
+const discoverWindowsPathApps = async (): Promise<WindowsAppInfo[]> => {
   const apps: WindowsAppInfo[] = [];
-  for (const candidate of candidates) {
-    if (candidate.appPath && await exists(candidate.appPath)) {
-      apps.push({ name: candidate.name, appPath: candidate.appPath });
+  const commands = ["code", "zed", "antigravity", "cursor", "windsurf", "devenv", "studio64", "idea64", "webstorm64", "pycharm64", "rider64"];
+  for (const command of commands) {
+    const commandPath = await firstCommandPath(command);
+    const appPath = commandPath ? await resolveWindowsLauncherPath(commandPath) : null;
+    if (appPath) apps.push({ name: windowsAppNameFromPath(appPath), appPath });
+  }
+  const visualStudioPath = await findWindowsVisualStudioPath();
+  if (visualStudioPath) apps.push({ name: windowsAppNameFromPath(visualStudioPath), appPath: visualStudioPath });
+  return apps;
+};
+
+const discoverWindowsInstallApps = async (): Promise<WindowsAppInfo[]> => {
+  const roots = windowsInstallRoots();
+  const apps: WindowsAppInfo[] = [];
+  for (const root of roots) {
+    if (!(await exists(root))) continue;
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const appRoot = path.join(root, entry.name);
+      if (!shouldInspectWindowsInstallDir(appRoot)) continue;
+      const exePath = await bestWindowsAppExe(appRoot, 5);
+      if (exePath) apps.push({ name: windowsAppNameFromPath(exePath), appPath: exePath });
     }
   }
   return apps;
@@ -288,6 +312,65 @@ const windowsWorkspaceAppPattern =
 
 const windowsExcludedAppPattern =
   /\b(uninstall|installer|install additional tools|manuals?|docs?|documentation|release notes|utility|media encoder|git cmd|git gui|node\.js|python|idle)\b/;
+
+const windowsInstallRoots = () => [
+  process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs") : null,
+  process.env.ProgramFiles || "C:\\Program Files",
+  process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+].filter((item): item is string => Boolean(item));
+
+const shouldInspectWindowsInstallDir = (appRoot: string) => {
+  const lower = appRoot.toLowerCase();
+  if (windowsInstallDirExcludedPattern.test(lower)) return false;
+  return windowsInstallDirPattern.test(lower);
+};
+
+const windowsInstallDirPattern =
+  /\b(code|cursor|windsurf|zed|antigravity|visual studio|android|jetbrains|intellij|webstorm|pycharm|clion|rider|datagrip|goland|phpstorm|rubymine|fleet|sublime|notepad\+\+|neovim|vim|emacs)\b/;
+
+const windowsInstallDirExcludedPattern =
+  /\b(common files|windows|windows nt|windows defender|internet explorer|microsoft office|microsoft sdk|reference assemblies|nodejs|python|adobe|google|bravesoftware|opera|epic games|steam|nvidia|blackmagic|borisfx|red giant|topaz|winrar|7-zip|vlc|videolan)\b/;
+
+const bestWindowsAppExe = async (root: string, depth: number) => {
+  const matches = await findWindowsExes(root, depth);
+  return matches
+    .filter((item) => !windowsExeExcludedPattern.test(item.toLowerCase()))
+    .sort((left, right) => windowsExeScore(right, root) - windowsExeScore(left, root))[0] || null;
+};
+
+const windowsExeExcludedPattern =
+  /\b(unins|uninstall|installer|setup|update|updater|helper|elevate|language_server|webm_encoder|openconsole|crashpad|service|daemon|cli|cmd)\b/;
+
+const windowsExeScore = (exePath: string, root: string) => {
+  const lower = exePath.toLowerCase();
+  const rootName = path.basename(root).toLowerCase().replace(/\s+/g, "");
+  const exeName = path.basename(exePath, ".exe").toLowerCase().replace(/\s+/g, "");
+  let score = 0;
+  if (exeName === rootName) score += 8;
+  if (lower.includes(`${path.sep}bin${path.sep}`)) score += 2;
+  if (windowsWorkspaceAppPattern.test(lower)) score += 4;
+  if (lower.includes("resources")) score -= 3;
+  return score;
+};
+
+const windowsAppNameFromPath = (appPath: string) => {
+  const lower = appPath.toLowerCase();
+  if (lower.includes("microsoft vs code") || path.basename(appPath).toLowerCase() === "code.exe") return "VS Code";
+  if (lower.includes("visual studio") || path.basename(appPath).toLowerCase() === "devenv.exe") return "Visual Studio";
+  if (lower.includes("android studio") || path.basename(appPath).toLowerCase() === "studio64.exe") return "Android Studio";
+  const exeName = path.basename(appPath, ".exe");
+  return exeName.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const resolveWindowsLauncherPath = async (launcherPath: string) => {
+  if (path.extname(launcherPath).toLowerCase() === ".exe") return launcherPath;
+  const exeName = `${path.basename(launcherPath, path.extname(launcherPath))}.exe`;
+  const candidates = [
+    path.resolve(path.dirname(launcherPath), "..", exeName),
+    path.join(path.dirname(launcherPath), exeName),
+  ];
+  return findFirstExistingPath(candidates);
+};
 
 const inferredWindowsIcon = (item: WindowsAppInfo): WorkspaceOpenTargetInfo["icon"] => {
   const haystack = `${item.name} ${item.appPath}`.toLowerCase();
@@ -468,20 +551,11 @@ const runQuiet = (command: string, args: string[]) => new Promise<boolean>((reso
 });
 
 const findWindowsVsCodePath = async () => {
-  const candidates = [
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "Code.exe"),
-    path.join(process.env.ProgramFiles || "C:\\Program Files", "Microsoft VS Code", "Code.exe"),
-    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Microsoft VS Code", "Code.exe"),
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code Insiders", "Code - Insiders.exe"),
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (await exists(candidate)) return candidate;
-  }
   const commandPath = await firstCommandPath("code");
-  if (!commandPath) return null;
-  if (path.basename(commandPath).toLowerCase() === "code.exe") return commandPath;
-  const inferred = path.resolve(path.dirname(commandPath), "..", "Code.exe");
-  return await exists(inferred) ? inferred : null;
+  const launcherPath = commandPath ? await resolveWindowsLauncherPath(commandPath) : null;
+  if (launcherPath) return launcherPath;
+  const app = (await discoverWindowsInstallApps()).find(isWindowsVsCode);
+  return app?.appPath || null;
 };
 
 const findWindowsTerminalPath = async () => {
@@ -538,38 +612,6 @@ const findWindowsVisualStudioPath = async () => {
   return firstCommandPath("devenv");
 };
 
-const findWindowsZedPath = async () =>
-  findFirstExistingPath([
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Zed", "Zed.exe"),
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Zed", "bin", "Zed.exe"),
-    await firstCommandPath("zed"),
-    await firstCommandPath("Zed"),
-  ]);
-
-const findWindowsAntigravityPath = async () =>
-  findFirstExistingPath([
-    path.join(process.env.LOCALAPPDATA || "", "Programs", "Antigravity", "Antigravity.exe"),
-    path.join(process.env.ProgramFiles || "C:\\Program Files", "Antigravity", "Antigravity.exe"),
-    await firstCommandPath("antigravity"),
-    await firstCommandPath("Antigravity"),
-  ]);
-
-const findWindowsAndroidStudioPath = async () =>
-  findFirstExistingPath([
-    path.join(process.env.ProgramFiles || "C:\\Program Files", "Android", "Android Studio", "bin", "studio64.exe"),
-    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Android", "Android Studio", "bin", "studio64.exe"),
-    path.join(process.env.LOCALAPPDATA || "", "Android", "Android Studio", "bin", "studio64.exe"),
-    await firstCommandPath("studio64"),
-  ]);
-
-const findWindowsNamedAppPath = async (folderName: string, exeName: string) =>
-  findFirstExistingPath([
-    path.join(process.env.LOCALAPPDATA || "", "Programs", folderName, exeName),
-    path.join(process.env.ProgramFiles || "C:\\Program Files", folderName, exeName),
-    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", folderName, exeName),
-    await firstCommandPath(path.basename(exeName, ".exe")),
-  ]);
-
 const findFirstExistingPath = async (candidates: Array<string | null>) => {
   for (const candidate of candidates) {
     if (candidate && await exists(candidate)) return candidate;
@@ -590,6 +632,23 @@ const findWindowsExe = async (root: string, exeName: string, depth: number): Pro
     if (found) return found;
   }
   return null;
+};
+
+const findWindowsExes = async (root: string, depth: number): Promise<string[]> => {
+  if (depth < 0 || !(await exists(root))) return [];
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const found: string[] = [];
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".exe")) {
+      found.push(fullPath);
+      continue;
+    }
+    if (entry.isDirectory()) {
+      found.push(...await findWindowsExes(fullPath, depth - 1));
+    }
+  }
+  return found;
 };
 
 const windowsSystemPath = (relativePath: string) => path.join(process.env.SystemRoot || "C:\\Windows", relativePath);
