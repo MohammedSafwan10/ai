@@ -201,7 +201,7 @@ function ToolTitleLine({
   onToggle: () => void;
 }) {
   const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool);
-  const preview = canExpand && !isQuestionTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
+  const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
   if (!canExpand) {
     return (
       <div className="tool-title-line">
@@ -237,23 +237,22 @@ function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagen
   return (
     <div className="subagent-inspector">
       {visibleAgents.map((agent) => {
-        const preview = agent.finalMessage || agent.lastPreview || agent.prompt;
+        const preview = usefulSubagentPreview(agent, tool);
+        const compactSingleAgent = visibleAgents.length === 1 && tool.name !== "list_agents" && tool.name !== "wait_agent";
         return (
           <section key={agent.id || agent.threadId || agent.agentPath}>
-            <div className="subagent-inspector-head">
-              <span className={clsx("subagent-dot", agent.status)} />
-              <strong>{formatSubagentName(agent)}</strong>
-              <code>{agent.status}</code>
-            </div>
-            <dl>
-              <div>
-                <dt>Path</dt>
-                <dd>{agent.agentPath}</dd>
+            {!compactSingleAgent && (
+              <div className="subagent-inspector-head">
+                <span className={clsx("subagent-dot", agent.status)} />
+                <strong>{formatSubagentName(agent)}</strong>
+                <code>{agent.status}</code>
               </div>
-              {agent.agentRole && (
+            )}
+            <dl>
+              {!compactSingleAgent && (
                 <div>
-                  <dt>Role</dt>
-                  <dd>{agent.agentRole}</dd>
+                  <dt>Path</dt>
+                  <dd>{agent.agentPath}</dd>
                 </div>
               )}
               <div>
@@ -562,6 +561,15 @@ const formatSubagentName = (agent: SubagentRecord) => {
 const compactSubagentPreview = (value: string) => {
   const trimmed = value.trim();
   return trimmed.length <= 1600 ? trimmed : `${trimmed.slice(0, 1599)}...`;
+};
+
+const usefulSubagentPreview = (agent: SubagentRecord, tool: ToolEventRecord) => {
+  const preview = (agent.finalMessage || agent.lastPreview || "").trim();
+  const prompt = agent.prompt.trim();
+  const output = displayOutput(tool).trim();
+  if (!preview || preview === prompt || preview === output) return "";
+  if (/^(spawned|assigned task to|sent message to|queued task for|closed)\b/i.test(preview)) return "";
+  return preview;
 };
 
 const stringValue = (value: unknown) =>
