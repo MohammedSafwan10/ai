@@ -52,18 +52,19 @@
 
 .topbar-icon-button {
   display: inline-grid;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   place-items: center;
-  border: 1px solid var(--privora-border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--privora-surface) 58%, transparent);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--privora-muted);
   padding: 0;
 }
 
 .topbar-icon-button:hover {
   color: var(--privora-text);
+  background: color-mix(in srgb, var(--privora-surface) 28%, transparent);
 }
 
 .topbar-icon-button:disabled {
@@ -129,10 +130,10 @@
   top: 42px;
   right: 0;
   width: 340px;
-  border: 1px solid var(--privora-border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--privora-surface) 94%, transparent);
-  box-shadow: var(--privora-shadow);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 66%, transparent);
+  border-radius: 18px;
+  background: var(--privora-surface);
+  box-shadow: 0 22px 70px color-mix(in srgb, #000 22%, transparent);
 }
 
 .settings-popover {
@@ -157,9 +158,9 @@
 
 .floating-menu {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   width: 238px;
-  padding: 7px;
+  padding: 9px;
 }
 
 .floating-menu button {
@@ -168,11 +169,15 @@
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  border-radius: 8px;
+  border-radius: 11px;
   background: transparent;
   color: var(--privora-text);
-  padding: 9px 10px;
+  padding: 9px 11px;
   text-align: left;
+}
+
+.floating-menu button:hover {
+  background: color-mix(in srgb, var(--privora-text) 10%, transparent);
 }
 
 .launcher-menu button {
@@ -837,4 +842,3 @@
     grid-template-columns: 1fr;
   }
 }
-

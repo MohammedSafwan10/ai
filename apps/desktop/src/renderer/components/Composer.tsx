@@ -1,7 +1,7 @@
-import { AtSign, Brain, BrainCircuit, Check, ChevronDown, ClipboardList, FileText, FolderOpen, ImagePlus, Maximize2, Minimize2, Search, Send, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { ArrowUp, AtSign, Blocks, Brain, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, FileText, FolderOpen, Maximize2, Minimize2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getModelOption, getModelProviderGroups, type CollaborationMode, type PermissionMode, type ReasoningEffort } from "../../shared/models";
+import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 
 interface ComposerProps {
@@ -30,6 +30,8 @@ interface PastedBlock {
   text: string;
   createdAt: number;
 }
+
+type ComposerMenu = "tools" | "access" | "model" | "reasoning";
 
 export function Composer({
   settings,
@@ -60,10 +62,9 @@ export function Composer({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
-  const [accessMenuOpen, setAccessMenuOpen] = useState(false);
-  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
+  const [pursueGoal, setPursueGoal] = useState(false);
+  const composerRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastHistoryTextRef = useRef<string | null>(null);
@@ -80,8 +81,37 @@ export function Composer({
   const lineCount = value ? value.split(/\r?\n/).length : 0;
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
+  const toggleMenu = (menu: ComposerMenu) => {
+    setActiveMenu((current) => current === menu ? null : menu);
+    setHistorySearchOpen(false);
+    setMentionToken(null);
+    setMentionSuggestions([]);
+  };
+
+  const closeComposerPopovers = () => {
+    setActiveMenu(null);
+    setHistorySearchOpen(false);
+    setMentionToken(null);
+    setMentionSuggestions([]);
+  };
+
   useEffect(() => {
     setPersistedPromptHistory(readPromptHistory());
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!composerRef.current?.contains(event.target as Node)) closeComposerPopovers();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeComposerPopovers();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
 
   useEffect(() => {
@@ -105,6 +135,7 @@ export function Composer({
     lastHistoryTextRef.current = null;
     setHistorySearchOpen(false);
     setHistorySearchQuery("");
+    setActiveMenu(null);
   }, [activeThreadId]);
 
   useEffect(() => {
@@ -313,8 +344,38 @@ export function Composer({
     }
   };
 
+  const attachLatestTerminal = async () => {
+    if (!activeThreadId) {
+      setAttachmentError("Open a thread before attaching terminal output.");
+      return;
+    }
+    try {
+      const suggestions = await window.privoraDesktop.searchContextMentions({ threadId: activeThreadId, query: "terminal:" });
+      const terminal = suggestions.find((suggestion) => suggestion.type === "terminal");
+      if (!terminal) {
+        setAttachmentError("No terminal output is available to attach yet.");
+        setActiveMenu(null);
+        return;
+      }
+      setContextMentions((current) => current.some((item) => item.id === terminal.id) ? current : [
+        ...current,
+        {
+          id: terminal.id,
+          type: "terminal",
+          label: terminal.label,
+          createdAt: Date.now(),
+        },
+      ]);
+      setAttachmentError(null);
+      setActiveMenu(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : "Could not attach terminal output.");
+    }
+  };
+
   return (
     <form
+      ref={composerRef}
       className={clsx("composer", dragging && "is-dragging", expanded && "is-expanded")}
       onSubmit={(event) => {
         event.preventDefault();
@@ -335,7 +396,7 @@ export function Composer({
         ref={textareaRef}
         value={value}
         disabled={disabled || Boolean(inputDisabledReason)}
-        placeholder={inputDisabledReason || (disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : settings.collaborationMode === "plan" ? "Ask Privora to research and draft a plan" : "Ask Privora to inspect, edit, or run something locally")}
+        placeholder={inputDisabledReason || (disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : settings.collaborationMode === "plan" ? "Ask Privora to research and draft a plan" : "Ask for follow-up changes")}
         onChange={(event) => {
           setValue(event.target.value);
           setSubmitError(null);
@@ -499,54 +560,73 @@ export function Composer({
       {(attachmentError || submitError) && <div className="attachment-error">{attachmentError || submitError}</div>}
       <div className="composer-toolbar">
         <div className="toolbar-left">
-          <button
-            type="button"
-            className="icon-tool-button"
-            title="Add images"
-            disabled={disabled || Boolean(inputDisabledReason) || running}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <ImagePlus size={15} />
-          </button>
-          <input
-            ref={fileInputRef}
-            className="hidden-file-input"
-            type="file"
-            hidden
-            aria-hidden="true"
-            tabIndex={-1}
-            accept={SUPPORTED_IMAGE_TYPES.join(",")}
-            multiple
-            onChange={(event) => {
-              if (event.target.files) void addFiles(event.target.files);
-              event.currentTarget.value = "";
-            }}
-          />
           <div className="menu-anchor">
             <button
               type="button"
-              className={clsx("tool-pill mode-pill", settings.collaborationMode === "plan" && "active")}
-              onClick={() => setModeMenuOpen((open) => !open)}
+              className="icon-tool-button"
+              title="Add tools"
+              disabled={disabled || Boolean(inputDisabledReason) || running}
+              onClick={() => toggleMenu("tools")}
             >
-              <ClipboardList size={15} />
-              {settings.collaborationMode === "plan" ? "Plan" : "Default"}
-              <ChevronDown size={13} />
+              <Plus size={21} />
             </button>
-            {modeMenuOpen && (
-              <div className="floating-menu compact-menu">
-                {collaborationModeOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => {
-                      onSettings({ collaborationMode: option.id });
-                      setModeMenuOpen(false);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    {settings.collaborationMode === option.id && <Check size={14} />}
-                  </button>
-                ))}
+            <input
+              ref={fileInputRef}
+              className="hidden-file-input"
+              type="file"
+              hidden
+              aria-hidden="true"
+              tabIndex={-1}
+              accept={SUPPORTED_IMAGE_TYPES.join(",")}
+              multiple
+              onChange={(event) => {
+                if (event.target.files) void addFiles(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+            {activeMenu === "tools" && (
+              <div className="floating-menu composer-tools-menu">
+                <button
+                  type="button"
+                  className="composer-menu-row"
+                  onClick={() => {
+                    setActiveMenu(null);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <span><Paperclip size={18} /> Add photos & files</span>
+                </button>
+                <button
+                  type="button"
+                  className="composer-menu-row"
+                  onClick={() => void attachLatestTerminal()}
+                >
+                  <span><TerminalSquare size={18} /> Attach Terminal</span>
+                </button>
+                <div className="composer-menu-divider" />
+                <button
+                  type="button"
+                  className="composer-menu-row"
+                  onClick={() => {
+                    onSettings({ collaborationMode: settings.collaborationMode === "plan" ? "default" : "plan" });
+                  }}
+                >
+                  <span><ClipboardList size={18} /> Plan mode</span>
+                  <ToggleSwitch checked={settings.collaborationMode === "plan"} />
+                </button>
+                <button
+                  type="button"
+                  className="composer-menu-row"
+                  onClick={() => setPursueGoal((current) => !current)}
+                >
+                  <span><Crosshair size={18} /> Pursue goal</span>
+                  <ToggleSwitch checked={pursueGoal} />
+                </button>
+                <div className="composer-menu-divider" />
+                <button type="button" className="composer-menu-row" disabled title="Plugins are coming soon">
+                  <span><Blocks size={18} /> Plugins</span>
+                  <ChevronRight size={17} />
+                </button>
               </div>
             )}
           </div>
@@ -554,13 +634,13 @@ export function Composer({
             <button
               type="button"
               className="tool-pill permission-pill"
-              onClick={() => setAccessMenuOpen((open) => !open)}
+              onClick={() => toggleMenu("access")}
             >
               {settings.permissionMode === "yolo" ? <Zap size={15} /> : <ShieldAlert size={15} />}
               {settings.permissionMode === "yolo" ? "Full access" : "Ask risky"}
               <ChevronDown size={13} />
             </button>
-            {accessMenuOpen && (
+            {activeMenu === "access" && (
               <div className="floating-menu compact-menu">
                 {permissionOptions.map((option) => (
                   <button
@@ -568,7 +648,7 @@ export function Composer({
                     type="button"
                     onClick={() => {
                       onSettings({ permissionMode: option.id });
-                      setAccessMenuOpen(false);
+                      setActiveMenu(null);
                     }}
                   >
                     <span>{option.label}</span>
@@ -578,48 +658,24 @@ export function Composer({
               </div>
             )}
           </div>
+          {settings.collaborationMode === "plan" && (
+            <span className="composer-mode-status" title="Plan mode is on">
+              <ClipboardList size={15} />
+              Plan
+            </span>
+          )}
         </div>
         <div className="toolbar-right">
           <div className="menu-anchor">
             <button
               type="button"
-              className="reasoning-button"
-              onClick={() => setReasoningMenuOpen((open) => !open)}
-            >
-              <BrainCircuit size={15} className={running ? "reasoning-spin" : undefined} />
-              <span>{reasoningLabel(settings.reasoningEffort)}</span>
-              <ChevronDown size={13} />
-            </button>
-            {reasoningMenuOpen && (
-              <div className="floating-menu reasoning-menu">
-                <small>Thinking</small>
-                {reasoningOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => {
-                      onSettings({ reasoningEffort: option.id });
-                      setReasoningMenuOpen(false);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    {settings.reasoningEffort === option.id && <Check size={14} />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="menu-anchor">
-            <button
-              type="button"
               className="model-button"
-              onClick={() => setModelMenuOpen((open) => !open)}
+              onClick={() => toggleMenu("model")}
             >
-              <Brain size={15} />
               <span className="model-short">{activeModel.label}</span>
               <ChevronDown size={13} />
             </button>
-            {modelMenuOpen && (
+            {activeMenu === "model" && (
               <div className="floating-menu model-menu">
                 <section>
                   {modelProviderGroups.map((group) => (
@@ -631,7 +687,7 @@ export function Composer({
                           type="button"
                           onClick={() => {
                             onSettings({ model: model.id });
-                            setModelMenuOpen(false);
+                            setActiveMenu(null);
                           }}
                         >
                           <span>{model.label}</span>
@@ -644,6 +700,35 @@ export function Composer({
               </div>
             )}
           </div>
+          <div className="menu-anchor">
+            <button
+              type="button"
+              className="reasoning-button"
+              onClick={() => toggleMenu("reasoning")}
+            >
+              <Brain size={15} className={running ? "reasoning-spin" : undefined} />
+              <span>{reasoningLabel(settings.reasoningEffort)}</span>
+              <ChevronDown size={13} />
+            </button>
+            {activeMenu === "reasoning" && (
+              <div className="floating-menu reasoning-menu">
+                <small>Thinking</small>
+                {reasoningOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      onSettings({ reasoningEffort: option.id });
+                      setActiveMenu(null);
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    {settings.reasoningEffort === option.id && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             type="button"
             className={clsx("send-button", stopping && "is-stopping")}
@@ -651,12 +736,16 @@ export function Composer({
             onClick={running ? onStop : () => void submit()}
             disabled={running ? stopping : disabled || Boolean(inputDisabledReason) || submitting || (!value.trim() && attachments.length === 0 && contextMentions.length === 0)}
           >
-            {running ? <Square size={17} fill="currentColor" /> : <Send size={17} />}
+            {running ? <Square size={17} fill="currentColor" /> : <ArrowUp size={19} />}
           </button>
         </div>
       </div>
     </form>
   );
+}
+
+function ToggleSwitch({ checked }: { checked: boolean }) {
+  return <span className={clsx("composer-toggle", checked && "checked")} aria-hidden="true"><i /></span>;
 }
 
 const reasoningOptions: Array<{ id: ReasoningEffort; label: string }> = [
@@ -670,11 +759,6 @@ const reasoningOptions: Array<{ id: ReasoningEffort; label: string }> = [
 const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
   { id: "ask_risky", label: "Ask risky" },
   { id: "yolo", label: "Full access" },
-];
-
-const collaborationModeOptions: Array<{ id: CollaborationMode; label: string }> = [
-  { id: "default", label: "Default" },
-  { id: "plan", label: "Plan" },
 ];
 
 const reasoningLabel = (value: ReasoningEffort) =>
