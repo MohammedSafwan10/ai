@@ -4,7 +4,7 @@ const external = ["electron", "@vscode/ripgrep", "node-pty", "bufferutil", "utf-
 
 export default defineConfig({
   build: {
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       external,
     },

@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Privora Desktop agent for local workspaces.",
+  "author": "Privora",
   "main": ".vite/build/main.js",
   "scripts": {
     "dev": "set PRIVORA_SKIP_PTY_REBUILD=1&& electron-forge start",
@@ -14,8 +15,10 @@
     "start": "electron-forge start",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "build": "electron-forge package",
-    "make": "electron-forge make"
+    "prepare:package": "node scripts/prepare-package-resources.js",
+    "build": "npm run prepare:package && electron-forge package",
+    "make": "npm run prepare:package && electron-forge make",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@google/genai": "^2.7.0",
@@ -24,7 +27,7 @@
     "@vscode/ripgrep": "^1.18.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
-    "monaco-editor": "^0.55.1",
+    "monaco-editor": "^0.53.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -43,8 +46,9 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "electron": "^42.3.0",
+    "patch-package": "^8.0.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.14",
+    "vite": "^8.0.16",
     "vitest": "^4.1.7"
   },
   "overrides": {

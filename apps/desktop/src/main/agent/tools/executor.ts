@@ -1,10 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { rgPath } from "@vscode/ripgrep";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
 import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../../security/pathSandbox";
 import { redactSecrets } from "../../security/redact";
+import { resolveRipgrepExecutablePath } from "../../resources";
 import { TerminalSessionManager } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
 import { FileOperationService, hashBuffer, recordFileObservation, recordFileObservationData } from "./fileOperationService";
@@ -170,7 +170,7 @@ export class DesktopToolExecutor {
     if (!caseSensitive) args.push("--ignore-case");
     if (call.arguments.glob) args.push("--glob", String(call.arguments.glob));
     args.push(query, ".");
-    const result = await runProcess(rgPath, args, context.workspaceRoot, context.signal);
+    const result = await runProcess(resolveRipgrepExecutablePath(), args, context.workspaceRoot, context.signal);
     const maxResults = Number(call.arguments.maxResults) || 80;
     const allLines = result.output.split(/\r?\n/).filter(Boolean);
     const lines = allLines.slice(0, maxResults);

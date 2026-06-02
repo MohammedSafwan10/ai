@@ -7,6 +7,7 @@ import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
 import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
+import { resolveAppIconPath } from "./resources";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -44,7 +45,7 @@ const getDefaultZoomFactor = (window?: BrowserWindow | null) => {
   if (shortestSide <= 1440) return MEDIUM_ZOOM_FACTOR;
   return LARGE_ZOOM_FACTOR;
 };
-const appIcon = () => nativeImage.createFromPath(path.join(process.cwd(), "assets", "icon.png"));
+const appIcon = () => nativeImage.createFromPath(resolveAppIconPath());
 
 const setWindowZoom = (window: BrowserWindow, zoomFactor: number) => {
   const nextZoomFactor = clampZoomFactor(Number(zoomFactor.toFixed(2)));

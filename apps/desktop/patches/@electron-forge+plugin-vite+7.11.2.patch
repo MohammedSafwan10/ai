@@ -1,0 +1,40 @@
+diff --git a/node_modules/@electron-forge/plugin-vite/dist/config/vite.preload.config.js b/node_modules/@electron-forge/plugin-vite/dist/config/vite.preload.config.js
+index 09fd751..9ceafcc 100644
+--- a/node_modules/@electron-forge/plugin-vite/dist/config/vite.preload.config.js
++++ b/node_modules/@electron-forge/plugin-vite/dist/config/vite.preload.config.js
+@@ -7,6 +7,7 @@ function getConfig(forgeEnv, userConfig = {}) {
+     const { forgeConfigSelf } = forgeEnv;
+     const config = {
+         build: {
++            codeSplitting: false,
+             copyPublicDir: false,
+             rollupOptions: {
+                 external: [...vite_base_config_1.external, 'electron/renderer'],
+@@ -15,7 +16,6 @@ function getConfig(forgeEnv, userConfig = {}) {
+                 output: {
+                     format: 'cjs',
+                     // It should not be split chunks.
+-                    inlineDynamicImports: true,
+                     entryFileNames: '[name].js',
+                     chunkFileNames: '[name].js',
+                     assetFileNames: '[name].[ext]',
+diff --git a/node_modules/@electron-forge/plugin-vite/src/config/vite.preload.config.ts b/node_modules/@electron-forge/plugin-vite/src/config/vite.preload.config.ts
+index 6b81930..cdea24c 100644
+--- a/node_modules/@electron-forge/plugin-vite/src/config/vite.preload.config.ts
++++ b/node_modules/@electron-forge/plugin-vite/src/config/vite.preload.config.ts
+@@ -9,6 +9,7 @@ export function getConfig(
+   const { forgeConfigSelf } = forgeEnv;
+   const config: UserConfig = {
+     build: {
++      codeSplitting: false,
+       copyPublicDir: false,
+       rollupOptions: {
+         external: [...external, 'electron/renderer'],
+@@ -17,7 +18,6 @@ export function getConfig(
+         output: {
+           format: 'cjs',
+           // It should not be split chunks.
+-          inlineDynamicImports: true,
+           entryFileNames: '[name].js',
+           chunkFileNames: '[name].js',
+           assetFileNames: '[name].[ext]',

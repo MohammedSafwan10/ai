@@ -9,7 +9,9 @@ const config: ForgeConfig = {
       unpack: "**/node_modules/node-pty/**",
     },
     extraResource: [
-      "node_modules/node-pty",
+      "assets",
+      "build-resources/node-pty",
+      "node_modules/@vscode/ripgrep-win32-x64",
     ],
     executableName: "Privora",
     icon: "assets/icon",
