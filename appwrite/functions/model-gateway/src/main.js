@@ -103,11 +103,16 @@ const getUserJwt = (req) => {
 
 const getAccount = (jwt) => appwriteRequest("/account", { jwt });
 
+const isMissingDocumentError = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("not found") || message.includes("could not be found") || message.includes("requested id");
+};
+
 const getDocument = async (collectionId, documentId) => {
   try {
     return await appwriteRequest(`/databases/${databaseId}/collections/${collectionId}/documents/${encodeURIComponent(documentId)}`);
   } catch (error) {
-    if (String(error.message || "").toLowerCase().includes("not found")) return null;
+    if (isMissingDocumentError(error)) return null;
     throw error;
   }
 };
