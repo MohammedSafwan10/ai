@@ -164,7 +164,7 @@ Options:
 
 function assertCommand(command, commandArgs) {
   try {
-    execFileSync(resolveExecutable(command), commandArgs, { cwd: repoRoot, stdio: "ignore" });
+    execCommand(command, commandArgs, { cwd: repoRoot, stdio: "ignore" });
   } catch {
     throw new Error(`Required command is not available: ${command}`);
   }
@@ -181,7 +181,7 @@ function assertAppwriteLogin() {
 function assertCleanGitUnlessAllowed() {
   if (args.allowDirty) return;
 
-  const status = execFileSync(resolveExecutable("git"), ["status", "--porcelain"], {
+  const status = execCommand("git", ["status", "--porcelain"], {
     cwd: repoRoot,
     encoding: "utf8",
   }).trim();
@@ -328,21 +328,24 @@ function runPowerShell(commandArgs) {
 
 function run(command, commandArgs, options = {}) {
   log(`$ ${[command, ...commandArgs].join(" ")}`);
-  execFileSync(resolveExecutable(command), commandArgs, {
+  execCommand(command, commandArgs, {
     cwd: options.cwd || repoRoot,
     stdio: "inherit",
   });
 }
 
 function runJson(command, commandArgs) {
-  const output = execFileSync(resolveExecutable(command), commandArgs, { cwd: repoRoot, encoding: "utf8" });
+  const output = execCommand(command, commandArgs, { cwd: repoRoot, encoding: "utf8" });
   return JSON.parse(output);
 }
 
-function resolveExecutable(command) {
-  if (process.platform !== "win32") return command;
-  if (command === "npm" || command === "appwrite") return `${command}.cmd`;
-  return command;
+function execCommand(command, commandArgs, options = {}) {
+  if (process.platform !== "win32") {
+    return execFileSync(command, commandArgs, options);
+  }
+
+  const psCommand = ["&", quotePs(command), ...commandArgs.map((arg) => quotePs(arg))].join(" ");
+  return execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psCommand], options);
 }
 
 function log(message) {
