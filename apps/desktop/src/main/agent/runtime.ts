@@ -600,6 +600,11 @@ export class AgentRuntime {
             collaborationMode: settings.collaborationMode,
             signal: controller.signal,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
+            appwriteEndpoint: settings.appwriteEndpoint,
+            appwriteProjectId: settings.appwriteProjectId,
+            privoraGatewayFunctionId: settings.privoraGatewayFunctionId,
+            privoraSessionCookie: this.store.getSecret("privora_session_cookie"),
+            privoraUserJwt: this.store.getPrivoraUserJwt(),
             openRouterApiKey: this.store.getSecret("openrouter_api_key"),
             geminiApiKey: this.store.getSecret("gemini_api_key"),
             maxOutputTokens: runtimeBudget.outputTokens,
@@ -686,6 +691,32 @@ export class AgentRuntime {
               lastProviderUsage = usage;
               totalProviderUsage = addTokenUsage(totalProviderUsage, usage);
               this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
+            },
+            onAiCredits: (creditEvent) => {
+              if (creditEvent.summary) {
+                this.store.setAiCreditSummary(creditEvent.summary);
+                this.emit({ type: "ai_credit_summary_updated", summary: creditEvent.summary });
+              }
+              const creditTool: DesktopToolCall = {
+                id: `ai_credits_${options.assistantMessage.id}_${iteration}`,
+                name: "web_search",
+                arguments: {
+                  creditsUsed: creditEvent.creditsUsed,
+                  estimatedCredits: creditEvent.estimatedCredits,
+                },
+              };
+              const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, creditTool, {
+                title: "AI credits used",
+                category: "other",
+                status: "done",
+                risk: "safe",
+                result: { success: true },
+                output: `${creditEvent.creditsUsed.toLocaleString()} AI credits used. Estimated ${creditEvent.estimatedCredits.toLocaleString()}.`,
+                textOffset: assistantText.length,
+                startedAt: now(),
+                endedAt: now(),
+              });
+              this.emit({ type: "tool_updated", tool: event });
             },
             onTextReplace: (text) => {
               endThoughtPart();

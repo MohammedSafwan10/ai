@@ -6,6 +6,7 @@ import type {
   ApprovalHistoryRecord,
   ApprovalScopeRecord,
   AgentRunCheckpointRecord,
+  AiCreditSummaryRecord,
   AssistantTextPartRecord,
   ChatMessageRecord,
   SettingsRecord,
@@ -20,7 +21,13 @@ import type {
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 
-type SecretName = "openrouter_api_key" | "gemini_api_key";
+type SecretName =
+  | "openrouter_api_key"
+  | "gemini_api_key"
+  | "privora_session_cookie"
+  | "privora_user_jwt"
+  | "privora_pending_auth"
+  | "privora_account_profile";
 
 interface StoredSecretEnvelope {
   v: 1;
@@ -33,8 +40,18 @@ interface StoredSecretEnvelope {
 
 type StoredSecret = StoredSecretEnvelope | string;
 
+interface PrivoraJwtSecret {
+  jwt: string;
+  expiresAt: number;
+}
+
+interface PrivoraAccountProfileSecret {
+  email?: string;
+  name?: string;
+}
+
 interface DesktopDataFile {
-  settings: Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored">;
+  settings: Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "privoraAccountConnected">;
   secrets: Record<string, StoredSecret>;
   workspaces: WorkspaceRecord[];
   threads: ThreadRecord[];
@@ -60,6 +77,9 @@ const defaultData = (): DesktopDataFile => ({
     collaborationMode: "default",
     theme: "system",
     cliproxyBaseUrl: "http://127.0.0.1:8317",
+    appwriteEndpoint: "https://sgp.cloud.appwrite.io/v1",
+    appwriteProjectId: "69af9f0700103b7f3482",
+    privoraGatewayFunctionId: "model-gateway",
   },
   secrets: {},
   workspaces: [],
@@ -79,6 +99,7 @@ export class DesktopStore {
   private writeTimer: NodeJS.Timeout | null = null;
   private dirty = false;
   private recoveryNotice: StoreRecoveryNoticeRecord | undefined;
+  private aiCreditSummary: AiCreditSummaryRecord | undefined;
 
   constructor(userDataPath = app.getPath("userData")) {
     fs.mkdirSync(userDataPath, { recursive: true });
@@ -107,15 +128,20 @@ export class DesktopStore {
       activeRun: null,
       activeRuns: [],
       contextUsage: undefined,
+      aiCredits: this.aiCreditSummary,
       recoveryNotice: this.recoveryNotice,
     };
   }
 
   getSettings(): SettingsRecord {
+    const profile = this.getPrivoraAccountProfile();
     return {
       ...this.data.settings,
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
+      privoraAccountConnected: Boolean(this.getSecret("privora_session_cookie") || this.getPrivoraUserJwt()),
+      privoraAccountEmail: profile.email,
+      privoraAccountName: profile.name,
     };
   }
 
@@ -128,11 +154,102 @@ export class DesktopStore {
       collaborationMode: input.collaborationMode ?? this.data.settings.collaborationMode,
       theme: input.theme ?? this.data.settings.theme,
       cliproxyBaseUrl: input.cliproxyBaseUrl ?? this.data.settings.cliproxyBaseUrl,
+      appwriteEndpoint: input.appwriteEndpoint ?? this.data.settings.appwriteEndpoint,
+      appwriteProjectId: input.appwriteProjectId ?? this.data.settings.appwriteProjectId,
+      privoraGatewayFunctionId: input.privoraGatewayFunctionId ?? this.data.settings.privoraGatewayFunctionId,
     };
     if (input.openRouterApiKey !== undefined) this.setSecret("openrouter_api_key", input.openRouterApiKey);
     if (input.geminiApiKey !== undefined) this.setSecret("gemini_api_key", input.geminiApiKey);
     this.writeData();
     return this.getSettings();
+  }
+
+  setAiCreditSummary(summary: AiCreditSummaryRecord | undefined) {
+    this.aiCreditSummary = summary;
+  }
+
+  setPrivoraSessionCookie(cookieHeader: string) {
+    this.setSecret("privora_session_cookie", cookieHeader);
+    this.setSecret("privora_user_jwt", "");
+    this.clearPrivoraPendingAuth();
+    this.writeData();
+  }
+
+  setPrivoraUserJwt(jwt: string, expiresAt = Date.now() + 55 * 60 * 1000, profile?: PrivoraAccountProfileSecret) {
+    this.setSecret("privora_user_jwt", JSON.stringify({ jwt, expiresAt }));
+    this.setSecret("privora_session_cookie", "");
+    if (profile?.email || profile?.name) this.setPrivoraAccountProfile(profile);
+    this.clearPrivoraPendingAuth();
+    this.writeData();
+  }
+
+  getPrivoraUserJwt() {
+    const raw = this.getSecret("privora_user_jwt");
+    if (!raw) return "";
+    try {
+      const parsed = JSON.parse(raw) as Partial<PrivoraJwtSecret>;
+      if (typeof parsed.jwt !== "string" || typeof parsed.expiresAt !== "number") return "";
+      if (Date.now() >= parsed.expiresAt) {
+        this.setSecret("privora_user_jwt", "");
+        this.writeData();
+        return "";
+      }
+      return parsed.jwt;
+    } catch {
+      return raw;
+    }
+  }
+
+  clearPrivoraSession() {
+    this.setSecret("privora_session_cookie", "");
+    this.setSecret("privora_user_jwt", "");
+    this.setSecret("privora_account_profile", "");
+    this.clearPrivoraPendingAuth();
+    this.aiCreditSummary = undefined;
+    this.writeData();
+  }
+
+  setPrivoraAccountProfile(profile: PrivoraAccountProfileSecret) {
+    this.setSecret("privora_account_profile", JSON.stringify({
+      email: profile.email?.trim() || undefined,
+      name: profile.name?.trim() || undefined,
+    }));
+  }
+
+  getPrivoraAccountProfile(): PrivoraAccountProfileSecret {
+    const raw = this.getSecret("privora_account_profile");
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as PrivoraAccountProfileSecret;
+      return {
+        email: typeof parsed.email === "string" ? parsed.email : undefined,
+        name: typeof parsed.name === "string" ? parsed.name : undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  setPrivoraPendingAuth(state: string, createdAt = Date.now()) {
+    this.setSecret("privora_pending_auth", JSON.stringify({ state, createdAt }));
+    this.writeData();
+  }
+
+  getPrivoraPendingAuth(): { state: string; createdAt: number } | null {
+    const raw = this.getSecret("privora_pending_auth");
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as { state?: unknown; createdAt?: unknown };
+      if (typeof parsed.state !== "string" || typeof parsed.createdAt !== "number") return null;
+      return { state: parsed.state, createdAt: parsed.createdAt };
+    } catch {
+      return null;
+    }
+  }
+
+  clearPrivoraPendingAuth() {
+    this.setSecret("privora_pending_auth", "");
+    this.writeData();
   }
 
   getSecret(name: SecretName) {

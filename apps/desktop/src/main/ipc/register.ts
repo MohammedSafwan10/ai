@@ -8,6 +8,9 @@ import { resolveExistingWorkspacePath } from "../security/pathSandbox";
 import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
 import { channels } from "./channels";
+import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
+import { createEmailPasswordAccount, createEmailPasswordSession, deleteCurrentSession, getAppwriteAccountFromJwt } from "../billing/appwriteAuth";
+import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
 import type {
   ApprovalDecisionInput,
   DesktopEvent,
@@ -16,6 +19,7 @@ import type {
   SearchContextMentionsInput,
   StartTurnInput,
   WorkspaceOpenTarget,
+  PrivoraAuthInput,
 } from "../../shared/types";
 
 export interface IpcState {
@@ -46,6 +50,14 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     const thread = threads[0] || store.createThread(state.activeWorkspaceId);
     state.activeThreadId = thread.id;
     return thread.id;
+  };
+
+  const emitSnapshot = () => {
+    ensureThread();
+    const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
+    snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
+    snapshot.activeRuns = runtime.listActiveRuns();
+    emit({ type: "snapshot", snapshot });
   };
 
   const handle = (
@@ -185,6 +197,88 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return store.saveSettings(input);
   });
 
+  handle(channels.startPrivoraBrowserAuth, z.tuple([]), async () => {
+    const auth = await beginPrivoraBrowserAuth(store, {
+      onJwt: async (jwt, expiresAt, profile) => {
+        store.setPrivoraUserJwt(jwt, expiresAt, profile);
+        try {
+          const account = await getAppwriteAccountFromJwt(store.getSettings(), jwt);
+          if (account.authenticated) {
+            store.setPrivoraAccountProfile({ email: account.email, name: account.name });
+          }
+        } catch {
+          // The JWT itself is still useful for the gateway; keep the handoff profile if account lookup fails.
+        }
+        try {
+          await refreshCreditsFromSession();
+        } catch (error) {
+          const summary = emptyAiCreditSummary(error instanceof Error ? error.message : String(error));
+          store.setAiCreditSummary(summary);
+          emit({ type: "ai_credit_summary_updated", summary });
+        }
+        emitSnapshot();
+        emit({ type: "toast", tone: "success", message: "Privora Desktop is connected." });
+      },
+    });
+    await shell.openExternal(auth.url);
+    emit({ type: "toast", tone: "info", message: "Opened Privora sign-in in your browser." });
+    return auth;
+  });
+
+  const refreshCreditsFromSession = async () => {
+    const settings = store.getSettings();
+    const sessionCookie = store.getSecret("privora_session_cookie");
+    const userJwt = store.getPrivoraUserJwt();
+    const summary = await refreshAiCreditSummary(settings, sessionCookie, userJwt);
+    store.setAiCreditSummary(summary);
+    emit({ type: "ai_credit_summary_updated", summary });
+    return summary;
+  };
+
+  handle(channels.signInPrivora, z.tuple([privoraAuthInputSchema]), async (_event, input: PrivoraAuthInput) => {
+    const sessionCookie = await createEmailPasswordSession(store.getSettings(), input);
+    store.setPrivoraSessionCookie(sessionCookie);
+    const summary = await refreshCreditsFromSession();
+    emitSnapshot();
+    return summary;
+  });
+
+  handle(channels.signUpPrivora, z.tuple([privoraAuthInputSchema]), async (_event, input: PrivoraAuthInput) => {
+    await createEmailPasswordAccount(store.getSettings(), input);
+    const sessionCookie = await createEmailPasswordSession(store.getSettings(), input);
+    store.setPrivoraSessionCookie(sessionCookie);
+    const summary = await refreshCreditsFromSession();
+    emitSnapshot();
+    return summary;
+  });
+
+  handle(channels.signOutPrivora, z.tuple([]), async () => {
+    await deleteCurrentSession(store.getSettings(), store.getSecret("privora_session_cookie"));
+    store.clearPrivoraSession();
+    const summary = emptyAiCreditSummary();
+    store.setAiCreditSummary(summary);
+    emit({ type: "ai_credit_summary_updated", summary });
+    emitSnapshot();
+    return summary;
+  });
+
+  handle(channels.refreshAiCredits, z.tuple([]), async () => {
+    const settings = store.getSettings();
+    const sessionCookie = store.getSecret("privora_session_cookie");
+    const userJwt = store.getPrivoraUserJwt();
+    try {
+      const summary = await refreshAiCreditSummary(settings, sessionCookie, userJwt);
+      store.setAiCreditSummary(summary);
+      emit({ type: "ai_credit_summary_updated", summary });
+      return summary;
+    } catch (error) {
+      const summary = emptyAiCreditSummary(error instanceof Error ? error.message : String(error));
+      store.setAiCreditSummary(summary);
+      emit({ type: "ai_credit_summary_updated", summary });
+      return summary;
+    }
+  });
+
   handle(channels.openPath, z.tuple([workspacePathInputSchema]), (_event, targetPath: string) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (!workspace) throw new Error("Choose a workspace first.");
@@ -277,8 +371,17 @@ const saveSettingsInputSchema = z.object({
   collaborationMode: z.enum(["default", "plan"]).optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   cliproxyBaseUrl: z.string().max(500).optional(),
+  appwriteEndpoint: z.string().max(500).optional(),
+  appwriteProjectId: z.string().max(120).optional(),
+  privoraGatewayFunctionId: z.string().max(120).optional(),
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
+});
+
+const privoraAuthInputSchema = z.object({
+  email: z.string().email().max(320),
+  password: z.string().min(8).max(4096),
+  name: z.string().max(160).optional(),
 });
 
 const requestUserInputAnswerSchema = z.object({

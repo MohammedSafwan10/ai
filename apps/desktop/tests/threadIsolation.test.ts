@@ -11,8 +11,12 @@ const baseSnapshot = () => ({
     collaborationMode: "default" as const,
     theme: "system" as const,
     cliproxyBaseUrl: "http://127.0.0.1:8317",
+    appwriteEndpoint: "https://sgp.cloud.appwrite.io/v1",
+    appwriteProjectId: "project",
+    privoraGatewayFunctionId: "model-gateway",
     openRouterApiKeyStored: false,
     geminiApiKeyStored: false,
+    privoraAccountConnected: false,
   },
   workspaces: [],
   threads: [

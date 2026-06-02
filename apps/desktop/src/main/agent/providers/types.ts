@@ -1,5 +1,5 @@
 import type { CollaborationMode, ProviderId, ReasoningEffort } from "../../../shared/models";
-import type { DesktopToolCall, TokenUsageRecord, ToolResult } from "../../../shared/types";
+import type { AiCreditSummaryRecord, DesktopToolCall, TokenUsageRecord, ToolResult } from "../../../shared/types";
 
 export interface ProviderWebSearchEvent {
   id: string;
@@ -31,6 +31,11 @@ export interface ProviderStreamOptions {
   signal: AbortSignal;
   maxOutputTokens?: number;
   cliproxyBaseUrl: string;
+  appwriteEndpoint: string;
+  appwriteProjectId: string;
+  privoraGatewayFunctionId: string;
+  privoraSessionCookie: string;
+  privoraUserJwt: string;
   openRouterApiKey: string;
   geminiApiKey: string;
   onTextDelta: (delta: string) => void;
@@ -38,6 +43,7 @@ export interface ProviderStreamOptions {
   onToolDraft: (draft: { id?: string; name: string; arguments: Record<string, unknown> }) => void;
   onToolCall: (call: DesktopToolCall) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
+  onAiCredits?: (event: { creditsUsed: number; estimatedCredits: number; summary?: AiCreditSummaryRecord }) => void;
   onTextReplace?: (text: string) => void;
   onWebSearch?: (event: ProviderWebSearchEvent) => void;
 }

@@ -1,4 +1,4 @@
-export type ProviderId = "cliproxy" | "gemini" | "openrouter";
+export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud";
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "extra_high";
 
@@ -30,6 +30,9 @@ export interface ModelProviderGroup {
 
 export const GEMINI_35_FLASH_MODEL_ID = "gemini-3.5-flash";
 export const GEMINI_31_FLASH_LITE_MODEL_ID = "gemini-3.1-flash-lite";
+export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
+export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
+export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
 
 const legacyModelReplacements: Record<string, string> = {
   "gemini-3-flash-preview": GEMINI_35_FLASH_MODEL_ID,
@@ -66,6 +69,11 @@ export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
     id: "openrouter",
     label: "OpenRouter Free",
     description: "Free OpenRouter models with tool support where advertised.",
+  },
+  {
+    id: "privora-cloud",
+    label: "Privora Cloud",
+    description: "Hosted Privora AI credits. BYOK usage does not consume credits.",
   },
 ];
 
@@ -156,6 +164,45 @@ export const modelOptions: ModelOption[] = [
     supportsImageInput: false,
     supportsReasoning: true,
     description: "Free OpenRouter 120B hybrid MoE model for long-context reasoning and agent workflows.",
+  },
+  {
+    id: PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID,
+    label: "DeepSeek V4 Flash",
+    provider: "privora-cloud",
+    supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 8_192,
+    defaultOutputTokens: 4_096,
+    upstreamModelId: "deepseek/deepseek-v4-flash",
+    description: "Fast hosted Privora model. Uses AI credits unless you switch to BYOK.",
+  },
+  {
+    id: PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID,
+    label: "DeepSeek V4 Pro",
+    provider: "privora-cloud",
+    supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 8_192,
+    defaultOutputTokens: 4_096,
+    upstreamModelId: "deepseek/deepseek-v4-pro",
+    description: "Stronger hosted Privora model. Uses AI credits unless you switch to BYOK.",
+  },
+  {
+    id: PRIVORA_MINIMAX_M3_MODEL_ID,
+    label: "MiniMax M3",
+    provider: "privora-cloud",
+    supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 8_192,
+    defaultOutputTokens: 4_096,
+    upstreamModelId: "minimax/minimax-m3",
+    description: "Hosted long-context Privora model. Uses AI credits unless you switch to BYOK.",
   },
 ];
 

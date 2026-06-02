@@ -184,9 +184,14 @@ small {
 }
 
 .sidebar-footer {
+  position: relative;
   margin-top: auto;
   border-top: 1px solid color-mix(in srgb, var(--privora-border) 34%, transparent);
   padding-top: 8px;
+}
+
+.settings-panel {
+  position: relative;
 }
 
 .sidebar-settings-button {
@@ -206,6 +211,61 @@ small {
 
 .sidebar-settings-button:hover {
   background: color-mix(in srgb, #fff 8%, transparent);
+}
+
+.sidebar-account-menu {
+  position: absolute;
+  left: -4px;
+  bottom: calc(100% + 8px);
+  z-index: 80;
+  display: grid;
+  width: min(280px, calc(100vw - 28px));
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--privora-surface) 96%, transparent);
+  box-shadow: 0 22px 55px color-mix(in srgb, #000 34%, transparent);
+  padding: 8px;
+}
+
+.sidebar-account-menu-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--privora-text);
+  padding: 6px 7px;
+  text-align: left;
+}
+
+.sidebar-account-menu-row span {
+  overflow: visible;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account-menu-row small {
+  font-size: 12px;
+}
+
+.sidebar-account-menu-row:hover:not(:disabled) {
+  background: color-mix(in srgb, #fff 8%, transparent);
+}
+
+.sidebar-account-menu-row.muted {
+  color: color-mix(in srgb, var(--privora-text) 66%, var(--privora-muted));
+  cursor: default;
+}
+
+.sidebar-account-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: color-mix(in srgb, var(--privora-border) 64%, transparent);
 }
 
 .project-group {

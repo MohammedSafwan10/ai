@@ -13,17 +13,21 @@ import { ChatShell } from "./features/chat/ChatShell";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue } from "./features/chat/usePromptQueue";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
-import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
+import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
+
+type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "shortcuts" | "about";
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsDestination>("general");
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideWidth, setIdeWidth] = useState(620);
   const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const creditRefreshStarted = useRef(false);
   const zoomToastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
@@ -140,6 +144,12 @@ export default function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!snapshot.settings.privoraAccountConnected || creditRefreshStarted.current) return;
+    creditRefreshStarted.current = true;
+    void window.privoraDesktop.refreshAiCredits();
+  }, [snapshot.settings.privoraAccountConnected]);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
     try {
@@ -274,10 +284,18 @@ export default function App() {
         footer={(
           <SettingsPanel
             settings={snapshot.settings}
+            aiCredits={snapshot.aiCredits}
             updateStatus={updateStatus}
             workspaceDisabled={!activeWorkspace}
             open={settingsOpen}
-            onOpen={() => setSettingsOpen(true)}
+            onOpen={() => {
+              setSettingsInitialTab("general");
+              setSettingsOpen(true);
+            }}
+            onOpenTab={(tab) => {
+              setSettingsInitialTab(tab);
+              setSettingsOpen(true);
+            }}
             onClose={() => setSettingsOpen(false)}
             onSave={saveSettings}
           />
@@ -293,6 +311,10 @@ export default function App() {
         toast={toast}
         topbarTrailing={(
           <>
+            <AiCreditsBadge credits={snapshot.aiCredits} onClick={() => {
+              setSettingsInitialTab("billing");
+              setSettingsOpen(true);
+            }} />
             <UpdateControl status={updateStatus} />
             <AppLauncher disabled={!activeWorkspace} />
           </>
@@ -519,10 +541,15 @@ export default function App() {
         settingsLayer={(
           <SettingsScreen
             settings={snapshot.settings}
+            aiCredits={snapshot.aiCredits}
             updateStatus={updateStatus}
             workspaceDisabled={!activeWorkspace}
             open={settingsOpen}
-            onOpen={() => setSettingsOpen(true)}
+            initialTab={settingsInitialTab}
+            onOpen={() => {
+              setSettingsInitialTab("general");
+              setSettingsOpen(true);
+            }}
             onClose={() => setSettingsOpen(false)}
             onSave={saveSettings}
           />
@@ -555,6 +582,22 @@ export default function App() {
       )}
       </div>
     </div>
+  );
+}
+
+function AiCreditsBadge({ credits, onClick }: { credits?: AiCreditSummaryRecord; onClick: () => void }) {
+  const connected = credits?.authenticated;
+  const label = connected
+    ? `${credits.monthlyCreditsRemaining.toLocaleString()} AI credits`
+    : "BYOK";
+  const title = connected
+    ? `${credits.plan.toUpperCase()} plan. BYOK usage does not consume Privora AI credits.`
+    : "Free BYOK mode. Connect Billing to use hosted AI credits.";
+  return (
+    <button type="button" className={clsx("ai-credit-badge", !connected && "muted")} title={title} onClick={onClick}>
+      <span className="ai-credit-dot" />
+      <span>{label}</span>
+    </button>
   );
 }
 

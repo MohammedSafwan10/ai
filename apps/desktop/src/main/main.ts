@@ -9,6 +9,7 @@ import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
 import { resolveAppIconPath } from "./resources";
 import { installUpdateService } from "./updateService";
+import { parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -27,12 +28,56 @@ const state: IpcState = {
   activeWorkspaceId: null,
 };
 const isDevMode = Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+const PRIVORA_PROTOCOL = "privora";
 
 if (isDevMode) {
   app.setName("Privora Dev");
   app.setPath("userData", path.join(app.getPath("appData"), "Privora Dev"));
 }
-const singleInstanceLock = isDevMode ? true : app.requestSingleInstanceLock();
+const singleInstanceLock = app.requestSingleInstanceLock();
+
+const registerPrivoraProtocol = () => {
+  if ((isDevMode || process.defaultApp) && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(PRIVORA_PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+    return;
+  }
+  app.setAsDefaultProtocolClient(PRIVORA_PROTOCOL);
+};
+
+const findPrivoraProtocolUrl = (argv: string[]) => argv.find((arg) => arg.startsWith(`${PRIVORA_PROTOCOL}://`));
+
+const focusMainWindow = () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+};
+
+const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
+  if (!rawUrl || !store) return;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === `${PRIVORA_PROTOCOL}:` && parsed.hostname === "settings" && parsed.pathname === "/billing") {
+      focusMainWindow();
+      mainWindow?.webContents.send(channels.event, {
+        type: "toast",
+        tone: "info",
+        message: "Return to Billing and start Privora sign-in again if it is still not connected.",
+      });
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  const result = parsePrivoraAuthCallback(store, rawUrl);
+  if (!result) return;
+  focusMainWindow();
+  mainWindow?.webContents.send(channels.event, {
+    type: "toast",
+    tone: result.ok ? "success" : "error",
+    message: result.message,
+  });
+};
 
 const clampZoomFactor = (zoomFactor: number) => Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
 const zoomFactorToPercent = (zoomFactor: number) => Math.round(zoomFactor * 100);
@@ -201,13 +246,18 @@ const createWindow = async () => {
 if (!singleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+  app.on("second-instance", (_event, argv) => {
+    focusMainWindow();
+    handlePrivoraProtocolUrl(findPrivoraProtocolUrl(argv));
+  });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handlePrivoraProtocolUrl(url);
   });
 
   app.whenReady().then(async () => {
+    registerPrivoraProtocol();
     installApplicationMenu();
     const icon = appIcon();
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
@@ -219,6 +269,7 @@ if (!singleInstanceLock) {
     registerIpc(store, runtime, state);
     installUpdateService();
     await createWindow();
+    handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void createWindow();

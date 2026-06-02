@@ -8,6 +8,7 @@ import type {
   PrepareTurnUndoInput,
   UndoTurnChangesInput,
   RequestUserInputResponseInput,
+  PrivoraAuthInput,
 } from "../shared/types";
 import { channels } from "../main/ipc/channels";
 
@@ -32,6 +33,11 @@ const api: PrivoraDesktopApi = {
   listWorkspaceDirectory: (input) => ipcRenderer.invoke(channels.listWorkspaceDirectory, input),
   readWorkspaceFile: (input) => ipcRenderer.invoke(channels.readWorkspaceFile, input),
   saveSettings: (input: SaveSettingsInput) => ipcRenderer.invoke(channels.saveSettings, input),
+  startPrivoraBrowserAuth: () => ipcRenderer.invoke(channels.startPrivoraBrowserAuth),
+  signInPrivora: (input: PrivoraAuthInput) => ipcRenderer.invoke(channels.signInPrivora, input),
+  signUpPrivora: (input: PrivoraAuthInput) => ipcRenderer.invoke(channels.signUpPrivora, input),
+  signOutPrivora: () => ipcRenderer.invoke(channels.signOutPrivora),
+  refreshAiCredits: () => ipcRenderer.invoke(channels.refreshAiCredits),
   openPath: (path: string) => ipcRenderer.invoke(channels.openPath, path),
   openExternalUrl: (url: string) => ipcRenderer.invoke(channels.openExternalUrl, url),
   listWorkspaceOpenTargets: () => ipcRenderer.invoke(channels.listWorkspaceOpenTargets),

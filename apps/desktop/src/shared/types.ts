@@ -104,8 +104,14 @@ export interface SettingsRecord {
   collaborationMode: CollaborationMode;
   theme: "light" | "dark" | "system";
   cliproxyBaseUrl: string;
+  appwriteEndpoint: string;
+  appwriteProjectId: string;
+  privoraGatewayFunctionId: string;
   openRouterApiKeyStored: boolean;
   geminiApiKeyStored: boolean;
+  privoraAccountConnected: boolean;
+  privoraAccountEmail?: string;
+  privoraAccountName?: string;
 }
 
 export interface ThreadRecord {
@@ -443,7 +449,49 @@ export interface AppSnapshot {
   activeRun: ActiveRunState | null;
   activeRuns: ActiveRunState[];
   contextUsage?: ContextUsageRecord;
+  aiCredits?: AiCreditSummaryRecord;
   recoveryNotice?: StoreRecoveryNoticeRecord;
+}
+
+export type PrivoraPlanId = "free" | "plus" | "pro";
+
+export interface AiCreditUsageRecord {
+  id: string;
+  modelId: string;
+  creditsCharged: number;
+  inputTokens: number;
+  outputTokens: number;
+  rawCostUsd: number;
+  createdAt: number;
+}
+
+export interface AiCreditSummaryRecord {
+  authenticated: boolean;
+  userId?: string;
+  email?: string;
+  plan: PrivoraPlanId;
+  status: "active" | "trialing" | "past_due" | "cancelled" | "disabled" | "unknown";
+  hostedAccessDisabled: boolean;
+  monthlyCreditAllowance: number;
+  monthlyCreditsRemaining: number;
+  topUpCreditsRemaining: number;
+  monthlyCreditsUsed: number;
+  dailyCreditsUsed: number;
+  perRunCreditCap: number;
+  dailyCreditCap: number;
+  resetDate?: string;
+  renewalDate?: string;
+  recentUsage: AiCreditUsageRecord[];
+  message?: string;
+  updatedAt: number;
+}
+
+export interface PrivoraAccountRecord {
+  authenticated: boolean;
+  userId?: string;
+  email?: string;
+  name?: string;
+  emailVerification?: boolean;
 }
 
 export interface TokenUsageRecord {
@@ -570,6 +618,7 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "tool_updated"; tool: ToolEventRecord }
   | { type: "turn_undo_updated"; undo: TurnUndoRecord }
   | { type: "context_usage_updated"; usage: ContextUsageRecord }
+  | { type: "ai_credit_summary_updated"; summary: AiCreditSummaryRecord }
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }
@@ -607,8 +656,22 @@ export interface SaveSettingsInput {
   collaborationMode?: CollaborationMode;
   theme?: "light" | "dark" | "system";
   cliproxyBaseUrl?: string;
+  appwriteEndpoint?: string;
+  appwriteProjectId?: string;
+  privoraGatewayFunctionId?: string;
   openRouterApiKey?: string;
   geminiApiKey?: string;
+}
+
+export interface PrivoraAuthInput {
+  email: string;
+  password: string;
+  name?: string;
+}
+
+export interface PrivoraBrowserAuthStartRecord {
+  url: string;
+  expiresAt: number;
 }
 
 export interface PrivoraDesktopApi {
@@ -632,6 +695,11 @@ export interface PrivoraDesktopApi {
   listWorkspaceDirectory(input: { path: string }): Promise<WorkspaceDirectoryListing>;
   readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
+  startPrivoraBrowserAuth(): Promise<PrivoraBrowserAuthStartRecord>;
+  signInPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
+  signUpPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
+  signOutPrivora(): Promise<AiCreditSummaryRecord>;
+  refreshAiCredits(): Promise<AiCreditSummaryRecord>;
   openPath(path: string): Promise<void>;
   openExternalUrl(url: string): Promise<void>;
   listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;
