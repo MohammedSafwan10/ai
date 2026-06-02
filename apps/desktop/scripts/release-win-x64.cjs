@@ -3,6 +3,7 @@
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
@@ -172,9 +173,14 @@ function assertCommand(command, commandArgs) {
 
 function assertAppwriteLogin() {
   try {
-    runJson("appwrite", ["-j", "whoami"]);
+    execCommand("appwrite", ["projects", "get", "--project-id", "69af9f0700103b7f3482"], {
+      cwd: repoRoot,
+      stdio: "ignore",
+    });
   } catch {
-    throw new Error("Appwrite CLI is not logged in or not linked. Run `appwrite login` from the repo first.");
+    throw new Error(
+      "Appwrite CLI cannot access the Privora project. Run `appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482`, then `appwrite login`.",
+    );
   }
 }
 
@@ -336,7 +342,13 @@ function run(command, commandArgs, options = {}) {
 
 function runJson(command, commandArgs) {
   const output = execCommand(command, commandArgs, { cwd: repoRoot, encoding: "utf8" });
-  return JSON.parse(output);
+  const normalizedOutput = stripAnsi(output).trim();
+
+  try {
+    return JSON.parse(normalizedOutput);
+  } catch {
+    return vm.runInNewContext(`(${normalizedOutput})`, Object.create(null), { timeout: 1000 });
+  }
 }
 
 function execCommand(command, commandArgs, options = {}) {
@@ -354,6 +366,10 @@ function log(message) {
 
 function quotePs(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function stripAnsi(value) {
+  return String(value).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 function isTargetRelease(doc) {
