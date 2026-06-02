@@ -663,6 +663,9 @@ export interface UpdateStatus {
   releaseName?: string;
   releaseNotes?: string;
   releaseDate?: string;
+  latestVersion?: string;
+  latestReleaseNotes?: string;
+  latestReleaseDate?: string;
   lastCheckedAt?: number;
 }
 

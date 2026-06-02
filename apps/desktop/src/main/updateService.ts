@@ -12,6 +12,7 @@ let status: UpdateStatus = {
 };
 
 let checking = false;
+let lastMetadataFetch = 0;
 
 const emitStatus = () => {
   BrowserWindow.getAllWindows().forEach((window) => {
@@ -25,6 +26,7 @@ const setStatus = (next: Partial<UpdateStatus>) => {
 };
 
 const checkForUpdates = () => {
+  void refreshLatestReleaseMetadata();
   if (!status.supported) {
     setStatus({
       state: "unsupported",
@@ -36,6 +38,31 @@ const checkForUpdates = () => {
   checking = true;
   setStatus({ state: "checking", error: undefined, message: undefined });
   autoUpdater.checkForUpdates();
+  return status;
+};
+
+const refreshLatestReleaseMetadata = async () => {
+  const now = Date.now();
+  if (now - lastMetadataFetch < 60_000 && status.latestVersion) return status;
+  lastMetadataFetch = now;
+
+  try {
+    const response = await fetch(UPDATE_FEED_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Update feed returned ${response.status}.`);
+    const latest = await response.json() as {
+      version?: string;
+      notes?: string;
+      releaseDate?: string;
+    };
+    setStatus({
+      latestVersion: latest.version,
+      latestReleaseNotes: latest.notes,
+      latestReleaseDate: latest.releaseDate,
+    });
+  } catch (error) {
+    setStatus({ error: error instanceof Error ? error.message : String(error) });
+  }
+
   return status;
 };
 
@@ -86,7 +113,7 @@ export const installUpdateService = () => {
     setStatus({ state: "installing", message: "Installing update..." });
   });
 
-  ipcMain.handle(channels.getUpdateStatus, () => status);
+  ipcMain.handle(channels.getUpdateStatus, () => refreshLatestReleaseMetadata());
   ipcMain.handle(channels.checkForUpdates, () => checkForUpdates());
   ipcMain.handle(channels.installUpdate, () => {
     if (status.state !== "ready") return status;
@@ -100,4 +127,6 @@ export const installUpdateService = () => {
       checkForUpdates();
     }, 10_000);
   }
+
+  void refreshLatestReleaseMetadata();
 };

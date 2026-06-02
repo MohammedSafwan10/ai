@@ -259,11 +259,14 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
               {activeTab === "about" && (
                 <div className="settings-section settings-about">
                   <InfoRow label="Version" value={updateStatus?.currentVersion || "Unknown"} />
+                  {updateStatus?.latestVersion && <InfoRow label="Latest" value={updateStatus.latestVersion} />}
                   <InfoRow label="Updates" value={formatUpdateState(updateStatus)} />
-                  <InfoRow label="Feed" value={updateStatus?.feedUrl || "Not configured"} code />
+                  <InfoRow label="Channel" value={formatUpdateChannel(updateStatus)} />
                   {updateStatus?.releaseName && <InfoRow label="Ready update" value={updateStatus.releaseName} />}
                   {updateStatus?.releaseDate && <InfoRow label="Release date" value={updateStatus.releaseDate} />}
-                  {updateStatus?.releaseNotes && <InfoRow label="Release notes" value={updateStatus.releaseNotes} />}
+                  {(updateStatus?.releaseNotes || updateStatus?.latestReleaseNotes) && (
+                    <InfoRow label="Release notes" value={updateStatus.releaseNotes || updateStatus.latestReleaseNotes || ""} />
+                  )}
                   {updateStatus?.lastCheckedAt && (
                     <InfoRow label="Last checked" value={new Date(updateStatus.lastCheckedAt).toLocaleString()} />
                   )}
@@ -323,6 +326,12 @@ const formatUpdateState = (status: UpdateStatus | null) => {
   if (status.state === "error") return status.error || "Update failed";
   if (status.state === "unsupported") return status.message || "Unsupported";
   return status.message || "Up to date";
+};
+
+const formatUpdateChannel = (status: UpdateStatus | null) => {
+  if (!status?.feedUrl) return "Not configured";
+  if (status.feedUrl.includes("/win32/x64/stable")) return "Windows x64 stable";
+  return "Custom update feed";
 };
 
 const tabTitle = (tab: SettingsTab) => {
