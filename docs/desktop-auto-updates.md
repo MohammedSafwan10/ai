@@ -48,6 +48,8 @@ npm run desktop:release:win:x64
 
 The script configures the Appwrite CLI to use `https://sgp.cloud.appwrite.io/v1` and project `69af9f0700103b7f3482` before upload. Do not use interactive account login for this release flow; Appwrite Cloud account login is global, while this project's storage/database API calls use the Singapore regional endpoint.
 
+The release command uses Appwrite CLI for Storage uploads and direct Appwrite REST calls for release metadata. This avoids Windows PowerShell quoting problems with Appwrite CLI JSON document payloads.
+
 Commit source changes before running the release command. By default the command requires a clean working tree, then it creates the desktop package version bump as the only local git change.
 
 That command:
@@ -99,8 +101,8 @@ Remove-Item Env:\APPWRITE_RELEASE_API_KEY
 ## Manual Verification
 
 ```powershell
-Invoke-WebRequest https://updates.nexdark.com/win32/x64/stable | Select-Object -ExpandProperty Content
-Invoke-WebRequest https://updates.nexdark.com/win32/x64/stable/RELEASES | Select-Object -ExpandProperty Content
+curl.exe -s https://updates.nexdark.com/win32/x64/stable
+curl.exe -s https://updates.nexdark.com/win32/x64/stable/RELEASES
 ```
 
 The JSON endpoint should show the new `version`. The `RELEASES` endpoint should mention `Privora-<version>-full.nupkg`.
@@ -111,5 +113,6 @@ The JSON endpoint should show the new `version`. The `RELEASES` endpoint should 
 - After `0.1.1`, future Windows x64 stable releases can be delivered through the in-app update control.
 - The production menu hides Reload and Toggle Developer Tools in packaged builds.
 - Do not commit Appwrite API keys or provider secrets. If a key is used for setup automation, rotate/delete it after use.
+- If a key was pasted into chat or logs, rotate/delete it immediately after the release.
 - Electron apps still contain bundled JavaScript inside `app.asar`; never embed private backend secrets in the app bundle.
 - macOS updates are not configured yet. macOS production release needs signing, notarization, and a macOS-specific update feed.

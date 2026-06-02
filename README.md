@@ -158,7 +158,7 @@ $env:APPWRITE_RELEASE_API_KEY = "YOUR_TEMP_APPWRITE_API_KEY"
 npm run desktop:release:win:x64
 ```
 
-Commit source changes before running the release command. That command configures the Appwrite CLI for the Singapore project endpoint, bumps the desktop patch version, runs lint/tests, builds the Windows Squirrel installer, uploads the release files to Appwrite, marks the new release as latest, and verifies the public feed. For an exact version or release notes:
+Commit source changes before running the release command. That command configures the Appwrite CLI for the Singapore project endpoint, bumps the desktop patch version, runs lint/tests, builds the Windows Squirrel installer, uploads release files to Appwrite Storage, updates release metadata through Appwrite REST, marks the new release as latest, and verifies the public feed. For an exact version or release notes:
 
 ```powershell
 npm run desktop:release:win:x64 -- --version 0.1.2 --notes "Windows desktop fixes."
