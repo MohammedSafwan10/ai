@@ -51,6 +51,20 @@ const createDocument = (collectionId, documentId, data) => request(`/databases/$
   body: { documentId, data },
 });
 
+const isMissingDocumentError = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("not found") || message.includes("could not be found") || message.includes("requested id");
+};
+
+const getOrCreateDocument = async (collectionId, documentId, data) => {
+  try {
+    return await getDocument(collectionId, documentId);
+  } catch (error) {
+    if (!isMissingDocumentError(error)) throw error;
+    return createDocument(collectionId, documentId, data);
+  }
+};
+
 const listByUser = (collectionId, userId, limit = 25) => {
   const params = new URLSearchParams();
   params.append("queries[]", JSON.stringify({ method: "equal", attribute: "user_id", values: [userId] }));
@@ -65,11 +79,53 @@ const nextMonthIso = () => {
   return date.toISOString();
 };
 
+const tomorrowIso = () => {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString();
+};
+
+const ensureUserRecords = async (userId) => {
+  const timestamp = new Date().toISOString();
+  await getOrCreateDocument("profiles", userId, {
+    user_id: userId,
+    email: flag("email", ""),
+    display_name: flag("name", ""),
+    role: "user",
+    hosted_access_disabled: false,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+  await getOrCreateDocument("subscriptions", userId, {
+    user_id: userId,
+    plan: "free",
+    status: "active",
+    renewal_date: nextMonthIso(),
+    monthly_credit_allowance: plans.free.monthlyCreditAllowance,
+    per_run_credit_cap: plans.free.perRunCreditCap,
+    daily_credit_cap: plans.free.dailyCreditCap,
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+  await getOrCreateDocument("credit_balances", userId, {
+    user_id: userId,
+    monthly_credits_remaining: 0,
+    top_up_credits_remaining: 0,
+    monthly_credits_used: 0,
+    daily_credits_used: 0,
+    reset_date: nextMonthIso(),
+    daily_reset_date: tomorrowIso(),
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+};
+
 const grantCredits = async () => {
   const userId = flag("user-id");
   const credits = Number(flag("credits"));
   const reason = flag("reason", "manual_grant");
   if (!userId || !Number.isFinite(credits) || credits <= 0) throw new Error("Usage: grant --user-id <id> --credits <amount> [--reason text]");
+  await ensureUserRecords(userId);
   const balance = await getDocument("credit_balances", userId);
   const nextMonthly = Number(balance.monthly_credits_remaining || 0) + credits;
   const updated = await updateDocument("credit_balances", userId, {
@@ -93,6 +149,7 @@ const setPlan = async () => {
   const userId = flag("user-id");
   const plan = flag("plan");
   if (!userId || !plans[plan]) throw new Error("Usage: set-plan --user-id <id> --plan free|plus|pro");
+  await ensureUserRecords(userId);
   const selected = plans[plan];
   await updateDocument("subscriptions", userId, {
     plan,
@@ -128,6 +185,7 @@ const setPlan = async () => {
 const setHostedAccess = async (disabled) => {
   const userId = flag("user-id");
   if (!userId) throw new Error(`${disabled ? "disable" : "enable"} --user-id <id>`);
+  await ensureUserRecords(userId);
   await updateDocument("profiles", userId, {
     hosted_access_disabled: disabled,
     updated_at: new Date().toISOString(),
@@ -138,6 +196,7 @@ const setHostedAccess = async (disabled) => {
 const showUsage = async () => {
   const userId = flag("user-id");
   if (!userId) throw new Error("usage --user-id <id>");
+  await ensureUserRecords(userId);
   const [subscription, balance, usage, ledger] = await Promise.all([
     getDocument("subscriptions", userId),
     getDocument("credit_balances", userId),
