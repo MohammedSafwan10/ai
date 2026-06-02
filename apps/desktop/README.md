@@ -79,9 +79,11 @@ Supported provider paths are configured in the app settings and shared model cat
 
 - CLIProxy API, defaulting to `http://127.0.0.1:8317`
 - Gemini API
-- OpenRouter API
+- OpenRouter API for BYOK
+- Privora Cloud hosted models through the Appwrite model gateway
 
 Secrets are stored through the local desktop store and are not exposed directly to the renderer.
+BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are charged by the server-side credit engine.
 
 ## Requirements
 
@@ -119,6 +121,20 @@ Useful scripts:
 | `npm test` | Run Vitest tests |
 | `npm run build` | Package the Electron app |
 | `npm run make` | Build distributables/installers |
+| `npm run saas:setup:credits` | Create/seed Appwrite AI credit collections |
+| `npm run saas:admin:credits -- <command>` | Manual grants, plan changes, usage checks, and hosted-access disable |
+
+## SaaS AI Credits
+
+The SaaS credit engine lives in the shared Appwrite project and is documented in [docs/saas-ai-credits.md](docs/saas-ai-credits.md).
+
+Launch pricing is INR-first:
+
+- Free: BYOK only
+- Plus: INR 799/mo with 5,000 AI credits/month
+- Pro: INR 1,999/mo with 20,000 AI credits/month
+
+AI credits are consumed based on model, input size, output size, and tool usage. Premium models consume credits faster. BYOK usage does not consume Privora AI credits.
 
 ## Current Stack
 
