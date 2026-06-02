@@ -2,6 +2,7 @@ const endpoint = process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWR
 const projectId = process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || "69af9f0700103b7f3482";
 const serverKey = process.env.APPWRITE_FUNCTION_API_KEY || process.env.APPWRITE_API_KEY;
 const openRouterKey = process.env.OPENROUTER_API_KEY;
+let runtimeServerKey = "";
 
 const databaseId = process.env.SAAS_DATABASE_ID || "privora_saas";
 const creditMultiplier = Number(process.env.AI_CREDIT_MULTIPLIER || 2000);
@@ -76,13 +77,14 @@ const parseBody = (req) => {
 const header = (req, name) => req.headers?.[name] || req.headers?.[name.toLowerCase()] || req.headers?.[name.toUpperCase()];
 
 const appwriteRequest = async (path, { method = "GET", body, jwt } = {}) => {
+  const key = serverKey || runtimeServerKey;
   const response = await fetch(`${endpoint}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
       "x-appwrite-project": projectId,
       ...(jwt ? { "x-appwrite-jwt": jwt } : {}),
-      ...(!jwt && serverKey ? { "x-appwrite-key": serverKey } : {}),
+      ...(!jwt && key ? { "x-appwrite-key": key } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -347,6 +349,7 @@ const handleChat = async ({ account, records, body }) => {
 
 export default async ({ req, res, error }) => {
   try {
+    runtimeServerKey = header(req, "x-appwrite-key") || runtimeServerKey;
     const userJwt = getUserJwt(req);
     if (!userJwt) return res.json({ error: "Authentication required." }, 401, jsonHeaders);
     const account = await getAccount(userJwt);
