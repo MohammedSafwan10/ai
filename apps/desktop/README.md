@@ -53,7 +53,8 @@ The renderer includes:
 - Composer with prompt history, large-paste handling, image attachments, model/provider controls, permission mode, and Plan mode.
 - Tool timeline with live shimmer, compact activity grouping, expandable terminal output, file-change summaries, and answered-question details.
 - Review/undo surfaces for file changes.
-- Settings screen for providers, theme, workspace options, and shortcuts.
+- Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
+- Settings screen for profile, billing, providers, theme, workspace options, shortcuts, and update status.
 - Recovery notice if the local JSON store is corrupt and Privora has to back it up.
 
 ## Architecture
@@ -62,6 +63,7 @@ The renderer includes:
 src/
   main/
     agent/          Agent runtime, providers, tools, diagnostics, context, approvals
+    billing/        Appwrite account handoff, local browser auth callback, AI credit summary
     db/             Local JSON store, recovery, workspaces, threads, settings, secrets
     ipc/            Main-process IPC channels and validation
     security/       Workspace path checks and redaction helpers
@@ -84,6 +86,12 @@ Supported provider paths are configured in the app settings and shared model cat
 
 Secrets are stored through the local desktop store and are not exposed directly to the renderer.
 BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are charged by the server-side credit engine.
+
+## Browser Sign-In
+
+Desktop account sign-in opens Privora Web in the system browser. In development, the web app can return a short-lived Appwrite JWT to a local loopback callback so the running dev app can connect without launching another Electron instance. In production, the same user flow should move to a backend-issued one-time code exchange before general release.
+
+Desktop stores only the secure account connection result and optional profile display fields. It does not store the OpenRouter hosted key.
 
 ## Requirements
 
@@ -121,6 +129,7 @@ Useful scripts:
 | `npm test` | Run Vitest tests |
 | `npm run build` | Package the Electron app |
 | `npm run make` | Build distributables/installers |
+| `npm run release:win:x64 -- --notes "..."` | Build, upload, and publish the Windows x64 update feed |
 | `npm run saas:setup:credits` | Create/seed Appwrite AI credit collections |
 | `npm run saas:admin:credits -- <command>` | Manual grants, plan changes, usage checks, and hosted-access disable |
 
@@ -135,6 +144,16 @@ Launch pricing is INR-first:
 - Pro: INR 1,999/mo with 20,000 AI credits/month
 
 AI credits are consumed based on model, input size, output size, and tool usage. Premium models consume credits faster. BYOK usage does not consume Privora AI credits.
+
+## Production Updates
+
+Windows x64 builds use the Appwrite-hosted update feed at:
+
+```text
+https://updates.nexdark.com/win32/x64/stable
+```
+
+Use `npm run release:win:x64 -- --notes "Release notes"` from `apps/desktop` to build, upload the installer/NUPKG, and publish feed metadata. The release command requires a temporary Appwrite API key in `APPWRITE_RELEASE_API_KEY` or `APPWRITE_API_KEY`; never commit that key.
 
 ## Current Stack
 

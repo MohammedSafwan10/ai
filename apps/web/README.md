@@ -1,8 +1,8 @@
 # Privora Web
 
-Privora Web is the public SaaS surface for pricing, auth, account, legal pages, desktop connection, and future admin.
+Privora Web is the public SaaS surface for Privora: pricing, sign in/sign up, account pages, legal pages, desktop connection, and the future admin console.
 
-It intentionally lives beside `apps/desktop` instead of inside it. Desktop should not expose Appwrite project IDs, raw JWT fields, hosted provider keys, or admin controls.
+It intentionally lives beside `apps/desktop` instead of inside it. The web app can expose public Appwrite configuration such as endpoint and project ID, but hosted model keys, Appwrite API keys, billing webhook secrets, and admin automation stay server-side only.
 
 ## Stack
 
@@ -13,6 +13,8 @@ It intentionally lives beside `apps/desktop` instead of inside it. Desktop shoul
 - Appwrite Web SDK
 
 ## Commands
+
+Run these from `apps/web`:
 
 ```powershell
 npm run dev
@@ -31,15 +33,42 @@ npm run web:build
 
 ## Environment
 
-Set these for production Appwrite Sites deployments:
+Create `apps/web/.env.local` for local development:
 
 ```env
-VITE_APPWRITE_ENDPOINT=https://appwrite.nexdark.com/v1
+VITE_APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
+VITE_APPWRITE_PROJECT_ID=69af9f0700103b7f3482
+VITE_APPWRITE_SAAS_DATABASE_ID=privora_saas
+```
+
+For production Appwrite Sites, set the same values in the Appwrite site environment. When `privora.nexdark.com` is ready, keep the endpoint on the Appwrite project API endpoint, not the marketing domain.
+
+Example shape:
+
+```env
+VITE_APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
 VITE_APPWRITE_PROJECT_ID=your_appwrite_project_id
 VITE_APPWRITE_SAAS_DATABASE_ID=privora_saas
 ```
 
 The app does not fall back to a real Appwrite project. If these values are missing, auth/account actions show a configuration message instead of silently calling production.
+
+## Pages
+
+- `/` marketing home
+- `/pricing` INR-first pricing and AI credit policy
+- `/security` security posture
+- `/auth/sign-in` and `/auth/sign-up`
+- `/account`, `/account/billing`, `/account/usage`
+- `/desktop/connect` browser-based desktop handoff
+- `/legal/privacy`, `/legal/terms`, `/legal/refund`, `/legal/acceptable-use`
+- `/admin/*` placeholder admin routes, to be role-gated before real admin use
+
+## Desktop Connection
+
+The desktop app opens `/desktop/connect` in the system browser. In local development, the page returns a short-lived Appwrite JWT to the desktop loopback callback supplied in the URL. Production should replace that debug-friendly local handoff with a backend-issued one-time code exchange before broad release.
+
+The browser shows the signed-in account and offers a return-to-desktop action. Desktop then stores the account connection result and display email/name locally.
 
 ## Product Rules
 
@@ -48,5 +77,12 @@ The app does not fall back to a real Appwrite project. If these values are missi
 - Plus is ₹799/mo with 5,000 AI credits.
 - Pro is ₹1,999/mo with 20,000 AI credits.
 - Hosted model keys stay only in backend environment secrets.
-- Desktop sign-in should use browser auth and `privora://auth/callback`.
+- Desktop sign-in uses browser auth; production callback security should use short-lived one-time codes.
 - Admin belongs on the web and must be role-gated.
+
+## Security Notes
+
+- Do not add `.env.local` to git.
+- Do not put OpenRouter keys, Appwrite API keys, Razorpay secrets, or webhook secrets in `VITE_*` variables.
+- `VITE_*` variables are bundled into the browser and must be treated as public.
+- Admin pages are UI placeholders until server-side role checks are wired in.
