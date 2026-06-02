@@ -154,6 +154,8 @@ https://updates.nexdark.com/win32/x64/stable
 For a normal Windows x64 release, run this from the repository root:
 
 ```powershell
+appwrite login --endpoint https://sgp.cloud.appwrite.io/v1
+appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482
 npm run desktop:release:win:x64
 ```
 

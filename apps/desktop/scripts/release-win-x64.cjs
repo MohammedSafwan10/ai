@@ -179,7 +179,7 @@ function assertAppwriteLogin() {
     });
   } catch {
     throw new Error(
-      "Appwrite CLI cannot access the Privora project. Run `appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482`, then `appwrite login`.",
+      "Appwrite CLI cannot access the Privora project. Run `appwrite login --endpoint https://sgp.cloud.appwrite.io/v1`, then `appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482`.",
     );
   }
 }

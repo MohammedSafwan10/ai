@@ -34,7 +34,14 @@ Each release document stores:
 
 ## One Command Release
 
-From the repository root, after Appwrite CLI is logged in and linked:
+From the repository root, after Appwrite CLI is logged in to the Singapore endpoint and linked:
+
+```powershell
+appwrite login --endpoint https://sgp.cloud.appwrite.io/v1
+appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482
+```
+
+Then publish:
 
 ```powershell
 npm run desktop:release:win:x64
