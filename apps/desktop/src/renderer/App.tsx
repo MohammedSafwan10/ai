@@ -586,15 +586,15 @@ export default function App() {
 }
 
 function AiCreditsBadge({ credits, onClick }: { credits?: AiCreditSummaryRecord; onClick: () => void }) {
-  const connected = credits?.authenticated;
-  const label = connected
-    ? `${credits.monthlyCreditsRemaining.toLocaleString()} AI credits`
-    : "BYOK";
-  const title = connected
-    ? `${credits.plan.toUpperCase()} plan. BYOK usage does not consume Privora AI credits.`
-    : "Free BYOK mode. Connect Billing to use hosted AI credits.";
+  if (!credits?.authenticated) return null;
+  const label = credits.plan === "free"
+    ? "0 AI credits"
+    : credits.monthlyCreditsRemaining.toLocaleString() + " AI credits";
+  const title = credits.plan === "free"
+    ? "Free plan. Hosted AI credits require Plus, Pro, or a manual grant."
+    : `${credits.plan.toUpperCase()} plan.`;
   return (
-    <button type="button" className={clsx("ai-credit-badge", !connected && "muted")} title={title} onClick={onClick}>
+    <button type="button" className="ai-credit-badge" title={title} onClick={onClick}>
       <span className="ai-credit-dot" />
       <span>{label}</span>
     </button>

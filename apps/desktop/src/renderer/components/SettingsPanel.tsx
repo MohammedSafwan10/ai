@@ -45,7 +45,7 @@ export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOp
   const connected = settings.privoraAccountConnected;
   const accountDisplay = getAccountDisplay(settings, aiCredits);
   const accountLabel = accountDisplay || (connected ? "Privora account connected" : "Sign in to Privora");
-  const planLabel = aiCredits?.authenticated ? formatPlan(aiCredits) : connected ? "Free BYOK" : "Not signed in";
+  const planLabel = aiCredits?.authenticated ? formatPlan(aiCredits) : connected ? "Account connected" : "Not signed in";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -573,13 +573,13 @@ const themeOptions = [
 ];
 
 const formatPlan = (credits?: AiCreditSummaryRecord) => {
-  if (!credits?.authenticated) return "Free BYOK";
+  if (!credits?.authenticated) return "Free";
   if (credits.plan === "plus") return "Plus";
   if (credits.plan === "pro") return "Pro";
-  return "Free BYOK";
+  return "Free";
 };
 
 const formatCredits = (credits?: AiCreditSummaryRecord) => {
-  if (!credits?.authenticated) return "BYOK only";
+  if (!credits?.authenticated) return "No hosted credits";
   return `${credits.monthlyCreditsRemaining.toLocaleString()} monthly + ${credits.topUpCreditsRemaining.toLocaleString()} top-up`;
 };

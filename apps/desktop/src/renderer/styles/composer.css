@@ -697,7 +697,9 @@
 }
 
 .toolbar-right {
+  flex: 1 1 auto;
   justify-content: flex-end;
+  overflow: visible;
 }
 
 .context-meter-wrap {
@@ -848,9 +850,15 @@
   color: color-mix(in srgb, var(--privora-text) 80%, var(--privora-muted));
   padding: 5px 8px;
   font-size: 12.5px;
+  min-width: 0;
   white-space: nowrap;
   box-shadow: none;
   transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.model-reasoning-button {
+  flex: 0 1 auto;
+  max-width: min(260px, 42vw);
 }
 
 .tool-pill:hover,
@@ -939,7 +947,8 @@
 }
 
 .model-short {
-  max-width: 112px;
+  min-width: 0;
+  max-width: 168px;
   overflow: hidden;
   color: inherit;
   text-overflow: ellipsis;
@@ -947,11 +956,37 @@
 }
 
 .reasoning-short {
+  flex: 0 0 auto;
   max-width: 86px;
   overflow: hidden;
   color: color-mix(in srgb, var(--privora-muted) 88%, transparent);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (min-width: 980px) {
+  .model-reasoning-button {
+    max-width: 320px;
+  }
+
+  .model-short {
+    max-width: 218px;
+  }
+}
+
+@media (max-width: 620px) {
+  .model-reasoning-button {
+    max-width: 190px;
+    gap: 5px;
+  }
+
+  .model-short {
+    max-width: 116px;
+  }
+
+  .reasoning-short {
+    max-width: 58px;
+  }
 }
 
 .compact-menu {

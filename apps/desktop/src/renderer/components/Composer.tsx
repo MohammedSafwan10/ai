@@ -706,9 +706,10 @@ export function Composer({
             <button
               type="button"
               className="model-reasoning-button"
+              title={`${activeModel.label} · ${reasoningLabel(settings.reasoningEffort)}`}
               onClick={() => toggleMenu("model")}
             >
-              <span className="model-short">{shortModelLabel(activeModel.label)}</span>
+              <span className="model-short">{modelDisplayLabel(activeModel.label)}</span>
               <span className="reasoning-short">{reasoningLabel(settings.reasoningEffort)}</span>
               <ChevronDown size={13} />
             </button>
@@ -806,11 +807,9 @@ const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
 const reasoningLabel = (value: ReasoningEffort) =>
   reasoningOptions.find((option) => option.id === value)?.label || "Medium";
 
-const shortModelLabel = (label: string) =>
+const modelDisplayLabel = (label: string) =>
   label
-    .replace(/^GPT-/, "")
     .replace(/\s*\(CLIProxy\)$/i, "")
-    .replace(/^Gemini\s+/i, "Gemini ")
     .trim();
 
 const MAX_ATTACHMENTS = 15;
