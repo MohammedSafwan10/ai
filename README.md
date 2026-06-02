@@ -143,6 +143,28 @@ npm --prefix apps/desktop run build
 npm --prefix apps/desktop run make -- --platform=win32 --arch=x64
 ```
 
+## Releasing Desktop Updates
+
+Windows x64 production updates are published through Appwrite Storage, Appwrite Database, and the `desktop-update-feed` Appwrite Function. The public update feed is:
+
+```text
+https://updates.nexdark.com/win32/x64/stable
+```
+
+For a normal Windows x64 release, run this from the repository root:
+
+```powershell
+npm run desktop:release:win:x64
+```
+
+Commit source changes before running the release command. That command bumps the desktop patch version, runs lint/tests, builds the Windows Squirrel installer, uploads the release files to Appwrite, marks the new release as latest, and verifies the public feed. For an exact version or release notes:
+
+```powershell
+npm run desktop:release:win:x64 -- --version 0.1.2 --notes "Windows desktop fixes."
+```
+
+See [docs/desktop-auto-updates.md](docs/desktop-auto-updates.md) for the full release runbook and Appwrite resource map.
+
 The desktop production build disables Vite source maps and runs `prepare:package` before `build` or `make`. That staging step keeps only the runtime `node-pty` files needed by the app and avoids shipping source maps, tests, extra native platforms, and package source folders. The generated `apps/desktop/build-resources/` folder is ignored by git and can be regenerated.
 
 Electron apps still contain bundled JavaScript inside `app.asar`, so they should not be treated as a secret vault. Do not embed private API keys, signing certificates, private configs, or paid provider secrets in the app bundle. Runtime provider secrets belong in local user settings, where the desktop app stores them through Electron `safeStorage`.
@@ -378,6 +400,7 @@ npm --prefix apps/desktop run test
 npm --prefix apps/desktop run build
 npm --prefix apps/desktop run make
 npm --prefix apps/desktop run make -- --platform=win32 --arch=x64
+npm run desktop:release:win:x64
 ```
 
 ## License

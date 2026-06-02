@@ -21,6 +21,7 @@
     "make:mac": "npm run make -- --platform=darwin --arch=arm64",
     "make:mac:x64": "npm run make -- --platform=darwin --arch=x64",
     "make:win:x64": "npm run make -- --platform=win32 --arch=x64",
+    "release:win:x64": "node scripts/release-win-x64.cjs",
     "postinstall": "patch-package"
   },
   "dependencies": {
