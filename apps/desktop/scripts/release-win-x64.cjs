@@ -10,6 +10,8 @@ const repoRoot = path.resolve(desktopRoot, "..", "..");
 const packagePath = path.join(desktopRoot, "package.json");
 
 const config = {
+  endpoint: "https://sgp.cloud.appwrite.io/v1",
+  projectId: "69af9f0700103b7f3482",
   databaseId: "privora_desktop",
   collectionId: "desktop_releases",
   bucketId: "desktop-releases",
@@ -180,9 +182,9 @@ function configureAppwriteClient() {
   const commandArgs = [
     "client",
     "--endpoint",
-    "https://sgp.cloud.appwrite.io/v1",
+    config.endpoint,
     "--project-id",
-    "69af9f0700103b7f3482",
+    config.projectId,
   ];
 
   if (apiKey) commandArgs.push("--key", apiKey);
@@ -192,25 +194,7 @@ function configureAppwriteClient() {
 
 function assertAppwriteAccess() {
   try {
-    execCommand(
-      "appwrite",
-      [
-        "databases",
-        "list-documents",
-        "--database-id",
-        config.databaseId,
-        "--collection-id",
-        config.collectionId,
-        "--limit",
-        "1",
-        "--ttl",
-        "0",
-      ],
-      {
-        cwd: repoRoot,
-        stdio: "ignore",
-      },
-    );
+    listReleaseDocuments();
   } catch {
     throw new Error(
       "Appwrite CLI cannot access the Privora project. Set APPWRITE_RELEASE_API_KEY to a temporary Appwrite API key with storage/databases access, then rerun.",
@@ -276,8 +260,6 @@ function uploadFileIfNeeded(artifact) {
     artifact.id,
     "--file",
     artifact.path,
-    "--permissions",
-    'read("any")',
   ]);
 }
 
@@ -291,53 +273,77 @@ function storageFileExists(fileId) {
 }
 
 function listReleaseDocuments() {
-  const response = runJson("appwrite", [
-    "-j",
-    "databases",
-    "list-documents",
-    "--database-id",
-    config.databaseId,
-    "--collection-id",
-    config.collectionId,
-    "--limit",
-    "100",
-    "--ttl",
-    "0",
-  ]);
-
+  const response = appwriteRequest(
+    "GET",
+    `/databases/${config.databaseId}/collections/${config.collectionId}/documents?limit=100&ttl=0`,
+  );
   return response.documents || [];
 }
 
 function upsertReleaseDocument(documentId, data) {
-  run("appwrite", [
-    "databases",
-    "upsert-document",
-    "--database-id",
-    config.databaseId,
-    "--collection-id",
-    config.collectionId,
-    "--document-id",
+  if (releaseDocumentExists(documentId)) {
+    updateReleaseDocument(documentId, data);
+    return;
+  }
+
+  appwriteRequest("POST", `/databases/${config.databaseId}/collections/${config.collectionId}/documents`, {
     documentId,
-    "--data",
-    JSON.stringify(data),
-    "--permissions",
-    'read("any")',
-  ]);
+    data,
+  });
 }
 
 function updateReleaseDocument(documentId, data) {
-  run("appwrite", [
-    "databases",
-    "update-document",
-    "--database-id",
-    config.databaseId,
-    "--collection-id",
-    config.collectionId,
-    "--document-id",
-    documentId,
-    "--data",
-    JSON.stringify(data),
-  ]);
+  appwriteRequest("PATCH", `/databases/${config.databaseId}/collections/${config.collectionId}/documents/${documentId}`, {
+    data,
+  });
+}
+
+function releaseDocumentExists(documentId) {
+  try {
+    appwriteRequest("GET", `/databases/${config.databaseId}/collections/${config.collectionId}/documents/${documentId}`);
+    return true;
+  } catch (error) {
+    if (error.status === 404) return false;
+    throw error;
+  }
+}
+
+function appwriteRequest(method, route, body) {
+  const apiKey = process.env.APPWRITE_RELEASE_API_KEY || process.env.APPWRITE_API_KEY;
+  if (!apiKey) throw new Error("APPWRITE_RELEASE_API_KEY or APPWRITE_API_KEY is required.");
+
+  let response;
+  const commandArgs = [
+    "-NoProfile",
+    "-Command",
+    [
+      `$headers = @{ 'X-Appwrite-Project' = ${quotePs(config.projectId)}; 'X-Appwrite-Key' = ${quotePs(apiKey)}; 'Content-Type' = 'application/json' }`,
+      body === undefined ? "$body = $null" : `$body = ${quotePs(JSON.stringify(body))}`,
+      "$params = @{ Method = " +
+        quotePs(method) +
+        "; Uri = " +
+        quotePs(`${config.endpoint}${route}`) +
+        "; Headers = $headers }",
+      "if ($body) { $params.Body = $body }",
+      "try { Invoke-RestMethod @params | ConvertTo-Json -Depth 20 -Compress } catch { $status = [int]$_.Exception.Response.StatusCode; $content = $_.ErrorDetails.Message; Write-Output (@{ status = $status; body = $content } | ConvertTo-Json -Compress); exit 66 }",
+    ].join("; "),
+  ];
+
+  try {
+    response = runPowerShell(commandArgs);
+  } catch (error) {
+    if (error.status !== 66 || !error.stdout) throw error;
+    response = String(error.stdout).trim();
+  }
+
+  const parsed = response ? JSON.parse(response) : {};
+  if (parsed && typeof parsed.status === "number" && Object.prototype.hasOwnProperty.call(parsed, "body")) {
+    const error = new Error(`Appwrite API ${method} ${route} failed with ${parsed.status}: ${parsed.body}`);
+    error.status = parsed.status;
+    throw error;
+  }
+
+  return parsed;
 }
 
 function verifyFeed(expectedVersion) {
@@ -353,12 +359,15 @@ function verifyFeed(expectedVersion) {
 }
 
 function fetchJson(url) {
-  const output = runPowerShell(["-NoProfile", "-Command", `(Invoke-WebRequest ${quotePs(url)}).Content`]);
+  const output = fetchText(url);
   return JSON.parse(output);
 }
 
 function fetchText(url) {
-  return runPowerShell(["-NoProfile", "-Command", `(Invoke-WebRequest ${quotePs(url)}).Content`]);
+  return execCommand(process.platform === "win32" ? "curl.exe" : "curl", ["-fsSL", url], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
 }
 
 function runPowerShell(commandArgs) {
