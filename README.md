@@ -42,7 +42,7 @@ The codebase is built with React 19, TypeScript, Vite, local storage, and provid
 
 ### Desktop
 
-- Electron 36
+- Electron 42
 - Electron Forge + Vite
 - React 19
 - TypeScript
@@ -117,6 +117,35 @@ npm run desktop:build
 ```
 
 Inside the Electron Forge terminal, type `rs` to restart the Electron main process after main/preload changes.
+
+## Building The Desktop Installer
+
+For a Windows production installer, run from the repository root:
+
+```powershell
+npm --prefix apps/desktop run make -- --platform=win32 --arch=x64
+```
+
+The installer is created at:
+
+```text
+apps/desktop/out/make/squirrel.windows/x64/PrivoraSetup.exe
+```
+
+That `.exe` is the file to share with a tester on Windows. They do not need the source code or the generated ZIP for normal installation.
+
+Useful packaging commands:
+
+```powershell
+npm --prefix apps/desktop run lint
+npm --prefix apps/desktop run test
+npm --prefix apps/desktop run build
+npm --prefix apps/desktop run make -- --platform=win32 --arch=x64
+```
+
+The desktop production build disables Vite source maps and runs `prepare:package` before `build` or `make`. That staging step keeps only the runtime `node-pty` files needed by the app and avoids shipping source maps, tests, extra native platforms, and package source folders. The generated `apps/desktop/build-resources/` folder is ignored by git and can be regenerated.
+
+Electron apps still contain bundled JavaScript inside `app.asar`, so they should not be treated as a secret vault. Do not embed private API keys, signing certificates, private configs, or paid provider secrets in the app bundle. Runtime provider secrets belong in local user settings, where the desktop app stores them through Electron `safeStorage`.
 
 ## Model Providers
 
@@ -277,9 +306,10 @@ Desktop stores workspaces, threads, messages, tool events, terminal metadata, ru
 - Any `VITE_*` value is exposed to browser code.
 - Browser/web provider keys are convenient for local development but should move behind a backend before public deployment.
 - Desktop secrets are kept in the main process and encrypted with Electron `safeStorage`; the renderer never receives raw secret values.
+- Desktop production source maps are disabled, and the Windows package stages only runtime native resources.
 - Desktop file and terminal tools resolve paths against the selected workspace.
 - Risky actions should go through explicit approval unless Full Access is selected.
-- Do not commit local CLIProxy configs, provider keys, private attachments, generated `dist`, or desktop user data.
+- Do not commit local CLIProxy configs, provider keys, private attachments, generated `dist`, generated desktop `out`, generated desktop `build-resources`, or desktop user data.
 
 ## Project Structure
 
@@ -347,6 +377,7 @@ npm --prefix apps/desktop run lint
 npm --prefix apps/desktop run test
 npm --prefix apps/desktop run build
 npm --prefix apps/desktop run make
+npm --prefix apps/desktop run make -- --platform=win32 --arch=x64
 ```
 
 ## License
