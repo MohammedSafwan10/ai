@@ -6,9 +6,14 @@ export const authRedirectSchema = z.object({
   redirect: z.string().max(512).optional(),
 });
 
+export const authRecoverySchema = authRedirectSchema.extend({
+  email: z.string().max(320).optional(),
+});
+
 export const authSecretSchema = z.object({
   userId: z.string().min(1).optional(),
   secret: z.string().min(1).optional(),
+  redirect: z.string().max(512).optional(),
 });
 
 export const safeRedirect = (value: string | undefined) => (value?.startsWith("/") && !value.startsWith("//") ? value : "/account");

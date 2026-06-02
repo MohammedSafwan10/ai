@@ -244,7 +244,8 @@ small {
 }
 
 .sidebar-account-menu-row span {
-  overflow: visible;
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -257,6 +258,10 @@ small {
   background: color-mix(in srgb, #fff 8%, transparent);
 }
 
+.sidebar-account-menu-row.active {
+  background: color-mix(in srgb, #fff 7%, transparent);
+}
+
 .sidebar-account-menu-row.muted {
   color: color-mix(in srgb, var(--privora-text) 66%, var(--privora-muted));
   cursor: default;
@@ -266,6 +271,67 @@ small {
   height: 1px;
   margin: 5px 4px;
   background: color-mix(in srgb, var(--privora-border) 64%, transparent);
+}
+
+.sidebar-usage-submenu {
+  display: grid;
+  gap: 5px;
+  margin: 0 3px 5px 26px;
+  padding: 4px 0 2px;
+}
+
+.sidebar-usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  min-height: 22px;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.sidebar-usage-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--privora-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.sidebar-usage-message {
+  margin: 2px 0;
+  color: var(--privora-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sidebar-usage-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.sidebar-usage-actions button {
+  min-height: 28px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 60%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, #fff 5%, transparent);
+  color: var(--privora-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sidebar-usage-actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, #fff 9%, transparent);
+}
+
+.sidebar-usage-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .project-group {

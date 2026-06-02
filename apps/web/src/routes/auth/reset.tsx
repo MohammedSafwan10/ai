@@ -4,8 +4,8 @@ import { authSecretSchema } from "@/lib/auth";
 import { account, isAppwriteConfigured } from "@/lib/appwrite";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 
 export const Route = createFileRoute("/auth/reset")({
   validateSearch: (search) => authSecretSchema.parse(search),
@@ -13,8 +13,10 @@ export const Route = createFileRoute("/auth/reset")({
 });
 
 function ResetPage() {
-  const { userId, secret } = Route.useSearch();
+  const { userId, secret, redirect } = Route.useSearch();
   const [password, setPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [updated, setUpdated] = React.useState(false);
   const [status, setStatus] = React.useState(userId && secret ? "Choose a new password." : "This reset link is missing required details.");
 
   async function handleSubmit(event: React.FormEvent) {
@@ -27,9 +29,18 @@ function ResetPage() {
       setStatus("This reset link is missing required details.");
       return;
     }
+    if (password.length < 8) {
+      setStatus("Use at least 8 characters for the new password.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setStatus("Passwords do not match.");
+      return;
+    }
     setStatus("Updating password...");
     try {
       await account.updateRecovery({ userId, secret, password });
+      setUpdated(true);
       setStatus("Password updated. You can sign in now.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Password reset failed.");
@@ -44,16 +55,22 @@ function ResetPage() {
           <CardDescription>{status}</CardDescription>
         </CardHeader>
         <CardContent>
-          {userId && secret ? (
+          {updated ? (
+            <Link to="/auth/sign-in" search={{ redirect }} className={buttonVariants()}>Sign in</Link>
+          ) : userId && secret ? (
             <form className="space-y-4" onSubmit={handleSubmit}>
               <div className="space-y-2">
                 <Label htmlFor="password">New password</Label>
-                <Input id="password" type="password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+                <PasswordInput id="password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm password</Label>
+                <PasswordInput id="confirm-password" autoComplete="new-password" required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
               </div>
               <Button className="w-full" type="submit">Update password</Button>
             </form>
           ) : (
-            <Link to="/auth/recovery" className={buttonVariants()}>Request a new link</Link>
+            <Link to="/auth/recovery" search={{ redirect }} className={buttonVariants()}>Request a new link</Link>
           )}
         </CardContent>
       </Card>

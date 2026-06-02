@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 
 export const Route = createFileRoute("/auth/sign-in")({
   validateSearch: (search) => authRedirectSchema.parse(search),
@@ -65,8 +66,17 @@ function SignInPage() {
               <Input id="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  to="/auth/recovery"
+                  search={{ email: email || undefined, redirect: search.redirect }}
+                  className="text-xs font-medium text-primary hover:text-primary/80"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+              <PasswordInput id="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
             </div>
             <Button className="w-full" type="submit">Sign in</Button>
           </form>

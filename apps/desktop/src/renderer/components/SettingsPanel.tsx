@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Check,
+  ChevronDown,
   ChevronRight,
   Code2,
   CreditCard,
@@ -41,11 +42,15 @@ type SettingsTab = "profile" | "general" | "providers" | "billing" | "workspace"
 
 export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOpenTab }: SettingsPanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageRefreshing, setUsageRefreshing] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const refreshedMenuOpenRef = useRef(false);
   const connected = settings.privoraAccountConnected;
   const accountDisplay = getAccountDisplay(settings, aiCredits);
   const accountLabel = accountDisplay || (connected ? "Privora account connected" : "Sign in to Privora");
   const planLabel = aiCredits?.authenticated ? formatPlan(aiCredits) : connected ? "Account connected" : "Not signed in";
+  const creditRows = formatCreditMenuRows(aiCredits);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -70,8 +75,26 @@ export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOp
     return () => window.removeEventListener("mousedown", close);
   }, [menuOpen]);
 
+  useEffect(() => {
+    if (!menuOpen) {
+      refreshedMenuOpenRef.current = false;
+      return;
+    }
+    if (!connected || refreshedMenuOpenRef.current) return;
+    let canceled = false;
+    refreshedMenuOpenRef.current = true;
+    setUsageRefreshing(true);
+    void window.privoraDesktop.refreshAiCredits().finally(() => {
+      if (!canceled) setUsageRefreshing(false);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [connected, menuOpen]);
+
   const openTab = (tab: SettingsTab) => {
     setMenuOpen(false);
+    setUsageOpen(false);
     onOpenTab?.(tab);
   };
 
@@ -108,11 +131,54 @@ export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOp
             <small>Ctrl+,</small>
           </button>
           <div className="sidebar-account-separator" />
-          <button type="button" className="sidebar-account-menu-row" onClick={() => openTab("billing")}>
+          <button
+            type="button"
+            className={clsx("sidebar-account-menu-row", usageOpen && "active")}
+            onClick={() => setUsageOpen((value) => !value)}
+            aria-expanded={usageOpen}
+          >
             <BarChart3 size={15} />
             <span>Usage remaining</span>
-            <ChevronRight size={15} />
+            {usageOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </button>
+          {usageOpen && (
+            <div className="sidebar-usage-submenu">
+              {creditRows.map((row) => (
+                <div className="sidebar-usage-row" key={row.label}>
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                </div>
+              ))}
+              {aiCredits?.message && (
+                <p className="sidebar-usage-message">{aiCredits.message}</p>
+              )}
+              {!aiCredits?.authenticated && connected && (
+                <p className="sidebar-usage-message">Refresh to sync your latest plan and AI credits.</p>
+              )}
+              <div className="sidebar-usage-actions">
+                <button
+                  type="button"
+                  onClick={() => openTab("billing")}
+                >
+                  Billing
+                </button>
+                <button
+                  type="button"
+                  disabled={!connected || usageRefreshing}
+                  onClick={async () => {
+                    setUsageRefreshing(true);
+                    try {
+                      await window.privoraDesktop.refreshAiCredits();
+                    } finally {
+                      setUsageRefreshing(false);
+                    }
+                  }}
+                >
+                  {usageRefreshing ? "Refreshing" : "Refresh"}
+                </button>
+              </div>
+            </div>
+          )}
           {connected ? (
             <button
               type="button"
@@ -582,4 +648,27 @@ const formatPlan = (credits?: AiCreditSummaryRecord) => {
 const formatCredits = (credits?: AiCreditSummaryRecord) => {
   if (!credits?.authenticated) return "No hosted credits";
   return `${credits.monthlyCreditsRemaining.toLocaleString()} monthly + ${credits.topUpCreditsRemaining.toLocaleString()} top-up`;
+};
+
+const formatPercent = (used: number, total: number) => {
+  if (total <= 0) return "0%";
+  return `${Math.max(0, Math.min(100, Math.round((used / total) * 100)))}%`;
+};
+
+const formatCreditMenuRows = (credits?: AiCreditSummaryRecord) => {
+  if (!credits?.authenticated) {
+    return [
+      { label: "Plan", value: "Free" },
+      { label: "Monthly", value: "0 AI credits" },
+    ];
+  }
+
+  const remaining = credits.monthlyCreditsRemaining + credits.topUpCreditsRemaining;
+  return [
+    { label: "Plan", value: formatPlan(credits) },
+    { label: "Monthly", value: `${remaining.toLocaleString()} left` },
+    { label: "Used", value: `${credits.monthlyCreditsUsed.toLocaleString()} (${formatPercent(credits.monthlyCreditsUsed, credits.monthlyCreditAllowance)})` },
+    { label: "Daily cap", value: credits.dailyCreditCap > 0 ? `${credits.dailyCreditsUsed.toLocaleString()} / ${credits.dailyCreditCap.toLocaleString()}` : "BYOK only" },
+    { label: "Reset", value: credits.resetDate || credits.renewalDate ? new Date(credits.resetDate || credits.renewalDate || "").toLocaleDateString() : "Not scheduled" },
+  ];
 };
