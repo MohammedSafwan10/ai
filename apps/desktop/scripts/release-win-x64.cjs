@@ -192,10 +192,25 @@ function configureAppwriteClient() {
 
 function assertAppwriteAccess() {
   try {
-    execCommand("appwrite", ["projects", "get", "--project-id", "69af9f0700103b7f3482"], {
-      cwd: repoRoot,
-      stdio: "ignore",
-    });
+    execCommand(
+      "appwrite",
+      [
+        "databases",
+        "list-documents",
+        "--database-id",
+        config.databaseId,
+        "--collection-id",
+        config.collectionId,
+        "--limit",
+        "1",
+        "--ttl",
+        "0",
+      ],
+      {
+        cwd: repoRoot,
+        stdio: "ignore",
+      },
+    );
   } catch {
     throw new Error(
       "Appwrite CLI cannot access the Privora project. Set APPWRITE_RELEASE_API_KEY to a temporary Appwrite API key with storage/databases access, then rerun.",
