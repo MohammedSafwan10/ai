@@ -100,7 +100,7 @@ function main() {
     latest: false,
   };
 
-  upsertReleaseDocument(releaseDocumentId, releaseData);
+  upsertReleaseDocument(releaseDocumentId, releaseData, existingReleases.some((doc) => doc.$id === releaseDocumentId));
 
   existingReleases
     .filter((doc) => isTargetRelease(doc) && doc.latest && doc.$id !== releaseDocumentId)
@@ -280,8 +280,8 @@ function listReleaseDocuments() {
   return response.documents || [];
 }
 
-function upsertReleaseDocument(documentId, data) {
-  if (releaseDocumentExists(documentId)) {
+function upsertReleaseDocument(documentId, data, exists) {
+  if (exists) {
     updateReleaseDocument(documentId, data);
     return;
   }
@@ -296,16 +296,6 @@ function updateReleaseDocument(documentId, data) {
   appwriteRequest("PATCH", `/databases/${config.databaseId}/collections/${config.collectionId}/documents/${documentId}`, {
     data,
   });
-}
-
-function releaseDocumentExists(documentId) {
-  try {
-    appwriteRequest("GET", `/databases/${config.databaseId}/collections/${config.collectionId}/documents/${documentId}`);
-    return true;
-  } catch (error) {
-    if (error.status === 404) return false;
-    throw error;
-  }
 }
 
 function appwriteRequest(method, route, body) {
