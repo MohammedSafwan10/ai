@@ -16,7 +16,11 @@
     "desktop:lint": "npm --prefix apps/desktop run lint",
     "desktop:test": "npm --prefix apps/desktop run test",
     "desktop:build": "npm --prefix apps/desktop run build",
-    "desktop:release:win:x64": "npm --prefix apps/desktop run release:win:x64 --"
+    "desktop:release:win:x64": "npm --prefix apps/desktop run release:win:x64 --",
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:lint": "npm --prefix apps/web run lint",
+    "web:build": "npm --prefix apps/web run build",
+    "web:preview": "npm --prefix apps/web run preview"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",
