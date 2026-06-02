@@ -154,12 +154,11 @@ https://updates.nexdark.com/win32/x64/stable
 For a normal Windows x64 release, run this from the repository root:
 
 ```powershell
-appwrite login --endpoint https://sgp.cloud.appwrite.io/v1
-appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482
+$env:APPWRITE_RELEASE_API_KEY = "YOUR_TEMP_APPWRITE_API_KEY"
 npm run desktop:release:win:x64
 ```
 
-Commit source changes before running the release command. That command bumps the desktop patch version, runs lint/tests, builds the Windows Squirrel installer, uploads the release files to Appwrite, marks the new release as latest, and verifies the public feed. For an exact version or release notes:
+Commit source changes before running the release command. That command configures the Appwrite CLI for the Singapore project endpoint, bumps the desktop patch version, runs lint/tests, builds the Windows Squirrel installer, uploads the release files to Appwrite, marks the new release as latest, and verifies the public feed. For an exact version or release notes:
 
 ```powershell
 npm run desktop:release:win:x64 -- --version 0.1.2 --notes "Windows desktop fixes."

@@ -32,7 +32,8 @@ function main() {
   assertCommand("git", ["--version"]);
   assertCommand("npm", ["--version"]);
   assertCommand("appwrite", ["--version"]);
-  assertAppwriteLogin();
+  configureAppwriteClient();
+  assertAppwriteAccess();
   assertCleanGitUnlessAllowed();
 
   const previousPackageVersion = readPackageVersion();
@@ -160,6 +161,9 @@ Options:
   --notes <text>       Release notes stored in Appwrite metadata.
   --allow-dirty        Allow releasing with pre-existing uncommitted changes.
   --force              Allow publishing a version <= the current latest metadata.
+
+Auth:
+  Set APPWRITE_RELEASE_API_KEY or APPWRITE_API_KEY for non-interactive Appwrite publishing.
 `);
 }
 
@@ -171,7 +175,22 @@ function assertCommand(command, commandArgs) {
   }
 }
 
-function assertAppwriteLogin() {
+function configureAppwriteClient() {
+  const apiKey = process.env.APPWRITE_RELEASE_API_KEY || process.env.APPWRITE_API_KEY;
+  const commandArgs = [
+    "client",
+    "--endpoint",
+    "https://sgp.cloud.appwrite.io/v1",
+    "--project-id",
+    "69af9f0700103b7f3482",
+  ];
+
+  if (apiKey) commandArgs.push("--key", apiKey);
+
+  execCommand("appwrite", commandArgs, { cwd: repoRoot, stdio: "ignore" });
+}
+
+function assertAppwriteAccess() {
   try {
     execCommand("appwrite", ["projects", "get", "--project-id", "69af9f0700103b7f3482"], {
       cwd: repoRoot,
@@ -179,7 +198,7 @@ function assertAppwriteLogin() {
     });
   } catch {
     throw new Error(
-      "Appwrite CLI cannot access the Privora project. Run `appwrite login --endpoint https://sgp.cloud.appwrite.io/v1`, then `appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482`.",
+      "Appwrite CLI cannot access the Privora project. Set APPWRITE_RELEASE_API_KEY to a temporary Appwrite API key with storage/databases access, then rerun.",
     );
   }
 }

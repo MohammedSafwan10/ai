@@ -34,11 +34,10 @@ Each release document stores:
 
 ## One Command Release
 
-From the repository root, after Appwrite CLI is logged in to the Singapore endpoint and linked:
+From the repository root, set a temporary Appwrite API key for non-interactive publishing:
 
 ```powershell
-appwrite login --endpoint https://sgp.cloud.appwrite.io/v1
-appwrite client --endpoint https://sgp.cloud.appwrite.io/v1 --project-id 69af9f0700103b7f3482
+$env:APPWRITE_RELEASE_API_KEY = "YOUR_TEMP_APPWRITE_API_KEY"
 ```
 
 Then publish:
@@ -46,6 +45,8 @@ Then publish:
 ```powershell
 npm run desktop:release:win:x64
 ```
+
+The script configures the Appwrite CLI to use `https://sgp.cloud.appwrite.io/v1` and project `69af9f0700103b7f3482` before upload. Do not use interactive account login for this release flow; Appwrite Cloud account login is global, while this project's storage/database API calls use the Singapore regional endpoint.
 
 Commit source changes before running the release command. By default the command requires a clean working tree, then it creates the desktop package version bump as the only local git change.
 
@@ -88,6 +89,12 @@ git push origin main
 ```
 
 Use `--allow-dirty` only for an emergency/tester build where you intentionally want to release uncommitted local source changes.
+
+After publishing, clear the key from the current terminal and rotate/delete the temporary API key in Appwrite:
+
+```powershell
+Remove-Item Env:\APPWRITE_RELEASE_API_KEY
+```
 
 ## Manual Verification
 
