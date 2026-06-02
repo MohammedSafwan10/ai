@@ -22,6 +22,10 @@ export const channels = {
   openExternalUrl: "desktop:openExternalUrl",
   listWorkspaceOpenTargets: "desktop:listWorkspaceOpenTargets",
   openWorkspaceTarget: "desktop:openWorkspaceTarget",
+  getUpdateStatus: "desktop:getUpdateStatus",
+  checkForUpdates: "desktop:checkForUpdates",
+  installUpdate: "desktop:installUpdate",
+  updateStatusChanged: "desktop:updateStatusChanged",
   zoomChanged: "desktop:zoomChanged",
   event: "desktop:event",
 } as const;

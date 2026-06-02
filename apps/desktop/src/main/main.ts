@@ -8,6 +8,7 @@ import { registerIpc, type IpcState } from "./ipc/register";
 import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
 import { resolveAppIconPath } from "./resources";
+import { installUpdateService } from "./updateService";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -84,9 +85,11 @@ const installApplicationMenu = () => {
             if (window instanceof BrowserWindow) setWindowZoom(window, getDefaultZoomFactor(window));
           },
         },
-        { type: "separator" },
-        { role: "reload" },
-        { role: "toggleDevTools" },
+        ...isDevMode ? [
+          { type: "separator" as const },
+          { role: "reload" as const },
+          { role: "toggleDevTools" as const },
+        ] : [],
       ],
     },
     { role: "windowMenu" },
@@ -214,6 +217,7 @@ if (!singleInstanceLock) {
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
     runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state));
     registerIpc(store, runtime, state);
+    installUpdateService();
     await createWindow();
 
     app.on("activate", () => {

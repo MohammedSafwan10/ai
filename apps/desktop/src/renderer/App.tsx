@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, Download, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import clsx from "clsx";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -12,7 +13,7 @@ import { ChatShell } from "./features/chat/ChatShell";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue } from "./features/chat/usePromptQueue";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
-import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput } from "../shared/types";
+import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
@@ -22,6 +23,7 @@ export default function App() {
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideWidth, setIdeWidth] = useState(620);
   const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const zoomToastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
@@ -121,6 +123,20 @@ export default function App() {
 
     return () => {
       clearZoomToastTimers();
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.privoraDesktop.getUpdateStatus()
+      .then((status) => {
+        if (mounted) setUpdateStatus(status);
+      })
+      .catch((error) => console.error(error));
+    const unsubscribe = window.privoraDesktop.onUpdateStatusChanged(setUpdateStatus);
+    return () => {
+      mounted = false;
       unsubscribe();
     };
   }, []);
@@ -274,7 +290,12 @@ export default function App() {
         title={activeThread?.title || "New chat"}
         settingsOpen={settingsOpen}
         toast={toast}
-        topbarTrailing={<AppLauncher disabled={!activeWorkspace} />}
+        topbarTrailing={(
+          <>
+            <UpdateControl status={updateStatus} />
+            <AppLauncher disabled={!activeWorkspace} />
+          </>
+        )}
         messageList={(
         <div
           className="message-list"
@@ -532,6 +553,63 @@ export default function App() {
       )}
       </div>
     </div>
+  );
+}
+
+function UpdateControl({ status }: { status: UpdateStatus | null }) {
+  const [busy, setBusy] = useState(false);
+  const state = status?.state || "idle";
+  const visible = state !== "unsupported" && (state !== "idle" || Boolean(status?.message));
+  const active = state === "checking" || state === "downloading" || state === "installing";
+  const ready = state === "ready";
+  const label = (() => {
+    if (state === "checking") return "Checking";
+    if (state === "downloading") return "Downloading";
+    if (state === "ready") return "Restart to update";
+    if (state === "installing") return "Installing";
+    if (state === "error") return "Update failed";
+    return "Check updates";
+  })();
+
+  if (!status?.supported && !status?.message) return null;
+
+  const check = async () => {
+    setBusy(true);
+    try {
+      await window.privoraDesktop.checkForUpdates();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const install = async () => {
+    setBusy(true);
+    try {
+      await window.privoraDesktop.installUpdate();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!visible && status?.supported) {
+    return (
+      <button type="button" className="update-icon-button" title="Check for updates" onClick={check} disabled={busy}>
+        <Download size={16} />
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={clsx("update-pill", ready && "ready", state === "error" && "error")}
+      title={status?.error || status?.message || label}
+      onClick={ready ? install : check}
+      disabled={busy || active}
+    >
+      {active ? <RotateCw size={15} className="spin" /> : <Download size={15} />}
+      <span>{label}</span>
+    </button>
   );
 }
 

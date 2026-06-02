@@ -636,8 +636,33 @@ export interface PrivoraDesktopApi {
   openExternalUrl(url: string): Promise<void>;
   listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;
   openWorkspaceTarget(target: WorkspaceOpenTarget): Promise<void>;
+  getUpdateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  installUpdate(): Promise<UpdateStatus>;
+  onUpdateStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   onZoomChanged(callback: (percent: number) => void): () => void;
   onEvent(callback: (event: DesktopEvent) => void): () => void;
+}
+
+export type UpdateState =
+  | "idle"
+  | "checking"
+  | "downloading"
+  | "ready"
+  | "installing"
+  | "unsupported"
+  | "error";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  supported: boolean;
+  feedUrl: string;
+  message?: string;
+  error?: string;
+  releaseName?: string;
+  releaseNotes?: string;
+  releaseDate?: string;
+  lastCheckedAt?: number;
 }
 
 export type WorkspaceOpenTarget = string;

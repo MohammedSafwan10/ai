@@ -113,6 +113,65 @@
   gap: 8px;
 }
 
+.update-icon-button,
+.update-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--privora-surface) 18%, transparent);
+  color: var(--privora-muted);
+}
+
+.update-icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+
+.update-pill {
+  min-width: 0;
+  height: 34px;
+  gap: 7px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.update-icon-button:hover:not(:disabled),
+.update-pill:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--privora-surface) 32%, transparent);
+  color: var(--privora-text);
+}
+
+.update-pill.ready {
+  border-color: color-mix(in srgb, var(--success) 46%, transparent);
+  color: var(--success);
+}
+
+.update-pill.error {
+  border-color: color-mix(in srgb, var(--danger) 46%, transparent);
+  color: var(--danger);
+}
+
+.update-icon-button:disabled,
+.update-pill:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.spin {
+  animation: update-spin 0.9s linear infinite;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .topbar-icon-button {
   display: inline-grid;
   width: 34px;

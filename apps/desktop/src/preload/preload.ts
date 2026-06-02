@@ -36,6 +36,14 @@ const api: PrivoraDesktopApi = {
   openExternalUrl: (url: string) => ipcRenderer.invoke(channels.openExternalUrl, url),
   listWorkspaceOpenTargets: () => ipcRenderer.invoke(channels.listWorkspaceOpenTargets),
   openWorkspaceTarget: (target) => ipcRenderer.invoke(channels.openWorkspaceTarget, target),
+  getUpdateStatus: () => ipcRenderer.invoke(channels.getUpdateStatus),
+  checkForUpdates: () => ipcRenderer.invoke(channels.checkForUpdates),
+  installUpdate: () => ipcRenderer.invoke(channels.installUpdate),
+  onUpdateStatusChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: Awaited<ReturnType<PrivoraDesktopApi["getUpdateStatus"]>>) => callback(status);
+    ipcRenderer.on(channels.updateStatusChanged, listener);
+    return () => ipcRenderer.off(channels.updateStatusChanged, listener);
+  },
   onZoomChanged: (callback: (percent: number) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, percent: number) => callback(percent);
     ipcRenderer.on(channels.zoomChanged, listener);
