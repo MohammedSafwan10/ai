@@ -1,7 +1,16 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
+import fs from "node:fs";
+import path from "node:path";
+import { MakerDMG } from "@electron-forge/maker-dmg";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
 import { VitePlugin } from "@electron-forge/plugin-vite";
+
+const targetPlatform = process.env.npm_config_platform || process.platform;
+const targetArch = process.env.npm_config_arch || process.arch;
+const optionalResource = (...segments: string[]) => path.join(...segments);
+const existingOptionalResources = (...resources: string[]) => resources.filter((resource) => fs.existsSync(resource));
+const ripgrepResourcePackage = `node_modules/@vscode/ripgrep-${targetPlatform}-${targetArch}`;
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -11,7 +20,9 @@ const config: ForgeConfig = {
     extraResource: [
       "assets",
       "build-resources/node-pty",
-      "node_modules/@vscode/ripgrep-win32-x64",
+      ...existingOptionalResources(
+        optionalResource(ripgrepResourcePackage),
+      ),
     ],
     executableName: "Privora",
     icon: "assets/icon",
@@ -26,7 +37,12 @@ const config: ForgeConfig = {
       setupIcon: "assets/icon.ico",
       setupExe: "PrivoraSetup.exe",
     }),
-    new MakerZIP({}, ["win32"]),
+    new MakerZIP({}, ["win32", "darwin"]),
+    new MakerDMG({
+      name: "Privora",
+      icon: "assets/icon.icns",
+      overwrite: true,
+    }, ["darwin"]),
   ],
   plugins: [
     new VitePlugin({

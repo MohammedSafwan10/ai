@@ -5,6 +5,8 @@ const root = path.resolve(__dirname, "..");
 const stagedRoot = path.join(root, "build-resources");
 const stagedPty = path.join(stagedRoot, "node-pty");
 const sourcePty = path.join(root, "node_modules", "node-pty");
+const targetPlatform = process.env.npm_config_platform || process.platform;
+const targetArch = process.env.npm_config_arch || process.arch;
 
 const copyFile = (from, to) => {
   fs.mkdirSync(path.dirname(to), { recursive: true });
@@ -23,6 +25,7 @@ const copyRuntimeJs = (from, to) => {
 };
 
 const copyMatching = (fromDir, toDir, include) => {
+  if (!fs.existsSync(fromDir)) return;
   for (const entry of fs.readdirSync(fromDir, { withFileTypes: true })) {
     const from = path.join(fromDir, entry.name);
     const to = path.join(toDir, entry.name);
@@ -32,6 +35,21 @@ const copyMatching = (fromDir, toDir, include) => {
     }
     if (include(from)) copyFile(from, to);
   }
+};
+
+const targetPtyPrebuilds = () => {
+  if (targetArch === "universal" && targetPlatform === "darwin") {
+    return ["darwin-arm64", "darwin-x64"];
+  }
+  return [`${targetPlatform}-${targetArch}`];
+};
+
+const includeRuntimeNativeFile = (file) => {
+  const name = path.basename(file);
+  if (file.endsWith(".node")) return true;
+  if (targetPlatform === "darwin") return name === "spawn-helper";
+  if (targetPlatform === "win32") return file.endsWith(".dll") || file.endsWith(".exe");
+  return false;
 };
 
 fs.rmSync(stagedRoot, { recursive: true, force: true });
@@ -48,6 +66,6 @@ copyMatching(path.join(sourcePty, "lib"), path.join(stagedPty, "lib"), (file) =>
   copyRuntimeJs(file, path.join(stagedPty, "lib", path.relative(path.join(sourcePty, "lib"), file)));
   return false;
 });
-copyMatching(path.join(sourcePty, "prebuilds", "win32-x64"), path.join(stagedPty, "prebuilds", "win32-x64"), (file) =>
-  file.endsWith(".node") || file.endsWith(".dll") || file.endsWith(".exe")
-);
+for (const prebuild of targetPtyPrebuilds()) {
+  copyMatching(path.join(sourcePty, "prebuilds", prebuild), path.join(stagedPty, "prebuilds", prebuild), includeRuntimeNativeFile);
+}

@@ -18,6 +18,9 @@
     "prepare:package": "node scripts/prepare-package-resources.js",
     "build": "npm run prepare:package && electron-forge package",
     "make": "npm run prepare:package && electron-forge make",
+    "make:mac": "npm run make -- --platform=darwin --arch=arm64",
+    "make:mac:x64": "npm run make -- --platform=darwin --arch=x64",
+    "make:win:x64": "npm run make -- --platform=win32 --arch=x64",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -38,6 +41,7 @@
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-dmg": "^7.11.2",
     "@electron-forge/maker-squirrel": "^7.11.2",
     "@electron-forge/maker-zip": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
