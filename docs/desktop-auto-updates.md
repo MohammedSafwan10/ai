@@ -111,6 +111,7 @@ The JSON endpoint should show the new `version`. The `RELEASES` endpoint should 
 
 - Users on builds before `0.1.1` do not have updater code. They must install a new `PrivoraSetup.exe` once.
 - After `0.1.1`, future Windows x64 stable releases can be delivered through the in-app update control.
+- Users can see their installed version, update status, feed URL, and downloaded release notes in Settings > About.
 - The production menu hides Reload and Toggle Developer Tools in packaged builds.
 - Do not commit Appwrite API keys or provider secrets. If a key is used for setup automation, rotate/delete it after use.
 - If a key was pasted into chat or logs, rotate/delete it immediately after the release.

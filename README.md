@@ -302,6 +302,7 @@ Current desktop capabilities:
 - Terminal command execution with output buffering and stop support.
 - Context mentions for `@file`, `@folder`, and `@terminal`.
 - Stop/continue-friendly run state and checkpoints.
+- Settings > About shows the installed desktop version, update status, update feed, and downloaded release notes when available.
 
 Desktop is still evolving toward a more Codex-style architecture: protocol-driven turn loop, durable event stream, terminal/session model, mutation coordinator, and smoother high-volume rendering.
 

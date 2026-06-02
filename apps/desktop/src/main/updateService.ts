@@ -8,6 +8,7 @@ let status: UpdateStatus = {
   state: "idle",
   supported: process.platform === "win32" && app.isPackaged,
   feedUrl: UPDATE_FEED_URL,
+  currentVersion: app.getVersion(),
 };
 
 let checking = false;

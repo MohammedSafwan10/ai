@@ -274,6 +274,7 @@ export default function App() {
         footer={(
           <SettingsPanel
             settings={snapshot.settings}
+            updateStatus={updateStatus}
             workspaceDisabled={!activeWorkspace}
             open={settingsOpen}
             onOpen={() => setSettingsOpen(true)}
@@ -518,6 +519,7 @@ export default function App() {
         settingsLayer={(
           <SettingsScreen
             settings={snapshot.settings}
+            updateStatus={updateStatus}
             workspaceDisabled={!activeWorkspace}
             open={settingsOpen}
             onOpen={() => setSettingsOpen(true)}

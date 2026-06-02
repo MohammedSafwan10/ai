@@ -1,11 +1,12 @@
-import { Check, Code2, KeyRound, Keyboard, Monitor, Moon, Settings, Sun, Trash2, X } from "lucide-react";
+import { Check, Code2, Info, KeyRound, Keyboard, Monitor, Moon, Settings, Sun, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState, type ReactNode } from "react";
-import type { SaveSettingsInput, SettingsRecord, WorkspaceOpenTargetInfo } from "../../shared/types";
+import type { SaveSettingsInput, SettingsRecord, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
 
 interface SettingsPanelProps {
   settings: SettingsRecord;
+  updateStatus: UpdateStatus | null;
   workspaceDisabled: boolean;
   open: boolean;
   onOpen: () => void;
@@ -14,7 +15,7 @@ interface SettingsPanelProps {
   className?: string;
 }
 
-type SettingsTab = "general" | "providers" | "workspace" | "shortcuts";
+type SettingsTab = "general" | "providers" | "workspace" | "shortcuts" | "about";
 
 export function SettingsPanel({ open, onOpen, onClose }: SettingsPanelProps) {
   useEffect(() => {
@@ -39,7 +40,7 @@ export function SettingsPanel({ open, onOpen, onClose }: SettingsPanelProps) {
   );
 }
 
-export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onClose, onSave, className }: SettingsPanelProps) {
+export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, className }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
@@ -102,6 +103,7 @@ export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onCl
               <SettingsTabButton id="providers" active={activeTab} icon={<KeyRound size={15} />} label="Providers" onSelect={setActiveTab} />
               <SettingsTabButton id="workspace" active={activeTab} icon={<Code2 size={15} />} label="Workspace" onSelect={setActiveTab} />
               <SettingsTabButton id="shortcuts" active={activeTab} icon={<Keyboard size={15} />} label="Shortcuts" onSelect={setActiveTab} />
+              <SettingsTabButton id="about" active={activeTab} icon={<Info size={15} />} label="About" onSelect={setActiveTab} />
             </aside>
 
             <div className="settings-content">
@@ -253,6 +255,20 @@ export function SettingsScreen({ settings, workspaceDisabled, open, onOpen, onCl
                   <ShortcutRow keys="Ctrl+R" label="Reload app" />
                 </div>
               )}
+
+              {activeTab === "about" && (
+                <div className="settings-section settings-about">
+                  <InfoRow label="Version" value={updateStatus?.currentVersion || "Unknown"} />
+                  <InfoRow label="Updates" value={formatUpdateState(updateStatus)} />
+                  <InfoRow label="Feed" value={updateStatus?.feedUrl || "Not configured"} code />
+                  {updateStatus?.releaseName && <InfoRow label="Ready update" value={updateStatus.releaseName} />}
+                  {updateStatus?.releaseDate && <InfoRow label="Release date" value={updateStatus.releaseDate} />}
+                  {updateStatus?.releaseNotes && <InfoRow label="Release notes" value={updateStatus.releaseNotes} />}
+                  {updateStatus?.lastCheckedAt && (
+                    <InfoRow label="Last checked" value={new Date(updateStatus.lastCheckedAt).toLocaleString()} />
+                  )}
+                </div>
+              )}
             </div>
       </section>
     </div>
@@ -289,10 +305,31 @@ function ShortcutRow({ keys, label }: { keys: string; label: string }) {
   );
 }
 
+function InfoRow({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
+  return (
+    <div className="settings-info-row">
+      <span>{label}</span>
+      {code ? <code>{value}</code> : <strong>{value}</strong>}
+    </div>
+  );
+}
+
+const formatUpdateState = (status: UpdateStatus | null) => {
+  if (!status) return "Loading";
+  if (status.state === "ready") return "Ready to install";
+  if (status.state === "checking") return "Checking";
+  if (status.state === "downloading") return "Downloading";
+  if (status.state === "installing") return "Installing";
+  if (status.state === "error") return status.error || "Update failed";
+  if (status.state === "unsupported") return status.message || "Unsupported";
+  return status.message || "Up to date";
+};
+
 const tabTitle = (tab: SettingsTab) => {
   if (tab === "providers") return "Providers";
   if (tab === "workspace") return "Workspace";
   if (tab === "shortcuts") return "Shortcuts";
+  if (tab === "about") return "About";
   return "General";
 };
 

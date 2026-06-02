@@ -657,6 +657,7 @@ export interface UpdateStatus {
   state: UpdateState;
   supported: boolean;
   feedUrl: string;
+  currentVersion: string;
   message?: string;
   error?: string;
   releaseName?: string;
