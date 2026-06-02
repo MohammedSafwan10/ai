@@ -164,7 +164,7 @@ Options:
 
 function assertCommand(command, commandArgs) {
   try {
-    execFileSync(command, commandArgs, { cwd: repoRoot, stdio: "ignore" });
+    execFileSync(resolveExecutable(command), commandArgs, { cwd: repoRoot, stdio: "ignore" });
   } catch {
     throw new Error(`Required command is not available: ${command}`);
   }
@@ -181,7 +181,10 @@ function assertAppwriteLogin() {
 function assertCleanGitUnlessAllowed() {
   if (args.allowDirty) return;
 
-  const status = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" }).trim();
+  const status = execFileSync(resolveExecutable("git"), ["status", "--porcelain"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
   if (status) {
     throw new Error("Working tree has uncommitted changes. Commit/stash them first, or rerun with --allow-dirty.");
   }
@@ -325,15 +328,21 @@ function runPowerShell(commandArgs) {
 
 function run(command, commandArgs, options = {}) {
   log(`$ ${[command, ...commandArgs].join(" ")}`);
-  execFileSync(command, commandArgs, {
+  execFileSync(resolveExecutable(command), commandArgs, {
     cwd: options.cwd || repoRoot,
     stdio: "inherit",
   });
 }
 
 function runJson(command, commandArgs) {
-  const output = execFileSync(command, commandArgs, { cwd: repoRoot, encoding: "utf8" });
+  const output = execFileSync(resolveExecutable(command), commandArgs, { cwd: repoRoot, encoding: "utf8" });
   return JSON.parse(output);
+}
+
+function resolveExecutable(command) {
+  if (process.platform !== "win32") return command;
+  if (command === "npm" || command === "appwrite") return `${command}.cmd`;
+  return command;
 }
 
 function log(message) {
