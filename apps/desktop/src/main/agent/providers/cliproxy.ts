@@ -12,6 +12,24 @@ import { normalizeProviderUsage } from "./usage";
 const responseReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
 
+export const normalizeCliproxyError = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "CLIProxy request failed.";
+  let message = trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    message = String(parsed?.error?.message || parsed?.message || trimmed);
+  } catch {
+    message = trimmed;
+  }
+
+  if (/authentication token is expired|invalidated oauth token|auth_unavailable|no auth available/i.test(message)) {
+    return "CLIProxy could not authenticate its upstream account. Stop CLIProxy, remove stale Codex auth files from ~/.cli-proxy-api, run `cliproxy -codex-login`, then start CLIProxy again.";
+  }
+
+  return message;
+};
+
 export const cliproxyToolsForModel = (
   _model: string,
   collaborationMode: ProviderStreamOptions["collaborationMode"],
@@ -182,7 +200,7 @@ export class CliproxyAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(errorText || `CLIProxy request failed with ${response.status}`);
+      throw new Error(normalizeCliproxyError(errorText || `CLIProxy request failed with ${response.status}`));
     }
 
     const buffers = new Map<string, { id?: string; name?: string; argumentsText: string }>();
