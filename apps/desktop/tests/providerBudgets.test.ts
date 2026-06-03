@@ -67,4 +67,26 @@ describe("provider output budgets", () => {
     body = requestBodyAt(fetchMock, 1);
     expect(body.max_tokens).toBe(12_000);
   });
+
+  it("retries OpenRouter once with the output tokens the key can afford", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: "This request requires more credits, or fewer max_tokens. You requested up to 4096 tokens, but can only afford 1050.",
+          code: 402,
+        },
+      }), { status: 402 }))
+      .mockResolvedValueOnce(sseResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OpenRouterAdapter().stream(baseOptions({
+      provider: "openrouter",
+      model: "minimax/minimax-m3",
+      maxOutputTokens: 4_096,
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestBodyAt(fetchMock, 0).max_tokens).toBe(4_096);
+    expect(requestBodyAt(fetchMock, 1).max_tokens).toBe(1_050);
+  });
 });

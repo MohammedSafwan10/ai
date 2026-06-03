@@ -6,20 +6,35 @@ import { normalizeProviderUsage } from "./usage";
 const openRouterReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
 
-export const normalizeOpenRouterError = (value: string) => {
+const getOpenRouterErrorMessage = (value: string) => {
   const trimmed = value.trim();
-  if (!trimmed) return "OpenRouter request failed.";
-  let message = trimmed;
+  if (!trimmed) return "";
   try {
     const parsed = JSON.parse(trimmed);
-    message = String(parsed?.error?.message || parsed?.message || trimmed);
+    return String(parsed?.error?.message || parsed?.message || trimmed);
   } catch {
-    message = trimmed;
+    return trimmed;
   }
+};
 
-  const creditMatch = message.match(/requested up to\s+(\d+)\s+tokens, but can only afford\s+(\d+)/i);
-  if (creditMatch) {
-    return `OpenRouter rejected the request because this key can only afford ${Number(creditMatch[2]).toLocaleString()} output tokens, while the request allowed ${Number(creditMatch[1]).toLocaleString()}. The app now sends a smaller default max_tokens for OpenRouter BYOK models; try again, or raise the key's credit limit in OpenRouter.`;
+export const parseOpenRouterAffordableOutputTokens = (value: string) => {
+  const message = getOpenRouterErrorMessage(value);
+  const match = message.match(/requested up to\s+([\d,]+)\s+tokens, but can only afford\s+([\d,]+)/i);
+  if (!match) return undefined;
+  const requested = Number(match[1].replaceAll(",", ""));
+  const affordable = Number(match[2].replaceAll(",", ""));
+  return Number.isFinite(requested) && Number.isFinite(affordable)
+    ? { requested, affordable }
+    : undefined;
+};
+
+export const normalizeOpenRouterError = (value: string) => {
+  const message = getOpenRouterErrorMessage(value);
+  if (!message) return "OpenRouter request failed.";
+
+  const affordability = parseOpenRouterAffordableOutputTokens(message);
+  if (affordability) {
+    return `OpenRouter rejected the request because this key can only afford ${affordability.affordable.toLocaleString()} output tokens, while the request allowed ${affordability.requested.toLocaleString()}. Try a shorter prompt or raise the key's credit limit in OpenRouter.`;
   }
 
   if (/no endpoints found/i.test(message)) {
@@ -91,7 +106,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
       throw new Error("OpenRouter API key is not configured in desktop settings.");
     }
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const request = (maxOutputTokens: number | undefined) => fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -105,7 +120,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
         tools: openRouterDesktopTools(options.collaborationMode),
         tool_choice: "auto",
         parallel_tool_calls: true,
-        ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
+        ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),
         stream: true,
         stream_options: { include_usage: true },
@@ -113,6 +128,26 @@ export class OpenRouterAdapter implements ProviderAdapter {
       }),
       signal: options.signal,
     });
+
+    let response = await request(options.maxOutputTokens);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const affordability = response.status === 402
+        ? parseOpenRouterAffordableOutputTokens(errorText)
+        : undefined;
+      const affordableOutputTokens = affordability?.affordable;
+      if (
+        options.maxOutputTokens
+        && affordableOutputTokens
+        && affordableOutputTokens >= 1
+        && affordableOutputTokens < options.maxOutputTokens
+      ) {
+        response = await request(affordableOutputTokens);
+      } else {
+        throw new Error(normalizeOpenRouterError(errorText || `OpenRouter request failed with ${response.status}`));
+      }
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
