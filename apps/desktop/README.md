@@ -89,9 +89,9 @@ BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are ch
 
 ## Browser Sign-In
 
-Desktop account sign-in opens Privora Web in the system browser. In development, the web app can return a short-lived Appwrite JWT to a local loopback callback so the running dev app can connect without launching another Electron instance. In production, the same user flow should move to a backend-issued one-time code exchange before general release.
+Desktop account sign-in opens Privora Web in the system browser. The authenticated web app asks the `model-gateway` function for a short-lived, single-use Appwrite custom token. Desktop exchanges that token for its own durable Appwrite session cookie, then creates fresh short-lived JWTs from that session when calling hosted APIs.
 
-Desktop stores only the secure account connection result and optional profile display fields. It does not store the OpenRouter hosted key.
+Local development sends the token through a loopback callback. Production sends it through the state-verified `privora://auth/callback` protocol URL. Desktop stores the durable session cookie and optional profile display fields in OS-backed secret storage. It does not store the OpenRouter hosted key.
 
 ## Requirements
 
@@ -154,6 +154,8 @@ https://updates.nexdark.com/win32/x64/stable
 ```
 
 Use `npm run release:win:x64 -- --notes "Release notes"` from `apps/desktop` to build, upload the installer/NUPKG, and publish feed metadata. The release command requires a temporary Appwrite API key in `APPWRITE_RELEASE_API_KEY` or `APPWRITE_API_KEY`; never commit that key.
+
+The public Windows download page at `https://privora.nexdark.com/download` reads the same stable release metadata, so publishing a new stable release updates the installer download without a website code change.
 
 ## Current Stack
 

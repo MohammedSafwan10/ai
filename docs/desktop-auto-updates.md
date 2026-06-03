@@ -111,6 +111,7 @@ The JSON endpoint should show the new `version`. The `RELEASES` endpoint should 
 
 - Users on builds before `0.1.1` do not have updater code. They must install a new `PrivoraSetup.exe` once.
 - After `0.1.1`, future Windows x64 stable releases can be delivered through the in-app update control.
+- The public download page at `https://privora.nexdark.com/download` reads the stable release metadata and automatically serves the latest published installer.
 - Users can see their installed version, latest release, update channel, update status, and release notes in Settings > About. The raw feed URL is public and safe, but normal UI shows a friendly channel label instead.
 - The production menu hides Reload and Toggle Developer Tools in packaged builds.
 - Do not commit Appwrite API keys or provider secrets. If a key is used for setup automation, rotate/delete it after use.
