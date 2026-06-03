@@ -23,6 +23,7 @@ import { buildDesktopSystemPrompt } from "./systemPrompt";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
+import { buildAgentsMdContext } from "./agentsMd";
 import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel, sanitizeProviderHistoryForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
 import { loadSubagentRoles, pickSubagentNickname, type SubagentRoleConfig } from "./subagents";
@@ -426,6 +427,7 @@ export class AgentRuntime {
     let recoveryAttempts = options.recoveryAttempts;
     let lastProviderUsage: TokenUsageRecord | null = null;
     let totalProviderUsage: TokenUsageRecord | null = null;
+    const agentsMdContext = await buildAgentsMdContext(options.workspaceRoot);
     const visibleFingerprints = buildVisibleFingerprints(assistantText);
     let handoff = false;
     let controller = options.controller;
@@ -596,6 +598,7 @@ export class AgentRuntime {
               options.workspaceRoot,
               [
                 buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+                agentsMdContext,
                 subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
               ].filter(Boolean).join("\n\n"),
               settings.collaborationMode,

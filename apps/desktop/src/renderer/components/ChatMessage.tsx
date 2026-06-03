@@ -72,7 +72,7 @@ function ChatMessageComponent({
   );
   const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
   const activityNeedsAttention = renderParts.some((part) =>
-    part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed")
+    part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval")
   );
   const [activityOpen, setActivityOpen] = useState(runActive || activityNeedsAttention);
   useEffect(() => {
@@ -311,7 +311,7 @@ function markDefaultOpenToolPart(parts: AssistantRenderPart[], runActive: boolea
   const liveIndex = latestLiveToolIndex >= 0 ? parts.length - 1 - latestLiveToolIndex : -1;
   return parts.map((part, index) => {
     if (part.type !== "tools") return part;
-    const needsAttention = part.tools.some((tool) => tool.status === "awaiting_approval" || tool.status === "failed");
+    const needsAttention = part.tools.some((tool) => tool.status === "awaiting_approval");
     return {
       ...part,
       defaultOpen: needsAttention || (runActive && index === liveIndex),
