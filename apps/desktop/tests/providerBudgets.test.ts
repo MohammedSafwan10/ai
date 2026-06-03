@@ -10,6 +10,15 @@ const sseResponse = () => new Response(new ReadableStream({
   },
 }), { status: 200 });
 
+const sseResponseWith = (chunks: string[]) => new Response(new ReadableStream({
+  start(controller) {
+    const encoder = new TextEncoder();
+    chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)));
+    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    controller.close();
+  },
+}), { status: 200 });
+
 const baseOptions = (overrides: Partial<ProviderStreamOptions> = {}): ProviderStreamOptions => ({
   provider: "cliproxy",
   model: "gpt-5.5",
@@ -81,10 +90,56 @@ describe("provider output budgets", () => {
     expect(requestHeadersAt(fetchMock, 0)?.Session_id).toBeUndefined();
   });
 
-  it("keeps CLIProxy model aliasing centralized and preserves GPT-5.5", () => {
+  it("keeps CLIProxy model aliasing centralized and preserves Antigravity Gemini 3.5 Flash", () => {
     expect(resolveCliproxyModelId("gpt-5.5")).toBe("gpt-5.5");
     expect(resolveCliproxyModelId("gemini-3.5-flash-cliproxy")).toBe("gemini-3-flash-agent");
     expect(cliproxyPromptCacheKey("thread-123")).toBe("privora:thread:thread-123:v1");
+  });
+
+  it("routes CLIProxy Responses output text to visible assistant text", async () => {
+    const onTextDelta = vi.fn();
+    const onThoughtDelta = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([
+      "event: response.output_text.delta\n",
+      "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+    ])));
+
+    await new CliproxyAdapter().stream(baseOptions({ onTextDelta, onThoughtDelta }));
+
+    expect(onTextDelta).toHaveBeenCalledWith("hello");
+    expect(onThoughtDelta).not.toHaveBeenCalled();
+  });
+
+  it("routes CLIProxy Responses reasoning to Thought process instead of visible text", async () => {
+    const onTextDelta = vi.fn();
+    const onThoughtDelta = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([
+      "event: response.reasoning_summary_text.delta\n",
+      "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Need inspect file.\"}\n\n",
+      "event: response.reasoning_text.delta\n",
+      "data: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"Raw hidden thought.\"}\n\n",
+    ])));
+
+    await new CliproxyAdapter().stream(baseOptions({ onTextDelta, onThoughtDelta }));
+
+    expect(onTextDelta).not.toHaveBeenCalled();
+    expect(onThoughtDelta).toHaveBeenNthCalledWith(1, "Need inspect file.");
+    expect(onThoughtDelta).toHaveBeenNthCalledWith(2, "Raw hidden thought.");
+  });
+
+  it("does not show loose chat-style or malformed CLIProxy chunks as visible text", async () => {
+    const onTextDelta = vi.fn();
+    const onThoughtDelta = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([
+      "data: {\"choices\":[{\"delta\":{\"content\":\"Need run tests.\"}}]}\n\n",
+      "event: response.output_text.delta\n",
+      "data: Need raw fallback should stay hidden\n\n",
+    ])));
+
+    await new CliproxyAdapter().stream(baseOptions({ onTextDelta, onThoughtDelta }));
+
+    expect(onTextDelta).not.toHaveBeenCalled();
+    expect(onThoughtDelta).not.toHaveBeenCalled();
   });
 
   it("sends max_tokens to OpenRouter only when a budget is provided", async () => {

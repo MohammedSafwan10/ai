@@ -311,6 +311,9 @@ export class DesktopStore {
       titleSource: options.title?.trim() ? "agent" : "placeholder",
       titleUpdatedAt: timestamp,
       workspaceId,
+      model: normalizeModelId(this.data.settings.model),
+      reasoningEffort: this.data.settings.reasoningEffort,
+      collaborationMode: this.data.settings.collaborationMode,
       hidden: options.hidden === true,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -328,6 +331,25 @@ export class DesktopStore {
       thread.id === threadId
         ? { ...thread, title: trimmed, titleSource: source, titleUpdatedAt: timestamp, updatedAt: timestamp }
         : thread,
+    );
+    this.writeData();
+    return this.getThread(threadId);
+  }
+
+  updateThreadSettings(threadId: string, input: Pick<ThreadRecord, "model" | "reasoningEffort" | "collaborationMode">) {
+    const thread = this.getThread(threadId);
+    if (!thread) return null;
+    const timestamp = now();
+    this.data.threads = this.data.threads.map((item) =>
+      item.id === threadId
+        ? {
+          ...item,
+          model: input.model ? normalizeModelId(input.model) : item.model,
+          reasoningEffort: input.reasoningEffort ?? item.reasoningEffort,
+          collaborationMode: input.collaborationMode ?? item.collaborationMode,
+          updatedAt: timestamp,
+        }
+        : item,
     );
     this.writeData();
     return this.getThread(threadId);
@@ -789,6 +811,9 @@ const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
     titleSource,
     titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(),
     hidden: thread.hidden === true,
+    model: thread.model ? normalizeModelId(thread.model) : undefined,
+    reasoningEffort: thread.reasoningEffort,
+    collaborationMode: thread.collaborationMode,
   };
 };
 

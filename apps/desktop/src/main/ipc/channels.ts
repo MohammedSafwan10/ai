@@ -18,6 +18,7 @@ export const channels = {
   listWorkspaceDirectory: "desktop:listWorkspaceDirectory",
   readWorkspaceFile: "desktop:readWorkspaceFile",
   saveSettings: "desktop:saveSettings",
+  saveThreadSettings: "desktop:saveThreadSettings",
   startPrivoraBrowserAuth: "desktop:startPrivoraBrowserAuth",
   signInPrivora: "desktop:signInPrivora",
   signUpPrivora: "desktop:signUpPrivora",

@@ -120,6 +120,9 @@ export interface ThreadRecord {
   titleSource?: ThreadTitleSource;
   titleUpdatedAt?: number;
   workspaceId: string | null;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  collaborationMode?: CollaborationMode;
   hidden?: boolean;
   starred?: boolean;
   createdAt: number;
@@ -663,6 +666,13 @@ export interface SaveSettingsInput {
   geminiApiKey?: string;
 }
 
+export interface SaveThreadSettingsInput {
+  threadId: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  collaborationMode?: CollaborationMode;
+}
+
 export interface PrivoraAuthInput {
   email: string;
   password: string;
@@ -695,6 +705,7 @@ export interface PrivoraDesktopApi {
   listWorkspaceDirectory(input: { path: string }): Promise<WorkspaceDirectoryListing>;
   readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
+  saveThreadSettings(input: SaveThreadSettingsInput): Promise<ThreadRecord | null>;
   startPrivoraBrowserAuth(): Promise<PrivoraBrowserAuthStartRecord>;
   signInPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
   signUpPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;

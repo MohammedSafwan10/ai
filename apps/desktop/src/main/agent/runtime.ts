@@ -217,13 +217,14 @@ export class AgentRuntime {
       const workspace = this.store.getWorkspace(thread.workspaceId);
       if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
       const settings = this.store.getSettings();
-      const selectedModel = getModelOption(settings.model);
+      const effectiveModel = getModelOption(thread.model || settings.model).id;
+      const selectedModel = getModelOption(effectiveModel);
       const imageAttachmentCount = (input.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/")).length;
       if (imageAttachmentCount > 0 && !selectedModel.supportsImageInput) {
         throw new Error(`${selectedModel.label} does not support image input. Remove the image ${imageAttachmentCount === 1 ? "or switch" : "attachments or switch"} to a vision-capable model.`);
       }
       const budgetMode = runtimeBudgetModeForTurn(input);
-      const runtimeBudget = resolveModelRuntimeBudget(settings.model, budgetMode);
+      const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, budgetMode);
 
       this.store.clearRunCheckpoint(input.threadId);
       const timestamp = now();
@@ -415,12 +416,14 @@ export class AgentRuntime {
 
   private async continueLoop(options: ContinueOptions) {
     const settings = this.store.getSettings();
-    const effectiveModel = getModelOption(options.model || settings.model).id;
+    const thread = this.store.getThread(options.threadId);
+    const effectiveModel = getModelOption(options.model || thread?.model || settings.model).id;
+    const effectiveReasoning = options.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort;
+    const effectiveCollaborationMode = thread?.collaborationMode || settings.collaborationMode;
     const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
     let history = sanitizeProviderHistoryForModel(options.history, effectiveModel);
     let assistantText = options.assistantText;
     let assistantThought = options.assistantThought;
-    const thread = this.store.getThread(options.threadId);
     const titleFilter = createThreadTitleFilterState(Boolean(thread && isPlaceholderThreadTitle(thread)));
     let iteration = options.iteration;
     let toolCount = options.toolCount;
@@ -601,11 +604,11 @@ export class AgentRuntime {
                 agentsMdContext,
                 subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
               ].filter(Boolean).join("\n\n"),
-              settings.collaborationMode,
+              effectiveCollaborationMode,
             ),
             messages: history,
-            reasoning: options.reasoningEffort || settings.reasoningEffort,
-            collaborationMode: settings.collaborationMode,
+            reasoning: effectiveReasoning,
+            collaborationMode: effectiveCollaborationMode,
             signal: controller.signal,
             threadId: options.threadId,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
@@ -660,7 +663,7 @@ export class AgentRuntime {
               markRunProgress(run);
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode);
-              const planBlock = planModeBlockReason(call, settings.collaborationMode, decision);
+              const planBlock = planModeBlockReason(call, effectiveCollaborationMode, decision);
               const scope = decision.requiresApproval
                 ? this.findReusableApprovalScope(options.threadId, call)
                 : null;
@@ -1252,8 +1255,8 @@ export class AgentRuntime {
       agentRole: role?.name,
       agentNickname: nickname,
       prompt: message,
-      model: typeof call.arguments.model === "string" ? call.arguments.model : role?.model || settings.model,
-      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || settings.reasoningEffort,
+      model: typeof call.arguments.model === "string" ? call.arguments.model : role?.model || thread?.model || settings.model,
+      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort,
     });
     this.startSubagentTurn(agent, workspaceRoot, message, role, forkTurns.value);
     this.emitSnapshot();
@@ -1377,7 +1380,8 @@ export class AgentRuntime {
     messageId: string,
   ): Promise<ToolResult> {
     const settings = this.store.getSettings();
-    if (settings.collaborationMode !== "plan") {
+    const thread = this.store.getThread(threadId);
+    if ((thread?.collaborationMode || settings.collaborationMode) !== "plan") {
       return { success: false, error: "request_user_input is only available in Plan Mode." };
     }
     const normalized = normalizeRequestUserInputQuestions(call.arguments.questions);

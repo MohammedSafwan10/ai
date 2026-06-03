@@ -130,7 +130,7 @@ export const modelOptions: ModelOption[] = [
     ...geminiLongContext,
     defaultOutputTokens: 32_000,
     upstreamModelId: "gemini-3-flash-agent",
-    description: "Gemini 3.5 Flash through CLIProxy.",
+    description: "Gemini 3.5 Flash through CLIProxy Antigravity.",
   },
   {
     id: "gemini-3.1-pro-cliproxy",

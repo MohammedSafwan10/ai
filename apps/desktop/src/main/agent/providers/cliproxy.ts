@@ -12,9 +12,12 @@ import { normalizeProviderUsage } from "./usage";
 const responseReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
 
+const CLIPROXY_ANTIGRAVITY_GEMINI_35_FLASH = "gemini-3-flash-agent";
+const CLIPROXY_ANTIGRAVITY_GEMINI_31_PRO = "gemini-pro-agent";
+
 const cliproxyModelAliases: Record<string, string> = {
-  "gemini-3.5-flash-cliproxy": "gemini-3-flash-agent",
-  "gemini-3.1-pro-cliproxy": "gemini-pro-agent",
+  "gemini-3.5-flash-cliproxy": CLIPROXY_ANTIGRAVITY_GEMINI_35_FLASH,
+  "gemini-3.1-pro-cliproxy": CLIPROXY_ANTIGRAVITY_GEMINI_31_PRO,
 };
 
 export const resolveCliproxyModelId = (modelId: string) =>
@@ -119,15 +122,21 @@ const toInput = (messages: ProviderMessage[]) => {
 const dataUrl = (mimeType: string, base64: string) => `data:${mimeType};base64,${base64}`;
 
 const textDelta = (event: string | undefined, data: any) => {
-  if (typeof data?.delta === "string" && event?.includes("output_text")) return data.delta;
-  if (typeof data?.choices?.[0]?.delta?.content === "string") return data.choices[0].delta.content;
-  if (typeof data?.message?.content === "string") return data.message.content;
+  if (event === "response.output_text.delta" && data?.type === "response.output_text.delta" && typeof data?.delta === "string") {
+    return data.delta;
+  }
   return "";
 };
 
 const thoughtDelta = (event: string | undefined, data: any) => {
-  if (typeof data?.delta === "string" && (event?.includes("reasoning") || data?.type?.includes?.("reasoning"))) return data.delta;
-  if (typeof data?.text === "string" && data?.type === "summary_text") return data.text;
+  const type = data?.type;
+  if (
+    typeof data?.delta === "string" &&
+    (event === "response.reasoning_summary_text.delta" || event === "response.reasoning_text.delta") &&
+    (type === "response.reasoning_summary_text.delta" || type === "response.reasoning_text.delta")
+  ) {
+    return data.delta;
+  }
   return "";
 };
 
@@ -287,7 +296,8 @@ export class CliproxyAdapter implements ProviderAdapter {
           }
         }
       } catch {
-        if (!event || event.includes("output_text")) options.onTextDelta(dataLine);
+        // Ignore malformed or non-JSON SSE payloads. CLIProxy Responses streams use
+        // typed events, and unknown payloads must not leak into visible assistant text.
       }
     });
   }

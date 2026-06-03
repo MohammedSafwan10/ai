@@ -90,6 +90,13 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return store.updateThreadTitle(threadId, title);
   });
 
+  handle(channels.saveThreadSettings, z.tuple([saveThreadSettingsInputSchema]), (_event, input: z.infer<typeof saveThreadSettingsInputSchema>) => {
+    const updated = store.updateThreadSettings(input.threadId, input);
+    if (!updated) throw new Error("Thread not found.");
+    emitSnapshot();
+    return updated;
+  });
+
   handle(channels.toggleThreadStar, z.tuple([idSchema]), (_event, threadId: string) => {
     return store.toggleThreadStar(threadId);
   });
@@ -377,6 +384,13 @@ const saveSettingsInputSchema = z.object({
   privoraGatewayFunctionId: z.string().max(120).optional(),
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
+});
+
+const saveThreadSettingsInputSchema = z.object({
+  threadId: idSchema,
+  model: z.string().max(160).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
+  collaborationMode: z.enum(["default", "plan"]).optional(),
 });
 
 const privoraAuthInputSchema = z.object({

@@ -53,6 +53,12 @@ export default function App() {
       .filter((content, index, items) => index === 0 || content !== items[index - 1]),
     [activeThread?.id, messages],
   );
+  const activeThreadSettings = useMemo(() => ({
+    ...snapshot.settings,
+    model: activeThread?.model || snapshot.settings.model,
+    reasoningEffort: activeThread?.reasoningEffort || snapshot.settings.reasoningEffort,
+    collaborationMode: activeThread?.collaborationMode || snapshot.settings.collaborationMode,
+  }), [activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
   const lastToolUpdatedAt = useMemo(
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
@@ -161,6 +167,31 @@ export default function App() {
     }
   };
 
+  const saveComposerSettings = async (settings: SaveSettingsInput) => {
+    const threadSettings = {
+      model: settings.model,
+      reasoningEffort: settings.reasoningEffort,
+      collaborationMode: settings.collaborationMode,
+    };
+    const globalSettings: SaveSettingsInput = { ...settings };
+    delete globalSettings.model;
+    delete globalSettings.reasoningEffort;
+    delete globalSettings.collaborationMode;
+    try {
+      if (Object.keys(globalSettings).length > 0) await window.privoraDesktop.saveSettings(globalSettings);
+      if (activeThread && (threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode)) {
+        await window.privoraDesktop.saveThreadSettings({
+          threadId: activeThread.id,
+          ...threadSettings,
+        });
+      }
+      await refresh();
+    } catch (error) {
+      console.error(error);
+      throw error;
+    }
+  };
+
   const {
     editQueuedPrompt,
     queueExpanded,
@@ -184,7 +215,7 @@ export default function App() {
 
   const implementPlan = useCallback((plan: string) => {
     if (!activeThread) return;
-    void window.privoraDesktop.saveSettings({ collaborationMode: "default" })
+    void window.privoraDesktop.saveThreadSettings({ threadId: activeThread.id, collaborationMode: "default" })
       .then(refresh)
       .then(() => startPrompt(
         "Implement the proposed plan above. Keep the changes scoped to that plan and verify the result.",
@@ -516,7 +547,7 @@ export default function App() {
             />
           )}
           <Composer
-            settings={snapshot.settings}
+            settings={activeThreadSettings}
             disabled={!activeThread || !activeWorkspace}
             inputDisabledReason={snapshot.pendingUserInput ? "Answer the question to continue" : undefined}
             running={running}
@@ -530,7 +561,7 @@ export default function App() {
             onStop={() => {
               stopActiveTurn();
             }}
-            onSettings={saveSettings}
+            onSettings={saveComposerSettings}
           />
         </>
         )}

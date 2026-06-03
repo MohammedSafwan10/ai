@@ -117,7 +117,7 @@ export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOp
             <span>{accountLabel}</span>
           </button>
           <button type="button" className="sidebar-account-menu-row muted" disabled>
-            <SettingsIcon size={15} />
+            <CreditCard size={15} />
             <span>{planLabel}</span>
           </button>
           <div className="sidebar-account-separator" />
