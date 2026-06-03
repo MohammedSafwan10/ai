@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { beginPrivoraBrowserAuth, closePrivoraBrowserAuthServer, parsePrivoraAuthCallback } from "../src/main/billing/browserAuthFlow";
+import { beginPrivoraBrowserAuth, closePrivoraBrowserAuthServer, decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "../src/main/billing/browserAuthFlow";
 import type { DesktopStore } from "../src/main/db/store";
 
 const fakeStore = () => {
@@ -62,19 +62,17 @@ describe("Privora browser auth flow", () => {
     expect(new URL(auth.url).origin).toBe("http://localhost:3002");
   });
 
-  it("only enables the localhost JWT bridge for local web URLs", async () => {
+  it("only enables the localhost token bridge for local web URLs", async () => {
     vi.stubEnv("PRIVORA_WEB_BASE_URL", "https://privora.nexdark.com");
-    const productionAuth = await beginPrivoraBrowserAuth(fakeStore(), { onJwt: async () => undefined });
+    const productionAuth = await beginPrivoraBrowserAuth(fakeStore(), { onToken: async () => undefined });
     expect(new URL(productionAuth.url).searchParams.get("callback")).toBeNull();
 
     vi.stubEnv("PRIVORA_WEB_BASE_URL", "http://localhost:3000");
     const store = fakeStore();
-    let receivedJwt = "";
-    let receivedExpiresAt = 0;
+    let receivedToken: { userId: string; secret: string; expiresAt: number } | null = null;
     const localAuth = await beginPrivoraBrowserAuth(store, {
-      onJwt: async (jwt, expiresAt) => {
-        receivedJwt = jwt;
-        receivedExpiresAt = expiresAt;
+      onToken: async (token) => {
+        receivedToken = token;
       },
     });
     const localUrl = new URL(localAuth.url);
@@ -86,12 +84,35 @@ describe("Privora browser auth flow", () => {
     const response = await fetch(callback!, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state, jwt: "test-jwt", expiresAt }),
+      body: JSON.stringify({ state, userId: "user_123", secret: "one-time-secret", expiresAt }),
     });
 
     expect(response.ok).toBe(true);
-    expect(receivedJwt).toBe("test-jwt");
-    expect(receivedExpiresAt).toBe(expiresAt);
+    expect(receivedToken).toEqual({
+      userId: "user_123",
+      secret: "one-time-secret",
+      expiresAt,
+      email: undefined,
+      name: undefined,
+    });
+  });
+
+  it("decodes a valid production desktop authentication code", () => {
+    const expiresAt = Date.now() + 60_000;
+    const raw = Buffer.from(JSON.stringify({
+      userId: "user_123",
+      secret: "one-time-secret",
+      expiresAt,
+      email: "user@example.com",
+    })).toString("base64url");
+
+    expect(decodePrivoraDesktopAuthCode(raw)).toEqual({
+      userId: "user_123",
+      secret: "one-time-secret",
+      expiresAt,
+      email: "user@example.com",
+      name: undefined,
+    });
   });
 
   it("accepts only matching privora auth callback state", async () => {

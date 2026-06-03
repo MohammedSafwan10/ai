@@ -9,7 +9,7 @@ import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
 import { channels } from "./channels";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
-import { createEmailPasswordAccount, createEmailPasswordSession, deleteCurrentSession, getAppwriteAccountFromJwt } from "../billing/appwriteAuth";
+import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
 import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
 import type {
   ApprovalDecisionInput,
@@ -199,15 +199,16 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
 
   handle(channels.startPrivoraBrowserAuth, z.tuple([]), async () => {
     const auth = await beginPrivoraBrowserAuth(store, {
-      onJwt: async (jwt, expiresAt, profile) => {
-        store.setPrivoraUserJwt(jwt, expiresAt, profile);
+      onToken: async (token) => {
+        const sessionCookie = await createTokenSession(store.getSettings(), token);
+        store.setPrivoraSessionCookie(sessionCookie);
         try {
-          const account = await getAppwriteAccountFromJwt(store.getSettings(), jwt);
+          const account = await getAppwriteAccount(store.getSettings(), sessionCookie);
           if (account.authenticated) {
             store.setPrivoraAccountProfile({ email: account.email, name: account.name });
           }
         } catch {
-          // The JWT itself is still useful for the gateway; keep the handoff profile if account lookup fails.
+          if (token.email || token.name) store.setPrivoraAccountProfile({ email: token.email, name: token.name });
         }
         try {
           await refreshCreditsFromSession();

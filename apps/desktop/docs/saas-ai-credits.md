@@ -37,6 +37,8 @@ Required function env vars:
 | `SAAS_DATABASE_ID` | Defaults to `privora_saas`. |
 | `AI_CREDIT_MULTIPLIER` | Defaults to `2000`. |
 
+The function API key must include the Appwrite `users.write` scope so the authenticated `desktop_auth_token` action can create short-lived custom tokens for the current user. The action never creates tokens for arbitrary user IDs.
+
 The desktop executes the function through Appwrite with a short-lived user JWT derived from the stored Appwrite session. The gateway validates the Appwrite account, checks plan/credits, calls OpenRouter, records `usage_events`, writes immutable `credit_ledger` debits, and returns updated credit summary.
 
 ## Browser Auth Flow
@@ -46,9 +48,10 @@ Desktop sign-in must happen through the SaaS website, not with password fields i
 1. Desktop generates a random state nonce and stores it with OS-backed encryption.
 2. Desktop opens `https://privora.nexdark.com/desktop/connect?state=<nonce>&source=desktop`.
 3. The website handles sign-in, pricing, email verification, and account pages.
-4. The website will later issue a short-lived one-time code and open `privora://auth/callback?code=<code>&state=<nonce>`.
+4. The website asks the authenticated gateway for a short-lived, single-use Appwrite custom token and opens `privora://auth/callback?code=<code>&state=<nonce>`.
 5. Desktop accepts the callback only when the state matches the pending nonce and has not expired.
-6. The remaining backend step is exchanging the one-time code for a desktop Appwrite session.
+6. Desktop exchanges the custom token for its own durable Appwrite session cookie.
+7. Hosted requests create fresh short-lived JWTs from that stored session, so browser sign-in does not expire after one hour.
 
 Do not add raw JWT, Appwrite project, endpoint, gateway, or password fields to desktop Billing UI.
 
@@ -104,14 +107,13 @@ npm run saas:admin:credits -- enable --user-id "<userId>"
 
 ## Desktop UI
 
-- Topbar shows AI credit balance or `BYOK`.
 - Settings > Billing shows plan, credits, renewal/reset, recent usage, and browser sign-in/sign-out controls.
+- Sidebar Usage remaining shows the current hosted credit balance.
 - Composer does not show duplicate BYOK/credit chips.
 - BYOK routes consume 0 Privora AI credits.
 
 ## Deferred
 
 - Razorpay subscription and webhook grants.
-- Desktop one-time code exchange function for the browser auth callback.
 - Full admin dashboard.
 - Top-ups.

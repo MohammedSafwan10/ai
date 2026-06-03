@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell } from "electron";
+import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopStore } from "./db/store";
@@ -9,7 +10,9 @@ import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
 import { resolveAppIconPath } from "./resources";
 import { installUpdateService } from "./updateService";
-import { parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
+import { decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
+import { createTokenSession, getAppwriteAccount } from "./billing/appwriteAuth";
+import { emptyAiCreditSummary, refreshAiCreditSummary } from "./billing/creditService";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -29,6 +32,8 @@ const state: IpcState = {
 };
 const isDevMode = Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL);
 const PRIVORA_PROTOCOL = "privora";
+
+if (squirrelStartup) app.quit();
 
 if (isDevMode) {
   app.setName("Privora Dev");
@@ -52,6 +57,34 @@ const focusMainWindow = () => {
   mainWindow.focus();
 };
 
+const emitSnapshot = () => {
+  if (!store || !runtime) return;
+  const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
+  snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
+  snapshot.activeRuns = runtime.listActiveRuns();
+  mainWindow?.webContents.send(channels.event, { type: "snapshot", snapshot });
+};
+
+const completePrivoraProtocolAuth = async (code: string) => {
+  if (!store) return;
+  const token = decodePrivoraDesktopAuthCode(code);
+  const settings = store.getSettings();
+  const sessionCookie = await createTokenSession(settings, token);
+  store.setPrivoraSessionCookie(sessionCookie);
+  const account = await getAppwriteAccount(settings, sessionCookie);
+  if (account.authenticated) {
+    store.setPrivoraAccountProfile({ email: account.email, name: account.name });
+  } else if (token.email || token.name) {
+    store.setPrivoraAccountProfile({ email: token.email, name: token.name });
+  }
+  try {
+    store.setAiCreditSummary(await refreshAiCreditSummary(store.getSettings(), sessionCookie));
+  } catch (error) {
+    store.setAiCreditSummary(emptyAiCreditSummary(error instanceof Error ? error.message : String(error)));
+  }
+  emitSnapshot();
+};
+
 const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
   if (!rawUrl || !store) return;
   try {
@@ -72,11 +105,29 @@ const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
   const result = parsePrivoraAuthCallback(store, rawUrl);
   if (!result) return;
   focusMainWindow();
-  mainWindow?.webContents.send(channels.event, {
-    type: "toast",
-    tone: result.ok ? "success" : "error",
-    message: result.message,
-  });
+  if (!result.ok || !result.code) {
+    mainWindow?.webContents.send(channels.event, {
+      type: "toast",
+      tone: "error",
+      message: result.message,
+    });
+    return;
+  }
+  void completePrivoraProtocolAuth(result.code)
+    .then(() => {
+      mainWindow?.webContents.send(channels.event, {
+        type: "toast",
+        tone: "success",
+        message: "Privora Desktop is connected.",
+      });
+    })
+    .catch((error) => {
+      mainWindow?.webContents.send(channels.event, {
+        type: "toast",
+        tone: "error",
+        message: error instanceof Error ? error.message : "Privora sign-in failed.",
+      });
+    });
 };
 
 const clampZoomFactor = (zoomFactor: number) => Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));

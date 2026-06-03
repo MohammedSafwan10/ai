@@ -105,6 +105,21 @@ const getUserJwt = (req) => {
 
 const getAccount = (jwt) => appwriteRequest("/account", { jwt });
 
+const createDesktopAuthToken = async (account) => {
+  const token = await appwriteRequest(`/users/${encodeURIComponent(account.$id)}/tokens`, {
+    method: "POST",
+    body: { length: 64, expire: 10 * 60 },
+  });
+  if (!token?.secret) throw new Error("Appwrite did not return a desktop authentication token.");
+  return {
+    userId: account.$id,
+    secret: token.secret,
+    expiresAt: Date.parse(token.expire || "") || Date.now() + 10 * 60 * 1000,
+    email: account.email || "",
+    name: account.name || "",
+  };
+};
+
 const isMissingDocumentError = (error) => {
   const message = String(error?.message || "").toLowerCase();
   return message.includes("not found") || message.includes("could not be found") || message.includes("requested id");
@@ -358,6 +373,9 @@ export default async ({ req, res, error }) => {
 
     if (body.action === "summary" || !body.action) {
       return res.json(await usageSummary(account, records), 200, jsonHeaders);
+    }
+    if (body.action === "desktop_auth_token") {
+      return res.json(await createDesktopAuthToken(account), 200, jsonHeaders);
     }
     if (body.action === "chat") {
       return res.json(await handleChat({ account, records, body }), 200, jsonHeaders);

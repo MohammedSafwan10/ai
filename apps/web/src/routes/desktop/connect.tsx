@@ -3,12 +3,14 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { MonitorCheck, RotateCw } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { account, isAppwriteConfigured } from "@/lib/appwrite";
+import { account, appwriteConfig, functions, isAppwriteConfigured } from "@/lib/appwrite";
 import { clearCurrentSessionIfAny, isUnauthenticatedAppwriteError } from "@/lib/auth";
 import {
+  buildDesktopCallbackUrl,
   buildDesktopConnectRedirect,
   desktopConnectSchema,
   desktopConnectStatus,
+  encodeDesktopAuthCode,
   isLocalDesktopCallbackUrl,
 } from "@/lib/desktop-link";
 
@@ -24,40 +26,61 @@ function DesktopConnectPage() {
   const isLocalPage = typeof window !== "undefined" && window.location.hostname === "localhost";
   const redirect = buildDesktopConnectRedirect(search);
   const [status, setStatus] = React.useState(
-    canUseLocalBridge ? "Checking your Privora account..." : desktopConnectStatus.futureBackend,
+    hasState ? "Checking your Privora account..." : desktopConnectStatus.secureHandoff,
   );
   const [signedIn, setSignedIn] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [connecting, setConnecting] = React.useState(false);
   const [connected, setConnected] = React.useState(false);
+  const [desktopCallbackUrl, setDesktopCallbackUrl] = React.useState("");
 
   const finishConnection = React.useCallback(async (profile?: { email?: string; name?: string }) => {
-    if (!search.callback || !search.state || !canUseLocalBridge) {
+    if (!search.state) {
       setStatus(desktopConnectStatus.signedInMissingCallback);
       return false;
     }
 
     setConnecting(true);
     setConnected(false);
+    setDesktopCallbackUrl("");
     setStatus("Connecting Privora Desktop...");
     try {
-      const duration = 3600;
-      const token = await account.createJWT({ duration });
-      const response = await fetch(search.callback, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          state: search.state,
-          jwt: token.jwt,
-          expiresAt: Date.now() + duration * 1000,
-          email: profile?.email || email,
-          name: profile?.name || profile?.email || email,
-        }),
+      const execution = await functions.createExecution({
+        functionId: appwriteConfig.modelGatewayFunctionId,
+        body: JSON.stringify({ action: "desktop_auth_token" }),
+        async: false,
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "Desktop connection failed.");
-      setConnected(true);
-      setStatus("Privora Desktop is connected. You can return to the app.");
+      const body = execution.responseBody ? JSON.parse(execution.responseBody) : {};
+      if (execution.status !== "completed" || body?.error) {
+        throw new Error(typeof body?.error === "string" ? body.error : "Desktop authentication token could not be created.");
+      }
+      const token = {
+        userId: String(body.userId || ""),
+        secret: String(body.secret || ""),
+        expiresAt: Number(body.expiresAt || 0),
+        email: String(body.email || profile?.email || email || ""),
+        name: String(body.name || profile?.name || profile?.email || email || ""),
+      };
+      if (!token.userId || !token.secret || !Number.isFinite(token.expiresAt)) {
+        throw new Error("Desktop authentication token was incomplete.");
+      }
+
+      if (canUseLocalBridge && search.callback) {
+        const response = await fetch(search.callback, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: search.state, ...token }),
+        });
+        const responseBody = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(typeof responseBody.error === "string" ? responseBody.error : "Desktop connection failed.");
+        setConnected(true);
+        setStatus("Privora Desktop is connected. You can return to the app.");
+      } else {
+        const callbackUrl = buildDesktopCallbackUrl(encodeDesktopAuthCode(token), search.state);
+        setDesktopCallbackUrl(callbackUrl);
+        setStatus("Open Privora Desktop to finish connecting your account.");
+        window.location.href = callbackUrl;
+      }
       return true;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Desktop connection failed. Start sign-in from Privora Desktop again.");
@@ -65,7 +88,7 @@ function DesktopConnectPage() {
     } finally {
       setConnecting(false);
     }
-  }, [canUseLocalBridge, search.callback, search.state]);
+  }, [canUseLocalBridge, email, search.callback, search.state]);
 
   React.useEffect(() => {
     let canceled = false;
@@ -80,10 +103,7 @@ function DesktopConnectPage() {
         if (canceled) return;
         setSignedIn(true);
         setEmail(user.email || user.name || "");
-        if (!canUseLocalBridge || !search.callback || !search.state) {
-          setStatus(desktopConnectStatus.signedInMissingCallback);
-          return;
-        }
+        if (!search.state) return;
         await finishConnection({ email: user.email, name: user.name });
       } catch (error) {
         if (canceled) return;
@@ -114,7 +134,7 @@ function DesktopConnectPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="rounded-md border border-white/10 bg-white/5 p-4 text-sm text-muted-foreground">
-            {status || (canUseLocalBridge ? desktopConnectStatus.localBridge : desktopConnectStatus.futureBackend)}
+            {status || (canUseLocalBridge ? desktopConnectStatus.localBridge : desktopConnectStatus.secureHandoff)}
             {signedIn && email && <span className="mt-2 block text-foreground">Signed in as {email}.</span>}
           </div>
           <div className="flex flex-wrap gap-3">
@@ -130,14 +150,17 @@ function DesktopConnectPage() {
                 Return to desktop
               </Button>
             )}
-            {connected && !isLocalPage && <a href="privora://settings/billing" className={buttonVariants()}>Return to desktop</a>}
+            {desktopCallbackUrl && (
+              <a href={desktopCallbackUrl} className={buttonVariants()}>
+                Open Privora Desktop
+              </a>
+            )}
             {signedIn && <Link to="/account" className={buttonVariants()}>Account</Link>}
-            {signedIn && !canUseLocalBridge && isLocalPage && (
+            {signedIn && !canUseLocalBridge && isLocalPage && !desktopCallbackUrl && (
               <Button type="button" onClick={() => window.close()}>
                 Return to desktop
               </Button>
             )}
-            {signedIn && !canUseLocalBridge && !isLocalPage && <a href="privora://settings/billing" className={buttonVariants()}>Return to desktop</a>}
             <Link to="/pricing" className={buttonVariants({ variant: "secondary" })}>View pricing</Link>
           </div>
         </CardContent>

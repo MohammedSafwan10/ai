@@ -3,9 +3,23 @@ import { createAppwriteJwt } from "./appwriteAuth";
 
 const hostedCreditHelp = "Hosted AI needs Plus/Pro credits or a manual grant. You can keep using BYOK providers from Settings > Providers.";
 
-const normalizeGatewayError = (message: string) => {
+const extractGatewayErrorMessage = (message: string) => {
   const trimmed = message.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed);
+    return String(parsed?.message || parsed?.error || trimmed);
+  } catch {
+    return trimmed;
+  }
+};
+
+export const normalizeGatewayError = (message: string) => {
+  const trimmed = extractGatewayErrorMessage(message);
   if (!trimmed) return "Privora hosted AI request failed.";
+  if (/function_synchronous_timeout|synchronous function execution timed out|exceed 30 seconds/i.test(trimmed)) {
+    return "Hosted AI took longer than Appwrite's 30-second synchronous gateway limit. Try again with a shorter prompt or use BYOK OpenRouter for long runs. Smooth hosted streaming needs the dedicated streaming gateway.";
+  }
   if (/authentication required|missing scopes|\b401\b|user \(role: guests\)/i.test(trimmed)) {
     return `Privora account sign-in expired or was not accepted by the hosted gateway. Sign out, sign in again, then refresh Billing. ${hostedCreditHelp}`;
   }

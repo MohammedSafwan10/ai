@@ -71,6 +71,24 @@ export const createEmailPasswordSession = async (
   return cookieHeader;
 };
 
+export const createTokenSession = async (
+  settings: Pick<SettingsRecord, "appwriteEndpoint" | "appwriteProjectId">,
+  input: { userId: string; secret: string },
+) => {
+  const response = await fetch(endpointFor(settings, "/account/sessions/token"), {
+    method: "POST",
+    headers: headersFor(settings),
+    body: JSON.stringify({
+      userId: input.userId,
+      secret: input.secret,
+    }),
+  });
+  await parseJsonResponse(response);
+  const cookieHeader = setCookiesFrom(response);
+  if (!cookieHeader) throw new Error("Appwrite did not return a desktop session cookie.");
+  return cookieHeader;
+};
+
 export const getAppwriteAccount = async (
   settings: SettingsRecord,
   cookieHeader: string,

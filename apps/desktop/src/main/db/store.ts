@@ -191,6 +191,7 @@ export class DesktopStore {
       if (typeof parsed.jwt !== "string" || typeof parsed.expiresAt !== "number") return "";
       if (Date.now() >= parsed.expiresAt) {
         this.setSecret("privora_user_jwt", "");
+        this.aiCreditSummary = undefined;
         this.writeData();
         return "";
       }

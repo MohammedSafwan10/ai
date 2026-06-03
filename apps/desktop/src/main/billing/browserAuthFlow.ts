@@ -102,6 +102,38 @@ const sendJson = (response: http.ServerResponse, status: number, body: Record<st
   response.end(JSON.stringify(body));
 };
 
+export interface PrivoraDesktopAuthToken {
+  userId: string;
+  secret: string;
+  expiresAt: number;
+  email?: string;
+  name?: string;
+}
+
+const validatePrivoraDesktopAuthToken = (input: Partial<PrivoraDesktopAuthToken>): PrivoraDesktopAuthToken => {
+  const userId = typeof input.userId === "string" ? input.userId.trim() : "";
+  const secret = typeof input.secret === "string" ? input.secret.trim() : "";
+  const expiresAt = typeof input.expiresAt === "number" ? input.expiresAt : 0;
+  if (!userId || !secret || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw new Error("Privora desktop authentication token is invalid or expired.");
+  }
+  return {
+    userId,
+    secret,
+    expiresAt,
+    email: typeof input.email === "string" ? input.email.trim() : undefined,
+    name: typeof input.name === "string" ? input.name.trim() : undefined,
+  };
+};
+
+export const decodePrivoraDesktopAuthCode = (code: string): PrivoraDesktopAuthToken => {
+  if (!code || code.length > 4096) throw new Error("Privora sign-in callback did not include a valid code.");
+  const normalized = code.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const parsed = JSON.parse(Buffer.from(padded, "base64").toString("utf8")) as Partial<PrivoraDesktopAuthToken>;
+  return validatePrivoraDesktopAuthToken(parsed);
+};
+
 const validatePendingState = (store: DesktopStore, state: string) => {
   const pending = store.getPrivoraPendingAuth();
   if (!pending) throw new Error("No pending Privora sign-in was found.");
@@ -114,7 +146,7 @@ const validatePendingState = (store: DesktopStore, state: string) => {
 
 const startLoopbackCallbackServer = async (
   store: DesktopStore,
-  onJwt: (jwt: string, expiresAt: number, profile: { email?: string; name?: string }) => Promise<void>,
+  onToken: (token: PrivoraDesktopAuthToken) => Promise<void>,
 ) => {
   closePrivoraBrowserAuthServer();
 
@@ -133,21 +165,21 @@ const startLoopbackCallbackServer = async (
       const rawBody = await readRequestBody(request);
       const parsed = JSON.parse(rawBody || "{}") as {
         state?: unknown;
-        jwt?: unknown;
+        userId?: unknown;
+        secret?: unknown;
         expiresAt?: unknown;
         email?: unknown;
         name?: unknown;
       };
       const state = typeof parsed.state === "string" ? parsed.state : "";
-      const jwt = typeof parsed.jwt === "string" ? parsed.jwt.trim() : "";
-      const expiresAt = typeof parsed.expiresAt === "number" ? parsed.expiresAt : Date.now() + 55 * 60 * 1000;
-      const email = typeof parsed.email === "string" ? parsed.email.trim() : "";
-      const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
       validatePendingState(store, state);
-      if (!jwt || jwt.length > 4096) throw new Error("Privora sign-in did not include a valid account token.");
-      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error("Privora sign-in token is expired.");
-
-      await onJwt(jwt, expiresAt, { email, name });
+      await onToken(validatePrivoraDesktopAuthToken({
+        userId: typeof parsed.userId === "string" ? parsed.userId.trim() : "",
+        secret: typeof parsed.secret === "string" ? parsed.secret.trim() : "",
+        expiresAt: typeof parsed.expiresAt === "number" ? parsed.expiresAt : 0,
+        email: typeof parsed.email === "string" ? parsed.email.trim() : undefined,
+        name: typeof parsed.name === "string" ? parsed.name.trim() : undefined,
+      }));
       sendJson(response, 200, { ok: true, message: "Privora Desktop is connected." });
       closePrivoraBrowserAuthServer();
     } catch (error) {
@@ -173,13 +205,13 @@ const startLoopbackCallbackServer = async (
 
 export const beginPrivoraBrowserAuth = async (
   store: DesktopStore,
-  options: { onJwt?: (jwt: string, expiresAt: number, profile: { email?: string; name?: string }) => Promise<void> } = {},
+  options: { onToken?: (token: PrivoraDesktopAuthToken) => Promise<void> } = {},
 ): Promise<PrivoraBrowserAuthStartRecord> => {
   const state = crypto.randomBytes(AUTH_STATE_BYTES).toString("base64url");
   const createdAt = Date.now();
   const webBaseUrl = await resolveWebBaseUrl();
-  const callbackUrl = options.onJwt && isLocalWebBaseUrl(webBaseUrl)
-    ? await startLoopbackCallbackServer(store, options.onJwt)
+  const callbackUrl = options.onToken && isLocalWebBaseUrl(webBaseUrl)
+    ? await startLoopbackCallbackServer(store, options.onToken)
     : "";
   const url = new URL("/desktop/connect", webBaseUrl);
   url.searchParams.set("state", state);
