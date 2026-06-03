@@ -84,9 +84,9 @@ export function SiteHeader() {
               Sign in
             </Link>
           )}
-          <Link to="/desktop/connect" className={buttonVariants({ size: "sm" })}>
+          <Link to="/download" className={buttonVariants({ size: "sm" })}>
             <ArrowDownToLine className="h-4 w-4" />
-            Desktop
+            Download
           </Link>
         </div>
       </div>

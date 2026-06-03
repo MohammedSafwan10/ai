@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, BadgeCheck, Bot, KeyRound, MonitorDown, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowDownToLine, ArrowRight, BadgeCheck, Bot, KeyRound, ShieldCheck, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeading } from "@/components/marketing/section-heading";
@@ -31,9 +31,9 @@ function HomePage() {
             A calm desktop workspace for serious agent runs: bring your own keys for free, or sign in for hosted AI credits when you want Privora to handle the model gateway.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Link to="/desktop/connect" className={cn(buttonVariants({ size: "lg" }), "w-full sm:w-auto")}>
-              <MonitorDown className="h-5 w-5" />
-              Connect desktop
+            <Link to="/download" className={cn(buttonVariants({ size: "lg" }), "w-full sm:w-auto")}>
+              <ArrowDownToLine className="h-5 w-5" />
+              Download for Windows
             </Link>
             <Link to="/pricing" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full sm:w-auto")}>
               View pricing
