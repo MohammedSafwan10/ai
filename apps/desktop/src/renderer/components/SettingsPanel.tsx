@@ -218,7 +218,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const accountDisplay = getAccountDisplay(settings, aiCredits);
-  const profileTitle = settings.privoraAccountName || accountDisplay || (settings.privoraAccountConnected ? "Privora account" : "Privora user");
+  const profileTitle = (settings.privoraAccountConnected ? settings.privoraAccountName : "") || accountDisplay || (settings.privoraAccountConnected ? "Privora account" : "Privora user");
   const profileSubtitle = accountDisplay || (settings.privoraAccountConnected ? "Email sync pending. Refresh or sign in again if it does not appear." : "Connect Privora to show your account email.");
 
   const saveProviderSettings = async (input: SaveSettingsInput) => {
@@ -619,11 +619,12 @@ const tabTitle = (tab: SettingsTab) => {
 };
 
 const getAccountDisplay = (settings: SettingsRecord, credits?: AiCreditSummaryRecord) => {
+  if (!settings.privoraAccountConnected) return "";
   return credits?.email || settings.privoraAccountEmail || settings.privoraAccountName || "";
 };
 
 const profileInitials = (settings: SettingsRecord, credits?: AiCreditSummaryRecord) => {
-  const source = settings.privoraAccountName || getAccountDisplay(settings, credits) || "Privora";
+  const source = (settings.privoraAccountConnected ? settings.privoraAccountName : "") || getAccountDisplay(settings, credits) || "Privora";
   const parts = source
     .replace(/@.*/, "")
     .split(/[\s._-]+/)

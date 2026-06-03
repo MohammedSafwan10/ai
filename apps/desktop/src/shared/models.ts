@@ -30,6 +30,8 @@ export interface ModelProviderGroup {
 
 export const GEMINI_35_FLASH_MODEL_ID = "gemini-3.5-flash";
 export const GEMINI_31_FLASH_LITE_MODEL_ID = "gemini-3.1-flash-lite";
+export const OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID = "deepseek/deepseek-v4-flash";
+export const OPENROUTER_MINIMAX_M3_MODEL_ID = "minimax/minimax-m3";
 export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
 export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
 export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
@@ -39,13 +41,16 @@ const legacyModelReplacements: Record<string, string> = {
   "gemini-3.1-flash-lite-preview": GEMINI_31_FLASH_LITE_MODEL_ID,
   "anthropic/claude-3.7-sonnet": "gpt-5.5",
   "google/gemini-2.5-pro": "gemini-3.1-pro-preview",
-  "deepseek/deepseek-chat": "deepseek/deepseek-v4-flash:free",
+  "deepseek/deepseek-chat": OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
+  "deepseek/deepseek-v4-flash:free": OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
+  "baidu/cobuddy:free": "nvidia/nemotron-3-super-120b-a12b:free",
 };
 
 const GPT_55_CONTEXT_TOKENS = 1_050_000;
 const GPT_55_MAX_OUTPUT_TOKENS = 128_000;
 const GEMINI_LONG_CONTEXT_TOKENS = 1_048_576;
 const GEMINI_MAX_OUTPUT_TOKENS = 65_536;
+const OPENROUTER_DEFAULT_OUTPUT_TOKENS = 4_096;
 
 const geminiLongContext = {
   supportsImageInput: true,
@@ -67,8 +72,8 @@ export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   },
   {
     id: "openrouter",
-    label: "OpenRouter Free",
-    description: "Free OpenRouter models with tool support where advertised.",
+    label: "OpenRouter BYOK",
+    description: "OpenRouter models using your saved API key.",
   },
   {
     id: "privora-cloud",
@@ -138,23 +143,16 @@ export const modelOptions: ModelOption[] = [
     description: "Gemini 3.1 Pro through CLIProxy.",
   },
   {
-    id: "deepseek/deepseek-v4-flash:free",
+    id: OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
     label: "DeepSeek V4 Flash",
     provider: "openrouter",
     supportsTools: true,
     supportsImageInput: false,
     supportsReasoning: true,
-    contextWindowTokens: 1_000_000,
-    description: "Free fast DeepSeek MoE model with 1M context for coding, chat, and agent workflows.",
-  },
-  {
-    id: "baidu/cobuddy:free",
-    label: "Baidu CoBuddy",
-    provider: "openrouter",
-    supportsTools: true,
-    supportsImageInput: false,
-    supportsReasoning: true,
-    description: "Free OpenRouter code-generation model for coding tasks and AI agent workflows.",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    description: "Fast DeepSeek MoE model with 1M context through your OpenRouter key.",
   },
   {
     id: "nvidia/nemotron-3-super-120b-a12b:free",
@@ -163,7 +161,22 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: false,
     supportsReasoning: true,
+    contextWindowTokens: 262_144,
+    maxOutputTokens: 262_144,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
     description: "Free OpenRouter 120B hybrid MoE model for long-context reasoning and agent workflows.",
+  },
+  {
+    id: OPENROUTER_MINIMAX_M3_MODEL_ID,
+    label: "MiniMax M3",
+    provider: "openrouter",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    contextWindowTokens: 524_288,
+    maxOutputTokens: 512_000,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    description: "Multimodal long-context MiniMax model through your OpenRouter key.",
   },
   {
     id: PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID,
@@ -174,7 +187,7 @@ export const modelOptions: ModelOption[] = [
     supportsReasoning: true,
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 8_192,
-    defaultOutputTokens: 4_096,
+    defaultOutputTokens: 2_048,
     upstreamModelId: "deepseek/deepseek-v4-flash",
     description: "Fast hosted Privora model. Uses AI credits unless you switch to BYOK.",
   },
@@ -187,7 +200,7 @@ export const modelOptions: ModelOption[] = [
     supportsReasoning: true,
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 8_192,
-    defaultOutputTokens: 4_096,
+    defaultOutputTokens: 2_048,
     upstreamModelId: "deepseek/deepseek-v4-pro",
     description: "Stronger hosted Privora model. Uses AI credits unless you switch to BYOK.",
   },
@@ -196,11 +209,11 @@ export const modelOptions: ModelOption[] = [
     label: "MiniMax M3",
     provider: "privora-cloud",
     supportsTools: true,
-    supportsImageInput: false,
+    supportsImageInput: true,
     supportsReasoning: true,
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 8_192,
-    defaultOutputTokens: 4_096,
+    defaultOutputTokens: 2_048,
     upstreamModelId: "minimax/minimax-m3",
     description: "Hosted long-context Privora model. Uses AI credits unless you switch to BYOK.",
   },

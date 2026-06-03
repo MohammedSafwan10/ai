@@ -23,7 +23,7 @@ import { buildDesktopSystemPrompt } from "./systemPrompt";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
-import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel } from "./context";
+import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel, sanitizeProviderHistoryForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
 import { loadSubagentRoles, pickSubagentNickname, type SubagentRoleConfig } from "./subagents";
 import {
@@ -216,6 +216,11 @@ export class AgentRuntime {
       const workspace = this.store.getWorkspace(thread.workspaceId);
       if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
       const settings = this.store.getSettings();
+      const selectedModel = getModelOption(settings.model);
+      const imageAttachmentCount = (input.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/")).length;
+      if (imageAttachmentCount > 0 && !selectedModel.supportsImageInput) {
+        throw new Error(`${selectedModel.label} does not support image input. Remove the image ${imageAttachmentCount === 1 ? "or switch" : "attachments or switch"} to a vision-capable model.`);
+      }
       const budgetMode = runtimeBudgetModeForTurn(input);
       const runtimeBudget = resolveModelRuntimeBudget(settings.model, budgetMode);
 
@@ -411,7 +416,7 @@ export class AgentRuntime {
     const settings = this.store.getSettings();
     const effectiveModel = getModelOption(options.model || settings.model).id;
     const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
-    let history = options.history;
+    let history = sanitizeProviderHistoryForModel(options.history, effectiveModel);
     let assistantText = options.assistantText;
     let assistantThought = options.assistantThought;
     const thread = this.store.getThread(options.threadId);
@@ -609,7 +614,6 @@ export class AgentRuntime {
             geminiApiKey: this.store.getSecret("gemini_api_key"),
             maxOutputTokens: runtimeBudget.outputTokens,
             onTextDelta: (delta) => {
-              endThoughtPart();
               const titleFiltered = filterThreadTitleDelta(delta, titleFilter, (title) => {
                 const updated = this.store.updatePlaceholderThreadTitle(options.threadId, title, "agent");
                 if (updated) this.emitSnapshot();

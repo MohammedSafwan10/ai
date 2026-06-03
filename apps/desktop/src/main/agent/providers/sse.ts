@@ -10,6 +10,26 @@ export const splitSseEvents = (buffer: string) => {
   return { events, remaining: buffer.slice(cursor) };
 };
 
+const parseSseEvent = (raw: string) => {
+  const lines = raw.split(/\r?\n/);
+  const dataLines: string[] = [];
+  let event: string | undefined;
+
+  lines.forEach((line) => {
+    if (line.startsWith(":")) return;
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+      return;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  });
+
+  const data = dataLines.join("\n").trimEnd();
+  return data && data !== "[DONE]" ? { event, data } : null;
+};
+
 export const readSse = async (
   response: Response,
   onEvent: (event: string | undefined, data: string) => void,
@@ -25,24 +45,12 @@ export const readSse = async (
     const split = splitSseEvents(buffer);
     buffer = split.remaining;
     split.events.forEach((raw) => {
-      const lines = raw.split("\n");
-      const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
-      lines
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trim())
-        .forEach((data) => {
-          if (data && data !== "[DONE]") onEvent(event, data);
-        });
+      const parsed = parseSseEvent(raw);
+      if (parsed) onEvent(parsed.event, parsed.data);
     });
   }
   if (buffer.trim()) {
-    const lines = buffer.split("\n");
-    const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
-    lines
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice("data:".length).trim())
-      .forEach((data) => {
-        if (data && data !== "[DONE]") onEvent(event, data);
-      });
+    const parsed = parseSseEvent(buffer);
+    if (parsed) onEvent(parsed.event, parsed.data);
   }
 };

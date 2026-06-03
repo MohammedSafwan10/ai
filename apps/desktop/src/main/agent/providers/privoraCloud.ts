@@ -4,6 +4,25 @@ import { openRouterDesktopTools, parseDesktopToolCall } from "../tools/definitio
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { normalizeProviderUsage } from "./usage";
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const chunkText = (text: string) => {
+  const chunks = text.match(/(.{1,96})(\s+|$)/gs);
+  return chunks && chunks.length > 0 ? chunks : text.match(/.{1,96}/gs) || [];
+};
+
+export const emitProgressiveText = async (
+  text: string,
+  onDelta: (delta: string) => void,
+  signal: AbortSignal,
+) => {
+  for (const chunk of chunkText(text)) {
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    onDelta(chunk);
+    await delay(10);
+  }
+};
+
 const toMessages = (systemInstruction: string, messages: ProviderMessage[]) => {
   const out: Array<Record<string, unknown>> = systemInstruction ? [{ role: "system", content: systemInstruction }] : [];
   messages.forEach((message) => {
@@ -90,8 +109,12 @@ export class PrivoraCloudAdapter implements ProviderAdapter {
       options.signal,
     );
 
-    if (typeof result.reasoning === "string" && result.reasoning) options.onThoughtDelta(result.reasoning);
-    if (typeof result.text === "string" && result.text) options.onTextDelta(result.text);
+    if (typeof result.reasoning === "string" && result.reasoning) {
+      await emitProgressiveText(result.reasoning, options.onThoughtDelta, options.signal);
+    }
+    if (typeof result.text === "string" && result.text) {
+      await emitProgressiveText(result.text, options.onTextDelta, options.signal);
+    }
     const usage = normalizeProviderUsage(result.usage);
     if (usage) options.onUsage?.(usage);
     result.toolCalls?.forEach((toolCall) => {

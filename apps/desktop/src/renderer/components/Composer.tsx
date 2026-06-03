@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, FileText, FolderOpen, Maximize2, Minimize2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -76,6 +76,10 @@ export function Composer({
   const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = getModelOption(settings.model);
   const modelProviderGroups = getModelProviderGroups();
+  const firstVisionModel = useMemo(
+    () => modelProviderGroups.flatMap((group) => group.models).find((model) => model.supportsImageInput),
+    [modelProviderGroups],
+  );
   const combinedPromptHistory = useMemo(
     () => mergePromptHistory(promptHistory, persistedPromptHistory),
     [persistedPromptHistory, promptHistory],
@@ -198,6 +202,10 @@ export function Composer({
     if (trimmed.length > MAX_PROMPT_CHARS) {
       setSubmitError(`Prompt is ${trimmed.length.toLocaleString()} characters. Keep it under ${MAX_PROMPT_CHARS.toLocaleString()} characters.`);
       setExpanded(true);
+      return;
+    }
+    if (attachments.length > 0 && !activeModel.supportsImageInput) {
+      setSubmitError(`${activeModel.label} is text-only. Remove the images or switch to a vision model.`);
       return;
     }
     if (submitting) return;
@@ -347,6 +355,10 @@ export function Composer({
   const addFiles = async (files: FileList | File[]) => {
     const incoming = Array.from(files).filter((file) => file.type.startsWith("image/"));
     if (incoming.length === 0) return;
+    if (!activeModel.supportsImageInput) {
+      setAttachmentError(`${activeModel.label} is text-only. Switch to a vision model before adding images.`);
+      return;
+    }
     try {
       const remaining = MAX_ATTACHMENTS - attachments.length;
       if (remaining <= 0) {
@@ -553,6 +565,24 @@ export function Composer({
         </div>
       )}
       {(attachmentError || submitError) && <div className="attachment-error">{attachmentError || submitError}</div>}
+      {attachments.length > 0 && !activeModel.supportsImageInput && (
+        <div className="vision-model-warning" role="status">
+          <ImageOff size={15} />
+          <span>{activeModel.label} cannot read images.</span>
+          {firstVisionModel && (
+            <button
+              type="button"
+              onClick={() => {
+                onSettings({ model: firstVisionModel.id });
+                setAttachmentError(null);
+                setSubmitError(null);
+              }}
+            >
+              Switch to {modelDisplayLabel(firstVisionModel.label)}
+            </button>
+          )}
+        </div>
+      )}
       {confirmFullAccessOpen && createPortal(
         <div
           className="full-access-dialog-layer"
@@ -755,12 +785,16 @@ export function Composer({
                         <button
                           key={model.id}
                           type="button"
+                          title={model.supportsImageInput ? "Supports image input" : "Text input only"}
                           onClick={() => {
                             onSettings({ model: model.id });
                             setActiveMenu(null);
                           }}
                         >
                           <span>{model.label}</span>
+                          <span className={clsx("model-capability", model.supportsImageInput ? "vision" : "text-only")}>
+                            {model.supportsImageInput ? <Eye size={13} /> : <ImageOff size={13} />}
+                          </span>
                           {activeModel.id === model.id && <Check size={14} />}
                         </button>
                       ))}

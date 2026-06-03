@@ -6,6 +6,29 @@ import { normalizeProviderUsage } from "./usage";
 const openRouterReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
 
+export const normalizeOpenRouterError = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "OpenRouter request failed.";
+  let message = trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    message = String(parsed?.error?.message || parsed?.message || trimmed);
+  } catch {
+    message = trimmed;
+  }
+
+  const creditMatch = message.match(/requested up to\s+(\d+)\s+tokens, but can only afford\s+(\d+)/i);
+  if (creditMatch) {
+    return `OpenRouter rejected the request because this key can only afford ${Number(creditMatch[2]).toLocaleString()} output tokens, while the request allowed ${Number(creditMatch[1]).toLocaleString()}. The app now sends a smaller default max_tokens for OpenRouter BYOK models; try again, or raise the key's credit limit in OpenRouter.`;
+  }
+
+  if (/no endpoints found/i.test(message)) {
+    return `OpenRouter could not find an endpoint for the selected model. The model may have been renamed, removed, or disabled for your key. (${message})`;
+  }
+
+  return message;
+};
+
 const toMessages = (systemInstruction: string, messages: ProviderMessage[]) => {
   const out: Array<Record<string, unknown>> = systemInstruction ? [{ role: "system", content: systemInstruction }] : [];
   messages.forEach((message) => {
@@ -72,6 +95,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
         Authorization: `Bearer ${options.openRouterApiKey}`,
         "X-Title": "Privora Desktop",
       },
@@ -84,6 +108,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
         ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),
         stream: true,
+        stream_options: { include_usage: true },
         temperature: 0.35,
       }),
       signal: options.signal,
@@ -91,7 +116,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(errorText || `OpenRouter request failed with ${response.status}`);
+      throw new Error(normalizeOpenRouterError(errorText || `OpenRouter request failed with ${response.status}`));
     }
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
@@ -115,12 +140,13 @@ export class OpenRouterAdapter implements ProviderAdapter {
 
     await readSse(response, (_event, dataLine) => {
       const data = JSON.parse(dataLine);
-      if (data?.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+      if (data?.error) throw new Error(normalizeOpenRouterError(typeof data.error === "string" ? data.error : JSON.stringify(data.error)));
       const usage = normalizeProviderUsage(data?.usage);
       if (usage) options.onUsage?.(usage);
       const choice = data?.choices?.[0] || {};
       const delta = choice.delta || {};
       if (typeof delta.content === "string") options.onTextDelta(delta.content);
+      if (typeof choice.message?.content === "string") options.onTextDelta(choice.message.content);
       const thought = delta.reasoning || delta.reasoning_content || delta.thought;
       if (typeof thought === "string") options.onThoughtDelta(thought);
 

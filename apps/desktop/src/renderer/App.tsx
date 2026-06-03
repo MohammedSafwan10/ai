@@ -311,10 +311,6 @@ export default function App() {
         toast={toast}
         topbarTrailing={(
           <>
-            <AiCreditsBadge credits={snapshot.aiCredits} onClick={() => {
-              setSettingsInitialTab("billing");
-              setSettingsOpen(true);
-            }} />
             <UpdateControl status={updateStatus} />
             <AppLauncher disabled={!activeWorkspace} />
           </>
@@ -582,22 +578,6 @@ export default function App() {
       )}
       </div>
     </div>
-  );
-}
-
-function AiCreditsBadge({ credits, onClick }: { credits?: AiCreditSummaryRecord; onClick: () => void }) {
-  if (!credits?.authenticated) return null;
-  const label = credits.plan === "free"
-    ? "0 AI credits"
-    : credits.monthlyCreditsRemaining.toLocaleString() + " AI credits";
-  const title = credits.plan === "free"
-    ? "Free plan. Hosted AI credits require Plus, Pro, or a manual grant."
-    : `${credits.plan.toUpperCase()} plan.`;
-  return (
-    <button type="button" className="ai-credit-badge" title={title} onClick={onClick}>
-      <span className="ai-credit-dot" />
-      <span>{label}</span>
-    </button>
   );
 }
 

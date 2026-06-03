@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GEMINI_31_FLASH_LITE_MODEL_ID,
+  OPENROUTER_MINIMAX_M3_MODEL_ID,
   getModelOption,
   normalizeModelId,
   resolveModelRuntimeBudget,
@@ -30,6 +31,26 @@ describe("desktop model metadata and runtime budgets", () => {
       maxOutputTokens: 65_536,
       defaultOutputTokens: 16_000,
     });
+    expect(getModelOption("deepseek/deepseek-v4-flash")).toMatchObject({
+      contextWindowTokens: 1_048_576,
+      maxOutputTokens: 131_072,
+      defaultOutputTokens: 4_096,
+      supportsImageInput: false,
+    });
+    expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free")).toMatchObject({
+      contextWindowTokens: 262_144,
+      maxOutputTokens: 262_144,
+      defaultOutputTokens: 4_096,
+    });
+    expect(getModelOption(OPENROUTER_MINIMAX_M3_MODEL_ID)).toMatchObject({
+      provider: "openrouter",
+      contextWindowTokens: 524_288,
+      maxOutputTokens: 512_000,
+      defaultOutputTokens: 4_096,
+      supportsImageInput: true,
+      supportsReasoning: true,
+      supportsTools: true,
+    });
   });
 
   it("normalizes the retired flash-lite preview id to the stable model", () => {
@@ -45,5 +66,18 @@ describe("desktop model metadata and runtime budgets", () => {
     expect(normal.outputTokens).toBeLessThanOrEqual(getModelOption("gpt-5.5").maxOutputTokens || 0);
     expect(large.messageCharLimit).toBe(40_000);
     expect(large.toolResultCharLimit).toBe(60_000);
+  });
+
+  it("uses cost-safe OpenRouter output defaults while preserving long input budgets", () => {
+    const deepseek = resolveModelRuntimeBudget("deepseek/deepseek-v4-flash", "normal");
+    const nemotron = resolveModelRuntimeBudget("nvidia/nemotron-3-super-120b-a12b:free", "normal");
+    const minimax = resolveModelRuntimeBudget(OPENROUTER_MINIMAX_M3_MODEL_ID, "normal");
+
+    expect(deepseek.outputTokens).toBe(4_096);
+    expect(deepseek.inputBudgetTokens).toBe(350_000);
+    expect(nemotron.outputTokens).toBe(4_096);
+    expect(nemotron.hardInputBudgetTokens).toBeLessThanOrEqual(245_000);
+    expect(minimax.outputTokens).toBe(4_096);
+    expect(minimax.inputBudgetTokens).toBe(350_000);
   });
 });

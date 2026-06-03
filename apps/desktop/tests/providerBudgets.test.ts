@@ -59,7 +59,7 @@ describe("provider output budgets", () => {
     const fetchMock = vi.fn(async () => sseResponse());
     vi.stubGlobal("fetch", fetchMock);
 
-    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "deepseek/deepseek-v4-flash:free", maxOutputTokens: undefined }));
+    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "deepseek/deepseek-v4-flash", maxOutputTokens: undefined }));
     let body = requestBodyAt(fetchMock, 0);
     expect(body.max_tokens).toBeUndefined();
 

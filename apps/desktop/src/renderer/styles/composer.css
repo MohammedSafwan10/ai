@@ -583,6 +583,33 @@
   color: var(--danger);
 }
 
+.vision-model-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 4px 8px;
+  color: color-mix(in srgb, var(--danger) 88%, var(--privora-text));
+  font-size: 11.5px;
+}
+
+.vision-model-warning span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vision-model-warning button {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--privora-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--privora-text);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
 .full-access-dialog-layer {
   position: fixed;
   z-index: 1000;
@@ -1291,6 +1318,20 @@
   margin-top: 7px;
   border-top: 1px solid var(--privora-border);
   padding-top: 8px;
+}
+
+.model-capability {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--privora-muted);
+}
+
+.model-capability.vision {
+  color: color-mix(in srgb, var(--privora-accent) 72%, var(--privora-text));
 }
 
 .model-reasoning-menu small,

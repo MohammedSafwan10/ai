@@ -791,41 +791,6 @@
   border-right: 0;
 }
 
-.ai-credit-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--privora-border);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--privora-user-bubble) 42%, transparent);
-  color: var(--privora-text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.ai-credit-badge:hover {
-  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
-}
-
-.ai-credit-badge.muted {
-  color: var(--privora-muted);
-}
-
-.ai-credit-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #31d28a;
-}
-
-.ai-credit-badge.muted .ai-credit-dot {
-  background: var(--privora-muted);
-}
-
 .message-list {
   position: relative;
   min-height: 0;

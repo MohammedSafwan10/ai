@@ -3,7 +3,7 @@ import { isPlaceholderThreadTitle } from "../db/store";
 import type { ProviderMessage } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
 import { detectProjectProfileSync } from "./diagnostics";
-import type { ModelRuntimeBudget } from "../../shared/models";
+import { getModelOption, type ModelRuntimeBudget } from "../../shared/models";
 
 const MAX_HISTORY_MESSAGES = 18;
 const MAX_MESSAGE_CHARS = 12_000;
@@ -39,6 +39,28 @@ export const buildProviderHistory = (
         parts: parts.length ? parts : undefined,
       };
     });
+
+export const sanitizeProviderHistoryForModel = (history: ProviderMessage[], modelId: string): ProviderMessage[] => {
+  const model = getModelOption(modelId);
+  if (model.supportsImageInput) return history;
+
+  return history.map((message) => {
+    const parts = message.parts || [];
+    const imageCount = parts.filter((part) => part.type === "image").length;
+    if (imageCount === 0) return message;
+
+    const remainingParts = parts.filter((part) => part.type !== "image");
+    const imageLabel = imageCount === 1 ? "image attachment was" : "image attachments were";
+    const omissionNote = `[${imageCount} ${imageLabel} omitted because ${model.label} does not support image input.]`;
+    const content = [message.content, omissionNote].filter(Boolean).join("\n\n");
+
+    return {
+      ...message,
+      content,
+      parts: remainingParts.length ? remainingParts : [{ type: "text", text: content }],
+    };
+  });
+};
 
 export const buildRuntimeContext = (store: DesktopStore, threadId: string, workspaceRoot: string) => {
   const profile = detectProjectProfileSync(workspaceRoot);
