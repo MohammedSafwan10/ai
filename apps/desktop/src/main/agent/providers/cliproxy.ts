@@ -40,6 +40,14 @@ export const normalizeCliproxyError = (value: string) => {
     return "CLIProxy could not authenticate its upstream account. Stop CLIProxy, remove stale Codex auth files from ~/.cli-proxy-api, run `cliproxy -codex-login`, then start CLIProxy again.";
   }
 
+  if (/cf_chl|challenge-platform|cloudflare challenge|enable javascript and cookies|chatgpt\.com\/backend-api\/codex/i.test(message)) {
+    return "CLIProxy reached ChatGPT/Codex upstream, but ChatGPT returned a Cloudflare challenge instead of a model response. Open ChatGPT in the same browser/network and complete the check, then restart CLIProxy and retry; if it keeps happening, use a different network or wait for CLIProxy's cooldown to clear.";
+  }
+
+  if (/upstream connect error|disconnect\/reset before headers|connection timeout|internal_server_error/i.test(message)) {
+    return "CLIProxy reached its local server, but the upstream Codex connection timed out before returning headers. Restart CLIProxy and retry with a small prompt; if it repeats, ChatGPT/Codex upstream is likely blocked, challenged, or temporarily unavailable on this network.";
+  }
+
   return message;
 };
 
