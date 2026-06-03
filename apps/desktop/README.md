@@ -87,6 +87,8 @@ Supported provider paths are configured in the app settings and shared model cat
 Secrets are stored through the local desktop store and are not exposed directly to the renderer.
 BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are charged by the server-side credit engine.
 
+CLIProxy model aliases are owned by Privora Desktop in the first implementation, so users do not need to edit CLIProxy's `oauth-model-alias` config for supported models. Desktop also sends a thread-scoped `prompt_cache_key` to CLIProxy Responses requests so Codex-backed sessions can reuse stable prompt context and keep session routing consistent.
+
 ## Browser Sign-In
 
 Desktop account sign-in opens Privora Web in the system browser. The authenticated web app asks the `model-gateway` function for a short-lived, single-use Appwrite custom token. Desktop exchanges that token for its own durable Appwrite session cookie, then creates fresh short-lived JWTs from that session when calling hosted APIs.

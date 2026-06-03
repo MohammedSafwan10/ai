@@ -604,6 +604,7 @@ export class AgentRuntime {
             reasoning: options.reasoningEffort || settings.reasoningEffort,
             collaborationMode: settings.collaborationMode,
             signal: controller.signal,
+            threadId: options.threadId,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
             appwriteEndpoint: settings.appwriteEndpoint,
             appwriteProjectId: settings.appwriteProjectId,

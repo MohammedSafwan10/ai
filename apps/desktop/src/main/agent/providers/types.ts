@@ -29,6 +29,7 @@ export interface ProviderStreamOptions {
   reasoning: ReasoningEffort;
   collaborationMode: CollaborationMode;
   signal: AbortSignal;
+  threadId?: string;
   maxOutputTokens?: number;
   cliproxyBaseUrl: string;
   appwriteEndpoint: string;

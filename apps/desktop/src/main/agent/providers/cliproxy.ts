@@ -12,6 +12,19 @@ import { normalizeProviderUsage } from "./usage";
 const responseReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
   effort === "extra_high" ? "high" : effort;
 
+const cliproxyModelAliases: Record<string, string> = {
+  "gemini-3.5-flash-cliproxy": "gemini-3-flash-agent",
+  "gemini-3.1-pro-cliproxy": "gemini-pro-agent",
+};
+
+export const resolveCliproxyModelId = (modelId: string) =>
+  cliproxyModelAliases[modelId] || modelId;
+
+export const cliproxyPromptCacheKey = (threadId: string | undefined) => {
+  const trimmed = threadId?.trim();
+  return trimmed ? `privora:thread:${trimmed}:v1` : undefined;
+};
+
 export const normalizeCliproxyError = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return "CLIProxy request failed.";
@@ -174,22 +187,21 @@ const webSearchActionDetail = (action: any) => {
 
 export class CliproxyAdapter implements ProviderAdapter {
   async stream(options: ProviderStreamOptions): Promise<void> {
+    const promptCacheKey = cliproxyPromptCacheKey(options.threadId);
     const response = await fetch(`${options.cliproxyBaseUrl.replace(/\/$/, "")}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer dummy-key",
+        ...(promptCacheKey ? { Session_id: promptCacheKey } : {}),
       },
       body: JSON.stringify({
-        model: options.model === "gemini-3.5-flash-cliproxy"
-          ? "gemini-3-flash-agent"
-          : options.model === "gemini-3.1-pro-cliproxy"
-          ? "gemini-pro-agent"
-          : options.model,
+        model: resolveCliproxyModelId(options.model),
         instructions: options.systemInstruction,
         input: toInput(options.messages),
         tools: cliproxyToolsForModel(options.model, options.collaborationMode),
         parallel_tool_calls: true,
+        ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),
         stream: true,
