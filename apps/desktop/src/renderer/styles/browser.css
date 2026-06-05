@@ -1,0 +1,503 @@
+.browser-panel {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--privora-bg) 88%, transparent);
+}
+
+.browser-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  padding: 6px 10px 5px;
+  overflow: hidden;
+}
+
+.browser-tab-pill,
+.browser-tab-new {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 72px;
+  max-width: 180px;
+  height: 27px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0 7px;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.browser-tab-pill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tab-pill.active {
+  border-color: color-mix(in srgb, var(--privora-border) 54%, transparent);
+  background: color-mix(in srgb, var(--privora-surface) 28%, transparent);
+  color: var(--privora-text);
+}
+
+.browser-tab-pill:hover,
+.browser-tab-new:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--privora-surface) 34%, transparent);
+  color: var(--privora-text);
+}
+
+.browser-tab-close {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border-radius: 5px;
+}
+
+.browser-tab-close:hover {
+  background: color-mix(in srgb, var(--privora-border) 50%, transparent);
+}
+
+.browser-tab-new {
+  flex: 0 0 28px;
+  display: inline-grid;
+  width: 28px;
+  min-width: 28px;
+  place-items: center;
+  padding: 0;
+}
+
+.browser-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 30px 30px 30px;
+  align-items: center;
+  gap: 8px;
+  min-height: 50px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 62%, transparent);
+  padding: 8px 12px;
+}
+
+.browser-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.browser-toolbar button,
+.browser-preset-row button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+}
+
+.browser-toolbar button:hover:not(:disabled),
+.browser-preset-row button:hover,
+.browser-preset-row button.active {
+  background: color-mix(in srgb, var(--privora-surface) 32%, transparent);
+  color: var(--privora-text);
+}
+
+.browser-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.browser-address {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 56%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--privora-surface) 22%, transparent);
+  color: var(--privora-muted);
+  padding: 0 9px;
+}
+
+.browser-address input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--privora-text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.browser-address input::placeholder {
+  color: var(--privora-muted);
+}
+
+.browser-go-button {
+  color: var(--privora-accent) !important;
+}
+
+.browser-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  padding: 5px 12px;
+}
+
+.browser-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  gap: 6px;
+  margin-left: auto;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 54%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 20%, transparent);
+  color: var(--privora-muted);
+  padding: 0 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.browser-agent-chip.active {
+  border-color: color-mix(in srgb, var(--pending) 46%, transparent);
+  color: var(--pending);
+}
+
+.browser-viewport-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(color-mix(in srgb, var(--privora-border) 24%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--privora-border) 24%, transparent) 1px, transparent 1px),
+    color-mix(in srgb, var(--privora-bg) 94%, #000 4%);
+  background-size: 24px 24px;
+}
+
+.browser-native-slot {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.browser-native-slot.mobile {
+  top: 12px;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(390px, calc(100% - 24px));
+  height: min(844px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 64%, transparent);
+  border-radius: 18px;
+  box-shadow: 0 18px 46px color-mix(in srgb, #000 18%, transparent);
+}
+
+.browser-native-slot.tablet {
+  top: 12px;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(820px, calc(100% - 24px));
+  height: min(1180px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 64%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 18px 46px color-mix(in srgb, #000 16%, transparent);
+}
+
+.browser-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-top: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  color: var(--privora-muted);
+  padding: 6px 12px;
+  overflow: hidden;
+}
+
+.browser-status-strip button {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 48%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 20%, transparent);
+  color: var(--privora-muted);
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-status-strip button:hover {
+  background: color-mix(in srgb, var(--privora-surface) 38%, transparent);
+  color: var(--privora-text);
+}
+
+.browser-inspector-drawer {
+  position: absolute;
+  right: 12px;
+  bottom: 42px;
+  left: 12px;
+  z-index: 20;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: auto;
+  min-width: 0;
+  max-height: min(46vh, 360px);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--privora-surface) 94%, transparent);
+  box-shadow: 0 18px 54px color-mix(in srgb, #000 22%, transparent);
+}
+
+.browser-inspector-drawer header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 60%, transparent);
+  padding: 0 10px;
+}
+
+.browser-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.browser-inspector-drawer strong {
+  color: var(--privora-text);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.browser-inspector-drawer header button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--privora-muted);
+  padding: 0;
+}
+
+.browser-inspector-drawer header button:hover {
+  background: color-mix(in srgb, var(--privora-surface) 42%, transparent);
+  color: var(--privora-text);
+}
+
+.browser-inspector-drawer pre {
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  color: color-mix(in srgb, var(--privora-text) 86%, var(--privora-muted));
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.browser-downloads-drawer {
+  max-height: min(44vh, 340px);
+}
+
+.browser-download-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  color: var(--privora-muted);
+  padding: 10px;
+  font-size: 11.5px;
+}
+
+.browser-download-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 54%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--privora-bg) 44%, transparent);
+  padding: 7px;
+}
+
+.browser-download-row strong,
+.browser-download-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-download-row strong {
+  color: var(--privora-text);
+  font-size: 11.5px;
+}
+
+.browser-download-row span {
+  grid-column: 1;
+}
+
+.browser-download-row button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 50%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--privora-surface) 24%, transparent);
+  color: var(--privora-text);
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.browser-download-row.blocked {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--privora-border));
+}
+
+.browser-forms-drawer {
+  max-height: min(56vh, 460px);
+}
+
+.browser-form-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  color: var(--privora-muted);
+  padding: 10px;
+  font-size: 11.5px;
+}
+
+.browser-form-card {
+  display: grid;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 54%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--privora-bg) 48%, transparent);
+  padding: 8px;
+}
+
+.browser-form-card.sensitive,
+.browser-form-card.sensitive_payment {
+  border-color: color-mix(in srgb, var(--pending) 38%, var(--privora-border));
+}
+
+.browser-form-card.irreversible {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--privora-border));
+}
+
+.browser-form-card-head,
+.browser-form-meta,
+.browser-form-controls,
+.browser-form-errors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-form-card-head {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.browser-form-card-head strong,
+.browser-form-card p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-form-card-head strong {
+  color: var(--privora-text);
+  font-size: 12px;
+}
+
+.browser-form-card-head span,
+.browser-form-meta span,
+.browser-form-controls span,
+.browser-form-errors span {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-surface) 45%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 78%, var(--privora-muted));
+  padding: 2px 7px;
+}
+
+.browser-form-card p {
+  margin: 0;
+}
+
+.browser-form-errors span {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: color-mix(in srgb, var(--danger) 70%, var(--privora-text));
+}
+
+.browser-form-controls span.sensitive {
+  background: color-mix(in srgb, var(--pending) 18%, transparent);
+}
+
+.browser-form-controls span.required::after {
+  content: " *";
+  color: var(--privora-primary);
+}
+
+.browser-panel-empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  min-height: 0;
+  color: var(--privora-muted);
+  text-align: center;
+  padding: 24px;
+}
+
+.browser-panel-empty.inline {
+  position: absolute;
+  inset: 0;
+}
+
+.browser-panel-empty strong {
+  color: var(--privora-text);
+  font-size: 16px;
+}
+
+.browser-panel-empty span {
+  max-width: 280px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}

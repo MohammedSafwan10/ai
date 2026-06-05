@@ -1,4 +1,4 @@
-import { Bot, MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Bot, Globe2, MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, SubagentRecord, ToolEventRecord } from "../../shared/types";
@@ -117,10 +117,14 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
-                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool)) && (
+                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool) || isBrowserTool(tool)) && (
                   isTerminalOutputTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
+                    )
+                  ) : isBrowserTool(tool) ? (
+                    expandedOutputIds.has(tool.id) && (
+                      <BrowserOutputPanel tool={tool} />
                     )
                   ) : isQuestionTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
@@ -200,7 +204,7 @@ function ToolTitleLine({
   live: boolean;
   onToggle: () => void;
 }) {
-  const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool);
+  const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool) || isBrowserTool(tool);
   const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
   if (!canExpand) {
     return (
@@ -216,7 +220,7 @@ function ToolTitleLine({
       onClick={onToggle}
       title={expanded ? "Collapse output" : "Expand output"}
     >
-      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : <Terminal size={13} />}
+      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : <Terminal size={13} />}
       <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       {preview && <code>{preview}</code>}
     </button>
@@ -294,6 +298,20 @@ function TerminalStats({ tool }: { tool: ToolEventRecord }) {
   return null;
 }
 
+function BrowserOutputPanel({ tool }: { tool: ToolEventRecord }) {
+  const details = browserDetails(tool);
+  return (
+    <div className="browser-tool-panel">
+      {details.map((detail) => (
+        <section key={detail.label}>
+          <small>{detail.label}</small>
+          <pre>{detail.value}</pre>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function QuestionAnswerPanel({ tool }: { tool: ToolEventRecord }) {
   const questions = normalizeQuestionArgs(tool.args.questions);
   const answers = normalizeAnswerResult(tool.result?.data, tool.result?.output || tool.output || "");
@@ -348,6 +366,9 @@ const isTerminalOutputTool = (tool: ToolEventRecord) =>
     "desktop_git_status",
     "desktop_git_diff",
   ].includes(tool.name);
+
+const isBrowserTool = (tool: ToolEventRecord) =>
+  tool.name.startsWith("browser_");
 
 const isQuestionTool = (tool: ToolEventRecord) =>
   tool.name === "request_user_input";
@@ -431,6 +452,93 @@ const hasUsefulOutput = (output?: string) => {
 
 const displayOutput = (tool: ToolEventRecord) =>
   tool.output || tool.result?.output || tool.result?.error || "";
+
+const browserDetails = (tool: ToolEventRecord): Array<{ label: string; value: string }> => {
+  const data = tool.result?.data || {};
+  const output = displayOutput(tool).trim();
+  const details: Array<{ label: string; value: string }> = [];
+  const url = stringValue(data.url) || stringValue((data.after as Record<string, unknown> | undefined)?.url);
+  const title = stringValue(data.title) || stringValue((data.after as Record<string, unknown> | undefined)?.title);
+  if (url || title) details.push({ label: "Page", value: [url, title].filter(Boolean).join("\n") });
+  if (output) details.push({ label: tool.result?.success === false ? "Error" : "Output", value: compactBrowserText(output) });
+  const finding = stringValue(data.finding);
+  if (finding && finding !== output) details.push({ label: "Finding", value: compactBrowserText(finding) });
+  const snapshot = stringValue(data.snapshot);
+  if (snapshot) details.push({ label: "Snapshot", value: compactBrowserText(snapshot, 3200) });
+  const visibleText = stringValue(data.visibleText) || stringValue(data.text);
+  if (visibleText) details.push({ label: "Visible text", value: compactBrowserText(visibleText, 3200) });
+  const results = arraySummary(data.results, (item) => {
+    const entry = objectValue(item);
+    return [stringValue(entry.text), stringValue(entry.href)].filter(Boolean).join(" — ");
+  });
+  if (results) details.push({ label: "Results", value: results });
+  const links = arraySummary(data.links, (item) => {
+    const entry = objectValue(item);
+    return [stringValue(entry.text), stringValue(entry.href)].filter(Boolean).join(" — ");
+  });
+  if (links) details.push({ label: "Links", value: links });
+  const tables = arraySummary(data.tables, (item) => {
+    const table = objectValue(item);
+    const columns = Array.isArray(table.columns) ? table.columns.map(String).join(" | ") : "";
+    const rows = Array.isArray(table.rows) ? `${table.rows.length} row${table.rows.length === 1 ? "" : "s"}` : "";
+    return [stringValue(table.caption), columns, rows].filter(Boolean).join("\n");
+  });
+  if (tables) details.push({ label: "Tables", value: tables });
+  const forms = arraySummary(data.forms, (item) => {
+    const form = objectValue(item);
+    const controls = Array.isArray(form.controls) ? `${form.controls.length} control${form.controls.length === 1 ? "" : "s"}` : "";
+    return [stringValue(form.method).toUpperCase(), stringValue(form.action), controls].filter(Boolean).join(" ");
+  });
+  if (forms) details.push({ label: "Forms", value: forms });
+  if (data.metadata && typeof data.metadata === "object") {
+    details.push({ label: "Metadata", value: compactBrowserText(JSON.stringify(data.metadata, null, 2), 2400) });
+  }
+  const consoleEntries = arraySummary(data.console, (item) => {
+    const entry = objectValue(item);
+    return [stringValue(entry.level), stringValue(entry.message)].filter(Boolean).join(": ");
+  });
+  if (consoleEntries) details.push({ label: "Console", value: consoleEntries });
+  const requests = arraySummary(data.requests || data.failedRequests || data.failed_requests, (item) => {
+    const entry = objectValue(item);
+    return [stringValue(entry.method), stringValue(entry.url), stringValue(entry.status) || stringValue(entry.errorText)].filter(Boolean).join(" ");
+  });
+  if (requests) details.push({ label: "Network", value: requests });
+  const screenshotPath = stringValue(data.screenshotPath) || stringValue(data.screenshot_path);
+  if (screenshotPath) details.push({ label: "Screenshot", value: screenshotPath });
+  if (details.length === 0) details.push({ label: "Details", value: "(no browser details)" });
+  return dedupeBrowserDetails(details).slice(0, 8);
+};
+
+const dedupeBrowserDetails = (details: Array<{ label: string; value: string }>) => {
+  const output = details.find((detail) => detail.label === "Output");
+  if (!output) return details;
+  const outputKey = normalizeBrowserDetailText(output.value);
+  return details.filter((detail) =>
+    detail.label === "Output" ||
+    !sameBrowserDetail(outputKey, normalizeBrowserDetailText(detail.value))
+  );
+};
+
+const sameBrowserDetail = (first: string, second: string) =>
+  Boolean(first && second && (first === second || first.includes(second) || second.includes(first)));
+
+const normalizeBrowserDetailText = (value: string) =>
+  value.replace(/\s+/g, " ").trim();
+
+const arraySummary = (value: unknown, format: (item: unknown) => string) => {
+  if (!Array.isArray(value) || value.length === 0) return "";
+  const lines = value.map(format).filter(Boolean).slice(0, 12);
+  const omitted = Math.max(0, value.length - lines.length);
+  return `${lines.join("\n")}${omitted > 0 ? `\n... ${omitted} more` : ""}`;
+};
+
+const objectValue = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? value as Record<string, unknown> : {};
+
+const compactBrowserText = (value: string, max = 1800) => {
+  const trimmed = value.trim();
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max - 1)}...`;
+};
 
 const normalizeQuestionArgs = (value: unknown): Array<{ id: string; header: string; question: string }> => {
   if (!Array.isArray(value)) return [];

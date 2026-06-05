@@ -24,11 +24,14 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsDestination>("general");
   const [ideCollapsed, setIdeCollapsed] = useState(true);
+  const [ideCollapsedByUser, setIdeCollapsedByUser] = useState(false);
   const [ideWidth, setIdeWidth] = useState(620);
+  const [workspacePanelRequest, setWorkspacePanelRequest] = useState<{ mode: "files" | "review" | "browser"; key: number } | null>(null);
   const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const creditRefreshStarted = useRef(false);
   const zoomToastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const browserToolAutoOpenRef = useRef<{ initialized: boolean; key: string }>({ initialized: false, key: "" });
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
     text: string;
@@ -63,6 +66,12 @@ export default function App() {
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
   );
+  const latestBrowserToolKey = useMemo(() => {
+    const browserTool = snapshot.toolEvents
+      .filter((tool) => tool.name.startsWith("browser_"))
+      .sort((first, second) => (second.updatedAt || second.createdAt || 0) - (first.updatedAt || first.createdAt || 0))[0];
+    return browserTool ? `${browserTool.id}:${browserTool.status}:${browserTool.updatedAt || browserTool.createdAt || 0}` : "";
+  }, [snapshot.toolEvents]);
   const latestActivityKey = `${messages[messages.length - 1]?.id || ""}:${messages[messages.length - 1]?.updatedAt || 0}:${lastToolUpdatedAt}:${snapshot.activeRun?.updatedAt || 0}`;
   const {
     handleMessagePointerDown,
@@ -110,6 +119,18 @@ export default function App() {
     setComposerDraft(null);
     setReviewSession(null);
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (!browserToolAutoOpenRef.current.initialized) {
+      browserToolAutoOpenRef.current = { initialized: true, key: latestBrowserToolKey };
+      return;
+    }
+    if (!latestBrowserToolKey || browserToolAutoOpenRef.current.key === latestBrowserToolKey) return;
+    browserToolAutoOpenRef.current.key = latestBrowserToolKey;
+    if (!activeWorkspace || settingsOpen || ideCollapsedByUser) return;
+    setIdeCollapsed(false);
+    setWorkspacePanelRequest({ mode: "browser", key: Date.now() });
+  }, [activeWorkspace?.id, ideCollapsedByUser, latestBrowserToolKey, settingsOpen]);
 
   useEffect(() => {
     const clearZoomToastTimers = () => {
@@ -593,14 +614,26 @@ export default function App() {
       <WorkspaceIdeShell
         workspace={activeWorkspace}
         reviewSession={reviewSession}
+        hidden={ideCollapsed || settingsOpen}
+        requestedPanelMode={workspacePanelRequest?.mode}
+        requestedPanelModeKey={workspacePanelRequest?.key}
         onReviewClosed={() => setReviewSession(null)}
-        onToggleCollapsed={() => setIdeCollapsed((value) => !value)}
+        onToggleCollapsed={() => {
+          setIdeCollapsed((value) => {
+            const next = !value;
+            setIdeCollapsedByUser(next);
+            return next;
+          });
+        }}
       />
       {ideCollapsed && (
         <button
           type="button"
           className="ide-restore-button"
-          onClick={() => setIdeCollapsed(false)}
+          onClick={() => {
+            setIdeCollapsed(false);
+            setIdeCollapsedByUser(false);
+          }}
           title="Show workspace"
           aria-label="Show workspace"
         >

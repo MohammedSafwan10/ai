@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, PanelRightClose, Search, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, Globe2, PanelRightClose, Search, X } from "lucide-react";
 import clsx from "clsx";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { WorkspaceDirectoryEntry, WorkspaceDirectoryListing, WorkspaceFileReadResult, WorkspaceRecord } from "../../shared/types";
 import type { ReviewFileModel, ReviewSession } from "../reviewModels";
 import { languageForPath } from "../reviewModels";
 import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows, type WorkspaceTreeVirtualRow } from "../workspaceTreeRows";
+import { BrowserPanel } from "../features/browser/BrowserPanel";
 
 loader.config({ monaco });
 
 interface WorkspaceIdeShellProps {
   workspace: WorkspaceRecord | null;
   reviewSession: ReviewSession | null;
+  hidden: boolean;
+  requestedPanelMode?: WorkspacePanelMode | null;
+  requestedPanelModeKey?: number;
   onReviewClosed: () => void;
   onToggleCollapsed: () => void;
 }
@@ -27,8 +31,9 @@ interface OpenTab {
 }
 
 type ActiveIdeTab = { type: "file"; path: string | null } | { type: "review" };
+type WorkspacePanelMode = "files" | "review" | "browser";
 
-export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, onToggleCollapsed }: WorkspaceIdeShellProps) {
+export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedPanelMode, requestedPanelModeKey, onReviewClosed, onToggleCollapsed }: WorkspaceIdeShellProps) {
   const [listings, setListings] = useState<Record<string, WorkspaceDirectoryListing>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["."]));
   const [loadingFolders, setLoadingFolders] = useState<Set<string>>(() => new Set());
@@ -36,6 +41,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
   const [filter, setFilter] = useState("");
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveIdeTab>({ type: "file", path: null });
+  const [panelMode, setPanelMode] = useState<WorkspacePanelMode>("files");
   const [selectedReviewPath, setSelectedReviewPath] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
@@ -53,6 +59,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
     setFilter("");
     setTabs([]);
     setActiveTab({ type: "file", path: null });
+    setPanelMode("files");
     setSelectedReviewPath(null);
     if (workspace) void loadDirectory(".");
   }, [workspace?.id]);
@@ -64,7 +71,13 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
     }
     setSelectedReviewPath(reviewSession.selectedPath);
     setActiveTab({ type: "review" });
+    setPanelMode("review");
   }, [reviewSession?.messageId]);
+
+  useEffect(() => {
+    if (!requestedPanelMode || !workspace) return;
+    setPanelMode(requestedPanelMode);
+  }, [requestedPanelMode, requestedPanelModeKey, workspace?.id]);
 
   const loadedEntries = useMemo(
     () => Object.values(listings).flatMap((listing) => listing.entries),
@@ -150,10 +163,28 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
   };
 
   const activeExternalPath = reviewActive ? activeReviewFile?.path : activeFileTab?.path;
+  const fileMode = panelMode === "files" || (panelMode === "review" && !reviewSession);
+  const browserMode = panelMode === "browser";
+  const reviewMode = panelMode === "review" && Boolean(reviewSession);
 
   return (
     <aside className="workspace-ide" aria-label="Workspace editor">
       <header className="workspace-ide-topbar">
+        <div className="workspace-mode-tabs" role="tablist" aria-label="Workspace panel">
+          <button type="button" className={clsx(fileMode && "active")} onClick={() => setPanelMode("files")}>
+            <File size={15} />
+            <span>Files</span>
+          </button>
+          <button type="button" className={clsx(reviewMode && "active")} disabled={!reviewSession} onClick={() => setPanelMode("review")}>
+            <GitCompareArrows size={15} />
+            <span>Review</span>
+          </button>
+          <button type="button" className={clsx(browserMode && "active")} onClick={() => setPanelMode("browser")}>
+            <Globe2 size={15} />
+            <span>Browser</span>
+          </button>
+        </div>
+        {fileMode || reviewMode ? (
         <div className="workspace-ide-tabs" role="tablist" aria-label="Open files">
           {reviewSession && (
             <button
@@ -217,8 +248,9 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
             <span>+</span>
           </button>
         </div>
+        ) : <div />}
         <div className="workspace-ide-actions">
-          {reviewActive && (
+          {reviewMode && (
             <>
               <button type="button" className="workspace-icon-button" title="Previous diff" onClick={() => diffEditorRef.current?.goToDiff("previous")}>
                 <ChevronUp size={15} />
@@ -228,10 +260,10 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
               </button>
             </>
           )}
-          <button type="button" className="workspace-icon-button" title="Copy contents" disabled={reviewActive ? !activeReviewFile : !activeFileTab?.result || activeFileTab.result.binary} onClick={copyActiveFile}>
+          <button type="button" className="workspace-icon-button" title="Copy contents" disabled={browserMode || (reviewMode ? !activeReviewFile : !activeFileTab?.result || activeFileTab.result.binary)} onClick={copyActiveFile}>
             {copied ? <Check size={15} /> : <Copy size={15} />}
           </button>
-          <button type="button" className="workspace-icon-button" title="Open externally" disabled={!activeExternalPath} onClick={() => activeExternalPath && window.privoraDesktop.openPath(activeExternalPath)}>
+          <button type="button" className="workspace-icon-button" title="Open externally" disabled={browserMode || !activeExternalPath} onClick={() => activeExternalPath && window.privoraDesktop.openPath(activeExternalPath)}>
             <ExternalLink size={15} />
           </button>
           <button type="button" className="workspace-icon-button" title="Hide workspace" onClick={onToggleCollapsed}>
@@ -240,6 +272,9 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
         </div>
       </header>
 
+      {browserMode ? (
+        <BrowserPanel workspace={workspace} active={browserMode} hidden={hidden} />
+      ) : (
       <div className="workspace-ide-main">
         <section className="workspace-editor-panel" aria-label="Read-only file viewer">
           <div className="workspace-breadcrumb">
@@ -257,7 +292,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
               </>
             ) : <span>No project selected</span>}
           </div>
-          {reviewActive && reviewSession ? (
+          {reviewMode && reviewSession ? (
             <ReviewSurface
               file={activeReviewFile}
               onMount={(editor) => {
@@ -270,7 +305,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
         </section>
 
         <section className="workspace-file-panel" aria-label="Workspace files">
-          {reviewActive && reviewSession ? (
+          {reviewMode && reviewSession ? (
             <ReviewFileList session={reviewSession} selectedPath={activeReviewFile?.path || null} onSelect={setSelectedReviewPath} />
           ) : (
             <>
@@ -295,6 +330,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, onReviewClosed, on
           )}
         </section>
       </div>
+      )}
     </aside>
   );
 }

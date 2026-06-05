@@ -425,6 +425,37 @@
   white-space: nowrap;
 }
 
+.browser-tool-panel {
+  display: grid;
+  gap: 7px;
+  margin: 6px 0 0 20px;
+  max-width: min(100%, 52rem);
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  padding-left: 12px;
+}
+
+.browser-tool-panel section {
+  display: grid;
+  gap: 3px;
+}
+
+.browser-tool-panel small {
+  color: var(--privora-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.browser-tool-panel pre {
+  max-height: min(42vh, 340px);
+  margin: 0;
+  border-color: color-mix(in srgb, var(--privora-border) 62%, transparent);
+  background: color-mix(in srgb, var(--privora-bg) 58%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 88%, var(--privora-muted));
+  overflow-wrap: anywhere;
+}
+
 .question-answer-panel {
   display: grid;
   gap: 8px;
