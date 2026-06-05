@@ -59,11 +59,18 @@ export class CausalJournal {
   constructor(private workspaceId: string) {}
 
   recordConsole(entry: Omit<BrowserConsoleEntry, "timestamp">) {
+    const message = redactSensitiveText(entry.message, 1600);
+    const duplicate = [...this.consoleEntries].reverse().find((item) =>
+      item.level === entry.level &&
+      item.message === message &&
+      item.sourceId === entry.sourceId &&
+      Math.abs(Date.now() - item.timestamp) < 750);
+    if (duplicate) return;
     this.consoleEntries = [
       ...this.consoleEntries,
       {
         ...entry,
-        message: redactSensitiveText(entry.message, 1600),
+        message,
         timestamp: Date.now(),
       },
     ].slice(-MAX_CONSOLE);

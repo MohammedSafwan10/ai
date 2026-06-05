@@ -158,6 +158,156 @@ export interface BrowserFormRecord {
   updatedAt: number;
 }
 
+export type BrowserWorkflowStatus = "recording" | "idle";
+export type BrowserWorkflowRunStatus = "running" | "passed" | "failed" | "cancelled";
+export type BrowserWorkflowStepStatus = "passed" | "failed" | "skipped";
+export type BrowserWorkflowAssertionKind =
+  | "text_present"
+  | "text_absent"
+  | "url_contains"
+  | "no_console_errors"
+  | "no_failed_requests"
+  | "element_visible"
+  | "form_valid"
+  | "screenshot_changed"
+  | "pdf_contains";
+export type BrowserWorkflowDiagnosisKind =
+  | "element_missing"
+  | "element_disabled"
+  | "validation_failed"
+  | "navigation_failed"
+  | "network_error"
+  | "auth_error"
+  | "console_error"
+  | "timeout"
+  | "stale_target"
+  | "blocked_by_policy"
+  | "unknown";
+
+export interface BrowserWorkflowTargetStrategy {
+  ref?: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  formId?: string;
+  formLabel?: string;
+  fieldId?: string;
+  fieldName?: string;
+  fieldLabel?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface BrowserWorkflowStep {
+  id: string;
+  action: DesktopToolName | string;
+  args: Record<string, unknown>;
+  targetStrategy?: BrowserWorkflowTargetStrategy;
+  waitBefore?: string;
+  waitAfter?: string;
+  redactionLevel: "none" | "standard" | "sensitive";
+  createdFromToolEventId?: string;
+  createdAt: number;
+}
+
+export interface BrowserWorkflowAssertion {
+  id: string;
+  kind: BrowserWorkflowAssertionKind;
+  value?: string;
+  ref?: string;
+  formId?: string;
+  screenshotPath?: string;
+  createdAt: number;
+}
+
+export interface BrowserWorkflowRecord {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description?: string;
+  steps: BrowserWorkflowStep[];
+  assertions: BrowserWorkflowAssertion[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BrowserWorkflowAssertionResult {
+  id: string;
+  kind: BrowserWorkflowAssertionKind;
+  passed: boolean;
+  finding: string;
+}
+
+export interface BrowserWorkflowStepResult {
+  stepId: string;
+  action: string;
+  status: BrowserWorkflowStepStatus;
+  output?: string;
+  error?: string;
+  evidenceId?: string;
+  diagnosis?: BrowserWorkflowDiagnosisRecord;
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface BrowserWorkflowDiagnosisRecord {
+  kind: BrowserWorkflowDiagnosisKind;
+  finding: string;
+  evidenceId?: string;
+  details?: string[];
+}
+
+export interface BrowserWorkflowRunRecord {
+  id: string;
+  workspaceId: string;
+  workflowId: string;
+  status: BrowserWorkflowRunStatus;
+  startedAt: number;
+  endedAt?: number;
+  stepResults: BrowserWorkflowStepResult[];
+  assertionResults: BrowserWorkflowAssertionResult[];
+  evidenceIds: string[];
+  diagnosis?: BrowserWorkflowDiagnosisRecord;
+}
+
+export interface BrowserEvidenceRecord {
+  id: string;
+  workspaceId: string;
+  workflowId?: string;
+  runId?: string;
+  tabId?: string;
+  url: string;
+  title: string;
+  timestamp: string;
+  artifactPaths: string[];
+  consoleSummary: string[];
+  networkSummary: string[];
+  textSummary: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+}
+
+export interface BrowserWorkflowSummaryRecord {
+  id: string;
+  name: string;
+  stepCount: number;
+  assertionCount: number;
+  updatedAt: number;
+  lastRunStatus?: BrowserWorkflowRunStatus;
+}
+
+export interface BrowserWorkflowPanelStateRecord {
+  status: BrowserWorkflowStatus;
+  activeWorkflowId?: string;
+  activeWorkflowName?: string;
+  stepCount: number;
+  assertionCount: number;
+  workflows: BrowserWorkflowSummaryRecord[];
+  lastRun?: BrowserWorkflowRunRecord;
+  recentEvidence: BrowserEvidenceRecord[];
+  updatedAt: number;
+}
+
 export interface BrowserWorkspaceStateRecord {
   workspaceId: string;
   tabs: BrowserTabRecord[];
@@ -184,6 +334,7 @@ export interface BrowserPanelStateRecord {
   activeTabId: string;
   downloads: BrowserDownloadRecord[];
   forms: BrowserFormRecord[];
+  workflow: BrowserWorkflowPanelStateRecord;
   evidenceUpdatedAt?: number;
   updatedAt: number;
 }
@@ -279,6 +430,64 @@ export interface BrowserFormSubmitInput {
   tabId?: string;
   formId?: string;
   includeScreenshot?: boolean;
+}
+
+export interface BrowserWorkflowInput {
+  workspaceId: string;
+  action: "start_recording" | "stop_recording" | "list" | "get" | "replay" | "delete" | "rename";
+  workflowId?: string;
+  name?: string;
+  description?: string;
+  newTab?: boolean;
+}
+
+export interface BrowserWorkflowAssertInput {
+  workspaceId: string;
+  action: "add" | "list" | "remove" | "run";
+  workflowId?: string;
+  assertionId?: string;
+  kind?: BrowserWorkflowAssertionKind;
+  value?: string;
+  ref?: string;
+  formId?: string;
+}
+
+export interface BrowserEvidenceVaultInput {
+  workspaceId: string;
+  action: "save_current" | "list" | "get" | "prune";
+  evidenceId?: string;
+  workflowId?: string;
+  runId?: string;
+  includeScreenshot?: boolean;
+}
+
+export interface BrowserDiagnoseInput {
+  workspaceId: string;
+  runId?: string;
+  workflowId?: string;
+}
+
+export type BrowserToolsMenuAction =
+  | "current_evidence"
+  | "forms"
+  | "record_workflow"
+  | "replay_workflow"
+  | "save_evidence"
+  | "downloads"
+  | "workflow_vault";
+
+export interface BrowserToolsMenuInput {
+  workspaceId: string;
+  hasUrl: boolean;
+  hasWorkflows: boolean;
+  recording: boolean;
+}
+
+export interface BrowserOverlayInput {
+  title: string;
+  body: string;
+  width?: number;
+  height?: number;
 }
 
 export type ThreadTitleSource = "placeholder" | "agent" | "user" | "fallback";
@@ -766,6 +975,11 @@ export type DesktopToolName =
   | "browser_form_fill"
   | "browser_form_validate"
   | "browser_form_submit"
+  | "browser_capabilities"
+  | "browser_workflow"
+  | "browser_assert"
+  | "browser_evidence_vault"
+  | "browser_diagnose"
   | "browser_trace"
   | "browser_verify"
   | "web_search";
@@ -828,6 +1042,7 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "context_usage_updated"; usage: ContextUsageRecord }
   | { type: "ai_credit_summary_updated"; summary: AiCreditSummaryRecord }
   | { type: "browser_state_updated"; state: BrowserPanelStateRecord }
+  | { type: "browser_tools_menu_action"; workspaceId: string; action: BrowserToolsMenuAction }
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }
@@ -930,8 +1145,14 @@ export interface PrivoraDesktopApi {
   browserFormFill(input: BrowserFormFillInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserFormValidate(input: BrowserFormValidateInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserFormSubmit(input: BrowserFormSubmitInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserWorkflow(input: BrowserWorkflowInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserAssert(input: BrowserWorkflowAssertInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserEvidenceVault(input: BrowserEvidenceVaultInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserDiagnose(input: BrowserDiagnoseInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserEvidence(workspaceId: string): Promise<{ output: string; data?: Record<string, unknown> }>;
   openBrowserDevTools(workspaceId: string): Promise<void>;
+  showBrowserToolsMenu(input: BrowserToolsMenuInput): Promise<void>;
+  showBrowserOverlay(input: BrowserOverlayInput): Promise<void>;
   openPath(path: string): Promise<void>;
   openExternalUrl(url: string): Promise<void>;
   listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;

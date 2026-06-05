@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserOriginDecision, normalizeBrowserUrl, redactHeaders, redactSensitiveText } from "../src/main/browser/browserSecurity";
+import { browserOriginDecision, normalizeBrowserUrl, redactHeaders, redactSensitiveText, shouldRestorePersistedBrowserUrl } from "../src/main/browser/browserSecurity";
 
 describe("browser security", () => {
   it("normalizes bare localhost urls", () => {
@@ -25,6 +25,12 @@ describe("browser security", () => {
       local: false,
       origin: "https://example.com",
     });
+  });
+
+  it("does not restore persisted local dev urls on startup", () => {
+    expect(shouldRestorePersistedBrowserUrl("http://localhost:8765/app.html")).toBe(false);
+    expect(shouldRestorePersistedBrowserUrl("http://127.0.0.1:5173/")).toBe(false);
+    expect(shouldRestorePersistedBrowserUrl("https://example.com/docs")).toBe(true);
   });
 
   it("redacts sensitive headers and text", () => {

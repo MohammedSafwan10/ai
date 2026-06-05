@@ -58,6 +58,15 @@ export const isLocalBrowserUrl = (rawUrl: string) => {
   }
 };
 
+export const shouldRestorePersistedBrowserUrl = (rawUrl: string) => {
+  try {
+    const parsed = new URL(rawUrl);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && !SAFE_LOCAL_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+};
+
 export const browserOriginDecision = (rawUrl: string, scope: BrowserControlScope): BrowserOriginDecision => {
   const url = normalizeBrowserUrl(rawUrl);
   const parsed = new URL(url);

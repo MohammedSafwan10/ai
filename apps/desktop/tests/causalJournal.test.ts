@@ -41,6 +41,14 @@ describe("causal journal", () => {
     expect(journal.recentConsole()).toEqual([]);
     expect(journal.recentNetwork()).toEqual([]);
   });
+
+  it("deduplicates near-identical console evidence", () => {
+    const journal = new CausalJournal("workspace");
+    journal.recordConsole({ level: "error", message: "Boom", sourceId: "app.js", lineNumber: 10 });
+    journal.recordConsole({ level: "error", message: "Boom", sourceId: "app.js", lineNumber: 10 });
+
+    expect(journal.recentConsole()).toHaveLength(1);
+  });
 });
 
 const fakeContents = () => ({

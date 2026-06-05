@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, shell, WebContentsView, type DownloadItem, type Event, type Rectangle, type WebContents } from "electron";
 import { BrowserCdpClient, type BrowserSnapshotOptions } from "./browserCdp";
 import { buildBrowserExtractScript, browserExtractionOutput, normalizeExtractMode, sanitizeBrowserExtraction, type BrowserExtractMode, type BrowserExtractionResult } from "./browserExtraction";
-import { browserOriginDecision, compactUrl, installBrowserSessionSecurity, installBrowserWebContentsSecurity, normalizeBrowserUrl, redactSensitiveText, type BrowserControlScope } from "./browserSecurity";
+import { browserOriginDecision, compactUrl, installBrowserSessionSecurity, installBrowserWebContentsSecurity, normalizeBrowserUrl, redactSensitiveText, shouldRestorePersistedBrowserUrl, type BrowserControlScope } from "./browserSecurity";
 import { hideBrowserCursorOverlay, showBrowserCursorOverlay, type BrowserCursorBox, type BrowserCursorPoint } from "./browserCursorOverlay";
 import { CausalJournal, pageSummary, type BrowserActionFinding, type BrowserNetworkEntry } from "./causalJournal";
 import { inspectDevBridge } from "./devBridge";
@@ -21,7 +21,43 @@ import {
   sanitizeBrowserForms,
   type BrowserFormOperationResult,
 } from "./browserForms";
-import type { BrowserActionInput, BrowserDownloadInput, BrowserDownloadRecord, BrowserFormAnalyzeInput, BrowserFormFillInput, BrowserFormRecord, BrowserFormSubmitInput, BrowserFormValidateInput, BrowserPanelStateRecord, BrowserTabInput, BrowserTabRecord, BrowserViewportPreset, BrowserWorkspaceStateRecord } from "../../shared/types";
+import {
+  assertionResultsOutput,
+  BrowserWorkflowManager,
+  classifyDiagnosis,
+  diagnoseToolFailure,
+  evidenceListOutput,
+  stepResult,
+  workflowListOutput,
+  workflowRunOutput,
+} from "./browserWorkflow";
+import type {
+  BrowserActionInput,
+  BrowserEvidenceRecord,
+  BrowserDiagnoseInput,
+  BrowserDownloadInput,
+  BrowserDownloadRecord,
+  BrowserEvidenceVaultInput,
+  BrowserFormAnalyzeInput,
+  BrowserFormFillInput,
+  BrowserFormRecord,
+  BrowserFormSubmitInput,
+  BrowserFormValidateInput,
+  BrowserPanelStateRecord,
+  BrowserTabInput,
+  BrowserTabRecord,
+  BrowserViewportPreset,
+  BrowserWorkflowAssertInput,
+  BrowserWorkflowAssertionResult,
+  BrowserWorkflowAssertionKind,
+  BrowserWorkflowDiagnosisRecord,
+  BrowserWorkflowInput,
+  BrowserWorkflowRecord,
+  BrowserWorkflowStep,
+  BrowserWorkspaceStateRecord,
+  DesktopToolCall,
+  ToolResult,
+} from "../../shared/types";
 
 interface BrowserSessionRecord {
   id: string;
@@ -100,6 +136,9 @@ export class BrowserSessionManager {
   private downloads = new Map<string, BrowserDownloadRecord[]>();
   private allowNextDownload = new Set<string>();
   private downloadHandlers = new Set<string>();
+  private workflows = new BrowserWorkflowManager(app.getPath("userData"));
+  private replayingWorkflows = new Set<string>();
+  private latestAdHocDiagnosis = new Map<string, { diagnosis: BrowserWorkflowDiagnosisRecord; createdAt: number }>();
 
   constructor(
     private getMainWindow: () => BrowserWindow | null,
@@ -164,7 +203,17 @@ export class BrowserSessionManager {
       width: Math.max(0, Math.round(bounds.width || 0)),
       height: Math.max(0, Math.round(bounds.height || 0)),
     };
-    this.workspaceTabs.get(workspaceId)?.forEach((tab) => {
+    const tabs = this.workspaceTabs.get(workspaceId) || [];
+    const unchanged = tabs.length > 0 && tabs.every((tab) =>
+      tab.bounds.x === nextBounds.x &&
+      tab.bounds.y === nextBounds.y &&
+      tab.bounds.width === nextBounds.width &&
+      tab.bounds.height === nextBounds.height &&
+      tab.viewport.width === nextBounds.width &&
+      tab.viewport.height === nextBounds.height
+    );
+    if (unchanged) return session.state;
+    tabs.forEach((tab) => {
       tab.bounds = nextBounds;
       tab.viewport = { width: nextBounds.width, height: nextBounds.height };
       this.syncAttachment(tab);
@@ -328,7 +377,7 @@ export class BrowserSessionManager {
     const metadata = await this.extractPage(session, "metadata").catch(() => null);
     const visibleText = includeVisibleText ? await this.extractPage(session, "visible_text").catch(() => null) : null;
     const screenshot = options.includeScreenshot
-      ? await this.screenshot(workspaceId, { mode: "viewport" }).catch(() => null)
+      ? await this.captureEvidenceScreenshot(workspaceId, session)
       : null;
     const consoleEntries = includeConsole ? session.journal.recentConsole() : [];
     const requests = includeNetwork ? session.journal.recentNetwork() : [];
@@ -345,6 +394,7 @@ export class BrowserSessionManager {
       console: consoleEntries,
       requests,
       screenshotPath: screenshot?.screenshotPath,
+      screenshotError: screenshot?.error,
       pdf: looksLikePdfUrl(session.view.webContents.getURL()) ? { available: true } : { available: false },
     };
     this.updateState(session, { evidenceUpdatedAt: Date.now() });
@@ -462,6 +512,175 @@ export class BrowserSessionManager {
         totalCharacters: text.length,
       },
     };
+  }
+
+  recordWorkflowTool(workspaceId: string, call: DesktopToolCall, result?: ToolResult) {
+    if (this.replayingWorkflows.has(workspaceId)) return null;
+    const session = this.sessions.get(workspaceId);
+    const panel = this.workflows.panelState(workspaceId);
+    if (session && panel.status === "recording" && panel.stepCount === 0 && call.name !== "browser_open") {
+      const url = session.view.webContents.getURL();
+      if (/^https?:\/\//i.test(url)) {
+        this.workflows.recordStep({
+          workspaceId,
+          action: "browser_open",
+          args: { url: compactUrl(url) },
+        });
+      }
+    }
+    const targetStrategy = session ? this.workflowTargetForCall(session, call) : undefined;
+    const step = this.workflows.recordStep({
+      workspaceId,
+      action: call.name,
+      args: this.workflowArgsForCall(session || null, call),
+      targetStrategy,
+      createdFromToolEventId: call.id,
+    });
+    if (step && session) {
+      this.updateState(session, {
+        lastAction: `Recorded ${workflowActionTitle(call.name)}`,
+        lastFinding: `Recorded ${workflowActionTitle(call.name)} in ${this.workflows.panelState(workspaceId).activeWorkflowName || "workflow"}.`,
+      });
+    }
+    if (result && !result.success && session) {
+      this.updateState(session, { lastFinding: diagnoseToolFailure(result.error, result).finding });
+    }
+    return step;
+  }
+
+  async workflow(workspaceId: string, input: BrowserWorkflowInput, options: { agentApproved?: boolean } = {}) {
+    this.ensureSession(workspaceId);
+    if (input.action === "start_recording") {
+      const workflow = this.workflows.startRecording(workspaceId, input.name, input.description);
+      this.updateState(this.ensureSession(workspaceId), { lastAction: "Started workflow recording", lastFinding: `Recording ${workflow.name}.` });
+      return { output: `Started recording ${workflow.name}.`, data: { workflow } };
+    }
+    if (input.action === "stop_recording") {
+      const workflow = this.workflows.stopRecording(workspaceId, input.workflowId);
+      this.updateState(this.ensureSession(workspaceId), { lastAction: "Stopped workflow recording", lastFinding: workflow ? `Saved ${workflow.steps.length} workflow step(s).` : "No active workflow recording." });
+      return { output: workflow ? `Stopped recording ${workflow.name}; ${workflow.steps.length} step(s) saved.` : "No active workflow recording.", data: { workflow } };
+    }
+    if (input.action === "list") {
+      const workflows = this.workflows.list(workspaceId);
+      return { output: workflowListOutput(workflows), data: { workflows } };
+    }
+    if (input.action === "get") {
+      const workflow = this.workflows.get(workspaceId, input.workflowId);
+      return { output: workflowDetailOutput(workflow), data: { workflow } };
+    }
+    if (input.action === "delete") {
+      const workflow = this.workflows.delete(workspaceId, input.workflowId);
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: `Deleted workflow ${workflow.name}.` });
+      return { output: `Deleted workflow ${workflow.name}.`, data: { workflow } };
+    }
+    if (input.action === "rename") {
+      const workflow = this.workflows.rename(workspaceId, input.workflowId, input.name, input.description);
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: `Renamed workflow ${workflow.name}.` });
+      return { output: `Renamed workflow ${workflow.name}.`, data: { workflow } };
+    }
+    if (input.action === "replay") {
+      const workflow = this.workflows.get(workspaceId, input.workflowId);
+      const run = await this.replayWorkflow(workspaceId, workflow, { agentApproved: options.agentApproved === true, newTab: input.newTab === true });
+      this.updateState(this.ensureSession(workspaceId), {
+        lastAction: "Replayed browser workflow",
+        lastFinding: run.diagnosis?.finding || `Workflow ${run.status}.`,
+      });
+      return { output: workflowRunOutput(run), data: { run, workflow } };
+    }
+    throw new Error(`Unknown browser_workflow action: ${input.action}`);
+  }
+
+  async workflowAssert(workspaceId: string, input: BrowserWorkflowAssertInput) {
+    this.ensureSession(workspaceId);
+    if (input.action === "add") {
+      let screenshotPath: string | undefined;
+      if (input.kind === "screenshot_changed") {
+        const screenshot = await this.screenshot(workspaceId, { mode: "viewport" });
+        screenshotPath = screenshot.screenshotPath;
+      }
+      const assertion = this.workflows.addAssertion(workspaceId, { ...input, screenshotPath });
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: `Added ${assertion.kind} assertion.` });
+      return { output: `Added ${assertion.kind} assertion.`, data: { assertion } };
+    }
+    if (input.action === "remove") {
+      const workflow = this.workflows.removeAssertion(workspaceId, input.workflowId, input.assertionId);
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: "Removed browser workflow assertion." });
+      return { output: `Removed assertion. ${workflow.assertions.length} assertion(s) remain.`, data: { workflow } };
+    }
+    const workflow = this.workflows.get(workspaceId, input.workflowId);
+    if (input.action === "list") {
+      return {
+        output: workflow.assertions.length ? workflow.assertions.map((assertion) => `${assertion.id} ${assertion.kind} ${assertion.value || assertion.ref || assertion.formId || ""}`.trim()).join("\n") : "No assertions configured.",
+        data: { assertions: workflow.assertions },
+      };
+    }
+    if (input.action === "run") {
+      const results = await this.runWorkflowAssertions(workspaceId, workflow);
+      const failed = results.find((result) => !result.passed);
+      if (failed) {
+        const diagnosis = classifyDiagnosis(`${failed.kind} assertion failed: ${failed.finding}`);
+        this.latestAdHocDiagnosis.set(workspaceId, { diagnosis, createdAt: Date.now() });
+      } else {
+        this.latestAdHocDiagnosis.delete(workspaceId);
+      }
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: assertionResultsOutput(results) });
+      return { output: assertionResultsOutput(results), data: { results } };
+    }
+    throw new Error(`Unknown browser_assert action: ${input.action}`);
+  }
+
+  async evidenceVault(workspaceId: string, input: BrowserEvidenceVaultInput) {
+    this.ensureSession(workspaceId);
+    if (input.action === "save_current") {
+      const record = await this.captureVaultEvidence(workspaceId, {
+        workflowId: input.workflowId,
+        runId: input.runId,
+        includeScreenshot: input.includeScreenshot !== false,
+      });
+      this.updateState(this.ensureSession(workspaceId), { evidenceUpdatedAt: Date.now(), lastFinding: `Saved evidence ${record.id}.` });
+      return { output: `Saved browser evidence ${record.id} for ${record.url}.`, data: { evidence: record } };
+    }
+    if (input.action === "get") {
+      const evidence = this.workflows.getEvidence(workspaceId, input.evidenceId);
+      return { output: evidenceDetailOutput(evidence), data: { evidence } };
+    }
+    if (input.action === "prune") {
+      const removed = this.workflows.pruneEvidence(workspaceId);
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: `Pruned ${removed} browser evidence record(s).` });
+      return { output: `Pruned ${removed} browser evidence record(s).`, data: { removed } };
+    }
+    const evidence = this.workflows.listEvidence(workspaceId);
+    return { output: evidenceListOutput(evidence), data: { evidence } };
+  }
+
+  async diagnose(workspaceId: string, input: BrowserDiagnoseInput = { workspaceId }) {
+    this.ensureSession(workspaceId);
+    const requestedRun = input.runId ? this.workflows.getRun(workspaceId, input.runId) : null;
+    const panelRun = this.workflows.panelState(workspaceId).lastRun;
+    const run = requestedRun || panelRun;
+    const adHoc = this.latestAdHocDiagnosis.get(workspaceId);
+    const runTime = run?.endedAt || run?.startedAt || 0;
+    if (!input.runId && !input.workflowId && adHoc && Date.now() - adHoc.createdAt < 10 * 60 * 1000 && adHoc.createdAt >= runTime) {
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: adHoc.diagnosis.finding });
+      return { output: adHoc.diagnosis.finding, data: { diagnosis: adHoc.diagnosis } };
+    }
+    if (run?.diagnosis) {
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: run.diagnosis.finding });
+      return { output: run.diagnosis.finding, data: { diagnosis: run.diagnosis, run } };
+    }
+    if (input.runId && run) {
+      const diagnosis = diagnosisForRun(run);
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: diagnosis.finding });
+      return { output: diagnosis.finding, data: { diagnosis, run } };
+    }
+    if (!input.runId && !input.workflowId && adHoc && Date.now() - adHoc.createdAt < 10 * 60 * 1000) {
+      this.updateState(this.ensureSession(workspaceId), { lastFinding: adHoc.diagnosis.finding });
+      return { output: adHoc.diagnosis.finding, data: { diagnosis: adHoc.diagnosis } };
+    }
+    const evidence = this.workflows.listEvidence(workspaceId)[0];
+    const diagnosis = this.workflows.diagnose(workspaceId);
+    this.updateState(this.ensureSession(workspaceId), { lastFinding: diagnosis.finding });
+    return { output: diagnosis.finding, data: { diagnosis, run, evidence } };
   }
 
   async formAnalyze(workspaceId: string, tabId?: BrowserFormAnalyzeInput["tabId"]) {
@@ -620,13 +839,14 @@ export class BrowserSessionManager {
     }
     tabs.forEach((tab) => {
       const session = this.createTab(workspaceId, { activate: tab.id === persisted?.activeTabId, id: tab.id, createdAt: tab.createdAt });
-      if (tab.url) {
-        void session.view.webContents.loadURL(tab.url).catch(() => undefined);
+      const restoreUrl = tab.url && shouldRestorePersistedBrowserUrl(tab.url) ? tab.url : "";
+      if (restoreUrl) {
+        void session.view.webContents.loadURL(restoreUrl).catch(() => undefined);
       }
       session.state = {
         ...session.state,
-        url: tab.url,
-        title: tab.title || "Privora Browser",
+        url: restoreUrl,
+        title: restoreUrl ? tab.title || "Privora Browser" : "New tab",
         loading: false,
       };
     });
@@ -825,7 +1045,24 @@ export class BrowserSessionManager {
       });
     });
     contents.debugger.on("message", (_event, method, params: Record<string, unknown>) => {
+      this.recordCdpRuntime(session, method, params);
       this.recordCdpNetwork(session, method, params);
+    });
+  }
+
+  private recordCdpRuntime(session: BrowserSessionRecord, method: string, params: Record<string, unknown>) {
+    if (method !== "Runtime.exceptionThrown") return;
+    const exceptionDetails = params.exceptionDetails as Record<string, unknown> | undefined;
+    const exception = exceptionDetails?.exception as Record<string, unknown> | undefined;
+    const message = String(exceptionDetails?.text || exception?.description || exception?.value || "Uncaught browser exception");
+    session.journal.recordConsole({
+      level: "error",
+      message,
+      sourceId: typeof exceptionDetails?.url === "string" ? exceptionDetails.url : undefined,
+      lineNumber: Number.isFinite(Number(exceptionDetails?.lineNumber)) ? Number(exceptionDetails?.lineNumber) + 1 : undefined,
+    });
+    this.updateState(session, {
+      consoleErrorCount: session.journal.recentConsole().filter((entry) => entry.level === "error").length,
     });
   }
 
@@ -859,9 +1096,14 @@ export class BrowserSessionManager {
     if (method === "Network.loadingFailed") {
       const id = String(params.requestId || "");
       const current = session.network.get(id);
-      if (!current) return;
+      const entryBase = current || {
+        id: id || crypto.randomUUID(),
+        url: String(params.blockedReason || params.errorText || "unknown request"),
+        method: "GET",
+        startedAt: Date.now(),
+      };
       const entry = {
-        ...current,
+        ...entryBase,
         failed: true,
         errorText: String(params.errorText || "failed"),
         endedAt: Date.now(),
@@ -888,6 +1130,335 @@ export class BrowserSessionManager {
       forms: [],
     });
     session.forms = [];
+  }
+
+  private async replayWorkflow(workspaceId: string, workflow: Pick<BrowserWorkflowRecord, "id" | "steps" | "assertions">, options: { agentApproved: boolean; newTab: boolean }) {
+    const run = this.workflows.beginRun(workspaceId, workflow.id);
+    this.replayingWorkflows.add(workspaceId);
+    const sourceUrl = this.sessions.get(workspaceId)?.view.webContents.getURL() || "";
+    if (options.newTab) {
+      this.createTab(workspaceId, { activate: true });
+      if (workflow.steps[0]?.action !== "browser_open" && /^https?:\/\//i.test(sourceUrl)) {
+        await this.openUrl(workspaceId, sourceUrl, {
+          scope: options.agentApproved ? "user" : "agent",
+          throwOnLoadFailure: true,
+          rememberAgentApproval: options.agentApproved,
+        });
+      }
+    }
+    try {
+      for (const step of workflow.steps) {
+        const startedAt = Date.now();
+        try {
+          const result = await this.replayWorkflowStep(workspaceId, step, options);
+          const evidence = await this.captureVaultEvidence(workspaceId, {
+            workflowId: workflow.id,
+            runId: run.id,
+            includeScreenshot: shouldScreenshotWorkflowStep(step.action),
+          }).catch(() => null);
+          run.stepResults.push(stepResult(step, "passed", startedAt, {
+            output: result.output,
+            evidenceId: evidence?.id,
+          }));
+          if (evidence) run.evidenceIds.push(evidence.id);
+        } catch (error) {
+          const evidence = await this.captureVaultEvidence(workspaceId, {
+            workflowId: workflow.id,
+            runId: run.id,
+            includeScreenshot: true,
+          }).catch(() => null);
+          const diagnosis = classifyDiagnosis(error instanceof Error ? error.message : String(error), evidence?.id);
+          run.stepResults.push(stepResult(step, "failed", startedAt, {
+            error: error instanceof Error ? error.message : String(error),
+            evidenceId: evidence?.id,
+            diagnosis,
+          }));
+          if (evidence) run.evidenceIds.push(evidence.id);
+          return this.workflows.finishRun(run, "failed", diagnosis);
+        }
+      }
+      const assertions = await this.runWorkflowAssertions(workspaceId, workflow);
+      run.assertionResults = assertions;
+      const failedAssertion = assertions.find((assertion) => !assertion.passed);
+      if (failedAssertion) {
+        const diagnosis = classifyDiagnosis(failedAssertion.finding);
+        return this.workflows.finishRun(run, "failed", diagnosis);
+      }
+      return this.workflows.finishRun(run, "passed");
+    } finally {
+      this.replayingWorkflows.delete(workspaceId);
+    }
+  }
+
+  private async replayWorkflowStep(workspaceId: string, step: BrowserWorkflowStep, options: { agentApproved: boolean }): Promise<ToolResult> {
+    const args = { ...step.args };
+    if (step.action === "browser_open") {
+      const state = await this.openUrl(workspaceId, String(args.url || ""), {
+        scope: options.agentApproved ? "user" : "agent",
+        throwOnLoadFailure: true,
+        rememberAgentApproval: options.agentApproved,
+        newTab: args.newTab === true,
+      });
+      return { success: true, output: `Opened ${state.url}`, data: state as unknown as Record<string, unknown> };
+    }
+    if (step.action === "browser_wait") {
+      const result = await this.wait(workspaceId, {
+        kind: String(args.for || args.kind || "network_idle"),
+        value: typeof args.value === "string" ? args.value : undefined,
+        ref: typeof args.ref === "string" ? args.ref : undefined,
+        timeoutMs: Number.isFinite(Number(args.timeoutMs)) ? Number(args.timeoutMs) : undefined,
+        idleMs: Number.isFinite(Number(args.idleMs)) ? Number(args.idleMs) : undefined,
+      });
+      if (!result.matched) throw new Error(`Timed out waiting for ${result.kind}${result.value ? ` ${result.value}` : ""}.`);
+      return { success: true, output: `Matched ${result.kind}.`, data: result as unknown as Record<string, unknown> };
+    }
+    if (step.action === "browser_act" || step.action === "browser_trace") {
+      const session = this.ensureSession(workspaceId);
+      const actionArgs = await this.resolveWorkflowActionArgs(session, args, step.targetStrategy);
+      const actionInput = actionArgs as unknown as BrowserActionInput;
+      const finding = step.action === "browser_trace"
+        ? await this.trace(workspaceId, actionInput, { agentApproved: options.agentApproved })
+        : await this.act(workspaceId, actionInput, { agentApproved: options.agentApproved });
+      return { success: true, output: finding.finding, data: finding as unknown as Record<string, unknown> };
+    }
+    if (step.action === "browser_form_fill") {
+      const input = await this.resolveWorkflowFormFill(workspaceId, step);
+      const result = await this.formFill(workspaceId, input, { agentApproved: options.agentApproved });
+      return { success: true, output: result.output, data: result.data };
+    }
+    if (step.action === "browser_form_submit") {
+      const input = await this.resolveWorkflowFormSubmit(workspaceId, step);
+      const result = await this.formSubmit(workspaceId, input, { agentApproved: options.agentApproved });
+      if (result.data?.valid === false || /Form is invalid|Submit ready:\s*no|Valid:\s*no/i.test(result.output || "")) {
+        throw new Error(`Form validation failed during replay. ${result.output}`);
+      }
+      return { success: true, output: result.output, data: result.data };
+    }
+    if (step.action === "browser_screenshot") {
+      const result = await this.screenshot(workspaceId, { mode: String(args.mode || "viewport"), ref: typeof args.ref === "string" ? args.ref : undefined });
+      return { success: true, output: `Saved screenshot: ${result.screenshotPath}`, data: result as unknown as Record<string, unknown> };
+    }
+    if (step.action === "browser_extract") {
+      const result = await this.extract(workspaceId, args.mode);
+      return { success: true, output: result.output, data: result.data };
+    }
+    if (step.action === "browser_evidence") {
+      const result = await this.evidence(workspaceId, {
+        includeScreenshot: args.includeScreenshot === true,
+        includeVisibleText: args.includeVisibleText !== false,
+        includeConsole: args.includeConsole !== false,
+        includeNetwork: args.includeNetwork !== false,
+      });
+      return { success: true, output: result.output, data: result.data };
+    }
+    if (step.action === "browser_verify") {
+      const result = await this.verify(workspaceId, { reload: args.reload !== false });
+      if (!result.passed) throw new Error(result.output);
+      return { success: true, output: result.output, data: result as unknown as Record<string, unknown> };
+    }
+    throw new Error(`Workflow replay does not support ${step.action}.`);
+  }
+
+  private async runWorkflowAssertions(workspaceId: string, workflow: { assertions: Array<{ id: string; kind: BrowserWorkflowAssertionKind; value?: string; ref?: string; formId?: string; screenshotPath?: string }> }): Promise<BrowserWorkflowAssertionResult[]> {
+    const results: BrowserWorkflowAssertionResult[] = [];
+    for (const assertion of workflow.assertions) {
+      try {
+        results.push(await this.runWorkflowAssertion(workspaceId, assertion));
+      } catch (error) {
+        results.push({
+          id: assertion.id,
+          kind: assertion.kind,
+          passed: false,
+          finding: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return results;
+  }
+
+  private async runWorkflowAssertion(workspaceId: string, assertion: { id: string; kind: BrowserWorkflowAssertionKind; value?: string; ref?: string; formId?: string; screenshotPath?: string }): Promise<BrowserWorkflowAssertionResult> {
+    if (assertion.kind === "form_valid") {
+      const result = await this.formValidate(workspaceId, { workspaceId, formId: assertion.formId });
+      const valid = Boolean(result.data?.valid);
+      return { id: assertion.id, kind: assertion.kind, passed: valid, finding: valid ? "Form is valid." : result.output };
+    }
+    if (assertion.kind === "pdf_contains") {
+      const result = await this.pdf(workspaceId, "text");
+      const text = String(result.data?.text || result.output || "");
+      const passed = assertion.value ? text.toLowerCase().includes(assertion.value.toLowerCase()) : Boolean(text.trim());
+      return { id: assertion.id, kind: assertion.kind, passed, finding: passed ? `PDF contains ${assertion.value || "text"}.` : `PDF did not contain ${assertion.value || "expected text"}.` };
+    }
+    if (assertion.kind === "element_visible") {
+      const snapshot = await this.snapshot(workspaceId, { depth: 5 });
+      const needle = assertion.value || assertion.ref || "";
+      const passed = needle ? snapshot.snapshot.toLowerCase().includes(needle.toLowerCase()) : Boolean(snapshot.snapshot.trim());
+      return { id: assertion.id, kind: assertion.kind, passed, finding: passed ? `Element evidence found for ${needle}.` : `Element evidence missing for ${needle}.` };
+    }
+    if (assertion.kind === "screenshot_changed") {
+      if (!assertion.screenshotPath || !fsSync.existsSync(assertion.screenshotPath)) {
+        return { id: assertion.id, kind: assertion.kind, passed: false, finding: "Screenshot baseline is missing." };
+      }
+      const screenshot = await this.screenshot(workspaceId, { mode: "viewport" });
+      const changed = !fsSync.readFileSync(assertion.screenshotPath).equals(fsSync.readFileSync(screenshot.screenshotPath));
+      return { id: assertion.id, kind: assertion.kind, passed: changed, finding: changed ? "Screenshot changed from baseline." : "Screenshot did not change from baseline." };
+    }
+    const evidence = await this.evidence(workspaceId, { includeScreenshot: false, includeVisibleText: true, includeConsole: true, includeNetwork: true });
+    const data = evidence.data || {};
+    const visibleText = String(data.visibleText || "");
+    if (assertion.kind === "text_present") {
+      const passed = Boolean(assertion.value && visibleText.toLowerCase().includes(assertion.value.toLowerCase()));
+      return { id: assertion.id, kind: assertion.kind, passed, finding: passed ? `Text present: ${assertion.value}.` : `Text missing: ${assertion.value}.` };
+    }
+    if (assertion.kind === "text_absent") {
+      const value = assertion.value || "";
+      const passed = Boolean(value) && !visibleText.toLowerCase().includes(value.toLowerCase());
+      return { id: assertion.id, kind: assertion.kind, passed, finding: passed ? `Text absent: ${value}.` : `Unexpected text present: ${value}.` };
+    }
+    if (assertion.kind === "url_contains") {
+      const url = String(data.url || "");
+      const passed = Boolean(assertion.value && url.includes(assertion.value));
+      return { id: assertion.id, kind: assertion.kind, passed, finding: passed ? `URL contains ${assertion.value}.` : `URL did not contain ${assertion.value}; current URL is ${url}.` };
+    }
+    if (assertion.kind === "no_console_errors") {
+      const errors = Array.isArray(data.console) ? data.console.filter((entry) => JSON.stringify(entry).includes("\"level\":\"error\"")) : [];
+      return { id: assertion.id, kind: assertion.kind, passed: errors.length === 0, finding: errors.length === 0 ? "No console errors." : `${errors.length} console error(s) captured.` };
+    }
+    if (assertion.kind === "no_failed_requests") {
+      const failures = Array.isArray(data.requests) ? data.requests.filter((entry) => /"failed":true|"status":[45]\d\d/.test(JSON.stringify(entry))) : [];
+      return { id: assertion.id, kind: assertion.kind, passed: failures.length === 0, finding: failures.length === 0 ? "No failed requests." : `${failures.length} failed request(s) captured.` };
+    }
+    throw new Error(`Unsupported assertion kind ${assertion.kind}.`);
+  }
+
+  private async captureVaultEvidence(workspaceId: string, options: { workflowId?: string; runId?: string; includeScreenshot?: boolean }) {
+    const session = this.ensureSession(workspaceId);
+    const result = await this.evidence(workspaceId, {
+      includeScreenshot: options.includeScreenshot === true,
+      includeVisibleText: true,
+      includeConsole: true,
+      includeNetwork: true,
+    });
+    return this.workflows.saveEvidence({
+      workspaceId,
+      workflowId: options.workflowId,
+      runId: options.runId,
+      tabId: session.id,
+      data: result.data || {},
+    });
+  }
+
+  private async resolveWorkflowActionArgs(session: BrowserSessionRecord, args: Record<string, unknown>, target?: BrowserWorkflowStep["targetStrategy"]) {
+    const next = { ...args };
+    if (target?.role || target?.name || target?.text) {
+      await this.collectInteractiveSnapshot(session, { depth: 5 }).catch(() => "");
+      const needleName = (target.name || target.text || "").toLowerCase();
+      const found = Array.from(session.refs.values()).find((ref) => {
+        const roleMatches = !target.role || ref.role.toLowerCase() === target.role.toLowerCase();
+        const nameMatches = !needleName || ref.name.toLowerCase().includes(needleName);
+        return roleMatches && nameMatches;
+      });
+      if (found) {
+        next.ref = found.ref;
+        delete next.x;
+        delete next.y;
+        return next;
+      }
+    }
+    if (!next.ref && Number.isFinite(target?.x) && Number.isFinite(target?.y)) {
+      next.x = target?.x;
+      next.y = target?.y;
+    }
+    return next;
+  }
+
+  private async resolveWorkflowFormFill(workspaceId: string, step: BrowserWorkflowStep): Promise<BrowserFormFillInput> {
+    const session = this.ensureSession(workspaceId);
+    const forms = await this.analyzeForms(session);
+    const target = step.targetStrategy;
+    const form = target?.formLabel
+      ? forms.find((item) => item.label.toLowerCase().includes(target.formLabel!.toLowerCase()) || item.submitLabel.toLowerCase().includes(target.formLabel!.toLowerCase()))
+      : target?.formId ? forms.find((item) => item.id === target.formId) : undefined;
+    const fields = Array.isArray(step.args.fields) ? step.args.fields as Array<Record<string, unknown>> : [];
+    return {
+      workspaceId,
+      formId: form?.id || String(step.args.formId || ""),
+      fields: fields.map((field) => {
+        const fieldTarget = {
+          fieldId: typeof field.fieldId === "string" ? field.fieldId : undefined,
+          name: typeof field.name === "string" ? field.name : undefined,
+          label: typeof field.label === "string" ? field.label : undefined,
+        };
+        const control = form?.controls.find((item) =>
+          (fieldTarget.name && item.name.toLowerCase() === fieldTarget.name.toLowerCase()) ||
+          (fieldTarget.label && item.label.toLowerCase().includes(fieldTarget.label.toLowerCase())) ||
+          (fieldTarget.fieldId && item.id === fieldTarget.fieldId)
+        );
+        return {
+          fieldId: control?.id || fieldTarget.fieldId,
+          name: control?.name || fieldTarget.name,
+          label: control?.label || fieldTarget.label,
+          value: typeof field.value === "boolean" ? field.value : String(field.value || ""),
+        };
+      }),
+    };
+  }
+
+  private async resolveWorkflowFormSubmit(workspaceId: string, step: BrowserWorkflowStep): Promise<BrowserFormSubmitInput> {
+    const session = this.ensureSession(workspaceId);
+    const forms = await this.analyzeForms(session);
+    const target = step.targetStrategy;
+    const form = target?.formLabel
+      ? forms.find((item) => item.label.toLowerCase().includes(target.formLabel!.toLowerCase()) || item.submitLabel.toLowerCase().includes(target.formLabel!.toLowerCase()))
+      : target?.formId ? forms.find((item) => item.id === target.formId) : undefined;
+    return {
+      workspaceId,
+      formId: form?.id || String(step.args.formId || ""),
+      includeScreenshot: step.args.includeScreenshot === true,
+    };
+  }
+
+  private workflowTargetForCall(session: BrowserSessionRecord, call: DesktopToolCall) {
+    if (call.name === "browser_act" || call.name === "browser_trace") {
+      const ref = String(call.arguments.ref || call.arguments.targetRef || "");
+      const entry = ref ? session.refs.get(ref) : null;
+      return {
+        ref: ref || undefined,
+        role: entry?.role,
+        name: entry?.name,
+        text: typeof call.arguments.text === "string" ? call.arguments.text : undefined,
+        x: Number.isFinite(Number(call.arguments.x)) ? Number(call.arguments.x) : entry ? Math.round(entry.x + entry.width / 2) : undefined,
+        y: Number.isFinite(Number(call.arguments.y)) ? Number(call.arguments.y) : entry ? Math.round(entry.y + entry.height / 2) : undefined,
+      };
+    }
+    if (call.name === "browser_form_fill" || call.name === "browser_form_submit") {
+      const formId = typeof call.arguments.formId === "string" ? call.arguments.formId : undefined;
+      const form = formId ? session.forms.find((item) => item.id === formId) : session.forms[0];
+      return {
+        formId,
+        formLabel: form?.label || form?.submitLabel,
+      };
+    }
+    return undefined;
+  }
+
+  private workflowArgsForCall(session: BrowserSessionRecord | null, call: DesktopToolCall) {
+    if (call.name !== "browser_form_fill" || !session) return call.arguments;
+    const fields = Array.isArray(call.arguments.fields) ? call.arguments.fields : [];
+    const formId = typeof call.arguments.formId === "string" ? call.arguments.formId : undefined;
+    const form = formId ? session.forms.find((item) => item.id === formId) : session.forms[0];
+    return {
+      ...call.arguments,
+      fields: fields.map((field) => {
+        const data = field && typeof field === "object" ? field as Record<string, unknown> : {};
+        const fieldId = typeof data.fieldId === "string" ? data.fieldId : undefined;
+        const control = fieldId ? form?.controls.find((item) => item.id === fieldId) : undefined;
+        return {
+          ...data,
+          name: typeof data.name === "string" ? data.name : control?.name,
+          label: typeof data.label === "string" ? data.label : control?.label,
+        };
+      }),
+    };
   }
 
   private syncAttachment(session: BrowserSessionRecord) {
@@ -930,6 +1501,7 @@ export class BrowserSessionManager {
       tabs: this.tabRecords(session.workspaceId),
       downloads: this.downloads.get(session.workspaceId) || [],
       forms: session.forms,
+      workflow: this.workflows.panelState(session.workspaceId),
       updatedAt: Date.now(),
     };
     this.persistWorkspace(session.workspaceId);
@@ -1001,14 +1573,16 @@ export class BrowserSessionManager {
     const session = this.ensureSession(workspaceId);
     this.assertAgentMayControl(session, options.agentApproved === true);
     await session.cdp.enableNetwork().catch(() => undefined);
+    await session.cdp.enableRuntime().catch(() => undefined);
     const action = normalizeAction(input.action);
     const actionLabel = actionLabelForInput(action, input, session.refs.get(input.ref || ""));
+    const actionStartedAt = Date.now();
     session.journal.begin(actionLabel, pageSummary(session.view.webContents), includeScreenshot);
     this.updateState(session, { agentActive: true, lastAction: actionLabel });
     await this.showActionCursor(session, action, input, actionLabel);
     try {
       await this.dispatchAction(session, action, input);
-      await waitForBrowserSettle(session.view.webContents, 650);
+      await this.waitForActionEvidenceSettle(session, actionStartedAt);
     } finally {
       void hideBrowserCursorOverlay(session.view.webContents);
     }
@@ -1130,6 +1704,27 @@ export class BrowserSessionManager {
     this.updateState(session, { viewport: session.viewport });
   }
 
+  private async waitForActionEvidenceSettle(session: BrowserSessionRecord, startedAt: number) {
+    const timeoutMs = 2600;
+    const quietMs = 450;
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const recentConsole = session.journal.recentConsole().filter((entry) => entry.timestamp >= startedAt - 50);
+      const recentNetwork = session.journal.recentNetwork().filter((entry) => (entry.endedAt || entry.startedAt) >= startedAt - 50);
+      const latestEventAt = Math.max(
+        startedAt,
+        ...recentConsole.map((entry) => entry.timestamp),
+        ...recentNetwork.map((entry) => entry.endedAt || entry.startedAt),
+      );
+      const hasFailureEvidence = recentConsole.some((entry) => entry.level === "error" || entry.level === "warning") ||
+        recentNetwork.some((entry) => entry.failed || (typeof entry.status === "number" && entry.status >= 400));
+      const hasYoungPendingRequest = recentNetwork.some((entry) => !entry.endedAt && Date.now() - entry.startedAt < 1500);
+      if (hasFailureEvidence && Date.now() - latestEventAt >= 180) return;
+      if (!session.view.webContents.isLoading() && !hasYoungPendingRequest && Date.now() - latestEventAt >= quietMs) return;
+      await delay(90);
+    }
+  }
+
   private async browserWaitMatched(
     session: BrowserSessionRecord,
     kind: BrowserWaitKind,
@@ -1198,6 +1793,20 @@ export class BrowserSessionManager {
     return filePath;
   }
 
+  private async captureEvidenceScreenshot(workspaceId: string, session: BrowserSessionRecord): Promise<{ screenshotPath?: string; error?: string }> {
+    const primary = await this.screenshot(workspaceId, { mode: "viewport" }).catch((error: unknown) => ({ error }));
+    if ("screenshotPath" in primary && typeof primary.screenshotPath === "string") {
+      return { screenshotPath: primary.screenshotPath };
+    }
+    try {
+      this.ensureOperationalBounds(session);
+      const image = await session.view.webContents.capturePage();
+      return { screenshotPath: await this.saveScreenshot(session, image.toPNG(), "viewport") };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error || "Screenshot capture failed.") };
+    }
+  }
+
   private async saveTextArtifact(session: BrowserSessionRecord, text: string, label: string) {
     const dir = path.join(app.getPath("userData"), "browser-artifacts", session.workspaceId);
     await fs.mkdir(dir, { recursive: true });
@@ -1240,6 +1849,16 @@ const createEmptyBrowserState = (workspaceId: string): BrowserPanelStateRecord =
   activeTabId: "",
   downloads: [],
   forms: [],
+  workflow: emptyWorkflowPanelState(),
+  updatedAt: Date.now(),
+});
+
+const emptyWorkflowPanelState = () => ({
+  status: "idle" as const,
+  stepCount: 0,
+  assertionCount: 0,
+  workflows: [],
+  recentEvidence: [],
   updatedAt: Date.now(),
 });
 
@@ -1292,15 +1911,20 @@ const evidenceOutput = (data: {
   console: unknown[];
   requests: unknown[];
   screenshotPath?: string;
+  screenshotError?: string;
 }) => [
   `URL: ${data.url}`,
   data.title ? `Title: ${data.title}` : "",
   `Captured: ${data.timestamp}`,
   `Effective viewport: ${data.viewport.width}x${data.viewport.height}`,
   data.requestedViewport ? `Requested viewport: ${data.requestedViewport.width}x${data.requestedViewport.height}` : "",
+  data.requestedViewport && (data.requestedViewport.width !== data.viewport.width || data.requestedViewport.height !== data.viewport.height)
+    ? "Viewport note: effective viewport is constrained by the current Browser panel bounds."
+    : "",
   `Console entries: ${data.console.length}`,
   `Network entries: ${data.requests.length}`,
   data.screenshotPath ? `Screenshot: ${data.screenshotPath}` : "",
+  data.screenshotError ? `Screenshot error: ${redactSensitiveText(data.screenshotError, 300)}` : "",
   data.visibleText ? `\nVisible text:\n${redactSensitiveText(data.visibleText, 2400)}` : "",
 ].filter(Boolean).join("\n");
 
@@ -1456,6 +2080,56 @@ const summarizeText = (text: string, maxLength: number) => {
 
 const summarizeFormResult = (output: string) =>
   redactSensitiveText(output.replace(/\s+/g, " ").trim(), 500);
+
+const workflowActionTitle = (name: string) =>
+  name.replace(/^browser_/, "").replace(/_/g, " ");
+
+const shouldScreenshotWorkflowStep = (action: string) =>
+  action === "browser_act" || action === "browser_trace" || action === "browser_form_submit" || action === "browser_open";
+
+const workflowDetailOutput = (workflow: { id: string; name: string; steps: BrowserWorkflowStep[]; assertions: unknown[] }) => [
+  `${workflow.name} (${workflow.id})`,
+  `${workflow.steps.length} step(s), ${workflow.assertions.length} assertion(s)`,
+  ...workflow.steps.slice(0, 30).map((step, index) => `${index + 1}. ${workflowActionTitle(step.action)} ${summarizeWorkflowArgs(step.args)}`.trim()),
+].join("\n");
+
+const summarizeWorkflowArgs = (args: Record<string, unknown>) => {
+  const parts = [
+    typeof args.url === "string" ? args.url : "",
+    typeof args.value === "string" ? args.value : "",
+    typeof args.text === "string" ? args.text : "",
+    typeof args.mode === "string" ? args.mode : "",
+    typeof args.action === "string" ? args.action : "",
+  ].filter(Boolean);
+  return redactSensitiveText(parts.join(" "), 240);
+};
+
+const evidenceDetailOutput = (evidence: BrowserEvidenceRecord) => [
+  `Evidence ${evidence.id}`,
+  `URL: ${evidence.url}`,
+  evidence.title ? `Title: ${evidence.title}` : "",
+  `Captured: ${evidence.timestamp}`,
+  evidence.artifactPaths.length ? `Artifacts: ${evidence.artifactPaths.join(", ")}` : "",
+  evidence.consoleSummary.length ? `Console: ${evidence.consoleSummary.length}` : "Console: 0",
+  evidence.networkSummary.length ? `Network: ${evidence.networkSummary.length}` : "Network: 0",
+  evidence.textSummary ? `\nText:\n${evidence.textSummary}` : "",
+].filter(Boolean).join("\n");
+
+const diagnosisForRun = (run: { status: string; stepResults?: Array<{ status: string; error?: string; diagnosis?: { finding: string } }>; assertionResults?: Array<{ passed: boolean; finding: string }> }) => {
+  const failedStep = run.stepResults?.find((step) => step.status === "failed");
+  if (failedStep?.diagnosis) return failedStep.diagnosis;
+  if (failedStep?.error) return classifyDiagnosis(failedStep.error);
+  const failedAssertion = run.assertionResults?.find((assertion) => !assertion.passed);
+  if (failedAssertion) return classifyDiagnosis(failedAssertion.finding);
+  const passedSteps = run.stepResults?.filter((step) => step.status === "passed").length || 0;
+  const passedAssertions = run.assertionResults?.filter((assertion) => assertion.passed).length || 0;
+  return {
+    kind: "unknown" as const,
+    finding: run.status === "passed"
+      ? `Workflow run passed: ${passedSteps} step(s) passed, ${passedAssertions} assertion(s) passed.`
+      : `Workflow run is ${run.status}: ${passedSteps} step(s) passed, ${passedAssertions} assertion(s) passed.`,
+  };
+};
 
 const safeDownloadFilename = (value: string) => {
   const base = path.basename(value).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").trim();
