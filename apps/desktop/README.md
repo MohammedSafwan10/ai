@@ -29,6 +29,7 @@ Current desktop tools include:
 - `desktop_run_diagnostics` - run the best detected project check.
 - `desktop_git_status` and `desktop_git_diff` - concise git inspection, including clean non-repo messages.
 - `request_user_input` - Plan Mode questions with user-selected answers.
+- `browser_*` - built-in browser tools for tabs, screenshots, extraction, search, PDF evidence, form workflows, workflow replay, assertions, evidence vault records, and failure diagnosis.
 
 ## Plan Mode
 
@@ -53,6 +54,7 @@ The renderer includes:
 - Composer with prompt history, large-paste handling, image attachments, model/provider controls, permission mode, and Plan mode.
 - Tool timeline with live shimmer, compact activity grouping, expandable terminal output, file-change summaries, and answered-question details.
 - Review/undo surfaces for file changes.
+- Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, theme, workspace options, shortcuts, and update status.
 - Recovery notice if the local JSON store is corrupt and Privora has to back it up.
@@ -147,6 +149,10 @@ Launch pricing is INR-first:
 
 AI credits are consumed based on model, input size, output size, and tool usage. Premium models consume credits faster. BYOK usage does not consume Privora AI credits.
 
+## Browser Agent
+
+The built-in browser agent is documented in [docs/browser-agent.md](docs/browser-agent.md). It covers Phase 2A tabs/downloads/PDF evidence, Phase 2B form workflows, and Phase 2C workflow replay, assertions, evidence vault, and failure diagnosis.
+
 ## Production Updates
 
 Windows x64 builds use the Appwrite-hosted update feed at:
@@ -181,7 +187,7 @@ Run:
 npm test
 ```
 
-The tests cover storage recovery, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, and runtime behavior.
+The tests cover storage recovery, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, and runtime behavior.
 
 For a quick compile check:
 
