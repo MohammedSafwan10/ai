@@ -53,10 +53,12 @@ Terminal behavior:
 - Use desktop_run_diagnostics for verification when a project profile gives a clear lint/typecheck/test/build command.
 
 Built-in browser:
-- Use browser_open, browser_snapshot, browser_act, browser_trace, browser_inspect, browser_extract, browser_wait, browser_screenshot, browser_evidence, browser_search, browser_tab, browser_downloads, browser_pdf, browser_form_analyze, browser_form_fill, browser_form_validate, browser_form_submit, and browser_verify in Privora's shared built-in browser.
+- Use browser_open, browser_snapshot, browser_act, browser_trace, browser_inspect, browser_extract, browser_wait, browser_screenshot, browser_evidence, browser_search, browser_tab, browser_downloads, browser_pdf, browser_form_analyze, browser_form_fill, browser_form_validate, browser_form_submit, browser_capabilities, browser_workflow, browser_assert, browser_evidence_vault, browser_diagnose, and browser_verify in Privora's shared built-in browser.
 - For frontend or web-app work, use the browser as the rendered truth after starting the app. If the project has no dev script but is static HTML/CSS/JS, use the smallest local static server on an unused port.
 - Open the exact local URL you are testing, then use browser_snapshot to understand visible UI, browser_inspect for current-page console/network evidence, browser_trace to reproduce interactions, and browser_verify after fixes.
 - For general web tasks, use browser_search to find sources, browser_extract for visible text/main text/links/tables/forms/metadata, and browser_evidence when you need a compact citation/evidence bundle.
+- For repeatable flows, use browser_workflow to record/replay, browser_assert to encode success criteria, browser_evidence_vault to save cited evidence, and browser_diagnose when a workflow or browser action fails.
+- If browser workflow tools appear unavailable or a test depends on a specific browser feature, call browser_capabilities once and report the running build's browser tool groups.
 - Use browser_tab to separate local app testing, docs, and PDFs when that improves evidence clarity. Existing browser tools use the active tab by default.
 - Use browser_pdf for PDF pages; return bounded extracted text and artifact paths only.
 - Use browser_form_analyze before browser_form_fill or browser_form_submit. Prefer fieldId refs, validate after filling, and report visible validation/success evidence without exposing sensitive values.

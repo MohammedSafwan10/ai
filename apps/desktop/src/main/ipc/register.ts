@@ -1,4 +1,6 @@
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import fs from "node:fs";
+import path from "node:path";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { z } from "zod";
 import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
@@ -20,11 +22,18 @@ import type {
   BrowserFormFillInput,
   BrowserFormSubmitInput,
   BrowserFormValidateInput,
+  BrowserDiagnoseInput,
+  BrowserEvidenceVaultInput,
   BrowserInspectInput,
   BrowserNavigationInput,
   BrowserOpenInput,
+  BrowserOverlayInput,
   BrowserTabInput,
+  BrowserToolsMenuAction,
+  BrowserToolsMenuInput,
   BrowserViewportInput,
+  BrowserWorkflowAssertInput,
+  BrowserWorkflowInput,
   DesktopEvent,
   RequestUserInputResponseInput,
   SaveSettingsInput,
@@ -40,6 +49,8 @@ export interface IpcState {
 }
 
 export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager) => {
+  let browserOverlayWindow: BrowserWindow | null = null;
+  const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
   const undoCoordinator = new TurnUndoCoordinator(store, (threadId) => {
     const run = runtime.getActiveRun(threadId);
     return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
@@ -356,12 +367,138 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return browserManager.formSubmit(input.workspaceId, input, { agentApproved: true });
   });
 
+  handle(channels.browserWorkflow, z.tuple([browserWorkflowInputSchema]), async (_event, input: BrowserWorkflowInput) => {
+    return browserManager.workflow(input.workspaceId, input, { agentApproved: true });
+  });
+
+  handle(channels.browserAssert, z.tuple([browserWorkflowAssertInputSchema]), async (_event, input: BrowserWorkflowAssertInput) => {
+    return browserManager.workflowAssert(input.workspaceId, input);
+  });
+
+  handle(channels.browserEvidenceVault, z.tuple([browserEvidenceVaultInputSchema]), async (_event, input: BrowserEvidenceVaultInput) => {
+    return browserManager.evidenceVault(input.workspaceId, input);
+  });
+
+  handle(channels.browserDiagnose, z.tuple([browserDiagnoseInputSchema]), async (_event, input: BrowserDiagnoseInput) => {
+    return browserManager.diagnose(input.workspaceId, input);
+  });
+
   handle(channels.browserEvidence, z.tuple([idSchema]), async (_event, workspaceId: string) => {
     return browserManager.evidence(workspaceId, { includeScreenshot: false, includeVisibleText: true });
   });
 
   handle(channels.openBrowserDevTools, z.tuple([idSchema]), (_event, workspaceId: string) => {
     browserManager.openDevTools(workspaceId);
+  });
+
+  handle(channels.showBrowserToolsMenu, z.tuple([browserToolsMenuInputSchema]), async (event, input: BrowserToolsMenuInput) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return;
+    const sendAction = (action: BrowserToolsMenuAction) => {
+      event.sender.send(channels.event, {
+        type: "browser_tools_menu_action",
+        workspaceId: input.workspaceId,
+        action,
+      });
+    };
+    const downloadsResult = await browserManager.downloadAction(input.workspaceId, { workspaceId: input.workspaceId, action: "list" });
+    const downloads = Array.isArray(downloadsResult.data?.downloads) ? downloadsResult.data.downloads : [];
+    const downloadsSubmenu: MenuItemConstructorOptions[] = [
+      {
+        label: "Allow next download",
+        click: async () => {
+          await browserManager.downloadAction(input.workspaceId, { workspaceId: input.workspaceId, action: "allow_next" });
+          event.sender.send(channels.event, { type: "toast", tone: "info", message: "The next browser download is allowed." });
+        },
+      },
+      { type: "separator" },
+      ...(downloads.length ? downloads.slice(0, 12).map((download) => {
+        const item = download as { id?: string; filename?: string; state?: string; path?: string };
+        const label = `${item.filename || "download"}${item.state ? ` (${item.state})` : ""}`;
+        const submenu: MenuItemConstructorOptions[] = [
+          { label, enabled: false },
+        ];
+        if (item.path && item.id) {
+          submenu.push({
+            label: "Reveal in folder",
+            click: () => {
+              void browserManager.downloadAction(input.workspaceId, { workspaceId: input.workspaceId, action: "reveal", downloadId: item.id });
+            },
+          });
+        }
+        if (item.id && (item.state === "progressing" || item.state === "pending")) {
+          submenu.push({
+            label: "Cancel",
+            click: () => {
+              void browserManager.downloadAction(input.workspaceId, { workspaceId: input.workspaceId, action: "cancel", downloadId: item.id });
+            },
+          });
+        }
+        return { label, submenu };
+      }) : [{ label: "No downloads yet", enabled: false }]),
+    ];
+    const template: MenuItemConstructorOptions[] = [
+      { label: "Current evidence", enabled: input.hasUrl, click: () => sendAction("current_evidence") },
+      { label: "Forms", enabled: input.hasUrl, click: () => sendAction("forms") },
+      { type: "separator" },
+      { label: input.recording ? "Stop recording" : "Record workflow", enabled: input.hasUrl || input.recording, click: () => sendAction("record_workflow") },
+      { label: "Replay workflow", enabled: input.hasWorkflows, click: () => sendAction("replay_workflow") },
+      { label: "Save evidence", enabled: input.hasUrl, click: () => sendAction("save_evidence") },
+      { type: "separator" },
+      { label: "Downloads", submenu: downloadsSubmenu },
+      { label: "Workflow vault", click: () => sendAction("workflow_vault") },
+    ];
+    Menu.buildFromTemplate(template).popup({ window });
+  });
+
+  handle(channels.showBrowserOverlay, z.tuple([browserOverlayInputSchema]), async (event, input: BrowserOverlayInput) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    if (!parent) return;
+    const parentBounds = parent.getBounds();
+    const width = Math.min(Math.max(input.width || 520, 360), Math.max(360, parentBounds.width - 40));
+    const height = Math.min(Math.max(input.height || 420, 220), Math.max(260, parentBounds.height - 120));
+    if (!browserOverlayWindow || browserOverlayWindow.isDestroyed()) {
+      browserOverlayWindow = new BrowserWindow({
+        parent,
+        modal: false,
+        show: false,
+        frame: false,
+        resizable: true,
+        minimizable: false,
+        maximizable: false,
+        skipTaskbar: true,
+        backgroundColor: "#242424",
+        webPreferences: {
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+          preload: overlayPreloadPath,
+        },
+      });
+      browserOverlayWindow.on("blur", () => {
+        const current = browserOverlayWindow;
+        if (current && !current.isDestroyed()) current.hide();
+      });
+      browserOverlayWindow.on("closed", () => {
+        browserOverlayWindow = null;
+      });
+    }
+    const overlayWindow = browserOverlayWindow;
+    overlayWindow.setBounds({
+      x: parentBounds.x + parentBounds.width - width - 24,
+      y: parentBounds.y + 122,
+      width,
+      height,
+    });
+    await overlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(browserOverlayHtml(input.title, input.body))}`);
+    overlayWindow.show();
+    overlayWindow.focus();
+  });
+
+  ipcMain.on("desktop:closeBrowserOverlay", (event) => {
+    if (browserOverlayWindow && event.sender === browserOverlayWindow.webContents && !browserOverlayWindow.isDestroyed()) {
+      browserOverlayWindow.hide();
+    }
   });
 
   handle(channels.openPath, z.tuple([workspacePathInputSchema]), (_event, targetPath: string) => {
@@ -463,6 +600,49 @@ const browserFormSubmitInputSchema = z.object({
   formId: idSchema.optional(),
   includeScreenshot: z.boolean().optional(),
 });
+const browserWorkflowInputSchema = z.object({
+  workspaceId: idSchema,
+  action: z.enum(["start_recording", "stop_recording", "list", "get", "replay", "delete", "rename"]),
+  workflowId: idSchema.optional(),
+  name: z.string().trim().max(120).optional(),
+  description: z.string().trim().max(1000).optional(),
+  newTab: z.boolean().optional(),
+});
+const browserWorkflowAssertInputSchema = z.object({
+  workspaceId: idSchema,
+  action: z.enum(["add", "list", "remove", "run"]),
+  workflowId: idSchema.optional(),
+  assertionId: idSchema.optional(),
+  kind: z.enum(["text_present", "text_absent", "url_contains", "no_console_errors", "no_failed_requests", "element_visible", "form_valid", "screenshot_changed", "pdf_contains"]).optional(),
+  value: z.string().trim().max(2000).optional(),
+  ref: idSchema.optional(),
+  formId: idSchema.optional(),
+});
+const browserEvidenceVaultInputSchema = z.object({
+  workspaceId: idSchema,
+  action: z.enum(["save_current", "list", "get", "prune"]),
+  evidenceId: idSchema.optional(),
+  workflowId: idSchema.optional(),
+  runId: idSchema.optional(),
+  includeScreenshot: z.boolean().optional(),
+});
+const browserDiagnoseInputSchema = z.object({
+  workspaceId: idSchema,
+  workflowId: idSchema.optional(),
+  runId: idSchema.optional(),
+});
+const browserToolsMenuInputSchema = z.object({
+  workspaceId: idSchema,
+  hasUrl: z.boolean(),
+  hasWorkflows: z.boolean(),
+  recording: z.boolean(),
+});
+const browserOverlayInputSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  body: z.string().max(80_000),
+  width: z.number().min(260).max(1200).optional(),
+  height: z.number().min(180).max(1000).optional(),
+});
 const externalUrlSchema = z.string().trim().max(4096).refine((value) => {
   try {
     const parsed = new URL(value);
@@ -557,3 +737,47 @@ const requestUserInputResponseSchema = z.object({
   callId: idSchema,
   answers: z.record(z.string().max(120), requestUserInputAnswerSchema),
 });
+
+const ensureBrowserOverlayPreload = (userDataPath: string) => {
+  const preloadPath = path.join(userDataPath, "browser-overlay-preload.cjs");
+  const source = [
+    "const { contextBridge, ipcRenderer } = require('electron');",
+    "contextBridge.exposeInMainWorld('privoraOverlay', { close: () => ipcRenderer.send('desktop:closeBrowserOverlay') });",
+    "",
+  ].join("\n");
+  try {
+    fs.writeFileSync(preloadPath, source, "utf8");
+  } catch {
+    // If this fails, the overlay still works with blur-to-close.
+  }
+  return preloadPath;
+};
+
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const browserOverlayHtml = (title: string, body: string) => `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';" />
+    <style>
+      :root { color-scheme: dark; font-family: Inter, Segoe UI, Arial, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #242424; color: #f2f2f2; overflow: hidden; }
+      header { height: 42px; display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; gap: 10px; border-bottom: 1px solid #3a3a3a; padding: 0 8px 0 14px; -webkit-app-region: drag; }
+      strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+      button { -webkit-app-region: no-drag; display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #bdbdbd; font: 18px/1 Arial, sans-serif; }
+      button:hover { background: #3a3a3a; color: #fff; }
+      main { height: calc(100vh - 42px); overflow: auto; padding: 12px 14px 16px; }
+      pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #dedede; font: 12px/1.5 Consolas, "Cascadia Mono", monospace; }
+      ::selection { background: #2dd4bf55; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-thumb { background: #555; border-radius: 999px; border: 2px solid #242424; }
+    </style>
+  </head>
+  <body>
+    <header><strong>${escapeHtml(title)}</strong><button type="button" aria-label="Close" title="Close" onclick="window.privoraOverlay && window.privoraOverlay.close()">×</button></header>
+    <main><pre>${escapeHtml(body || "(empty)")}</pre></main>
+  </body>
+</html>`;

@@ -22,10 +22,18 @@ describe("browser tool executor", () => {
       consoleErrorCount: 0,
       failedRequestCount: 0,
       lastFinding: "Opened https://example.com/",
+      workflow: {
+        status: "idle",
+        stepCount: 7,
+        assertionCount: 0,
+        workflows: [{ id: "wf-open-noise", name: "Noise", stepCount: 7, assertionCount: 0, updatedAt: 1 }],
+        recentEvidence: [],
+        updatedAt: 1,
+      },
     }));
     const executor = new BrowserToolExecutor({ openUrl } as never);
 
-    await executor.execute(browserCall("browser_open", { url: "https://example.com" }), {
+    const result = await executor.execute(browserCall("browser_open", { url: "https://example.com" }), {
       workspaceId: "workspace",
       workspaceRoot: "D:/work",
       signal: new AbortController().signal,
@@ -37,6 +45,7 @@ describe("browser tool executor", () => {
       rememberAgentApproval: true,
       throwOnLoadFailure: true,
     }));
+    expect(JSON.stringify(result.data)).not.toContain("wf-open-noise");
   });
 
   it("routes browser search with bounded options", async () => {
@@ -94,6 +103,14 @@ describe("browser tool executor", () => {
       activeTabId: "tab-1",
       downloads: [],
       forms: [],
+      workflow: {
+        status: "idle",
+        stepCount: 99,
+        assertionCount: 1,
+        workflows: [{ id: "wf-stale", name: "Stale", stepCount: 99, assertionCount: 1, updatedAt: 4 }],
+        recentEvidence: [],
+        updatedAt: 4,
+      },
       updatedAt: 3,
     }));
     const executor = new BrowserToolExecutor({ tab } as never);
@@ -106,6 +123,27 @@ describe("browser tool executor", () => {
 
     expect(result.success).toBe(true);
     expect(tab).toHaveBeenCalledWith("workspace", expect.objectContaining({ action: "close_all_except", tabId: "tab-1" }));
+    expect(result.data).toEqual({
+      tabs: [expect.objectContaining({ id: "tab-1" })],
+      activeTabId: "tab-1",
+    });
+    expect(JSON.stringify(result.data)).not.toContain("wf-stale");
+  });
+
+  it("reports browser capabilities without recording a workflow step", async () => {
+    const recordWorkflowTool = vi.fn();
+    const executor = new BrowserToolExecutor({ recordWorkflowTool } as never);
+
+    const result = await executor.execute(browserCall("browser_capabilities", {}), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("browser_workflow");
+    expect(result.output).toContain("browser_evidence_vault");
+    expect(recordWorkflowTool).not.toHaveBeenCalled();
   });
 
   it("routes browser download and pdf tools", async () => {
@@ -141,6 +179,33 @@ describe("browser tool executor", () => {
     }), { agentApproved: true });
     expect(formValidate).toHaveBeenCalledWith("workspace", expect.objectContaining({ formId: "f1" }));
     expect(formSubmit).toHaveBeenCalledWith("workspace", expect.objectContaining({ formId: "f1", includeScreenshot: true }), { agentApproved: true });
+  });
+
+  it("routes browser workflow tools through the manager", async () => {
+    const workflow = vi.fn(async () => ({ output: "recording", data: { workflow: { id: "wf1" } } }));
+    const workflowAssert = vi.fn(async () => ({ output: "added", data: { assertion: { id: "a1" } } }));
+    const evidenceVault = vi.fn(async () => ({ output: "saved", data: { evidence: { id: "e1" } } }));
+    const diagnose = vi.fn(async () => ({ output: "diagnosed", data: { diagnosis: { kind: "timeout" } } }));
+    const recordWorkflowTool = vi.fn();
+    const executor = new BrowserToolExecutor({
+      workflow,
+      workflowAssert,
+      evidenceVault,
+      diagnose,
+      recordWorkflowTool,
+    } as never);
+    const context = { workspaceId: "workspace", workspaceRoot: "D:/work", signal: new AbortController().signal, browserExternalApproved: true };
+
+    await executor.execute(browserCall("browser_workflow", { action: "start_recording", name: "Login smoke" }), context);
+    await executor.execute(browserCall("browser_assert", { action: "add", kind: "text_present", value: "Done" }), context);
+    await executor.execute(browserCall("browser_evidence_vault", { action: "save_current" }), context);
+    await executor.execute(browserCall("browser_diagnose", {}), context);
+
+    expect(workflow).toHaveBeenCalledWith("workspace", expect.objectContaining({ action: "start_recording", name: "Login smoke" }), { agentApproved: true });
+    expect(workflowAssert).toHaveBeenCalledWith("workspace", expect.objectContaining({ action: "add", kind: "text_present", value: "Done" }));
+    expect(evidenceVault).toHaveBeenCalledWith("workspace", expect.objectContaining({ action: "save_current" }));
+    expect(diagnose).toHaveBeenCalledWith("workspace", expect.objectContaining({ workspaceId: "workspace" }));
+    expect(recordWorkflowTool).not.toHaveBeenCalled();
   });
 
   it("reports browser wait timeouts as failed tool results", async () => {

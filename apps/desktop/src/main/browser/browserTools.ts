@@ -17,46 +17,114 @@ export class BrowserToolExecutor {
     if (!context.workspaceId) return { success: false, error: "Choose a workspace before using Privora Browser." };
     const resolvedContext: ResolvedBrowserToolContext = { ...context, workspaceId: context.workspaceId };
     const args = call.arguments;
+    let result: ToolResult;
     switch (call.name) {
       case "browser_open":
-        return this.open(args, resolvedContext);
+        result = await this.open(args, resolvedContext);
+        break;
       case "browser_snapshot":
-        return this.snapshot(args, resolvedContext);
+        result = await this.snapshot(args, resolvedContext);
+        break;
       case "browser_act":
-        return this.act(args, resolvedContext);
+        result = await this.act(args, resolvedContext);
+        break;
       case "browser_inspect":
-        return this.inspect(args, resolvedContext);
+        result = await this.inspect(args, resolvedContext);
+        break;
       case "browser_extract":
-        return this.extract(args, resolvedContext);
+        result = await this.extract(args, resolvedContext);
+        break;
       case "browser_wait":
-        return this.wait(args, resolvedContext);
+        result = await this.wait(args, resolvedContext);
+        break;
       case "browser_screenshot":
-        return this.screenshot(args, resolvedContext);
+        result = await this.screenshot(args, resolvedContext);
+        break;
       case "browser_evidence":
-        return this.evidence(args, resolvedContext);
+        result = await this.evidence(args, resolvedContext);
+        break;
       case "browser_search":
-        return this.search(args, resolvedContext);
+        result = await this.search(args, resolvedContext);
+        break;
       case "browser_tab":
-        return this.tab(args, resolvedContext);
+        result = await this.tab(args, resolvedContext);
+        break;
       case "browser_downloads":
-        return this.downloads(args, resolvedContext);
+        result = await this.downloads(args, resolvedContext);
+        break;
       case "browser_pdf":
-        return this.pdf(args, resolvedContext);
+        result = await this.pdf(args, resolvedContext);
+        break;
       case "browser_form_analyze":
-        return this.formAnalyze(args, resolvedContext);
+        result = await this.formAnalyze(args, resolvedContext);
+        break;
       case "browser_form_fill":
-        return this.formFill(args, resolvedContext);
+        result = await this.formFill(args, resolvedContext);
+        break;
       case "browser_form_validate":
-        return this.formValidate(args, resolvedContext);
+        result = await this.formValidate(args, resolvedContext);
+        break;
       case "browser_form_submit":
-        return this.formSubmit(args, resolvedContext);
+        result = await this.formSubmit(args, resolvedContext);
+        break;
+      case "browser_capabilities":
+        result = this.capabilities();
+        break;
+      case "browser_workflow":
+        result = await this.workflow(args, resolvedContext);
+        break;
+      case "browser_assert":
+        result = await this.workflowAssert(args, resolvedContext);
+        break;
+      case "browser_evidence_vault":
+        result = await this.evidenceVault(args, resolvedContext);
+        break;
+      case "browser_diagnose":
+        result = await this.diagnose(args, resolvedContext);
+        break;
       case "browser_trace":
-        return this.trace(args, resolvedContext);
+        result = await this.trace(args, resolvedContext);
+        break;
       case "browser_verify":
-        return this.verify(args, resolvedContext);
+        result = await this.verify(args, resolvedContext);
+        break;
       default:
         return { success: false, error: `Unknown browser tool ${call.name}` };
     }
+    if (!["browser_capabilities", "browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"].includes(call.name)) {
+      this.manager.recordWorkflowTool?.(resolvedContext.workspaceId, call, result);
+    }
+    return result;
+  }
+
+  private capabilities(): ToolResult {
+    const toolGroups = {
+      core: ["browser_open", "browser_snapshot", "browser_act", "browser_trace", "browser_verify"],
+      evidence: ["browser_inspect", "browser_extract", "browser_wait", "browser_screenshot", "browser_evidence", "browser_search"],
+      tabsDownloadsPdf: ["browser_tab", "browser_downloads", "browser_pdf"],
+      forms: ["browser_form_analyze", "browser_form_fill", "browser_form_validate", "browser_form_submit"],
+      workflows: ["browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"],
+    };
+    return {
+      success: true,
+      output: [
+        "Privora Browser capabilities:",
+        `Core: ${toolGroups.core.join(", ")}`,
+        `Evidence: ${toolGroups.evidence.join(", ")}`,
+        `Tabs/downloads/PDF: ${toolGroups.tabsDownloadsPdf.join(", ")}`,
+        `Forms: ${toolGroups.forms.join(", ")}`,
+        `Workflows: ${toolGroups.workflows.join(", ")}`,
+      ].join("\n"),
+      data: {
+        available: true,
+        toolGroups,
+        notes: [
+          "Existing browser tools operate on the active tab unless tabId is provided.",
+          "Full access skips normal browser approvals; hard browser security blocks remain.",
+          "Evidence and workflow data are bounded and redacted.",
+        ],
+      },
+    };
   }
 
   private async open(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
@@ -73,7 +141,19 @@ export class BrowserToolExecutor {
     return {
       success: true,
       output: `Opened ${result.url}`,
-      data: result as unknown as Record<string, unknown>,
+      data: {
+        workspaceId: result.workspaceId,
+        url: result.url,
+        title: result.title,
+        loading: result.loading,
+        canGoBack: result.canGoBack,
+        canGoForward: result.canGoForward,
+        viewport: result.viewport,
+        activeTabId: result.activeTabId,
+        tabs: result.tabs,
+        consoleErrorCount: result.consoleErrorCount,
+        failedRequestCount: result.failedRequestCount,
+      },
     };
   }
 
@@ -187,7 +267,10 @@ export class BrowserToolExecutor {
     return {
       success: true,
       output: result.tabs.map((tab) => `${tab.id === result.activeTabId ? "*" : "-"} ${tab.title || "New tab"} ${tab.url}`).join("\n") || "No browser tabs.",
-      data: result as unknown as Record<string, unknown>,
+      data: {
+        tabs: result.tabs,
+        activeTabId: result.activeTabId,
+      },
     };
   }
 
@@ -239,6 +322,53 @@ export class BrowserToolExecutor {
     return { success: true, output: result.output, data: result.data };
   }
 
+  private async workflow(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
+    const result = await this.manager.workflow(context.workspaceId, {
+      workspaceId: context.workspaceId,
+      action: normalizeWorkflowAction(args.action),
+      workflowId: typeof args.workflowId === "string" ? args.workflowId : undefined,
+      name: typeof args.name === "string" ? args.name : undefined,
+      description: typeof args.description === "string" ? args.description : undefined,
+      newTab: args.newTab === true || args.new_tab === true,
+    }, { agentApproved: context.browserExternalApproved === true });
+    return { success: true, output: result.output, data: result.data };
+  }
+
+  private async workflowAssert(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
+    const result = await this.manager.workflowAssert(context.workspaceId, {
+      workspaceId: context.workspaceId,
+      action: normalizeWorkflowAssertAction(args.action),
+      workflowId: typeof args.workflowId === "string" ? args.workflowId : undefined,
+      assertionId: typeof args.assertionId === "string" ? args.assertionId : undefined,
+      kind: typeof args.kind === "string" ? args.kind as never : undefined,
+      value: typeof args.value === "string" ? args.value : undefined,
+      ref: typeof args.ref === "string" ? args.ref : undefined,
+      formId: typeof args.formId === "string" ? args.formId : undefined,
+    });
+    return { success: true, output: result.output, data: result.data };
+  }
+
+  private async evidenceVault(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
+    const result = await this.manager.evidenceVault(context.workspaceId, {
+      workspaceId: context.workspaceId,
+      action: normalizeEvidenceVaultAction(args.action),
+      evidenceId: typeof args.evidenceId === "string" ? args.evidenceId : undefined,
+      workflowId: typeof args.workflowId === "string" ? args.workflowId : undefined,
+      runId: typeof args.runId === "string" ? args.runId : undefined,
+      includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
+    });
+    return { success: true, output: result.output, data: result.data };
+  }
+
+  private async diagnose(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
+    const result = await this.manager.diagnose(context.workspaceId, {
+      workspaceId: context.workspaceId,
+      runId: typeof args.runId === "string" ? args.runId : undefined,
+      workflowId: typeof args.workflowId === "string" ? args.workflowId : undefined,
+    });
+    return { success: true, output: result.output, data: result.data };
+  }
+
   private async trace(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.trace(context.workspaceId, {
       action: String(args.action || "click"),
@@ -280,6 +410,26 @@ const normalizeDownloadAction = (value: unknown) => {
   const action = String(value || "list").trim().toLowerCase();
   if (["list", "allow_next", "cancel", "reveal"].includes(action)) return action as "list" | "allow_next" | "cancel" | "reveal";
   throw new Error("browser_downloads action must be list, allow_next, cancel, or reveal.");
+};
+
+const normalizeWorkflowAction = (value: unknown) => {
+  const action = String(value || "list").trim().toLowerCase();
+  if (["start_recording", "stop_recording", "list", "get", "replay", "delete", "rename"].includes(action)) {
+    return action as "start_recording" | "stop_recording" | "list" | "get" | "replay" | "delete" | "rename";
+  }
+  throw new Error("browser_workflow action must be start_recording, stop_recording, list, get, replay, delete, or rename.");
+};
+
+const normalizeWorkflowAssertAction = (value: unknown) => {
+  const action = String(value || "list").trim().toLowerCase();
+  if (["add", "list", "remove", "run"].includes(action)) return action as "add" | "list" | "remove" | "run";
+  throw new Error("browser_assert action must be add, list, remove, or run.");
+};
+
+const normalizeEvidenceVaultAction = (value: unknown) => {
+  const action = String(value || "list").trim().toLowerCase();
+  if (["save_current", "list", "get", "prune"].includes(action)) return action as "save_current" | "list" | "get" | "prune";
+  throw new Error("browser_evidence_vault action must be save_current, list, get, or prune.");
 };
 
 const normalizeFormFields = (value: unknown) => {

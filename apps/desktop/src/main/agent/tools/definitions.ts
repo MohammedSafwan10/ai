@@ -501,6 +501,59 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
+    name: "browser_capabilities",
+    description: "Report the Privora Browser tools and feature groups available in this running app build. Use before broad browser workflow tests when capabilities appear stale.",
+    parameters: schema({}, []),
+  },
+  {
+    type: "function",
+    name: "browser_workflow",
+    description: "Record, list, inspect, replay, rename, or delete reusable Privora Browser workflows. Recording passively captures existing browser actions into a named workflow.",
+    parameters: schema({
+      action: textProperty("Workflow action: start_recording, stop_recording, list, get, replay, delete, or rename."),
+      workflowId: textProperty("Workflow id for get, replay, delete, rename, or stop_recording. Defaults to active/latest workflow where safe."),
+      name: textProperty("Workflow name for start_recording or rename."),
+      description: textProperty("Optional workflow description."),
+      newTab: boolProperty("If true, replay starts in a new browser tab. Default false."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_assert",
+    description: "Add, list, remove, or run assertions for a reusable browser workflow. Assertions verify text, URL, console/network health, elements, forms, screenshots, and PDFs.",
+    parameters: schema({
+      action: textProperty("Assertion action: add, list, remove, or run."),
+      workflowId: textProperty("Workflow id. Defaults to active/latest workflow where safe."),
+      assertionId: textProperty("Assertion id for remove."),
+      kind: textProperty("Assertion kind: text_present, text_absent, url_contains, no_console_errors, no_failed_requests, element_visible, form_valid, screenshot_changed, or pdf_contains."),
+      value: textProperty("Expected text, URL fragment, element text, or PDF text depending on kind."),
+      ref: textProperty("Optional current snapshot ref for element_visible."),
+      formId: textProperty("Optional current form id for form_valid."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_evidence_vault",
+    description: "Save, list, get, or prune bounded current-page evidence records. Evidence includes URL/title/time, optional screenshot path, text, console, network, and metadata.",
+    parameters: schema({
+      action: textProperty("Evidence action: save_current, list, get, or prune."),
+      evidenceId: textProperty("Evidence id for get."),
+      workflowId: textProperty("Optional workflow id to associate with saved evidence."),
+      runId: textProperty("Optional workflow run id to associate with saved evidence."),
+      includeScreenshot: boolProperty("If true, save a viewport screenshot path. Default true for save_current."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_diagnose",
+    description: "Diagnose the latest failed browser workflow/action using compact current evidence, console/network errors, validation state, and failure text.",
+    parameters: schema({
+      workflowId: textProperty("Optional workflow id to focus diagnosis."),
+      runId: textProperty("Optional workflow run id to focus diagnosis."),
+    }, []),
+  },
+  {
+    type: "function",
     name: "browser_trace",
     description: "Perform one browser action and return a compact causal finding with URL change, console errors, failed requests, and optional screenshot artifact.",
     parameters: schema({

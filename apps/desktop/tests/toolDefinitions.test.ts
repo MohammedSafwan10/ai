@@ -22,6 +22,11 @@ describe("desktop tool definitions", () => {
     expect(names).toContain("browser_form_fill");
     expect(names).toContain("browser_form_validate");
     expect(names).toContain("browser_form_submit");
+    expect(names).toContain("browser_capabilities");
+    expect(names).toContain("browser_workflow");
+    expect(names).toContain("browser_assert");
+    expect(names).toContain("browser_evidence_vault");
+    expect(names).toContain("browser_diagnose");
   });
 
   it("parses subagent tool calls", () => {
@@ -43,6 +48,23 @@ describe("desktop tool definitions", () => {
         message: "Inspect the selected workspace and report available tools/status.",
         agentType: "tester",
       },
+    });
+  });
+
+  it("parses browser workflow and capability tool calls", () => {
+    expect(parseDesktopToolCall("browser_capabilities", "{}", "call-capabilities")).toMatchObject({
+      id: "call-capabilities",
+      name: "browser_capabilities",
+      arguments: {},
+    });
+    expect(parseDesktopToolCall(
+      "browser_workflow",
+      JSON.stringify({ action: "start_recording", name: "Smoke" }),
+      "call-workflow",
+    )).toMatchObject({
+      id: "call-workflow",
+      name: "browser_workflow",
+      arguments: { action: "start_recording", name: "Smoke" },
     });
   });
 });

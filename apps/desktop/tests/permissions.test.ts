@@ -135,6 +135,21 @@ describe("desktop permission classifier", () => {
     });
   });
 
+  it("guards workflow replay unless full access is active", () => {
+    expect(classifyToolCall(call("browser_workflow", { action: "replay", workflowId: "wf1" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("browser_workflow", { action: "replay", workflowId: "wf1" }), "yolo")).toMatchObject({
+      risk: "risky",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("browser_evidence_vault", { action: "save_current" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+  });
+
   it("matches reusable workspace tool approval scopes", () => {
     const scope = approvalScope({ kind: "tool_workspace", toolName: "desktop_delete_path" });
     expect(findMatchingApprovalScope(call("desktop_delete_path", { path: "old.txt" }), [scope])).toBe(scope);

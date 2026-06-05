@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Bug, ClipboardCheck, Download, ExternalLink, FileText, Globe2, Loader2, Monitor, Plus, RefreshCw, RotateCw, ShieldAlert, Smartphone, Square, Tablet, TerminalSquare, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bug, Database, Download, ExternalLink, Globe2, Loader2, Monitor, MoreHorizontal, Play, Plus, RefreshCw, RotateCw, Save, Smartphone, Square, Tablet, X } from "lucide-react";
 import clsx from "clsx";
-import type { BrowserPanelStateRecord, BrowserViewportPreset, WorkspaceRecord } from "../../../shared/types";
+import type { BrowserPanelStateRecord, BrowserToolsMenuAction, BrowserViewportPreset, WorkspaceRecord } from "../../../shared/types";
 
 interface BrowserPanelProps {
   workspace: WorkspaceRecord | null;
@@ -26,6 +26,14 @@ const EMPTY_STATE = (workspaceId: string): BrowserPanelStateRecord => ({
   activeTabId: "",
   downloads: [],
   forms: [],
+  workflow: {
+    status: "idle",
+    stepCount: 0,
+    assertionCount: 0,
+    workflows: [],
+    recentEvidence: [],
+    updatedAt: Date.now(),
+  },
   updatedAt: Date.now(),
 });
 
@@ -34,17 +42,19 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
   const frameRef = useRef<number | null>(null);
   const stateFrameRef = useRef<number | null>(null);
   const pendingStateRef = useRef<BrowserPanelStateRecord | null>(null);
+  const browserStateRef = useRef<BrowserPanelStateRecord | null>(null);
+  const lastBoundsRef = useRef<{ workspaceId: string; x: number; y: number; width: number; height: number } | null>(null);
+  const toolsMenuActionRef = useRef<(action: BrowserToolsMenuAction) => void>(() => undefined);
   const [state, setState] = useState<BrowserPanelStateRecord | null>(null);
   const [urlInput, setUrlInput] = useState("");
-  const [inspectPanel, setInspectPanel] = useState<{ title: string; output: string } | null>(null);
-  const [downloadsOpen, setDownloadsOpen] = useState(false);
-  const [formsOpen, setFormsOpen] = useState(false);
   const activeWorkspaceId = workspace?.id || null;
   const visible = Boolean(active && !hidden && activeWorkspaceId);
   const browserState = state || (activeWorkspaceId ? EMPTY_STATE(activeWorkspaceId) : null);
+  browserStateRef.current = browserState;
 
   useEffect(() => {
     if (!activeWorkspaceId) return;
+    lastBoundsRef.current = null;
     let mounted = true;
     void window.privoraDesktop.getBrowserState(activeWorkspaceId)
       .then((next) => {
@@ -92,6 +102,24 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     if (!activeWorkspaceId || !visible || !viewportRef.current || !browserState) return;
     const rect = viewportRef.current.getBoundingClientRect();
     const bounds = computeBrowserBounds(rect, browserState.viewportPreset);
+    const last = lastBoundsRef.current;
+    if (
+      last &&
+      last.workspaceId === activeWorkspaceId &&
+      last.x === Math.round(bounds.x) &&
+      last.y === Math.round(bounds.y) &&
+      last.width === Math.round(bounds.width) &&
+      last.height === Math.round(bounds.height)
+    ) {
+      return;
+    }
+    lastBoundsRef.current = {
+      workspaceId: activeWorkspaceId,
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+    };
     void window.privoraDesktop.setBrowserBounds({
       workspaceId: activeWorkspaceId,
       ...bounds,
@@ -162,9 +190,9 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     if (!activeWorkspaceId) return;
     try {
       const result = await window.privoraDesktop.inspectBrowser({ workspaceId: activeWorkspaceId, kind });
-      setInspectPanel({ title: kind === "source" ? "DevBridge" : kind, output: result.output || "(empty)" });
+      await showOverlay(kind === "source" ? "DevBridge" : kind, result.output || "(empty)");
     } catch (error) {
-      setInspectPanel({ title: kind, output: error instanceof Error ? error.message : String(error) });
+      await showOverlay(kind, error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -172,9 +200,9 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     if (!activeWorkspaceId) return;
     try {
       const result = await window.privoraDesktop.browserEvidence(activeWorkspaceId);
-      setInspectPanel({ title: "Current evidence", output: result.output || "(empty)" });
+      await showOverlay("Current evidence", result.output || "(empty)");
     } catch (error) {
-      setInspectPanel({ title: "Current evidence", output: error instanceof Error ? error.message : String(error) });
+      await showOverlay("Current evidence", error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -182,10 +210,9 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     if (!activeWorkspaceId) return;
     try {
       const result = await window.privoraDesktop.browserDownload({ workspaceId: activeWorkspaceId, action: "allow_next" });
-      setInspectPanel({ title: "Downloads", output: result.output || "(empty)" });
-      setDownloadsOpen(true);
+      await showOverlay("Downloads", result.output || "(empty)", { width: 420, height: 260 });
     } catch (error) {
-      setInspectPanel({ title: "Downloads", output: error instanceof Error ? error.message : String(error) });
+      await showOverlay("Downloads", error instanceof Error ? error.message : String(error), { width: 420, height: 260 });
     }
   };
 
@@ -193,10 +220,54 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     if (!activeWorkspaceId) return;
     try {
       const result = await window.privoraDesktop.browserFormAnalyze({ workspaceId: activeWorkspaceId });
-      setInspectPanel({ title: "Forms", output: result.output || "(empty)" });
-      setFormsOpen(true);
+      await showOverlay("Forms", result.output || "(empty)", { width: 560, height: 520 });
     } catch (error) {
-      setInspectPanel({ title: "Forms", output: error instanceof Error ? error.message : String(error) });
+      await showOverlay("Forms", error instanceof Error ? error.message : String(error), { width: 560, height: 520 });
+    }
+  };
+
+  const toggleRecording = async () => {
+    const currentState = browserStateRef.current;
+    if (!activeWorkspaceId || !currentState) return;
+    try {
+      const action = currentState.workflow.status === "recording" ? "stop_recording" : "start_recording";
+      const result = await window.privoraDesktop.browserWorkflow({
+        workspaceId: activeWorkspaceId,
+        action,
+        name: action === "start_recording" ? `Workflow ${new Date().toLocaleTimeString()}` : undefined,
+      });
+      await showOverlay("Workflow", result.output || "(empty)", { width: 520, height: 360 });
+    } catch (error) {
+      await showOverlay("Workflow", error instanceof Error ? error.message : String(error), { width: 520, height: 360 });
+    }
+  };
+
+  const replayWorkflow = async () => {
+    const currentState = browserStateRef.current;
+    if (!activeWorkspaceId || !currentState) return;
+    try {
+      const result = await window.privoraDesktop.browserWorkflow({
+        workspaceId: activeWorkspaceId,
+        action: "replay",
+        workflowId: currentState.workflow.activeWorkflowId || currentState.workflow.workflows[0]?.id,
+      });
+      await showOverlay("Workflow replay", result.output || "(empty)", { width: 560, height: 420 });
+    } catch (error) {
+      await showOverlay("Workflow replay", error instanceof Error ? error.message : String(error), { width: 560, height: 420 });
+    }
+  };
+
+  const saveEvidence = async () => {
+    if (!activeWorkspaceId) return;
+    try {
+      const result = await window.privoraDesktop.browserEvidenceVault({
+        workspaceId: activeWorkspaceId,
+        action: "save_current",
+        includeScreenshot: true,
+      });
+      await showOverlay("Saved evidence", result.output || "(empty)", { width: 560, height: 360 });
+    } catch (error) {
+      await showOverlay("Saved evidence", error instanceof Error ? error.message : String(error), { width: 560, height: 360 });
     }
   };
 
@@ -205,9 +276,63 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     try {
       await window.privoraDesktop.openBrowserDevTools(activeWorkspaceId);
     } catch (error) {
-      setInspectPanel({ title: "DevTools", output: error instanceof Error ? error.message : String(error) });
+      await showOverlay("DevTools", error instanceof Error ? error.message : String(error), { width: 480, height: 260 });
     }
   };
+
+  const showOverlay = (title: string, body: string, size: { width?: number; height?: number } = {}) =>
+    window.privoraDesktop.showBrowserOverlay({ title, body, ...size });
+
+  const showWorkflowVault = () => {
+    const currentState = browserStateRef.current;
+    if (!currentState) return;
+    const lines = [
+      "Workflows",
+      currentState.workflow.workflows.length
+        ? currentState.workflow.workflows.map((workflow) => `${workflow.name}\n  ${workflow.stepCount} steps, ${workflow.assertionCount} assertions${workflow.lastRunStatus ? `, last run ${workflow.lastRunStatus}` : ""}`).join("\n\n")
+        : "No workflows recorded yet.",
+      "",
+      "Evidence vault",
+      currentState.workflow.recentEvidence.length
+        ? currentState.workflow.recentEvidence.map((evidence) => `${evidence.title || evidence.url || "Evidence"}\n  ${new Date(evidence.createdAt).toLocaleString()}\n  ${evidence.artifactPaths.length} artifact(s)`).join("\n\n")
+        : "No saved evidence yet.",
+      "",
+      currentState.workflow.lastRun
+        ? `Last run\n  ${currentState.workflow.lastRun.status}\n  ${currentState.workflow.lastRun.stepResults.length} steps, ${currentState.workflow.lastRun.assertionResults.length} assertions${currentState.workflow.lastRun.diagnosis?.finding ? `\n  ${currentState.workflow.lastRun.diagnosis.finding}` : ""}`
+        : "",
+    ].filter((line) => line !== "").join("\n");
+    void showOverlay("Workflow vault", lines, { width: 560, height: 560 });
+  };
+
+  const showToolsMenu = async () => {
+    const currentState = browserStateRef.current;
+    if (!activeWorkspaceId || !currentState) return;
+    await window.privoraDesktop.showBrowserToolsMenu({
+      workspaceId: activeWorkspaceId,
+      hasUrl: Boolean(currentState.url),
+      hasWorkflows: currentState.workflow.workflows.length > 0,
+      recording: currentState.workflow.status === "recording",
+    });
+  };
+
+  const runToolsMenuAction = (action: BrowserToolsMenuAction) => {
+    if (action === "current_evidence") void showEvidence();
+    if (action === "forms") void analyzeForms();
+    if (action === "record_workflow") void toggleRecording();
+    if (action === "replay_workflow") void replayWorkflow();
+    if (action === "save_evidence") void saveEvidence();
+    if (action === "workflow_vault") showWorkflowVault();
+  };
+  toolsMenuActionRef.current = runToolsMenuAction;
+
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    const unsubscribe = window.privoraDesktop.onEvent((event) => {
+      if (event.type !== "browser_tools_menu_action" || event.workspaceId !== activeWorkspaceId) return;
+      toolsMenuActionRef.current(event.action);
+    });
+    return unsubscribe;
+  }, [activeWorkspaceId]);
 
   if (!workspace || !browserState) {
     return (
@@ -294,18 +419,9 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
         <PresetButton preset="responsive" active={browserState.viewportPreset === "responsive"} onClick={setPreset} icon={<Monitor size={14} />} />
         <PresetButton preset="mobile" active={browserState.viewportPreset === "mobile"} onClick={setPreset} icon={<Smartphone size={14} />} />
         <PresetButton preset="tablet" active={browserState.viewportPreset === "tablet"} onClick={setPreset} icon={<Tablet size={14} />} />
-        <span className={clsx("browser-agent-chip", browserState.agentActive && "active")}>
-          {browserState.agentActive ? <TerminalSquare size={13} /> : <ShieldAlert size={13} />}
-          {browserState.agentActive ? "Agent" : "Local-safe"}
-        </span>
-        <button type="button" title="Current evidence" aria-label="Current evidence" disabled={!browserState.url} onClick={showEvidence}>
-          <FileText size={14} />
-        </button>
-        <button type="button" title="Forms" aria-label="Forms" disabled={!browserState.url} onClick={() => formsOpen ? setFormsOpen(false) : void analyzeForms()}>
-          <ClipboardCheck size={14} />
-        </button>
-        <button type="button" title="Downloads" aria-label="Downloads" onClick={() => setDownloadsOpen((value) => !value)}>
-          <Download size={14} />
+        <span className="browser-preset-spacer" />
+        <button type="button" className="browser-tools-more" title="Browser tools" aria-label="Browser tools" onClick={showToolsMenu}>
+          <MoreHorizontal size={16} />
         </button>
       </div>
       <div className="browser-viewport-shell">
@@ -321,93 +437,10 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
       </div>
       {(browserState.agentActive || browserState.failedRequestCount > 0 || browserState.consoleErrorCount > 0 || browserState.lastFinding) && (
         <div className="browser-status-strip" role="status">
-          {browserState.agentActive && <button type="button" onClick={() => browserState.lastFinding && setInspectPanel({ title: "Last action", output: browserState.lastFinding })}>{browserState.lastAction || "Agent using browser"}</button>}
+          {browserState.agentActive && <button type="button" onClick={() => browserState.lastFinding && void showOverlay("Last action", browserState.lastFinding)}>{browserState.lastAction || "Agent using browser"}</button>}
           {browserState.failedRequestCount > 0 && <button type="button" onClick={() => inspect("network")}>{browserState.failedRequestCount} failed request{browserState.failedRequestCount === 1 ? "" : "s"}</button>}
           {browserState.consoleErrorCount > 0 && <button type="button" onClick={() => inspect("console")}>{browserState.consoleErrorCount} console error{browserState.consoleErrorCount === 1 ? "" : "s"}</button>}
-          {browserState.lastFinding && <button type="button" onClick={() => setInspectPanel({ title: "Last finding", output: browserState.lastFinding || "" })}>{browserState.lastFinding}</button>}
-        </div>
-      )}
-      {inspectPanel && (
-        <div className="browser-inspector-drawer">
-          <header>
-            <strong>{inspectPanel.title}</strong>
-            <button type="button" title="Close" aria-label="Close" onClick={() => setInspectPanel(null)}>
-              <X size={14} />
-            </button>
-          </header>
-          <pre>{inspectPanel.output}</pre>
-        </div>
-      )}
-      {downloadsOpen && (
-        <div className="browser-inspector-drawer browser-downloads-drawer">
-          <header>
-            <strong>Downloads</strong>
-            <div className="browser-drawer-actions">
-              <button type="button" title="Allow next download" aria-label="Allow next download" onClick={allowNextDownload}>
-                <Download size={13} />
-              </button>
-              <button type="button" title="Close" aria-label="Close" onClick={() => setDownloadsOpen(false)}>
-                <X size={14} />
-              </button>
-            </div>
-          </header>
-          <div className="browser-download-list">
-            {browserState.downloads.length === 0 ? (
-              <span>No downloads yet.</span>
-            ) : browserState.downloads.map((download) => (
-              <div key={download.id} className={clsx("browser-download-row", download.state)}>
-                <strong>{download.filename}</strong>
-                <span>{download.state} · {formatBytes(download.receivedBytes)}{download.totalBytes ? ` / ${formatBytes(download.totalBytes)}` : ""}</span>
-                {download.path && <button type="button" onClick={() => window.privoraDesktop.browserDownload({ workspaceId: activeWorkspaceId!, action: "reveal", downloadId: download.id })}>Reveal</button>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {formsOpen && (
-        <div className="browser-inspector-drawer browser-forms-drawer">
-          <header>
-            <strong>Forms</strong>
-            <div className="browser-drawer-actions">
-              <button type="button" title="Refresh forms" aria-label="Refresh forms" onClick={analyzeForms}>
-                <RefreshCw size={13} />
-              </button>
-              <button type="button" title="Close" aria-label="Close" onClick={() => setFormsOpen(false)}>
-                <X size={14} />
-              </button>
-            </div>
-          </header>
-          <div className="browser-form-list">
-            {browserState.forms.length === 0 ? (
-              <span>No forms detected yet.</span>
-            ) : browserState.forms.map((form) => (
-              <div key={form.id} className={clsx("browser-form-card", form.risk)}>
-                <div className="browser-form-card-head">
-                  <strong>{form.label || form.submitLabel || form.id}</strong>
-                  <span>{form.risk}</span>
-                </div>
-                <p>{form.method.toUpperCase()} {form.action || "(current page)"}</p>
-                <div className="browser-form-meta">
-                  <span>{form.controls.length} fields</span>
-                  <span>{form.controls.filter((control) => control.required).length} required</span>
-                  <span>{form.controls.filter((control) => control.sensitive).length} sensitive</span>
-                  {typeof form.valid === "boolean" && <span>{form.valid ? "valid" : "invalid"}</span>}
-                </div>
-                {form.validationErrors?.length ? (
-                  <div className="browser-form-errors">
-                    {form.validationErrors.slice(0, 3).map((error) => <span key={error}>{error}</span>)}
-                  </div>
-                ) : null}
-                <div className="browser-form-controls">
-                  {form.controls.slice(0, 8).map((control) => (
-                    <span key={control.id} className={clsx(control.sensitive && "sensitive", control.required && "required")}>
-                      {control.label || control.name || control.id}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          {browserState.lastFinding && <button type="button" onClick={() => void showOverlay("Last finding", browserState.lastFinding || "")}>{browserState.lastFinding}</button>}
         </div>
       )}
     </section>

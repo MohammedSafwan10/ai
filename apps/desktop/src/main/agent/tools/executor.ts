@@ -120,6 +120,11 @@ export class DesktopToolExecutor {
         case "browser_form_fill":
         case "browser_form_validate":
         case "browser_form_submit":
+        case "browser_capabilities":
+        case "browser_workflow":
+        case "browser_assert":
+        case "browser_evidence_vault":
+        case "browser_diagnose":
         case "browser_trace":
         case "browser_verify":
           if (!this.browser) return { success: false, error: "Privora Browser is not available." };

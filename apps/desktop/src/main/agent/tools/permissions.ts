@@ -141,6 +141,17 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     }
   }
 
+  if (call.name === "browser_workflow") {
+    const action = String(call.arguments.action || "list").toLowerCase();
+    if (action === "replay") {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "Replaying a browser workflow may interact with external pages or submit forms.",
+      };
+    }
+  }
+
   return { risk: "safe", requiresApproval: false };
 };
 
