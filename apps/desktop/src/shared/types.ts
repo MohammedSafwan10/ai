@@ -467,6 +467,50 @@ export interface BrowserDiagnoseInput {
   workflowId?: string;
 }
 
+export type StorageCleanupCategoryId =
+  | "browser_artifacts"
+  | "browser_workflow_history"
+  | "browser_cache"
+  | "browser_downloads";
+
+export interface StorageUsageCategoryRecord {
+  id: StorageCleanupCategoryId;
+  label: string;
+  description: string;
+  bytes: number;
+  files: number;
+  directories: number;
+  safeToClean: boolean;
+  userFiles: boolean;
+  path?: string;
+  errors: string[];
+}
+
+export interface StorageUsageSnapshot {
+  categories: StorageUsageCategoryRecord[];
+  totalBytes: number;
+  scannedAt: number;
+}
+
+export interface StorageCleanupInput {
+  categoryIds: StorageCleanupCategoryId[];
+}
+
+export interface StorageCleanupCategoryResult {
+  id: StorageCleanupCategoryId;
+  bytesFreed: number;
+  filesRemoved: number;
+  errors: string[];
+}
+
+export interface StorageCleanupResult {
+  before: StorageUsageSnapshot;
+  after: StorageUsageSnapshot;
+  categories: StorageCleanupCategoryResult[];
+  totalBytesFreed: number;
+  completedAt: number;
+}
+
 export type BrowserToolsMenuAction =
   | "current_evidence"
   | "forms"
@@ -1150,6 +1194,8 @@ export interface PrivoraDesktopApi {
   browserEvidenceVault(input: BrowserEvidenceVaultInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserDiagnose(input: BrowserDiagnoseInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserEvidence(workspaceId: string): Promise<{ output: string; data?: Record<string, unknown> }>;
+  getStorageUsage(): Promise<StorageUsageSnapshot>;
+  cleanupStorage(input: StorageCleanupInput): Promise<StorageCleanupResult>;
   openBrowserDevTools(workspaceId: string): Promise<void>;
   showBrowserToolsMenu(input: BrowserToolsMenuInput): Promise<void>;
   showBrowserOverlay(input: BrowserOverlayInput): Promise<void>;

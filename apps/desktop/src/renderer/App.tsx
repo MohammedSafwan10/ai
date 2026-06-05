@@ -15,7 +15,7 @@ import { usePromptQueue } from "./features/chat/usePromptQueue";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
 import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
 
-type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "shortcuts" | "about";
+type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
 
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();

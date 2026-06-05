@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, shell, WebContentsView, type DownloadItem, type Event, type Rectangle, type WebContents } from "electron";
+import { app, BrowserWindow, shell, session as electronSession, WebContentsView, type DownloadItem, type Event, type Rectangle, type WebContents } from "electron";
 import { BrowserCdpClient, type BrowserSnapshotOptions } from "./browserCdp";
 import { buildBrowserExtractScript, browserExtractionOutput, normalizeExtractMode, sanitizeBrowserExtraction, type BrowserExtractMode, type BrowserExtractionResult } from "./browserExtraction";
 import { browserOriginDecision, compactUrl, installBrowserSessionSecurity, installBrowserWebContentsSecurity, normalizeBrowserUrl, redactSensitiveText, shouldRestorePersistedBrowserUrl, type BrowserControlScope } from "./browserSecurity";
@@ -817,6 +817,15 @@ export class BrowserSessionManager {
     });
     this.sessions.clear();
     this.workspaceTabs.clear();
+  }
+
+  async clearProfileData() {
+    const partitions = new Set(Array.from(this.workspaceTabs.values()).flat().map((tab) => tab.partition));
+    for (const partition of partitions) {
+      const browserSession = electronSession.fromPartition(partition);
+      await browserSession.clearCache().catch(() => undefined);
+      await browserSession.clearStorageData().catch(() => undefined);
+    }
   }
 
   private ensureSession(workspaceId: string, tabId?: string) {

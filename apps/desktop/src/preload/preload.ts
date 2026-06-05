@@ -27,6 +27,7 @@ import type {
   BrowserEvidenceVaultInput,
   BrowserWorkflowAssertInput,
   BrowserWorkflowInput,
+  StorageCleanupInput,
 } from "../shared/types";
 import { channels } from "../main/ipc/channels";
 
@@ -75,6 +76,8 @@ const api: PrivoraDesktopApi = {
   browserEvidenceVault: (input: BrowserEvidenceVaultInput) => ipcRenderer.invoke(channels.browserEvidenceVault, input),
   browserDiagnose: (input: BrowserDiagnoseInput) => ipcRenderer.invoke(channels.browserDiagnose, input),
   browserEvidence: (workspaceId: string) => ipcRenderer.invoke(channels.browserEvidence, workspaceId),
+  getStorageUsage: () => ipcRenderer.invoke(channels.getStorageUsage),
+  cleanupStorage: (input: StorageCleanupInput) => ipcRenderer.invoke(channels.cleanupStorage, input),
   openBrowserDevTools: (workspaceId: string) => ipcRenderer.invoke(channels.openBrowserDevTools, workspaceId),
   showBrowserToolsMenu: (input: BrowserToolsMenuInput) => ipcRenderer.invoke(channels.showBrowserToolsMenu, input),
   showBrowserOverlay: (input: BrowserOverlayInput) => ipcRenderer.invoke(channels.showBrowserOverlay, input),

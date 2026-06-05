@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Code2,
   CreditCard,
+  Database,
   Info,
   KeyRound,
   Keyboard,
@@ -21,7 +22,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { AiCreditSummaryRecord, SaveSettingsInput, SettingsRecord, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
+import type { AiCreditSummaryRecord, SaveSettingsInput, SettingsRecord, StorageCleanupCategoryId, StorageUsageSnapshot, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
 
 interface SettingsPanelProps {
@@ -38,7 +39,7 @@ interface SettingsPanelProps {
   className?: string;
 }
 
-type SettingsTab = "profile" | "general" | "providers" | "billing" | "workspace" | "shortcuts" | "about";
+type SettingsTab = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
 
 export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOpenTab }: SettingsPanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -215,6 +216,10 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [billingRefreshing, setBillingRefreshing] = useState(false);
   const [billingMessage, setBillingMessage] = useState("");
   const [workspaceTargets, setWorkspaceTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
+  const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageCleaning, setStorageCleaning] = useState<StorageCleanupCategoryId | "app_owned" | null>(null);
+  const [storageMessage, setStorageMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const accountDisplay = getAccountDisplay(settings, aiCredits);
@@ -270,6 +275,37 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
     };
   }, [open]);
 
+  const refreshStorageUsage = async () => {
+    setStorageLoading(true);
+    setStorageMessage("");
+    try {
+      setStorageUsage(await window.privoraDesktop.getStorageUsage());
+    } catch (error) {
+      setStorageMessage(error instanceof Error ? error.message : "Could not scan storage.");
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open || activeTab !== "storage") return;
+    void refreshStorageUsage();
+  }, [activeTab, open]);
+
+  const cleanupStorage = async (categoryIds: StorageCleanupCategoryId[], mode: StorageCleanupCategoryId | "app_owned") => {
+    setStorageCleaning(mode);
+    setStorageMessage("");
+    try {
+      const result = await window.privoraDesktop.cleanupStorage({ categoryIds });
+      setStorageUsage(result.after);
+      setStorageMessage(`Cleaned ${formatBytes(result.totalBytesFreed)} across ${result.categories.length} ${result.categories.length === 1 ? "category" : "categories"}.`);
+    } catch (error) {
+      setStorageMessage(error instanceof Error ? error.message : "Cleanup failed.");
+    } finally {
+      setStorageCleaning(null);
+    }
+  };
+
   return (
     <div className="settings-screen">
       <section className="settings-screen-shell" aria-label="Settings">
@@ -280,6 +316,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
               <SettingsTabButton id="providers" active={activeTab} icon={<KeyRound size={15} />} label="Providers" onSelect={setActiveTab} />
               <SettingsTabButton id="billing" active={activeTab} icon={<CreditCard size={15} />} label="Billing" onSelect={setActiveTab} />
               <SettingsTabButton id="workspace" active={activeTab} icon={<Code2 size={15} />} label="Workspace" onSelect={setActiveTab} />
+              <SettingsTabButton id="storage" active={activeTab} icon={<Database size={15} />} label="Storage" onSelect={setActiveTab} />
               <SettingsTabButton id="shortcuts" active={activeTab} icon={<Keyboard size={15} />} label="Shortcuts" onSelect={setActiveTab} />
               <SettingsTabButton id="about" active={activeTab} icon={<Info size={15} />} label="About" onSelect={setActiveTab} />
             </aside>
@@ -431,6 +468,71 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                   <ShortcutRow keys="Ctrl+Alt+H" label="Search prompt history" />
                   <ShortcutRow keys="Ctrl+/" label="Open shortcuts" />
                   <ShortcutRow keys="Ctrl+R" label="Reload app" />
+                </div>
+              )}
+
+              {activeTab === "storage" && (
+                <div className="settings-section settings-storage">
+                  <div className="settings-storage-summary">
+                    <div>
+                      <span>Total stored</span>
+                      <strong>{storageUsage ? formatBytes(storageUsage.totalBytes) : storageLoading ? "Scanning..." : "Not scanned"}</strong>
+                      {storageUsage?.scannedAt ? <small>Scanned {new Date(storageUsage.scannedAt).toLocaleTimeString()}</small> : null}
+                    </div>
+                    <div className="settings-button-row">
+                      <button type="button" className="settings-row-button" disabled={storageLoading || Boolean(storageCleaning)} onClick={() => void refreshStorageUsage()}>
+                        <RefreshCw size={15} />
+                        <span>{storageLoading ? "Scanning" : "Refresh"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-row-button"
+                        disabled={storageLoading || Boolean(storageCleaning) || !storageUsage?.categories.some((category) => category.safeToClean && category.bytes > 0)}
+                        onClick={() => void cleanupStorage(["browser_artifacts", "browser_workflow_history", "browser_cache"], "app_owned")}
+                      >
+                        <Trash2 size={15} />
+                        <span>{storageCleaning === "app_owned" ? "Cleaning" : "Clean app-owned browser storage"}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="settings-muted-panel">
+                    Cleanup runs in chunks so large artifact folders do not freeze the app. Privora downloads are kept separate because they are user files in your Downloads folder.
+                  </div>
+                  <div className="settings-storage-grid">
+                    {(storageUsage?.categories || []).map((category) => (
+                      <div className={clsx("settings-storage-card", category.userFiles && "user-files")} key={category.id}>
+                        <div className="settings-storage-card-head">
+                          <div>
+                            <strong>{category.label}</strong>
+                            <span>{category.description}</span>
+                          </div>
+                          <b>{formatBytes(category.bytes)}</b>
+                        </div>
+                        <div className="settings-storage-meta">
+                          <span>{category.files.toLocaleString()} files</span>
+                          <span>{category.directories.toLocaleString()} folders</span>
+                          {category.userFiles && <span>User files</span>}
+                        </div>
+                        {category.path && <code>{category.path}</code>}
+                        {category.errors.length > 0 && (
+                          <p className="settings-storage-error">{category.errors.slice(0, 2).join(" ")}</p>
+                        )}
+                        <button
+                          type="button"
+                          className="settings-row-button"
+                          disabled={category.bytes <= 0 || storageLoading || Boolean(storageCleaning)}
+                          onClick={() => void cleanupStorage([category.id], category.id)}
+                        >
+                          <Trash2 size={14} />
+                          <span>{storageCleaning === category.id ? "Cleaning" : category.userFiles ? "Clean downloads" : "Clean"}</span>
+                        </button>
+                      </div>
+                    ))}
+                    {!storageLoading && !storageUsage && (
+                      <div className="settings-muted-panel">Scan storage to see browser artifacts, workflow history, cache, and downloads.</div>
+                    )}
+                  </div>
+                  {storageMessage && <p className="settings-storage-message">{storageMessage}</p>}
                 </div>
               )}
 
@@ -613,6 +715,7 @@ const tabTitle = (tab: SettingsTab) => {
   if (tab === "providers") return "Providers";
   if (tab === "billing") return "Billing";
   if (tab === "workspace") return "Workspace";
+  if (tab === "storage") return "Storage";
   if (tab === "shortcuts") return "Shortcuts";
   if (tab === "about") return "About";
   return "General";
@@ -649,6 +752,18 @@ const formatPlan = (credits?: AiCreditSummaryRecord) => {
 const formatCredits = (credits?: AiCreditSummaryRecord) => {
   if (!credits?.authenticated) return "No hosted credits";
   return `${credits.monthlyCreditsRemaining.toLocaleString()} monthly + ${credits.topUpCreditsRemaining.toLocaleString()} top-up`;
+};
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
 
 const formatPercent = (used: number, total: number) => {

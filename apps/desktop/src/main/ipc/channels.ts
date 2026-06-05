@@ -42,6 +42,8 @@ export const channels = {
   browserEvidenceVault: "desktop:browserEvidenceVault",
   browserDiagnose: "desktop:browserDiagnose",
   browserEvidence: "desktop:browserEvidence",
+  getStorageUsage: "desktop:getStorageUsage",
+  cleanupStorage: "desktop:cleanupStorage",
   openBrowserDevTools: "desktop:openBrowserDevTools",
   showBrowserToolsMenu: "desktop:showBrowserToolsMenu",
   showBrowserOverlay: "desktop:showBrowserOverlay",

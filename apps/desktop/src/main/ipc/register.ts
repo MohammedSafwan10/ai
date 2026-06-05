@@ -9,6 +9,7 @@ import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
 import { resolveExistingWorkspacePath } from "../security/pathSandbox";
 import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
+import { StorageCleanupService } from "../storage/cleanup";
 import { channels } from "./channels";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
 import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
@@ -39,6 +40,7 @@ import type {
   SaveSettingsInput,
   SearchContextMentionsInput,
   StartTurnInput,
+  StorageCleanupInput,
   WorkspaceOpenTarget,
   PrivoraAuthInput,
 } from "../../shared/types";
@@ -51,6 +53,11 @@ export interface IpcState {
 export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager) => {
   let browserOverlayWindow: BrowserWindow | null = null;
   const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
+  const storageCleanup = new StorageCleanupService({
+    userDataPath: app.getPath("userData"),
+    downloadsPath: app.getPath("downloads"),
+    clearBrowserProfileData: () => browserManager.clearProfileData(),
+  });
   const undoCoordinator = new TurnUndoCoordinator(store, (threadId) => {
     const run = runtime.getActiveRun(threadId);
     return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
@@ -521,6 +528,14 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     if (!workspace) throw new Error("Choose a workspace first.");
     await openWorkspaceTarget(target, workspace.path);
   });
+
+  handle(channels.getStorageUsage, z.tuple([]), async () => {
+    return storageCleanup.usage();
+  });
+
+  handle(channels.cleanupStorage, z.tuple([storageCleanupInputSchema]), async (_event, input: StorageCleanupInput) => {
+    return storageCleanup.cleanup(input);
+  });
 };
 
 const idSchema = z.string().trim().min(1).max(200);
@@ -630,6 +645,9 @@ const browserDiagnoseInputSchema = z.object({
   workspaceId: idSchema,
   workflowId: idSchema.optional(),
   runId: idSchema.optional(),
+});
+const storageCleanupInputSchema = z.object({
+  categoryIds: z.array(z.enum(["browser_artifacts", "browser_workflow_history", "browser_cache", "browser_downloads"])).min(1).max(4),
 });
 const browserToolsMenuInputSchema = z.object({
   workspaceId: idSchema,

@@ -710,6 +710,122 @@
   gap: 8px;
 }
 
+.settings-storage {
+  gap: 12px;
+}
+
+.settings-storage-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 24%, transparent);
+  padding: 12px;
+}
+
+.settings-storage-summary > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-storage-summary span,
+.settings-storage-summary small {
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.settings-storage-summary strong {
+  color: var(--privora-text);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.settings-storage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-storage-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 76%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--privora-surface) 96%, var(--privora-user-bubble) 8%);
+  padding: 12px;
+}
+
+.settings-storage-card.user-files {
+  border-color: color-mix(in srgb, var(--pending) 38%, var(--privora-border));
+}
+
+.settings-storage-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-storage-card-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-storage-card-head strong {
+  color: var(--privora-text);
+  font-size: 13px;
+}
+
+.settings-storage-card-head span {
+  color: var(--privora-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.settings-storage-card-head b {
+  flex: 0 0 auto;
+  color: var(--privora-text);
+  font-size: 13px;
+}
+
+.settings-storage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-storage-meta span {
+  border: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
+  border-radius: 999px;
+  color: var(--privora-muted);
+  font-size: 11px;
+  padding: 3px 7px;
+}
+
+.settings-storage-card code {
+  overflow-wrap: anywhere;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--privora-bg) 68%, transparent);
+  color: var(--privora-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 7px;
+}
+
+.settings-storage-error,
+.settings-storage-message {
+  margin: 0;
+  color: var(--pending);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .settings-info-row {
   display: grid;
   grid-template-columns: minmax(92px, 0.32fr) minmax(0, 1fr);
