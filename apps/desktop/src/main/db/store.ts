@@ -8,6 +8,7 @@ import type {
   AgentRunCheckpointRecord,
   AiCreditSummaryRecord,
   AssistantTextPartRecord,
+  BrowserWorkspaceStateRecord,
   ChatMessageRecord,
   SettingsRecord,
   StoreRecoveryNoticeRecord,
@@ -62,6 +63,7 @@ interface DesktopDataFile {
   approvalScopes: ApprovalScopeRecord[];
   approvalHistory: ApprovalHistoryRecord[];
   agentRunCheckpoints: AgentRunCheckpointRecord[];
+  browserWorkspaces: BrowserWorkspaceStateRecord[];
 }
 
 const now = () => Date.now();
@@ -91,6 +93,7 @@ const defaultData = (): DesktopDataFile => ({
   approvalScopes: [],
   approvalHistory: [],
   agentRunCheckpoints: [],
+  browserWorkspaces: [],
 });
 
 export class DesktopStore {
@@ -644,6 +647,34 @@ export class DesktopStore {
     this.writeData();
   }
 
+  getBrowserWorkspaceState(workspaceId: string): BrowserWorkspaceStateRecord | null {
+    return this.data.browserWorkspaces.find((state) => state.workspaceId === workspaceId) || null;
+  }
+
+  saveBrowserWorkspaceState(state: BrowserWorkspaceStateRecord) {
+    const timestamp = now();
+    const compact: BrowserWorkspaceStateRecord = {
+      workspaceId: state.workspaceId,
+      activeTabId: state.activeTabId,
+      updatedAt: timestamp,
+      tabs: state.tabs.slice(0, 6).map((tab) => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        createdAt: tab.createdAt || timestamp,
+        updatedAt: tab.updatedAt || timestamp,
+      })),
+    };
+    this.data.browserWorkspaces = this.data.browserWorkspaces.some((item) => item.workspaceId === state.workspaceId)
+      ? this.data.browserWorkspaces.map((item) => item.workspaceId === state.workspaceId ? compact : item)
+      : [...this.data.browserWorkspaces, compact];
+    this.scheduleWrite();
+    return compact;
+  }
+
   pruneThreadAfterMessage(threadId: string, messageId: string) {
     const removedMessages = this.listMessagesAfter(threadId, messageId);
     const removedMessageIds = new Set(removedMessages.map((message) => message.id));
@@ -731,6 +762,7 @@ export class DesktopStore {
         approvalScopes: Array.isArray(parsed.approvalScopes) ? parsed.approvalScopes : [],
         approvalHistory: Array.isArray(parsed.approvalHistory) ? parsed.approvalHistory : [],
         agentRunCheckpoints: Array.isArray(parsed.agentRunCheckpoints) ? parsed.agentRunCheckpoints : [],
+        browserWorkspaces: Array.isArray(parsed.browserWorkspaces) ? parsed.browserWorkspaces : [],
       };
     } catch (error) {
       this.recoveryNotice = this.backupCorruptDataFile(error);

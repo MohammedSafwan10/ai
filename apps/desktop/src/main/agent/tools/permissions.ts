@@ -1,5 +1,6 @@
 import type { PermissionMode } from "../../../shared/models";
 import type { ApprovalScopeRecord, DesktopToolCall, ToolRisk } from "../../../shared/types";
+import { browserOriginDecision } from "../../browser/browserSecurity";
 
 const destructiveCommandPattern =
   /\b(rm|del|erase|rd|rmdir|format|shutdown|restart-computer|stop-process|remove-item|move-item|rename-item|set-content|out-file|new-item|git\s+(reset|checkout|clean|push|commit|merge|rebase)|npm\s+i|npm\s+install|pnpm\s+i|pnpm\s+install|yarn\s+(add|install)|bun\s+install|pip\s+install|cargo\s+install)\b/i;
@@ -18,7 +19,11 @@ export interface PermissionDecision {
   reason?: string;
 }
 
-export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode): PermissionDecision => {
+interface PermissionContext {
+  browserCurrentPageRequiresApproval?: boolean;
+}
+
+export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, context: PermissionContext = {}): PermissionDecision => {
   if (call.name === "desktop_delete_path") {
     return {
       risk: "risky",
@@ -69,6 +74,71 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode): P
       requiresApproval: risky && mode !== "yolo",
       reason: undefined,
     };
+  }
+
+  if (call.name === "browser_open") {
+    try {
+      const decision = browserOriginDecision(String(call.arguments.url || ""), "agent");
+      if (!decision.allowed) {
+        return {
+          risk: "risky",
+          requiresApproval: mode !== "yolo",
+          reason: decision.reason,
+        };
+      }
+    } catch (error) {
+      return {
+        risk: "blocked",
+        requiresApproval: false,
+        reason: error instanceof Error ? error.message : "Invalid browser URL.",
+      };
+    }
+  }
+
+  if (call.name === "browser_act" || call.name === "browser_trace") {
+    if (browserActionLooksSensitive(call)) {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "This browser action may submit sensitive or irreversible information.",
+      };
+    }
+    if (context.browserCurrentPageRequiresApproval) {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "Agent interaction with the current external browser page needs approval.",
+      };
+    }
+  }
+
+  if (call.name === "browser_downloads") {
+    const action = String(call.arguments.action || "list").toLowerCase();
+    if (action === "allow_next" || action === "reveal" || action === "cancel") {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "Browser download actions need explicit approval.",
+      };
+    }
+  }
+
+  if (call.name === "browser_form_fill" || call.name === "browser_form_submit") {
+    const sensitive = call.name === "browser_form_submit" || browserFormLooksSensitive(call);
+    if (sensitive) {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "This browser form workflow may submit sensitive or irreversible information.",
+      };
+    }
+    if (context.browserCurrentPageRequiresApproval) {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "Agent form interaction with the current external browser page needs approval.",
+      };
+    }
   }
 
   return { risk: "safe", requiresApproval: false };
@@ -131,6 +201,26 @@ const riskyArgv = (value: unknown) => {
   if (["curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "ssh", "scp", "ftp"].includes(program)) return true;
   if (program === "gh" && subcommand === "auth") return true;
   return false;
+};
+
+const browserActionLooksSensitive = (call: DesktopToolCall) => {
+  const action = String(call.arguments.action || "").toLowerCase();
+  const key = String(call.arguments.key || "").toLowerCase();
+  const text = String(call.arguments.text || "");
+  const value = String(call.arguments.value || "");
+  const label = [call.arguments.ref, call.arguments.targetRef, text, value].map((item) => String(item || "")).join(" ");
+  if (action === "press" && key === "enter" && /pay|purchase|book|submit|apply|confirm|delete|transfer|checkout/i.test(label)) return true;
+  if (/password|passwd|pwd|otp|mfa|2fa|credit.?card|card number|cvv|cvc|ssn|api.?key|secret|token/i.test(label)) return true;
+  return false;
+};
+
+const browserFormLooksSensitive = (call: DesktopToolCall) => {
+  const fields = Array.isArray(call.arguments.fields) ? call.arguments.fields : [];
+  const joined = fields.map((field) => {
+    const data = field && typeof field === "object" ? field as Record<string, unknown> : {};
+    return [data.fieldId, data.field_id, data.name, data.label, data.value].map((item) => String(item || "")).join(" ");
+  }).join(" ");
+  return /password|passwd|pwd|otp|mfa|2fa|credit.?card|card number|cvv|cvc|ssn|api.?key|secret|token|pay|purchase|book|submit|apply|confirm|delete|transfer|checkout/i.test(joined);
 };
 
 const commandStartsWithPrefix = (command: string, prefix: string) =>

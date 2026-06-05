@@ -11,8 +11,20 @@ import { channels } from "./channels";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
 import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
 import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
+import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type {
   ApprovalDecisionInput,
+  BrowserBoundsInput,
+  BrowserDownloadInput,
+  BrowserFormAnalyzeInput,
+  BrowserFormFillInput,
+  BrowserFormSubmitInput,
+  BrowserFormValidateInput,
+  BrowserInspectInput,
+  BrowserNavigationInput,
+  BrowserOpenInput,
+  BrowserTabInput,
+  BrowserViewportInput,
   DesktopEvent,
   RequestUserInputResponseInput,
   SaveSettingsInput,
@@ -27,7 +39,7 @@ export interface IpcState {
   activeWorkspaceId: string | null;
 }
 
-export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState) => {
+export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager) => {
   const undoCoordinator = new TurnUndoCoordinator(store, (threadId) => {
     const run = runtime.getActiveRun(threadId);
     return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
@@ -287,6 +299,71 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     }
   });
 
+  handle(channels.getBrowserState, z.tuple([idSchema]), (_event, workspaceId: string) => {
+    return browserManager.getState(workspaceId);
+  });
+
+  handle(channels.setBrowserVisible, z.tuple([idSchema, z.boolean()]), (_event, workspaceId: string, visible: boolean) => {
+    return browserManager.setVisible(workspaceId, visible);
+  });
+
+  handle(channels.setBrowserBounds, z.tuple([browserBoundsInputSchema]), (_event, input: BrowserBoundsInput) => {
+    return browserManager.setBounds(input.workspaceId, {
+      x: input.x,
+      y: input.y,
+      width: input.width,
+      height: input.height,
+    });
+  });
+
+  handle(channels.openBrowserUrl, z.tuple([browserOpenInputSchema]), async (_event, input: BrowserOpenInput) => {
+    return browserManager.openUrl(input.workspaceId, input.url, { scope: "user", viewport: input.viewport, tabId: input.tabId, newTab: input.newTab });
+  });
+
+  handle(channels.navigateBrowser, z.tuple([browserNavigationInputSchema]), async (_event, input: BrowserNavigationInput) => {
+    return browserManager.navigate(input.workspaceId, input.direction, input.tabId);
+  });
+
+  handle(channels.setBrowserViewport, z.tuple([browserViewportInputSchema]), (_event, input: BrowserViewportInput) => {
+    return browserManager.applyViewportPreset(input.workspaceId, input.preset);
+  });
+
+  handle(channels.inspectBrowser, z.tuple([browserInspectInputSchema]), async (_event, input: BrowserInspectInput) => {
+    return browserManager.inspect(input.workspaceId, input.kind, input.tabId);
+  });
+
+  handle(channels.browserTab, z.tuple([browserTabInputSchema]), async (_event, input: BrowserTabInput) => {
+    return browserManager.tab(input.workspaceId, input);
+  });
+
+  handle(channels.browserDownload, z.tuple([browserDownloadInputSchema]), async (_event, input: BrowserDownloadInput) => {
+    return browserManager.downloadAction(input.workspaceId, input);
+  });
+
+  handle(channels.browserFormAnalyze, z.tuple([browserFormAnalyzeInputSchema]), async (_event, input: BrowserFormAnalyzeInput) => {
+    return browserManager.formAnalyze(input.workspaceId, input.tabId);
+  });
+
+  handle(channels.browserFormFill, z.tuple([browserFormFillInputSchema]), async (_event, input: BrowserFormFillInput) => {
+    return browserManager.formFill(input.workspaceId, input, { agentApproved: true });
+  });
+
+  handle(channels.browserFormValidate, z.tuple([browserFormValidateInputSchema]), async (_event, input: BrowserFormValidateInput) => {
+    return browserManager.formValidate(input.workspaceId, input);
+  });
+
+  handle(channels.browserFormSubmit, z.tuple([browserFormSubmitInputSchema]), async (_event, input: BrowserFormSubmitInput) => {
+    return browserManager.formSubmit(input.workspaceId, input, { agentApproved: true });
+  });
+
+  handle(channels.browserEvidence, z.tuple([idSchema]), async (_event, workspaceId: string) => {
+    return browserManager.evidence(workspaceId, { includeScreenshot: false, includeVisibleText: true });
+  });
+
+  handle(channels.openBrowserDevTools, z.tuple([idSchema]), (_event, workspaceId: string) => {
+    browserManager.openDevTools(workspaceId);
+  });
+
   handle(channels.openPath, z.tuple([workspacePathInputSchema]), (_event, targetPath: string) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (!workspace) throw new Error("Choose a workspace first.");
@@ -314,6 +391,78 @@ const optionalNullableId = z.string().trim().min(1).max(200).nullable();
 const workspacePathInputSchema = z.string().trim().min(1).max(2000);
 const workspacePathObjectInputSchema = z.object({ path: z.string().trim().min(0).max(2000) });
 const workspaceOpenTargetSchema = z.string().trim().min(1).max(2000);
+const browserViewportSchema = z.object({
+  width: z.number().min(1).max(10000),
+  height: z.number().min(1).max(10000),
+});
+const browserBoundsInputSchema = z.object({
+  workspaceId: idSchema,
+  x: z.number().min(0).max(20000),
+  y: z.number().min(0).max(20000),
+  width: z.number().min(0).max(20000),
+  height: z.number().min(0).max(20000),
+});
+const browserOpenInputSchema = z.object({
+  workspaceId: idSchema,
+  url: z.string().trim().min(1).max(4096),
+  viewport: browserViewportSchema.optional(),
+  tabId: idSchema.optional(),
+  newTab: z.boolean().optional(),
+});
+const browserNavigationInputSchema = z.object({
+  workspaceId: idSchema,
+  direction: z.enum(["back", "forward", "reload", "stop"]),
+  tabId: idSchema.optional(),
+});
+const browserViewportInputSchema = z.object({
+  workspaceId: idSchema,
+  preset: z.enum(["responsive", "mobile", "tablet", "desktop"]),
+});
+const browserInspectInputSchema = z.object({
+  workspaceId: idSchema,
+  kind: z.enum(["console", "network", "dom", "screenshot", "source"]),
+  tabId: idSchema.optional(),
+});
+const browserTabInputSchema = z.object({
+  workspaceId: idSchema,
+  action: z.enum(["list", "new", "switch", "close", "close_all_except"]),
+  tabId: idSchema.optional(),
+  url: z.string().trim().min(1).max(4096).optional(),
+});
+const browserDownloadInputSchema = z.object({
+  workspaceId: idSchema,
+  action: z.enum(["list", "allow_next", "cancel", "reveal"]),
+  downloadId: idSchema.optional(),
+});
+const browserFormFieldValueInputSchema = z.object({
+  fieldId: idSchema.optional(),
+  name: z.string().trim().max(200).optional(),
+  label: z.string().trim().max(240).optional(),
+  value: z.union([z.string().max(4000), z.boolean()]),
+}).refine((input) => Boolean(input.fieldId || input.name || input.label), {
+  message: "Form field input needs fieldId, name, or label.",
+});
+const browserFormAnalyzeInputSchema = z.object({
+  workspaceId: idSchema,
+  tabId: idSchema.optional(),
+});
+const browserFormFillInputSchema = z.object({
+  workspaceId: idSchema,
+  tabId: idSchema.optional(),
+  formId: idSchema.optional(),
+  fields: z.array(browserFormFieldValueInputSchema).min(1).max(40),
+});
+const browserFormValidateInputSchema = z.object({
+  workspaceId: idSchema,
+  tabId: idSchema.optional(),
+  formId: idSchema.optional(),
+});
+const browserFormSubmitInputSchema = z.object({
+  workspaceId: idSchema,
+  tabId: idSchema.optional(),
+  formId: idSchema.optional(),
+  includeScreenshot: z.boolean().optional(),
+});
 const externalUrlSchema = z.string().trim().max(4096).refine((value) => {
   try {
     const parsed = new URL(value);

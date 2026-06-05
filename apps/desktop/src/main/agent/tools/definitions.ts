@@ -7,6 +7,15 @@ const boolProperty = (description: string) => ({ type: "boolean", description })
 const numberProperty = (description: string) => ({ type: "number", description });
 const stringArrayProperty = (description: string) => ({ type: "array", items: { type: "string" }, description });
 const stringMapProperty = (description: string) => ({ type: "object", additionalProperties: { type: "string" }, description });
+const browserViewportProperty = (description: string) => ({
+  type: "object",
+  additionalProperties: false,
+  description,
+  properties: {
+    width: numberProperty("Viewport width in CSS pixels."),
+    height: numberProperty("Viewport height in CSS pixels."),
+  },
+});
 const editOperationsProperty = (description: string) => ({
   type: "array",
   description,
@@ -296,6 +305,223 @@ export const desktopToolDefinitions = [
       staged: boolProperty("If true, return staged diff."),
     }, []),
   },
+  {
+    type: "function",
+    name: "browser_open",
+    description: "Open an http(s) URL in Privora's built-in workspace browser. Use the exact local dev/static server URL being tested. Agent control is automatic for localhost and requires approval for external origins.",
+    parameters: schema({
+      url: textProperty("URL to open. Plain localhost:5173 style input is accepted."),
+      viewport: browserViewportProperty("Optional viewport size in CSS pixels."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+      newTab: boolProperty("If true, open this URL in a new browser tab."),
+    }, ["url"]),
+  },
+  {
+    type: "function",
+    name: "browser_snapshot",
+    description: "Capture a concise accessibility-oriented snapshot of the current built-in browser page. Use refs from this output with browser_act.",
+    parameters: schema({
+      depth: numberProperty("Optional snapshot depth, 1-8. Default 5."),
+      includeBoxes: boolProperty("If true, include element bounding boxes."),
+      targetRef: textProperty("Optional ref from a prior browser_snapshot to focus the snapshot."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_act",
+    description: "Interact with the current built-in browser page using a snapshot ref or x/y coordinate. Prefer refs from browser_snapshot.",
+    parameters: schema({
+      action: textProperty("Action: click, type, press, scroll, select, or resize."),
+      ref: textProperty("Element ref from browser_snapshot, such as b1."),
+      targetRef: textProperty("Alias for ref."),
+      text: textProperty("Text to type for action=type."),
+      key: textProperty("Key to press for action=press, such as Enter or Escape."),
+      x: numberProperty("Viewport x coordinate when a ref is unavailable."),
+      y: numberProperty("Viewport y coordinate when a ref is unavailable."),
+      deltaX: numberProperty("Horizontal scroll delta for action=scroll."),
+      deltaY: numberProperty("Vertical scroll delta for action=scroll."),
+      value: textProperty("Value for action=select."),
+      width: numberProperty("Viewport width for action=resize."),
+      height: numberProperty("Viewport height for action=resize."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_inspect",
+    description: "Inspect concise current-page browser evidence: console, network, dom, screenshot, or source/Privora DevBridge data. Reopen/reload the target URL if evidence appears stale.",
+    parameters: schema({
+      kind: textProperty("Inspection kind: console, network, dom, screenshot, or source."),
+    }, ["kind"]),
+  },
+  {
+    type: "function",
+    name: "browser_extract",
+    description: "Extract bounded, redacted current-page content for research or QA: visible_text, main_text, links, tables, forms, or metadata. Does not read cookies, storage, headers, or input values.",
+    parameters: schema({
+      mode: textProperty("Extraction mode: visible_text, main_text, links, tables, forms, or metadata. Default visible_text."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_wait",
+    description: "Wait for current-page readiness before the next browser step: text, url_contains, network_idle, dom_stable, or ref.",
+    parameters: schema({
+      for: textProperty("Wait target: text, url_contains, network_idle, dom_stable, or ref."),
+      kind: textProperty("Alias for for."),
+      value: textProperty("Text or URL fragment to wait for."),
+      ref: textProperty("Snapshot ref to wait for, such as b1."),
+      targetRef: textProperty("Alias for ref."),
+      timeoutMs: numberProperty("Timeout in milliseconds. Default 5000, max 30000."),
+      idleMs: numberProperty("Network idle window in milliseconds. Default 600."),
+    }, ["for"]),
+  },
+  {
+    type: "function",
+    name: "browser_screenshot",
+    description: "Save a current-page screenshot artifact. Supports viewport, full_page, element, and region modes. Returns a local path plus effective/requested viewport data, never base64.",
+    parameters: schema({
+      mode: textProperty("Screenshot mode: viewport, full_page, element, or region. Default viewport."),
+      ref: textProperty("Snapshot ref for mode=element."),
+      targetRef: textProperty("Alias for ref."),
+      x: numberProperty("Region x coordinate for mode=region."),
+      y: numberProperty("Region y coordinate for mode=region."),
+      width: numberProperty("Region width for mode=region."),
+      height: numberProperty("Region height for mode=region."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_evidence",
+    description: "Return one compact current-page evidence bundle with URL, title, timestamp, effective viewport, requested viewport, optional screenshot, visible text, console entries, network entries, and metadata.",
+    parameters: schema({
+      includeScreenshot: boolProperty("If true, save and include a viewport screenshot path."),
+      includeVisibleText: boolProperty("If false, omit visible text. Default true."),
+      includeConsole: boolProperty("If false, omit console entries. Default true."),
+      includeNetwork: boolProperty("If false, omit network entries. Default true."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_search",
+    description: "Search the web using the built-in browser session and return top visible result links. Defaults to DuckDuckGo to reduce embedded-browser CAPTCHA friction.",
+    parameters: schema({
+      query: textProperty("Search query."),
+      engine: textProperty("Search engine: duckduckgo, bing, or google. Default duckduckgo."),
+      open: boolProperty("If false, do not navigate before extracting current result links. Default true."),
+      limit: numberProperty("Maximum result links to return. Default 8, max 20."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+      newTab: boolProperty("If true, run the search in a new browser tab."),
+    }, ["query"]),
+  },
+  {
+    type: "function",
+    name: "browser_tab",
+    description: "List, create, switch, close, or clean up Privora Browser tabs. Existing browser tools use the active tab unless tabId is provided.",
+    parameters: schema({
+      action: textProperty("Tab action: list, new, switch, close, or close_all_except."),
+      tabId: textProperty("Tab id for switch, close, or close_all_except. close_all_except defaults to active tab."),
+      url: textProperty("Optional URL to open when action=new."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_downloads",
+    description: "Inspect or manage tracked browser downloads. Downloads are blocked unless explicitly allowed; files are never auto-opened.",
+    parameters: schema({
+      action: textProperty("Download action: list, allow_next, cancel, or reveal."),
+      downloadId: textProperty("Download id for cancel or reveal. Defaults to latest where safe."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_pdf",
+    description: "Extract bounded PDF evidence from the active browser tab. Modes: summary, text, or screenshot. Returns text/artifact paths only, never binary/base64.",
+    parameters: schema({
+      mode: textProperty("PDF mode: summary, text, or screenshot. Default summary."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_form_analyze",
+    description: "Analyze current-page forms in Privora Browser. Returns bounded form/control metadata with temporary formId/fieldId refs, risk labels, and no raw sensitive values.",
+    parameters: schema({
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_form_fill",
+    description: "Fill current-page form fields by fieldId first, then name or label. Does not return raw sensitive values; external origins need approval unless Full access is active.",
+    parameters: schema({
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+      formId: textProperty("Optional form id from browser_form_analyze. Defaults to first matching form."),
+      fields: {
+        type: "array",
+        description: "Fields to fill. Prefer fieldId from browser_form_analyze; use name or label only as fallback.",
+        maxItems: 40,
+        items: {
+          type: "object",
+          properties: {
+            fieldId: textProperty("Field id from browser_form_analyze."),
+            name: textProperty("Fallback input name/id."),
+            label: textProperty("Fallback visible label."),
+            value: {
+              anyOf: [
+                { type: "string", maxLength: 4000 },
+                { type: "boolean" },
+              ],
+              description: "Value to set. Use booleans for checkboxes/radios/switches.",
+            },
+          },
+          required: ["value"],
+          additionalProperties: false,
+        },
+      },
+    }, ["fields"]),
+  },
+  {
+    type: "function",
+    name: "browser_form_validate",
+    description: "Validate a current-page form without submitting. Reports required-field state, browser constraint errors, visible validation text, and submit readiness.",
+    parameters: schema({
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+      formId: textProperty("Optional form id from browser_form_analyze. Defaults to first form."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_form_submit",
+    description: "Submit one current-page form or click its submit control and return causal evidence. Sensitive or irreversible flows are guarded unless Full access is active.",
+    parameters: schema({
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+      formId: textProperty("Optional form id from browser_form_analyze. Defaults to first form."),
+      includeScreenshot: boolProperty("If true, save a local screenshot artifact after submit."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "browser_trace",
+    description: "Perform one browser action and return a compact causal finding with URL change, console errors, failed requests, and optional screenshot artifact.",
+    parameters: schema({
+      action: textProperty("Action: click, type, press, scroll, select, or resize."),
+      ref: textProperty("Element ref from browser_snapshot."),
+      targetRef: textProperty("Alias for ref."),
+      text: textProperty("Text to type for action=type."),
+      key: textProperty("Key to press for action=press."),
+      x: numberProperty("Viewport x coordinate when a ref is unavailable."),
+      y: numberProperty("Viewport y coordinate when a ref is unavailable."),
+      includeScreenshot: boolProperty("If true, save a local screenshot artifact and return its path."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_verify",
+    description: "Reload or re-check the current built-in browser page after a change and report whether current-page console or network failures remain.",
+    parameters: schema({
+      reload: boolProperty("If true, reload before checking. Default true."),
+    }, []),
+  },
 ] as const;
 
 export const desktopToolDefinitionsForMode = (mode: CollaborationMode = "default") =>
@@ -347,7 +573,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "mode", "engine", "value", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }

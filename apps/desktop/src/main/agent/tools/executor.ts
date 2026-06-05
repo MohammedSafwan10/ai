@@ -9,10 +9,14 @@ import { TerminalSessionManager } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
 import { FileOperationService, hashBuffer, recordFileObservation, recordFileObservationData } from "./fileOperationService";
 import { FileMutationCoordinator } from "./mutationCoordinator";
+import { BrowserToolExecutor } from "../../browser/browserTools";
+import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
 
 export interface ToolExecutionContext {
+  workspaceId?: string;
   workspaceRoot: string;
   signal: AbortSignal;
+  browserExternalApproved?: boolean;
   onCommandOutput: (callId: string, delta: string) => void;
   onTerminalProcessStarted?: (processId: number) => void;
   onTerminalProcessEnded?: (processId: number) => void;
@@ -40,6 +44,11 @@ export class DesktopToolExecutor {
   private terminal = new TerminalSessionManager();
   private mutations = new FileMutationCoordinator();
   private diagnostics = new DiagnosticsEngine(this.terminal);
+  private browser?: BrowserToolExecutor;
+
+  constructor(browserManager?: BrowserSessionManager) {
+    this.browser = browserManager ? new BrowserToolExecutor(browserManager) : undefined;
+  }
 
   async stopTerminalProcess(processId: number) {
     return await this.terminal.stopProcess({ processId });
@@ -95,6 +104,26 @@ export class DesktopToolExecutor {
           return await this.gitStatus(call, context);
         case "desktop_git_diff":
           return await this.gitDiff(call, context);
+        case "browser_open":
+        case "browser_snapshot":
+        case "browser_act":
+        case "browser_inspect":
+        case "browser_extract":
+        case "browser_wait":
+        case "browser_screenshot":
+        case "browser_evidence":
+        case "browser_search":
+        case "browser_tab":
+        case "browser_downloads":
+        case "browser_pdf":
+        case "browser_form_analyze":
+        case "browser_form_fill":
+        case "browser_form_validate":
+        case "browser_form_submit":
+        case "browser_trace":
+        case "browser_verify":
+          if (!this.browser) return { success: false, error: "Privora Browser is not available." };
+          return await this.browser.execute(call, context);
         default:
           return { success: false, error: `Unknown tool ${(call as DesktopToolCall).name}` };
       }

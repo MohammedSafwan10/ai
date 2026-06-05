@@ -94,6 +94,193 @@ export interface WorkspaceFileReadResult {
   truncatedBecauseSize: boolean;
 }
 
+export type BrowserViewportPreset = "responsive" | "mobile" | "tablet" | "desktop";
+
+export interface BrowserViewportRecord {
+  width: number;
+  height: number;
+}
+
+export interface BrowserTabRecord {
+  id: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type BrowserDownloadState = "blocked" | "pending" | "progressing" | "completed" | "cancelled" | "failed";
+
+export interface BrowserDownloadRecord {
+  id: string;
+  tabId: string;
+  url: string;
+  filename: string;
+  mimeType: string;
+  state: BrowserDownloadState;
+  receivedBytes: number;
+  totalBytes: number;
+  path?: string;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type BrowserFormRisk = "safe" | "sensitive" | "sensitive_payment" | "irreversible";
+
+export interface BrowserFormControlRecord {
+  id: string;
+  type: string;
+  name: string;
+  label: string;
+  placeholder: string;
+  required: boolean;
+  sensitive: boolean;
+  disabled: boolean;
+  checked?: boolean;
+  options?: string[];
+}
+
+export interface BrowserFormRecord {
+  id: string;
+  action: string;
+  method: string;
+  label: string;
+  submitLabel: string;
+  risk: BrowserFormRisk;
+  controls: BrowserFormControlRecord[];
+  valid?: boolean;
+  validationErrors?: string[];
+  lastResult?: string;
+  updatedAt: number;
+}
+
+export interface BrowserWorkspaceStateRecord {
+  workspaceId: string;
+  tabs: BrowserTabRecord[];
+  activeTabId: string;
+  updatedAt: number;
+}
+
+export interface BrowserPanelStateRecord {
+  workspaceId: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  visible: boolean;
+  agentActive: boolean;
+  lastAction?: string;
+  lastFinding?: string;
+  consoleErrorCount: number;
+  failedRequestCount: number;
+  viewport: BrowserViewportRecord;
+  viewportPreset: BrowserViewportPreset;
+  tabs: BrowserTabRecord[];
+  activeTabId: string;
+  downloads: BrowserDownloadRecord[];
+  forms: BrowserFormRecord[];
+  evidenceUpdatedAt?: number;
+  updatedAt: number;
+}
+
+export interface BrowserBoundsInput {
+  workspaceId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserOpenInput {
+  workspaceId: string;
+  url: string;
+  viewport?: BrowserViewportRecord;
+  tabId?: string;
+  newTab?: boolean;
+}
+
+export interface BrowserActionInput {
+  action: string;
+  ref?: string;
+  text?: string;
+  key?: string;
+  x?: number;
+  y?: number;
+  deltaX?: number;
+  deltaY?: number;
+  value?: string;
+  width?: number;
+  height?: number;
+  includeScreenshot?: boolean;
+}
+
+export interface BrowserNavigationInput {
+  workspaceId: string;
+  direction: "back" | "forward" | "reload" | "stop";
+  tabId?: string;
+}
+
+export interface BrowserInspectInput {
+  workspaceId: string;
+  kind: "console" | "network" | "dom" | "screenshot" | "source";
+  tabId?: string;
+}
+
+export interface BrowserViewportInput {
+  workspaceId: string;
+  preset: BrowserViewportPreset;
+}
+
+export interface BrowserTabInput {
+  workspaceId: string;
+  action: "list" | "new" | "switch" | "close" | "close_all_except";
+  tabId?: string;
+  url?: string;
+}
+
+export interface BrowserDownloadInput {
+  workspaceId: string;
+  action: "list" | "allow_next" | "cancel" | "reveal";
+  downloadId?: string;
+}
+
+export interface BrowserFormFieldValueInput {
+  fieldId?: string;
+  name?: string;
+  label?: string;
+  value: string | boolean;
+}
+
+export interface BrowserFormAnalyzeInput {
+  workspaceId: string;
+  tabId?: string;
+}
+
+export interface BrowserFormFillInput {
+  workspaceId: string;
+  tabId?: string;
+  formId?: string;
+  fields: BrowserFormFieldValueInput[];
+}
+
+export interface BrowserFormValidateInput {
+  workspaceId: string;
+  tabId?: string;
+  formId?: string;
+}
+
+export interface BrowserFormSubmitInput {
+  workspaceId: string;
+  tabId?: string;
+  formId?: string;
+  includeScreenshot?: boolean;
+}
+
 export type ThreadTitleSource = "placeholder" | "agent" | "user" | "fallback";
 
 export interface SettingsRecord {
@@ -563,6 +750,24 @@ export type DesktopToolName =
   | "desktop_run_diagnostics"
   | "desktop_git_status"
   | "desktop_git_diff"
+  | "browser_open"
+  | "browser_snapshot"
+  | "browser_act"
+  | "browser_inspect"
+  | "browser_extract"
+  | "browser_wait"
+  | "browser_screenshot"
+  | "browser_evidence"
+  | "browser_search"
+  | "browser_tab"
+  | "browser_downloads"
+  | "browser_pdf"
+  | "browser_form_analyze"
+  | "browser_form_fill"
+  | "browser_form_validate"
+  | "browser_form_submit"
+  | "browser_trace"
+  | "browser_verify"
   | "web_search";
 
 export interface DesktopToolCall {
@@ -622,6 +827,7 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "turn_undo_updated"; undo: TurnUndoRecord }
   | { type: "context_usage_updated"; usage: ContextUsageRecord }
   | { type: "ai_credit_summary_updated"; summary: AiCreditSummaryRecord }
+  | { type: "browser_state_updated"; state: BrowserPanelStateRecord }
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }
@@ -711,6 +917,21 @@ export interface PrivoraDesktopApi {
   signUpPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
   signOutPrivora(): Promise<AiCreditSummaryRecord>;
   refreshAiCredits(): Promise<AiCreditSummaryRecord>;
+  getBrowserState(workspaceId: string): Promise<BrowserPanelStateRecord | null>;
+  setBrowserVisible(workspaceId: string, visible: boolean): Promise<BrowserPanelStateRecord | null>;
+  setBrowserBounds(input: BrowserBoundsInput): Promise<BrowserPanelStateRecord | null>;
+  openBrowserUrl(input: BrowserOpenInput): Promise<BrowserPanelStateRecord>;
+  navigateBrowser(input: BrowserNavigationInput): Promise<BrowserPanelStateRecord>;
+  setBrowserViewport(input: BrowserViewportInput): Promise<BrowserPanelStateRecord>;
+  inspectBrowser(input: BrowserInspectInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserTab(input: BrowserTabInput): Promise<BrowserPanelStateRecord>;
+  browserDownload(input: BrowserDownloadInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserFormAnalyze(input: BrowserFormAnalyzeInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserFormFill(input: BrowserFormFillInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserFormValidate(input: BrowserFormValidateInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserFormSubmit(input: BrowserFormSubmitInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserEvidence(workspaceId: string): Promise<{ output: string; data?: Record<string, unknown> }>;
+  openBrowserDevTools(workspaceId: string): Promise<void>;
   openPath(path: string): Promise<void>;
   openExternalUrl(url: string): Promise<void>;
   listWorkspaceOpenTargets(): Promise<WorkspaceOpenTargetInfo[]>;

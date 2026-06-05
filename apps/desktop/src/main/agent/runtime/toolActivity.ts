@@ -161,6 +161,42 @@ export const titleForTool = (call: DesktopToolCall) => {
       return `Stop process ${args.processId || ""}`.trim();
     case "desktop_run_diagnostics":
       return `Check ${args.kind || args.command || "workspace"}`;
+    case "browser_open":
+      return `Open browser ${args.url || ""}`.trim();
+    case "browser_snapshot":
+      return "Capture browser snapshot";
+    case "browser_act":
+      return `Browser ${args.action || "action"}`;
+    case "browser_inspect":
+      return `Inspect browser ${args.kind || ""}`.trim();
+    case "browser_extract":
+      return `Extract browser ${args.mode || "content"}`;
+    case "browser_wait":
+      return `Wait for browser ${args.for || args.kind || ""}`.trim();
+    case "browser_screenshot":
+      return `Screenshot browser ${args.mode || "viewport"}`;
+    case "browser_evidence":
+      return "Collect browser evidence";
+    case "browser_search":
+      return `Search browser ${args.query || ""}`.trim();
+    case "browser_tab":
+      return `Browser tab ${args.action || "list"}`;
+    case "browser_downloads":
+      return `Browser downloads ${args.action || "list"}`;
+    case "browser_pdf":
+      return `Inspect browser PDF ${args.mode || "summary"}`;
+    case "browser_form_analyze":
+      return "Analyze browser forms";
+    case "browser_form_fill":
+      return "Fill browser form";
+    case "browser_form_validate":
+      return "Validate browser form";
+    case "browser_form_submit":
+      return "Submit browser form";
+    case "browser_trace":
+      return `Trace browser ${args.action || "action"}`;
+    case "browser_verify":
+      return "Verify browser";
     case "request_user_input":
       return `Questions`;
     case "spawn_agent":
@@ -182,6 +218,7 @@ export const titleForTool = (call: DesktopToolCall) => {
 
 export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["category"] => {
   if (isSubagentToolName(call.name)) return "agent";
+  if (call.name.startsWith("browser_")) return "other";
   if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
   if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
   if (call.name === "desktop_run_diagnostics") return "diagnostic";
@@ -213,6 +250,24 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "desktop_write_file") return "Writing file";
     if (call.name === "desktop_search") return "Searching workspace";
     if (call.name === "web_search") return "Searching web";
+    if (call.name === "browser_open") return "Opening browser";
+    if (call.name === "browser_snapshot") return "Capturing browser";
+    if (call.name === "browser_act") return "Using browser";
+    if (call.name === "browser_inspect") return "Inspecting browser";
+    if (call.name === "browser_extract") return "Extracting browser";
+    if (call.name === "browser_wait") return "Waiting for browser";
+    if (call.name === "browser_screenshot") return "Capturing screenshot";
+    if (call.name === "browser_evidence") return "Collecting evidence";
+    if (call.name === "browser_search") return "Searching browser";
+    if (call.name === "browser_tab") return "Managing browser tabs";
+    if (call.name === "browser_downloads") return "Managing downloads";
+    if (call.name === "browser_pdf") return "Inspecting PDF";
+    if (call.name === "browser_form_analyze") return "Analyzing forms";
+    if (call.name === "browser_form_fill") return "Filling form";
+    if (call.name === "browser_form_validate") return "Validating form";
+    if (call.name === "browser_form_submit") return "Submitting form";
+    if (call.name === "browser_trace") return "Tracing browser";
+    if (call.name === "browser_verify") return "Verifying browser";
     if (call.name === "desktop_read_file") return "Reading file";
     if (call.name === "desktop_list_dir") return "Inspecting workspace";
     return status.replace(/_/g, " ");

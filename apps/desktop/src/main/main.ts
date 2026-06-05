@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell, type MenuItemConstructorOptions } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +13,7 @@ import { installUpdateService } from "./updateService";
 import { decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
 import { createTokenSession, getAppwriteAccount } from "./billing/appwriteAuth";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "./billing/creditService";
+import { BrowserSessionManager } from "./browser/BrowserSessionManager";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -20,6 +21,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let mainWindow: BrowserWindow | null = null;
 let store: DesktopStore | null = null;
 let runtime: AgentService | null = null;
+let browserManager: BrowserSessionManager | null = null;
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 1.7;
 const ZOOM_STEP = 0.1;
@@ -215,6 +217,27 @@ const installWindowShortcuts = (window: BrowserWindow) => {
   });
 };
 
+const installTextContextMenu = (window: BrowserWindow) => {
+  window.webContents.on("context-menu", (_event, params) => {
+    const selectedText = params.selectionText.trim();
+    const editable = params.isEditable;
+    if (!editable && !selectedText) return;
+
+    const template: MenuItemConstructorOptions[] = editable
+      ? [
+          { role: "cut", label: "Cut", enabled: params.editFlags.canCut },
+          { role: "copy", label: "Copy", enabled: params.editFlags.canCopy },
+          { role: "paste", label: "Paste", enabled: params.editFlags.canPaste },
+          { role: "selectAll", label: "Select All", enabled: params.editFlags.canSelectAll },
+        ]
+      : [
+          { role: "copy", label: "Copy", enabled: params.editFlags.canCopy || Boolean(selectedText) },
+        ];
+
+    Menu.buildFromTemplate(template).popup({ window });
+  });
+};
+
 const isHttpUrl = (value: string) => {
   try {
     const parsed = new URL(value);
@@ -273,6 +296,7 @@ const createWindow = async () => {
     console.error(`[renderer:gone] ${details.reason}`);
   });
   installWindowShortcuts(mainWindow);
+  installTextContextMenu(mainWindow);
   setWindowZoom(mainWindow, getDefaultZoomFactor(mainWindow));
   const rendererEntryPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
   installExternalNavigationGuards(mainWindow, MAIN_WINDOW_VITE_DEV_SERVER_URL ? undefined : pathToFileURL(rendererEntryPath).toString());
@@ -313,11 +337,22 @@ if (!singleInstanceLock) {
     const icon = appIcon();
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
     store = new DesktopStore();
+    browserManager = new BrowserSessionManager(
+      () => mainWindow,
+      (browserState) => {
+        BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, {
+          type: "browser_state_updated",
+          state: browserState,
+        }));
+      },
+      (workspaceId) => store?.getBrowserWorkspaceState(workspaceId) || null,
+      (browserState) => store?.saveBrowserWorkspaceState(browserState),
+    );
     const workspaces = store.listWorkspaces();
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
-    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state));
-    registerIpc(store, runtime, state);
+    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager));
+    registerIpc(store, runtime, state, browserManager);
     installUpdateService();
     await createWindow();
     handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));
@@ -333,5 +368,6 @@ if (!singleInstanceLock) {
 }
 
 app.on("before-quit", () => {
+  browserManager?.destroyAll();
   store?.close();
 });

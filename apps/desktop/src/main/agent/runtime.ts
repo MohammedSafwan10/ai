@@ -23,6 +23,7 @@ import { buildDesktopSystemPrompt } from "./systemPrompt";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
+import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import { buildAgentsMdContext } from "./agentsMd";
 import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel, sanitizeProviderHistoryForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
@@ -103,6 +104,14 @@ const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 24_000;
 
 const now = () => Date.now();
 
+const isAutoApprovedRiskyBrowserTool = (
+  call: DesktopToolCall,
+  decision: ReturnType<DesktopToolOrchestrator["assess"]>,
+) =>
+  call.name.startsWith("browser_") &&
+  decision.risk === "risky" &&
+  !decision.requiresApproval;
+
 interface ApprovalBundle {
   id: string;
   threadId: string;
@@ -148,7 +157,7 @@ interface ContinueOptions {
 }
 
 export class AgentRuntime {
-  private tools = new DesktopToolOrchestrator();
+  private tools: DesktopToolOrchestrator;
   private activeRuns = new Map<string, AgentRunTracker>();
   private pendingApprovalByCallId = new Map<string, ApprovalBundle>();
   private pendingUserInputByCallId = new Map<string, PendingUserInput>();
@@ -168,7 +177,10 @@ export class AgentRuntime {
     private store: DesktopStore,
     private getMainWindow: () => BrowserWindow | null,
     private getActiveIds: () => { activeThreadId: string | null; activeWorkspaceId: string | null },
-  ) {}
+    browserManager?: BrowserSessionManager,
+  ) {
+    this.tools = new DesktopToolOrchestrator(browserManager);
+  }
 
   getActiveRun(threadId: string) {
     const run = this.activeRuns.get(threadId);
@@ -506,7 +518,7 @@ export class AgentRuntime {
         const calls: DesktopToolCall[] = [];
         const approvalCalls: DesktopToolCall[] = [];
         const scheduler = new ToolExecutionScheduler();
-        const scheduleTool = (call: DesktopToolCall) => {
+        const scheduleTool = (call: DesktopToolCall, browserExternalApproved = false) => {
           scheduler.schedule(call, this.tools.supportsParallelExecution(call), async (scheduledCall) => {
             try {
               if (controller.signal.aborted) {
@@ -525,6 +537,7 @@ export class AgentRuntime {
                 run,
                 options.threadId,
                 options.assistantMessage.id,
+                browserExternalApproved,
               );
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
                 status: result.success ? "done" : "failed",
@@ -662,7 +675,7 @@ export class AgentRuntime {
               endThoughtPart();
               markRunProgress(run);
               calls.push(call);
-              const decision = this.tools.assess(call, settings.permissionMode);
+              const decision = this.tools.assess(call, settings.permissionMode, thread?.workspaceId);
               const planBlock = planModeBlockReason(call, effectiveCollaborationMode, decision);
               const scope = decision.requiresApproval
                 ? this.findReusableApprovalScope(options.threadId, call)
@@ -695,7 +708,7 @@ export class AgentRuntime {
               } else if (requiresApproval) {
                 approvalCalls.push(call);
               } else {
-                scheduleTool(call);
+                scheduleTool(call, Boolean(scope) || isAutoApprovedRiskyBrowserTool(call, decision));
               }
             },
             onUsage: (usage) => {
@@ -971,14 +984,14 @@ export class AgentRuntime {
           call,
           approved: true,
           scope,
-          reason: this.tools.assess(call, this.store.getSettings().permissionMode).reason,
+          reason: this.tools.assess(call, this.store.getSettings().permissionMode, this.store.getThread(bundle.threadId)?.workspaceId).reason,
         });
         const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
           status: "running",
           startedAt: now(),
         });
         this.emit({ type: "tool_updated", tool: event });
-        result = await this.executeTool(call, bundle.workspaceRoot, bundle.run.controller, bundle.run, bundle.threadId, bundle.assistantMessageId);
+        result = await this.executeTool(call, bundle.workspaceRoot, bundle.run.controller, bundle.run, bundle.threadId, bundle.assistantMessageId, true);
         toolCount += 1;
       } else {
         this.recordApprovalHistory({
@@ -1160,6 +1173,7 @@ export class AgentRuntime {
     run: AgentRunTracker,
     threadId: string,
     messageId: string,
+    browserExternalApproved = false,
   ) {
     if (isSubagentTool(call.name)) {
       return await this.executeSubagentTool(call, workspaceRoot, controller, run, threadId, messageId);
@@ -1168,8 +1182,10 @@ export class AgentRuntime {
       return await this.requestUserInput(call, controller, run, threadId, messageId);
     }
     const result = await this.tools.execute(call, {
+      workspaceId: this.store.getThread(threadId)?.workspaceId || "",
       workspaceRoot,
       signal: controller.signal,
+      browserExternalApproved,
       onCommandOutput: (callId, delta) => {
         markRunProgress(run);
         this.queueToolOutput(threadId, messageId, call, callId, delta);

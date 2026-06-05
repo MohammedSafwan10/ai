@@ -1,13 +1,20 @@
 import type { PermissionMode } from "../../../shared/models";
 import type { DesktopToolCall } from "../../../shared/types";
+import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
 import { DesktopToolExecutor, type ToolExecutionContext } from "./executor";
 import { classifyToolCall } from "./permissions";
 
 export class DesktopToolOrchestrator {
-  constructor(private executor = new DesktopToolExecutor()) {}
+  private executor: DesktopToolExecutor;
 
-  assess(call: DesktopToolCall, permissionMode: PermissionMode) {
-    return classifyToolCall(call, permissionMode);
+  constructor(private browserManager?: BrowserSessionManager) {
+    this.executor = new DesktopToolExecutor(browserManager);
+  }
+
+  assess(call: DesktopToolCall, permissionMode: PermissionMode, workspaceId?: string | null) {
+    return classifyToolCall(call, permissionMode, {
+      browserCurrentPageRequiresApproval: this.browserManager?.currentAgentControlRequiresApproval(workspaceId) === true,
+    });
   }
 
   execute(call: DesktopToolCall, context: ToolExecutionContext) {
