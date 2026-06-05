@@ -56,7 +56,7 @@ The renderer includes:
 - Review/undo surfaces for file changes.
 - Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
-- Settings screen for profile, billing, providers, theme, workspace options, shortcuts, and update status.
+- Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
 - Recovery notice if the local JSON store is corrupt and Privora has to back it up.
 
 ## Architecture
@@ -151,7 +151,7 @@ AI credits are consumed based on model, input size, output size, and tool usage.
 
 ## Browser Agent
 
-The built-in browser agent is documented in [docs/browser-agent.md](docs/browser-agent.md). It covers Phase 2A tabs/downloads/PDF evidence, Phase 2B form workflows, and Phase 2C workflow replay, assertions, evidence vault, and failure diagnosis.
+The built-in browser agent is documented in [docs/browser-agent.md](docs/browser-agent.md). It covers Phase 2A tabs/downloads/PDF evidence, Phase 2B form workflows, Phase 2C workflow replay, assertions, evidence vault, and failure diagnosis, plus the Phase 2D-lite storage cleanup surface.
 
 ## Production Updates
 
@@ -187,7 +187,7 @@ Run:
 npm test
 ```
 
-The tests cover storage recovery, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, and runtime behavior.
+The tests cover storage recovery, storage cleanup, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, and runtime behavior.
 
 For a quick compile check:
 

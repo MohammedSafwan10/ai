@@ -60,5 +60,5 @@ Local environment examples live beside each app:
 Desktop release and SaaS credit automation are documented in:
 
 - `docs/desktop-auto-updates.md`
-- `apps/desktop/docs/browser-agent.md`
+- `apps/desktop/docs/browser-agent.md` for Browser Agent phases, workflow evidence, and storage cleanup behavior.
 - `apps/desktop/docs/saas-ai-credits.md`

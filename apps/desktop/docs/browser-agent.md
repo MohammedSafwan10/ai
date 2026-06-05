@@ -46,6 +46,17 @@ Phase 2C made browser work reusable and test-like.
 - `browser_diagnose` classifies failures such as validation failure, network error, auth error, console error, timeout, stale target, and policy block.
 - Workflow replay can start in a new tab and auto-records the current page when recording begins after navigation.
 
+## Phase 2D-lite: Storage Cleanup And Retention
+
+Phase 2D-lite added a Settings storage surface so browser artifacts do not grow forever on user machines.
+
+- Settings > Storage scans browser artifacts, workflow run history, browser cache/profile data, and Privora downloads.
+- The app-owned cleanup action removes browser artifacts, workflow run/evidence history, and browser cache without touching user downloads.
+- Workflow cleanup preserves reusable workflow definitions and assertions, pruning only old runs and evidence records.
+- Downloads are shown separately because they are user files under the user's downloads folder in `Privora`.
+- Scans and deletes run in small async chunks so large artifact folders do not freeze the app.
+- Browser profile cleanup clears active Electron sessions and persisted cache/storage folders for Privora browser partitions.
+
 ## Safety Defaults
 
 - Localhost and workspace dev origins are smooth by default.
@@ -61,6 +72,7 @@ Current coverage includes:
 - Browser tool routing and schema tests.
 - Causal journal console/network compaction tests.
 - Workflow manager tests for recording, redaction, evidence retention, assertions, and diagnosis.
+- Storage cleanup tests for app-owned cleanup, download separation, and workflow-history pruning.
 - Desktop tool executor tests for browser workflow tool routing.
 
 Run from `apps/desktop`:
