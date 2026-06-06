@@ -922,6 +922,14 @@
   color: var(--privora-muted);
 }
 
+.composer-mode-status.computer-use-status {
+  color: color-mix(in srgb, var(--pending) 74%, var(--privora-text));
+}
+
+.composer-mode-status.computer-use-status svg {
+  color: color-mix(in srgb, var(--pending) 82%, var(--privora-muted));
+}
+
 .composer-mode-status:hover,
 .composer-mode-status:focus-visible {
   color: var(--privora-text);
@@ -1029,7 +1037,7 @@
   right: auto;
   bottom: 36px;
   left: 0;
-  width: 188px;
+  width: 206px;
   padding: 5px;
   border-radius: 12px;
 }

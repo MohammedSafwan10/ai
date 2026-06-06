@@ -1,6 +1,7 @@
 import type { PermissionMode } from "../../../shared/models";
 import type { ApprovalScopeRecord, DesktopToolCall, ToolRisk } from "../../../shared/types";
 import { browserOriginDecision } from "../../browser/browserSecurity";
+import { computerActionHardBlockReason } from "../../computer/safety";
 
 const destructiveCommandPattern =
   /\b(rm|del|erase|rd|rmdir|format|shutdown|restart-computer|stop-process|remove-item|move-item|rename-item|set-content|out-file|new-item|git\s+(reset|checkout|clean|push|commit|merge|rebase)|npm\s+i|npm\s+install|pnpm\s+i|pnpm\s+install|yarn\s+(add|install)|bun\s+install|pip\s+install|cargo\s+install)\b/i;
@@ -91,6 +92,44 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
       reason: call.arguments.deleteFile === true || call.arguments.delete_file === true
         ? "Deleting this note can move its external file to the OS Recycle Bin."
         : "Deleting a note removes its local Privora draft or saved reference.",
+    };
+  }
+
+  if (call.name.startsWith("computer_")) {
+    if (call.name === "computer_capabilities" || call.name === "computer_list_windows" || call.name === "computer_find_apps" || call.name === "computer_snapshot" || call.name === "computer_inspect" || call.name === "computer_wait" || call.name === "computer_verify" || call.name === "computer_screenshot" || call.name === "computer_stop") {
+      return { risk: "safe", requiresApproval: false };
+    }
+
+    if (call.name === "computer_act" || call.name === "computer_trace") {
+      const hardBlock = computerActionHardBlockReason({
+        action: String(call.arguments.action || ""),
+        ref: typeof call.arguments.ref === "string" ? call.arguments.ref : undefined,
+        targetRef: typeof call.arguments.targetRef === "string" ? call.arguments.targetRef : typeof call.arguments.target_ref === "string" ? call.arguments.target_ref : undefined,
+        text: typeof call.arguments.text === "string" ? call.arguments.text : undefined,
+        key: typeof call.arguments.key === "string" ? call.arguments.key : undefined,
+        value: typeof call.arguments.value === "string" ? call.arguments.value : undefined,
+      });
+      if (hardBlock) {
+        return {
+          risk: "blocked",
+          requiresApproval: false,
+          reason: hardBlock.message,
+        };
+      }
+    }
+
+    if (call.name === "computer_clipboard") {
+      const action = String(call.arguments.action || "").toLowerCase();
+      if (action === "set_text") {
+        const hardBlock = computerActionHardBlockReason({ action: "type", text: String(call.arguments.text || "") });
+        if (hardBlock) return { risk: "blocked", requiresApproval: false, reason: hardBlock.message };
+      }
+    }
+
+    return {
+      risk: "risky",
+      requiresApproval: mode !== "yolo",
+      reason: "Computer Use can control native desktop apps outside the workspace.",
     };
   }
 

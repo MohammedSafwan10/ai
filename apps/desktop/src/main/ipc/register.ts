@@ -15,6 +15,7 @@ import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditS
 import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
 import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
+import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
 import type {
   ApprovalDecisionInput,
@@ -61,7 +62,7 @@ export interface IpcState {
   activeWorkspaceId: string | null;
 }
 
-export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager, notesStore: NotesStore) => {
+export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager, notesStore: NotesStore, computerUseManager?: ComputerUseManager) => {
   let browserOverlayWindow: BrowserWindow | null = null;
   const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
   const storageCleanup = new StorageCleanupService({
@@ -337,7 +338,9 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   });
 
   handle(channels.saveSettings, z.tuple([saveSettingsInputSchema]), (_event, input: SaveSettingsInput) => {
-    return store.saveSettings(input);
+    const settings = store.saveSettings(input);
+    if (typeof input.computerUseEnabled === "boolean") computerUseManager?.setEnabled(input.computerUseEnabled);
+    return settings;
   });
 
   handle(channels.startPrivoraBrowserAuth, z.tuple([]), async () => {
@@ -906,6 +909,7 @@ const saveSettingsInputSchema = z.object({
   reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
+  computerUseEnabled: z.boolean().optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   cliproxyBaseUrl: z.string().max(500).optional(),
   appwriteEndpoint: z.string().max(500).optional(),

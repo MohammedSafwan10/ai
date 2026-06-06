@@ -13,6 +13,8 @@ import { BrowserToolExecutor } from "../../browser/browserTools";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
 import type { NotesStore } from "../../notes/NotesStore";
 import type { PermissionMode } from "../../../shared/models";
+import { ComputerUseToolExecutor } from "../../computer/computerTools";
+import type { ComputerUseManager } from "../../computer/ComputerUseManager";
 
 export interface ToolExecutionContext {
   workspaceId?: string;
@@ -20,6 +22,7 @@ export interface ToolExecutionContext {
   signal: AbortSignal;
   browserExternalApproved?: boolean;
   permissionMode?: PermissionMode;
+  computerUseEnabled?: boolean;
   onCommandOutput: (callId: string, delta: string) => void;
   onTerminalProcessStarted?: (processId: number) => void;
   onTerminalProcessEnded?: (processId: number) => void;
@@ -48,9 +51,11 @@ export class DesktopToolExecutor {
   private mutations = new FileMutationCoordinator();
   private diagnostics = new DiagnosticsEngine(this.terminal);
   private browser?: BrowserToolExecutor;
+  private computer?: ComputerUseToolExecutor;
 
-  constructor(browserManager?: BrowserSessionManager, private notesStore?: NotesStore) {
+  constructor(browserManager?: BrowserSessionManager, private notesStore?: NotesStore, computerUseManager?: ComputerUseManager) {
     this.browser = browserManager ? new BrowserToolExecutor(browserManager) : undefined;
+    this.computer = computerUseManager ? new ComputerUseToolExecutor(computerUseManager) : undefined;
   }
 
   async stopTerminalProcess(processId: number) {
@@ -119,6 +124,22 @@ export class DesktopToolExecutor {
           return await this.notesSave(call, context);
         case "notes_delete":
           return await this.notesDelete(call, context);
+        case "computer_capabilities":
+        case "computer_list_windows":
+        case "computer_find_apps":
+        case "computer_focus_window":
+        case "computer_snapshot":
+        case "computer_inspect":
+        case "computer_act":
+        case "computer_wait":
+        case "computer_trace":
+        case "computer_verify":
+        case "computer_screenshot":
+        case "computer_stop":
+        case "computer_open_app":
+        case "computer_clipboard":
+          if (!this.computer) return { success: false, error: "Privora Computer Use is not available." };
+          return await this.computer.execute(call, context);
         case "browser_open":
         case "browser_open_link":
         case "browser_snapshot":

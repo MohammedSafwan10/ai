@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -603,7 +603,7 @@ export function Composer({
             </button>
             <h2 id="full-access-title">Enable full access?</h2>
             <p>
-              Full access lets Privora run commands, use the network, and edit files without asking before risky actions.
+              Full access lets Privora run commands, use the network, edit files, use the browser, and control desktop apps without asking before ordinary risky actions.
               This can move faster, but it also increases the chance of unintended changes or unsafe tool output.
             </p>
             <div className="full-access-dialog-actions">
@@ -677,6 +677,16 @@ export function Composer({
                 <button
                   type="button"
                   className="composer-menu-row"
+                  onClick={() => {
+                    onSettings({ computerUseEnabled: !settings.computerUseEnabled });
+                  }}
+                >
+                  <span><MousePointer2 size={18} /> Computer Use</span>
+                  <ToggleSwitch checked={settings.computerUseEnabled} />
+                </button>
+                <button
+                  type="button"
+                  className="composer-menu-row"
                   onClick={() => setPursueGoal((current) => !current)}
                 >
                   <span><Crosshair size={18} /> Pursue goal</span>
@@ -727,6 +737,19 @@ export function Composer({
             >
               <ClipboardList size={15} />
               <span>Plan</span>
+              <X className="composer-mode-dismiss" size={13} />
+            </button>
+          )}
+          {settings.computerUseEnabled && (
+            <button
+              type="button"
+              className="composer-mode-status computer-use-status"
+              title="Turn off Computer Use"
+              aria-label="Turn off Computer Use"
+              onClick={() => onSettings({ computerUseEnabled: false })}
+            >
+              <MousePointer2 size={15} />
+              <span>Computer Use</span>
               <X className="composer-mode-dismiss" size={13} />
             </button>
           )}

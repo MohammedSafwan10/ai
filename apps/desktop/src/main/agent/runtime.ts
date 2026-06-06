@@ -24,6 +24,7 @@ import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } fro
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
+import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
 import { buildAgentsMdContext } from "./agentsMd";
 import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel, sanitizeProviderHistoryForModel } from "./context";
@@ -180,8 +181,9 @@ export class AgentRuntime {
     private getActiveIds: () => { activeThreadId: string | null; activeWorkspaceId: string | null },
     browserManager?: BrowserSessionManager,
     notesStore?: NotesStore,
+    computerUseManager?: ComputerUseManager,
   ) {
-    this.tools = new DesktopToolOrchestrator(browserManager, notesStore);
+    this.tools = new DesktopToolOrchestrator(browserManager, notesStore, computerUseManager);
   }
 
   getActiveRun(threadId: string) {
@@ -430,6 +432,7 @@ export class AgentRuntime {
 
   private async continueLoop(options: ContinueOptions) {
     const settings = this.store.getSettings();
+    this.tools.setComputerUseEnabled(settings.computerUseEnabled);
     const thread = this.store.getThread(options.threadId);
     const effectiveModel = getModelOption(options.model || thread?.model || settings.model).id;
     const effectiveReasoning = options.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort;
@@ -541,6 +544,7 @@ export class AgentRuntime {
                 options.assistantMessage.id,
                 browserExternalApproved,
                 settings.permissionMode,
+                settings.computerUseEnabled,
               );
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
                 status: result.success ? "done" : "failed",
@@ -1177,6 +1181,7 @@ export class AgentRuntime {
     messageId: string,
     browserExternalApproved = false,
     permissionMode = this.store.getSettings().permissionMode,
+    computerUseEnabled = this.store.getSettings().computerUseEnabled,
   ) {
     if (isSubagentTool(call.name)) {
       return await this.executeSubagentTool(call, workspaceRoot, controller, run, threadId, messageId);
@@ -1190,6 +1195,7 @@ export class AgentRuntime {
       signal: controller.signal,
       browserExternalApproved,
       permissionMode,
+      computerUseEnabled,
       onCommandOutput: (callId, delta) => {
         markRunProgress(run);
         this.queueToolOutput(threadId, messageId, call, callId, delta);

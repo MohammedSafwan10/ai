@@ -15,6 +15,7 @@ import { decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "./billin
 import { createTokenSession, getAppwriteAccount } from "./billing/appwriteAuth";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "./billing/creditService";
 import { BrowserSessionManager } from "./browser/BrowserSessionManager";
+import { ComputerUseManager } from "./computer/ComputerUseManager";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -24,6 +25,7 @@ let store: DesktopStore | null = null;
 let notesStore: NotesStore | null = null;
 let runtime: AgentService | null = null;
 let browserManager: BrowserSessionManager | null = null;
+let computerUseManager: ComputerUseManager | null = null;
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 1.7;
 const ZOOM_STEP = 0.1;
@@ -369,6 +371,12 @@ if (!singleInstanceLock) {
       }
     });
     notesStore = new NotesStore(app.getPath("userData"));
+    computerUseManager = new ComputerUseManager(app.getPath("userData"), (computerState) => {
+      BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, {
+        type: "computer_state_updated",
+        state: computerState,
+      }));
+    });
     browserManager = new BrowserSessionManager(
       () => mainWindow,
       (browserState) => {
@@ -383,8 +391,9 @@ if (!singleInstanceLock) {
     const workspaces = store.listWorkspaces();
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
-    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager, notesStore));
-    registerIpc(store, runtime, state, browserManager, notesStore);
+    computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
+    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager));
+    registerIpc(store, runtime, state, browserManager, notesStore, computerUseManager);
     installUpdateService();
     await createWindow();
     handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));
@@ -400,6 +409,7 @@ if (!singleInstanceLock) {
 }
 
 app.on("before-quit", () => {
+  computerUseManager?.stop();
   browserManager?.destroyAll();
   store?.close();
 });

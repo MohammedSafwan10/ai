@@ -1,4 +1,4 @@
-import { Bot, Globe2, MessageSquareMore, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Bot, Globe2, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, SubagentRecord, ToolEventRecord } from "../../shared/types";
@@ -129,7 +129,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
-                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool) || isBrowserTool(tool)) && (
+                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool)) && (
                   isTerminalOutputTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
@@ -137,6 +137,10 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                   ) : isBrowserTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <BrowserOutputPanel tool={tool} />
+                    )
+                  ) : isComputerTool(tool) ? (
+                    expandedOutputIds.has(tool.id) && (
+                      <ComputerOutputPanel tool={tool} />
                     )
                   ) : isQuestionTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
@@ -216,7 +220,7 @@ function ToolTitleLine({
   live: boolean;
   onToggle: () => void;
 }) {
-  const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool) || isBrowserTool(tool);
+  const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool);
   const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
   if (!canExpand) {
     return (
@@ -232,7 +236,7 @@ function ToolTitleLine({
       onClick={onToggle}
       title={expanded ? "Collapse output" : "Expand output"}
     >
-      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : <Terminal size={13} />}
+      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : isComputerTool(tool) ? <MonitorCog size={13} /> : <Terminal size={13} />}
       <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       {preview && <code>{preview}</code>}
     </button>
@@ -324,6 +328,20 @@ function BrowserOutputPanel({ tool }: { tool: ToolEventRecord }) {
   );
 }
 
+function ComputerOutputPanel({ tool }: { tool: ToolEventRecord }) {
+  const details = computerDetails(tool);
+  return (
+    <div className="browser-tool-panel computer-tool-panel">
+      {details.map((detail) => (
+        <section key={detail.label}>
+          <small>{detail.label}</small>
+          <pre>{detail.value}</pre>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function QuestionAnswerPanel({ tool }: { tool: ToolEventRecord }) {
   const questions = normalizeQuestionArgs(tool.args.questions);
   const answers = normalizeAnswerResult(tool.result?.data, tool.result?.output || tool.output || "");
@@ -381,6 +399,9 @@ const isTerminalOutputTool = (tool: ToolEventRecord) =>
 
 const isBrowserTool = (tool: ToolEventRecord) =>
   tool.name.startsWith("browser_");
+
+const isComputerTool = (tool: ToolEventRecord) =>
+  tool.name.startsWith("computer_");
 
 const isQuestionTool = (tool: ToolEventRecord) =>
   tool.name === "request_user_input";
@@ -520,6 +541,102 @@ const browserDetails = (tool: ToolEventRecord): Array<{ label: string; value: st
   if (details.length === 0) details.push({ label: "Details", value: "(no browser details)" });
   return dedupeBrowserDetails(details).slice(0, 8);
 };
+
+const computerDetails = (tool: ToolEventRecord): Array<{ label: string; value: string }> => {
+  const data = objectValue(tool.result?.data);
+  const result = objectValue(data.result);
+  const trace = objectValue(data.trace);
+  const traceResult = objectValue(trace.result);
+  const output = displayOutput(tool).trim();
+  const details: Array<{ label: string; value: string }> = [];
+  const backend = stringValue(data.backend) || stringValue(result.backend) || stringValue(trace.backend);
+  if (backend) details.push({ label: "Backend", value: backend });
+  const window = firstRecord(
+    result.window,
+    data.window,
+    objectValue(trace.after).window,
+    objectValue(trace.before).window,
+  );
+  if (window) {
+    details.push({
+      label: "Window",
+      value: [
+        stringValue(window.title),
+        stringValue(window.processName) || stringValue(window.process),
+        stringValue(window.id) || stringValue(window.handle),
+      ].filter(Boolean).join("\n"),
+    });
+  }
+  const diagnosis = firstRecord(
+    data.diagnosis,
+    result.diagnosis,
+    trace.diagnosis,
+    traceResult.diagnosis,
+  );
+  if (diagnosis) {
+    details.push({ label: "Diagnosis", value: compactBrowserText(formatComputerRecord(diagnosis), 2600) });
+  }
+  const finding = stringValue(data.finding) || stringValue(result.finding) || stringValue(trace.finding);
+  if (finding) details.push({ label: "Finding", value: compactBrowserText(finding, 1800) });
+  const action = stringValue(data.action) || stringValue(result.action) || stringValue(trace.action);
+  const success = booleanLabel(data.success ?? result.success ?? trace.success ?? tool.result?.success);
+  if (action || success) details.push({ label: "Action", value: [action, success].filter(Boolean).join("\n") });
+  if (output) details.push({ label: tool.result?.success === false ? "Error" : "Output", value: compactBrowserText(output, 2600) });
+  const windows = arraySummary(data.windows || result.windows, (item) => {
+    const entry = objectValue(item);
+    return [
+      stringValue(entry.title) || "(untitled)",
+      stringValue(entry.processName) || stringValue(entry.process),
+      stringValue(entry.capability),
+    ].filter(Boolean).join(" — ");
+  });
+  if (windows) details.push({ label: "Windows", value: windows });
+  const apps = arraySummary(data.apps || result.apps, (item) => {
+    const entry = objectValue(item);
+    return [
+      stringValue(entry.name),
+      stringValue(entry.source) && `[${stringValue(entry.source)}]`,
+      stringValue(entry.executablePath) || stringValue(entry.shortcutPath) || stringValue(entry.installLocation),
+      typeof entry.score === "number" ? `score ${entry.score}` : "",
+    ].filter(Boolean).join(" ");
+  });
+  if (apps) details.push({ label: "Apps", value: apps });
+  const artifacts = arraySummary([
+    ...stringArray(data.artifactPaths),
+    ...stringArray(result.artifactPaths),
+    ...stringArray(trace.artifactPaths),
+    stringValue(data.artifactPath),
+    stringValue(result.artifactPath),
+    stringValue(trace.artifactPath),
+  ].filter(Boolean), (item) => String(item));
+  if (artifacts) details.push({ label: "Artifacts", value: artifacts });
+  if (details.length === 0) details.push({ label: "Details", value: "(no computer-use details)" });
+  return dedupeBrowserDetails(details).slice(0, 8);
+};
+
+const firstRecord = (...values: unknown[]): Record<string, unknown> | null => {
+  for (const value of values) {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  }
+  return null;
+};
+
+const formatComputerRecord = (value: Record<string, unknown>) => {
+  const lines = [
+    stringValue(value.classification) && `classification: ${stringValue(value.classification)}`,
+    stringValue(value.summary) && `summary: ${stringValue(value.summary)}`,
+    stringValue(value.reason) && `reason: ${stringValue(value.reason)}`,
+    stringValue(value.capability) && `capability: ${stringValue(value.capability)}`,
+    stringValue(value.nextStep) && `next: ${stringValue(value.nextStep)}`,
+  ].filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : JSON.stringify(value, null, 2);
+};
+
+const booleanLabel = (value: unknown) =>
+  typeof value === "boolean" ? `success: ${value ? "yes" : "no"}` : "";
+
+const stringArray = (value: unknown) =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 
 const dedupeBrowserDetails = (details: Array<{ label: string; value: string }>) => {
   const output = details.find((detail) => detail.label === "Output");

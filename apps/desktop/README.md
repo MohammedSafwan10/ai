@@ -33,6 +33,7 @@ Current desktop tools include:
 - `desktop_git_status` and `desktop_git_diff` - concise git inspection, including clean non-repo messages.
 - `request_user_input` - Plan Mode questions with user-selected answers.
 - `browser_*` - built-in browser tools for tabs, screenshots, extraction, search, PDF evidence, form workflows, workflow replay, assertions, evidence vault records, and failure diagnosis.
+- `computer_*` - optional native Computer Use tools for Windows app/window inspection, desktop snapshots, guarded actions, traces, screenshots, and failure diagnosis.
 
 ## Plan Mode
 
@@ -59,9 +60,10 @@ The renderer includes:
 - Review/undo surfaces for file changes.
 - Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
 - Built-in Notes panel with global/workspace drafts, file-backed notes, Save As, and agent notes tools.
+- Optional Computer Use mode for guarded native Windows app control with semantic snapshots, action traces, and hard safety blocks.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
-- Recovery notice if the local JSON store is corrupt and Privora has to back it up.
+- Clear recovery/error notices if local SQLite storage cannot be opened safely.
 
 ## Architecture
 
@@ -70,7 +72,8 @@ src/
   main/
     agent/          Agent runtime, providers, tools, diagnostics, context, approvals
     billing/        Appwrite account handoff, local browser auth callback, AI credit summary
-    db/             Local JSON store, recovery, workspaces, threads, settings, secrets
+    computer/       Native Computer Use backends, safety rules, tool adapter
+    db/             SQLite store, artifacts, workspaces, threads, settings, secrets
     ipc/            Main-process IPC channels and validation
     security/       Workspace path checks and redaction helpers
     terminal/       PTY/process session manager
@@ -161,6 +164,10 @@ The built-in browser agent is documented in [docs/browser-agent.md](docs/browser
 
 The built-in notepad is documented in [docs/notes.md](docs/notes.md). It covers global/workspace notes, file-backed notes, autosaved local drafts, large-note behavior, and agent note tools.
 
+## Computer Use
+
+The native desktop-control surface is documented in [docs/computer-use.md](docs/computer-use.md). V1 uses Privora's Windows-native backend by default, keeps Cua as a disabled experimental adapter slot, and hard-blocks secure desktop, credentials/MFA/payment data, hidden secrets, elevated/system boundaries, and irreversible real-world actions.
+
 ## Production Updates
 
 Windows x64 builds use the Appwrite-hosted update feed at:
@@ -195,7 +202,7 @@ Run:
 npm test
 ```
 
-The tests cover storage recovery, storage cleanup, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, and runtime behavior.
+The tests cover SQLite storage, storage cleanup, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, Computer Use safety/tool contracts, and runtime behavior.
 
 For a quick compile check:
 
@@ -209,7 +216,7 @@ npm run lint
 - The app validates IPC payloads with typed schemas.
 - Risky edits and terminal commands can require approval depending on permission mode.
 - Plan Mode blocks mutating actions by design.
-- Store corruption is handled by backing up the damaged data file and starting with a clean store instead of silently losing state.
+- SQLite failures surface clear recovery errors instead of silently resetting data.
 - Do not commit local secrets or generated runtime data.
 
 ## Repository Hygiene

@@ -213,6 +213,34 @@ export const titleForTool = (call: DesktopToolCall) => {
       return `Save note ${args.noteId || args.note_id || ""}`.trim();
     case "notes_delete":
       return `Delete note ${args.noteId || args.note_id || ""}`.trim();
+    case "computer_capabilities":
+      return "Check Computer Use";
+    case "computer_list_windows":
+      return "List desktop windows";
+    case "computer_find_apps":
+      return `Find app ${args.query || args.app || args.name || ""}`.trim();
+    case "computer_focus_window":
+      return `Focus window ${args.windowId || args.window_id || ""}`.trim();
+    case "computer_snapshot":
+      return "Capture desktop snapshot";
+    case "computer_inspect":
+      return `Inspect desktop ${args.kind || ""}`.trim();
+    case "computer_act":
+      return `Desktop ${args.action || "action"}`;
+    case "computer_wait":
+      return `Wait for desktop ${args.for || args.kind || ""}`.trim();
+    case "computer_trace":
+      return `Trace desktop ${args.action || "action"}`;
+    case "computer_verify":
+      return "Verify desktop";
+    case "computer_screenshot":
+      return "Screenshot desktop";
+    case "computer_open_app":
+      return `Open app ${args.app || args.path || ""}`.trim();
+    case "computer_clipboard":
+      return `Desktop clipboard ${args.action || ""}`.trim();
+    case "computer_stop":
+      return "Stop Computer Use";
     case "request_user_input":
       return `Questions`;
     case "spawn_agent":
@@ -236,6 +264,7 @@ export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["categor
   if (isSubagentToolName(call.name)) return "agent";
   if (call.name.startsWith("browser_")) return "other";
   if (call.name.startsWith("notes_")) return "other";
+  if (call.name.startsWith("computer_")) return "other";
   if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
   if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
   if (call.name === "desktop_run_diagnostics") return "diagnostic";
@@ -293,6 +322,20 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "notes_update") return "Updating note";
     if (call.name === "notes_save") return "Saving note";
     if (call.name === "notes_delete") return "Deleting note";
+    if (call.name === "computer_capabilities") return "Checking Computer Use";
+    if (call.name === "computer_list_windows") return "Listing windows";
+    if (call.name === "computer_find_apps") return "Finding apps";
+    if (call.name === "computer_focus_window") return "Focusing window";
+    if (call.name === "computer_snapshot") return "Capturing desktop";
+    if (call.name === "computer_inspect") return "Inspecting desktop";
+    if (call.name === "computer_act") return "Using desktop";
+    if (call.name === "computer_wait") return "Waiting for desktop";
+    if (call.name === "computer_trace") return "Tracing desktop";
+    if (call.name === "computer_verify") return "Verifying desktop";
+    if (call.name === "computer_screenshot") return "Capturing desktop";
+    if (call.name === "computer_open_app") return "Opening app";
+    if (call.name === "computer_clipboard") return "Using clipboard";
+    if (call.name === "computer_stop") return "Stopping Computer Use";
     if (call.name === "desktop_read_file") return "Reading file";
     if (call.name === "desktop_list_dir") return "Inspecting workspace";
     return status.replace(/_/g, " ");

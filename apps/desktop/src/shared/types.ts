@@ -669,6 +669,165 @@ export interface BrowserOverlayInput {
   height?: number;
 }
 
+export type ComputerUseBackendId = "privora_windows_native" | "cua_driver";
+
+export type ComputerUseCapability =
+  | "uia_direct"
+  | "window_message"
+  | "send_input_foreground"
+  | "blocked_by_uipi"
+  | "elevated"
+  | "secure_desktop"
+  | "unsupported_canvas";
+
+export type ComputerUseActionKind =
+  | "click"
+  | "double_click"
+  | "type"
+  | "press"
+  | "scroll"
+  | "drag"
+  | "set_value"
+  | "invoke"
+  | "select"
+  | "focus";
+
+export type ComputerUseDiagnosisKind =
+  | "ok"
+  | "element_missing"
+  | "element_disabled"
+  | "validation_failed"
+  | "navigation_failed"
+  | "network_error"
+  | "auth_error"
+  | "console_error"
+  | "timeout"
+  | "stale_target"
+  | "blocked_by_policy"
+  | "blocked_by_uipi"
+  | "secure_desktop"
+  | "unsupported_surface"
+  | "backend_unavailable";
+
+export interface ComputerUseRectRecord {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ComputerWindowRecord {
+  id: string;
+  title: string;
+  processName: string;
+  processId: number;
+  executablePath?: string;
+  bounds?: ComputerUseRectRecord;
+  focused: boolean;
+  elevated?: boolean;
+  capabilities: ComputerUseCapability[];
+  updatedAt: number;
+}
+
+export interface ComputerAppRecord {
+  id: string;
+  name: string;
+  source: "start_menu" | "app_paths" | "registry" | "path" | "common_folder";
+  executablePath?: string;
+  shortcutPath?: string;
+  arguments?: string;
+  installLocation?: string;
+  score: number;
+}
+
+export interface ComputerSnapshotNodeRecord {
+  ref: string;
+  role: string;
+  name: string;
+  value?: string;
+  automationId?: string;
+  enabled?: boolean;
+  focused?: boolean;
+  sensitive?: boolean;
+  bounds?: ComputerUseRectRecord;
+  capability?: ComputerUseCapability;
+  children?: ComputerSnapshotNodeRecord[];
+}
+
+export interface ComputerSnapshotRecord {
+  backend: ComputerUseBackendId;
+  mode: "uia" | "vision" | "summary";
+  window?: ComputerWindowRecord;
+  nodes: ComputerSnapshotNodeRecord[];
+  text: string;
+  artifactPaths?: string[];
+  diagnosis?: ComputerUseDiagnosisRecord;
+  createdAt: number;
+}
+
+export interface ComputerUseDiagnosisRecord {
+  kind: ComputerUseDiagnosisKind;
+  message: string;
+  capability?: ComputerUseCapability;
+}
+
+export interface ComputerUseActionResultRecord {
+  backend: ComputerUseBackendId;
+  action?: ComputerUseActionKind | string;
+  success: boolean;
+  finding: string;
+  diagnosis?: ComputerUseDiagnosisRecord;
+  window?: ComputerWindowRecord;
+  artifactPaths?: string[];
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface ComputerUseTraceRecord {
+  id: string;
+  backend: ComputerUseBackendId;
+  action: ComputerUseActionKind | string;
+  before?: ComputerSnapshotRecord;
+  after?: ComputerSnapshotRecord;
+  result: ComputerUseActionResultRecord;
+  finding: string;
+  diagnosis?: ComputerUseDiagnosisRecord;
+  artifactPaths?: string[];
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface ComputerUseStateRecord {
+  enabled: boolean;
+  backend: ComputerUseBackendId;
+  active: boolean;
+  lastAction?: string;
+  lastFinding?: string;
+  activeWindow?: ComputerWindowRecord;
+  recentTraces: ComputerUseTraceRecord[];
+  updatedAt: number;
+}
+
+export interface ComputerUseInputBase {
+  backend?: ComputerUseBackendId;
+  windowId?: string;
+}
+
+export interface ComputerUseActionInput extends ComputerUseInputBase {
+  action: ComputerUseActionKind | string;
+  ref?: string;
+  targetRef?: string;
+  text?: string;
+  key?: string;
+  value?: string;
+  x?: number;
+  y?: number;
+  deltaX?: number;
+  deltaY?: number;
+  durationMs?: number;
+  includeScreenshot?: boolean;
+}
+
 export type ThreadTitleSource = "placeholder" | "agent" | "user" | "fallback";
 
 export interface SettingsRecord {
@@ -677,6 +836,7 @@ export interface SettingsRecord {
   reasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   collaborationMode: CollaborationMode;
+  computerUseEnabled: boolean;
   theme: "light" | "dark" | "system";
   cliproxyBaseUrl: string;
   appwriteEndpoint: string;
@@ -1185,6 +1345,20 @@ export type DesktopToolName =
   | "notes_update"
   | "notes_save"
   | "notes_delete"
+  | "computer_capabilities"
+  | "computer_list_windows"
+  | "computer_find_apps"
+  | "computer_focus_window"
+  | "computer_snapshot"
+  | "computer_inspect"
+  | "computer_act"
+  | "computer_wait"
+  | "computer_trace"
+  | "computer_verify"
+  | "computer_screenshot"
+  | "computer_stop"
+  | "computer_open_app"
+  | "computer_clipboard"
   | "browser_open"
   | "browser_open_link"
   | "browser_snapshot"
@@ -1270,6 +1444,7 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "context_usage_updated"; usage: ContextUsageRecord }
   | { type: "ai_credit_summary_updated"; summary: AiCreditSummaryRecord }
   | { type: "browser_state_updated"; state: BrowserPanelStateRecord }
+  | { type: "computer_state_updated"; state: ComputerUseStateRecord }
   | { type: "browser_tools_menu_action"; workspaceId: string; action: BrowserToolsMenuAction }
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
@@ -1306,6 +1481,7 @@ export interface SaveSettingsInput {
   reasoningEffort?: ReasoningEffort;
   permissionMode?: PermissionMode;
   collaborationMode?: CollaborationMode;
+  computerUseEnabled?: boolean;
   theme?: "light" | "dark" | "system";
   cliproxyBaseUrl?: string;
   appwriteEndpoint?: string;

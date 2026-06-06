@@ -366,6 +366,168 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
+    name: "computer_capabilities",
+    description: "Report Privora Computer Use backend availability, capabilities, limitations, and diagnostics. Use before broad desktop-control tasks or when a backend appears stale.",
+    parameters: schema({
+      backend: textProperty("Optional backend: privora_windows_native or cua_driver. Defaults to Privora's Windows-native backend."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_list_windows",
+    description: "List visible top-level desktop windows with process, bounds, focus state, and capability labels.",
+    parameters: schema({
+      backend: textProperty("Optional backend: privora_windows_native or cua_driver."),
+      includeAll: boolProperty("If true, include all visible top-level windows where the backend supports it."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_find_apps",
+    description: "Search installed Windows apps by friendly name using Start Menu shortcuts, App Paths, registry entries, PATH commands, and common app folders. Use before computer_open_app when the user gives a product name like Antigravity IDE instead of an exact exe path.",
+    parameters: schema({
+      backend: textProperty("Optional backend: privora_windows_native or cua_driver."),
+      query: textProperty("Friendly app name or partial name, for example Antigravity IDE, Chrome, VS Code, or Calculator."),
+      limit: numberProperty("Maximum candidates to return. Default 10, max 30."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_focus_window",
+    description: "Bring a known desktop window to the foreground. Reports UIPI/foreground-control failures as diagnoses.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      windowId: textProperty("Window id from computer_list_windows."),
+    }, ["windowId"]),
+  },
+  {
+    type: "function",
+    name: "computer_snapshot",
+    description: "Capture a semantic-first desktop snapshot for a window using UI Automation where possible. Returns bounded refs, roles, names, bounds, and capability labels.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      windowId: textProperty("Optional window id. Defaults to the foreground window."),
+      depth: numberProperty("Optional UIA tree depth, default 3, max 5."),
+      includeBoxes: boolProperty("If true, include element bounding boxes. Default true where available."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_inspect",
+    description: "Inspect desktop state. Kinds: active_window, windows, uia, screenshot, or capabilities.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      kind: textProperty("Inspection kind: active_window, windows, uia, screenshot, or capabilities."),
+      windowId: textProperty("Optional window id."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_act",
+    description: "Perform one desktop action using semantic refs first, then honest foreground input fallback. Requires Computer Use mode. Hard-blocks credentials, secure desktop, and irreversible real-world actions.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      windowId: textProperty("Optional window id."),
+      action: textProperty("Action: click, double_click, type, press, scroll, drag, set_value, invoke, select, or focus."),
+      ref: textProperty("Preferred ref from computer_snapshot."),
+      targetRef: textProperty("Alias for ref."),
+      text: textProperty("Text to type. Never use for passwords, MFA, card data, API keys, tokens, or secrets."),
+      key: textProperty("Key to press, such as Enter, Escape, Tab, Ctrl+A, or PageDown."),
+      value: textProperty("Value for set_value or scroll amount."),
+      x: numberProperty("Screen x coordinate fallback."),
+      y: numberProperty("Screen y coordinate fallback."),
+      deltaX: numberProperty("Drag or scroll horizontal delta."),
+      deltaY: numberProperty("Drag or scroll vertical delta."),
+      durationMs: numberProperty("Optional action duration for gestures."),
+      includeScreenshot: boolProperty("If true, also save screenshot evidence where supported."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "computer_wait",
+    description: "Wait for desktop evidence: text, window_title, focused_window, or idle. Use after opening apps or dynamic actions.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      for: textProperty("Wait target: text, window_title, focused_window, or idle."),
+      value: textProperty("Expected text or title fragment."),
+      windowId: textProperty("Optional window id."),
+      timeoutMs: numberProperty("Timeout in milliseconds. Default 5000, max 30000."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_trace",
+    description: "Run one desktop action with before/after snapshots, optional screenshot evidence, and concise diagnosis.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      windowId: textProperty("Optional window id."),
+      action: textProperty("Action: click, double_click, type, press, scroll, drag, set_value, invoke, select, or focus."),
+      ref: textProperty("Preferred ref from computer_snapshot."),
+      targetRef: textProperty("Alias for ref."),
+      text: textProperty("Text to type. Never use for passwords, MFA, card data, API keys, tokens, or secrets."),
+      key: textProperty("Key to press."),
+      value: textProperty("Action value."),
+      x: numberProperty("Screen x coordinate fallback."),
+      y: numberProperty("Screen y coordinate fallback."),
+      deltaX: numberProperty("Drag or scroll horizontal delta."),
+      deltaY: numberProperty("Drag or scroll vertical delta."),
+      includeScreenshot: boolProperty("If true, save screenshot evidence."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "computer_verify",
+    description: "Verify current desktop state using a text or window-title expectation and compact evidence.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      text: textProperty("Expected text in the active/window snapshot."),
+      expectedText: textProperty("Alias for text."),
+      windowTitle: textProperty("Expected window title fragment."),
+      windowId: textProperty("Optional window id."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_screenshot",
+    description: "Capture desktop, window, or region screenshot evidence to a local artifact path. Returns paths only, never base64.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      mode: textProperty("desktop, window, or region. Defaults to desktop/window based on supplied ids."),
+      windowId: textProperty("Optional window id."),
+      x: numberProperty("Region x coordinate."),
+      y: numberProperty("Region y coordinate."),
+      width: numberProperty("Region width."),
+      height: numberProperty("Region height."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_open_app",
+    description: "Open a desktop application by app name or absolute path. Requires Computer Use mode.",
+    parameters: schema({
+      backend: textProperty("Optional backend."),
+      app: textProperty("Application executable/name, for example notepad.exe or calc.exe."),
+      path: textProperty("Absolute executable or document path."),
+      args: stringArrayProperty("Optional process arguments."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "computer_clipboard",
+    description: "Get, set, or clear desktop clipboard text. Output is redacted and bounded. Requires Computer Use mode.",
+    parameters: schema({
+      action: textProperty("Clipboard action: get_text, set_text, or clear."),
+      text: textProperty("Text for set_text. Never store passwords, MFA, card data, API keys, tokens, or secrets."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "computer_stop",
+    description: "Stop current Computer Use activity and clear transient refs/cursors. Pause/take-over is immediate after the current backend action returns.",
+    parameters: schema({}, []),
+  },
+  {
+    type: "function",
     name: "browser_open",
     description: "Open an http(s) URL in Privora's built-in workspace browser. Use the exact local dev/static server URL being tested. Agent control is automatic for localhost and requires approval for external origins.",
     parameters: schema({
@@ -708,7 +870,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "mode", "engine", "value", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }

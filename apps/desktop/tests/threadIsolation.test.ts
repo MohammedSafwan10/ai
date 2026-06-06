@@ -9,6 +9,7 @@ const baseSnapshot = () => ({
     reasoningEffort: "medium" as const,
     permissionMode: "ask_risky" as const,
     collaborationMode: "default" as const,
+    computerUseEnabled: false,
     theme: "system" as const,
     cliproxyBaseUrl: "http://127.0.0.1:8317",
     appwriteEndpoint: "https://sgp.cloud.appwrite.io/v1",

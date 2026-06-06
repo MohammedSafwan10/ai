@@ -27,6 +27,14 @@ describe("desktop tool definitions", () => {
     expect(names).toContain("browser_assert");
     expect(names).toContain("browser_evidence_vault");
     expect(names).toContain("browser_diagnose");
+    expect(names).toContain("computer_capabilities");
+    expect(names).toContain("computer_list_windows");
+    expect(names).toContain("computer_find_apps");
+    expect(names).toContain("computer_snapshot");
+    expect(names).toContain("computer_act");
+    expect(names).toContain("computer_trace");
+    expect(names).toContain("computer_verify");
+    expect(names).toContain("computer_stop");
   });
 
   it("parses subagent tool calls", () => {
@@ -65,6 +73,18 @@ describe("desktop tool definitions", () => {
       id: "call-workflow",
       name: "browser_workflow",
       arguments: { action: "start_recording", name: "Smoke" },
+    });
+  });
+
+  it("parses Computer Use tool calls", () => {
+    expect(parseDesktopToolCall(
+      "computer_trace",
+      JSON.stringify({ action: "click", ref: "c1", includeScreenshot: true }),
+      "call-computer",
+    )).toMatchObject({
+      id: "call-computer",
+      name: "computer_trace",
+      arguments: { action: "click", ref: "c1", includeScreenshot: true },
     });
   });
 });

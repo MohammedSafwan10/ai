@@ -200,6 +200,55 @@ describe("desktop permission classifier", () => {
     });
   });
 
+  it("keeps read-only Computer Use inspection safe", () => {
+    expect(classifyToolCall(call("computer_capabilities"), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("computer_list_windows"), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("computer_find_apps", { query: "notepad" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("computer_snapshot", { windowId: "123" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+  });
+
+  it("requires approval for native desktop control unless full access is active", () => {
+    expect(classifyToolCall(call("computer_act", { action: "click", ref: "c2" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("computer_open_app", { app: "notepad.exe" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("computer_trace", { action: "click", ref: "c2" }), "yolo")).toMatchObject({
+      risk: "risky",
+      requiresApproval: false,
+    });
+  });
+
+  it("hard-blocks sensitive Computer Use actions even in full access", () => {
+    expect(classifyToolCall(call("computer_act", { action: "type", text: "password: hunter2" }), "yolo")).toMatchObject({
+      risk: "blocked",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("computer_trace", { action: "click", text: "confirm transfer" }), "yolo")).toMatchObject({
+      risk: "blocked",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("computer_clipboard", { action: "set_text", text: "api_key=sk-test" }), "yolo")).toMatchObject({
+      risk: "blocked",
+      requiresApproval: false,
+    });
+  });
+
   it("matches reusable workspace tool approval scopes", () => {
     const scope = approvalScope({ kind: "tool_workspace", toolName: "desktop_delete_path" });
     expect(findMatchingApprovalScope(call("desktop_delete_path", { path: "old.txt" }), [scope])).toBe(scope);
