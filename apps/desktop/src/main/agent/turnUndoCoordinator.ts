@@ -25,7 +25,7 @@ export class TurnUndoCoordinator {
     if (!message || message.role !== "assistant") return null;
 
     const thread = this.store.getThread(message.threadId);
-    const tools = this.store.listToolEvents(message.threadId).filter((tool) => tool.messageId === messageId);
+    const tools = this.store.listToolEventsForMessage(message.threadId, messageId);
     const operations = collectUndoOperations(tools);
     if (operations.length === 0) return null;
 

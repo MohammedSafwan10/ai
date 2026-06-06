@@ -928,7 +928,7 @@ export class AgentRuntime {
       const hasVisibleWork = Boolean(
         assistantText.trim() ||
         assistantThought.trim() ||
-        this.store.listToolEvents(options.threadId).some((event) => event.messageId === options.assistantMessage.id),
+        this.store.hasToolEventsForMessage(options.threadId, options.assistantMessage.id),
       );
       this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
       transitionRun(run, aborted ? "stopped" : "failed", {
@@ -1088,9 +1088,8 @@ export class AgentRuntime {
       lastPreview: compactPreview(text, 240),
     });
     if (status === "completed" && updated) {
-      const messages = this.store.listMessages(threadId);
-      const latestUser = [...messages].reverse().find((message) => message.role === "user");
-      const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+      const latestUser = this.store.findLatestMessage(threadId, "user");
+      const latestAssistant = this.store.findLatestMessage(threadId, "assistant");
       const workspace = updated.workspaceId ? this.store.getWorkspace(updated.workspaceId)?.path : undefined;
       if (latestUser && latestAssistant && latestUser.createdAt > latestAssistant.createdAt && workspace && !this.activeRuns.has(threadId)) {
         this.store.updateSubagent(threadId, { status: "pending" });
@@ -1552,8 +1551,7 @@ export class AgentRuntime {
   private startExistingSubagentTurn(agent: SubagentRecord, workspaceRoot: string) {
     if (this.activeRuns.has(agent.threadId)) return;
     const timestamp = now();
-    const latestUserMessage = [...this.store.listMessages(agent.threadId)].reverse()
-      .find((message) => message.role === "user" && message.content.trim());
+    const latestUserMessage = this.store.findLatestMessage(agent.threadId, "user");
     const assistantMessage: ChatMessageRecord = {
       id: crypto.randomUUID(),
       threadId: agent.threadId,
@@ -1667,7 +1665,7 @@ export class AgentRuntime {
   private ensureFallbackThreadTitle(threadId: string) {
     const thread = this.store.getThread(threadId);
     if (!thread || !isPlaceholderThreadTitle(thread)) return;
-    const firstUserMessage = this.store.listMessages(threadId).find((message) => message.role === "user" && message.content.trim());
+    const firstUserMessage = this.store.findFirstMessage(threadId, "user");
     const fallbackTitle = firstUserMessage ? fallbackThreadTitle(firstUserMessage.content) : "";
     if (!fallbackTitle) return;
     const updated = this.store.updatePlaceholderThreadTitle(threadId, fallbackTitle, "fallback");
@@ -1723,13 +1721,8 @@ export class AgentRuntime {
   }
 
   private closeDanglingDraftTools(threadId: string, messageId: string, activeCallIds: Set<string>) {
-    this.store.listToolEvents(threadId)
-      .filter((event) =>
-        event.messageId === messageId &&
-        event.callId.startsWith("draft_") &&
-        !activeCallIds.has(event.callId) &&
-        (event.status === "preparing" || event.status === "running")
-      )
+    this.store.listActiveDraftToolEvents(threadId, messageId)
+      .filter((event) => !activeCallIds.has(event.callId))
       .forEach((event) => {
         const call: DesktopToolCall = {
           id: event.callId,
@@ -1752,7 +1745,7 @@ export class AgentRuntime {
   }
 
   private appendToolOutput(threadId: string, messageId: string, call: DesktopToolCall, callId: string, delta: string) {
-    const existing = this.store.listToolEvents(threadId).find((event) => event.callId === callId);
+    const existing = this.store.findToolEventByCall(threadId, callId);
     if (!existing) return null;
     const output = compactLiveOutput(`${existing.output || ""}${delta}`);
     return this.updateToolEvent(threadId, messageId, call, {
@@ -1804,16 +1797,11 @@ export class AgentRuntime {
   }
 
   private findExistingToolEvent(threadId: string, call: DesktopToolCall, nextStatus?: ToolEventRecord["status"]) {
-    const events = this.store.listToolEvents(threadId);
-    const direct = events.find((event) => event.callId === call.id && event.name === call.name);
+    const direct = this.store.findToolEventByCall(threadId, call.id, call.name);
     if (direct) return direct;
     if (nextStatus === "preparing") return undefined;
-    return events
-      .slice()
-      .reverse()
+    return this.store.listPreparingToolEvents(threadId, call.name)
       .find((event) =>
-        event.name === call.name &&
-        event.status === "preparing" &&
         event.callId.startsWith("draft_") &&
         this.isDraftForCall(event.args, call.arguments, call.name)
       );

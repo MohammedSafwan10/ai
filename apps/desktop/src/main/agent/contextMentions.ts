@@ -36,7 +36,7 @@ export const searchContextMentions = async (
 
   if (parsed.kind === "terminal") {
     return store
-      .listToolEvents(threadId)
+      .listRecentToolEvents(threadId, 100)
       .filter((tool) =>
         ["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(tool.name) &&
         (tool.output || tool.result?.output)
@@ -100,7 +100,7 @@ export const buildMentionContext = async (
       continue;
     }
     if (mention.type === "terminal") {
-      const tool = store.listToolEvents(threadId).find((event) => event.callId === mention.id || event.id === mention.id);
+      const tool = store.findToolEventByCall(threadId, mention.id) || store.getToolEvent(mention.id);
       const command = String(tool?.args.command || mention.label || "Terminal output");
       const output = compactTextForModel(tool?.output || tool?.result?.output || "", MAX_TERMINAL_CONTEXT_CHARS);
       blocks.push([

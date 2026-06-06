@@ -18,7 +18,7 @@ export const buildProviderHistory = (
   messageCharLimit = MAX_MESSAGE_CHARS,
 ): ProviderMessage[] =>
   store
-    .listMessages(threadId)
+    .listRecentMessages(threadId, MAX_HISTORY_MESSAGES + 1)
     .filter((message) => message.id !== assistantMessageId)
     .slice(-MAX_HISTORY_MESSAGES)
     .map((message): ProviderMessage => {
@@ -30,7 +30,7 @@ export const buildProviderHistory = (
           type: "image" as const,
           name: attachment.name,
           mimeType: attachment.mimeType,
-          data: attachment.base64,
+          data: attachment.base64 || "",
         })),
       ];
       return {
@@ -69,9 +69,8 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
     ? "- Chat title: untitled. If the user's request has a clear topic, emit one hidden title tag early in the turn: <thread_title>Short task title</thread_title>. Keep it under 48 characters, no punctuation flourish, no newline, and do not mention this tag in normal chat text."
     : `- Chat title: ${thread?.title ? `"${thread.title}"` : "already named"}. Do not emit a <thread_title> tag.`;
   const recentTools = store
-    .listToolEvents(threadId)
+    .listRecentToolEvents(threadId, 14)
     .filter((tool) => tool.status !== "preparing")
-    .slice(-14)
     .map((tool) => {
       const status = tool.status.replace(/_/g, " ");
       const output = compactTextForModel(tool.output || tool.result?.error || "", MAX_TOOL_OUTPUT_CHARS);
