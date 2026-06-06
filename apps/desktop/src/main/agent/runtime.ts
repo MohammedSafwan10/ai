@@ -385,6 +385,16 @@ export class AgentRuntime {
       reason: "Stop requested. Cleaning up active work.",
       resumable: true,
     });
+    if (run) {
+      const message = this.store.getMessage(run.assistantMessageId);
+      if (message) {
+        const assistantText = message.content || "Stopped. Completed tool changes were kept.";
+        if (!message.content) recordAssistantTextPart(message, "final_answer", 0, assistantText.length);
+        this.updateAssistant(message, assistantText, message.thought || "", "stopped");
+      }
+      this.activeRuns.delete(threadId);
+      this.emit({ type: "run_state", threadId, run: this.getActiveRun(threadId) });
+    }
     this.flushThreadToolOutputs(threadId);
     const approvals = Array.from(new Set(Array.from(this.pendingApprovalByCallId.values()).filter((item) => item.threadId === threadId)));
     approvals.forEach((bundle) => {
@@ -413,7 +423,7 @@ export class AgentRuntime {
         error: "Stopped before user input was answered.",
         data: { answers: {}, interrupted: true },
       }));
-    this.emit({ type: "run_state", threadId, run: run ? toActiveRunState(run) : this.getActiveRun(threadId) });
+    if (!run) this.emit({ type: "run_state", threadId, run: this.getActiveRun(threadId) });
   }
 
   async answerRequestUserInput(input: RequestUserInputResponseInput) {
@@ -573,16 +583,19 @@ export class AgentRuntime {
                 settings.permissionMode,
                 settings.computerUseEnabled,
               );
+              const finalResult = controller.signal.aborted
+                ? { success: false, error: "Stopped before this tool completed." }
+                : result;
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
-                status: result.success ? "done" : "failed",
-                result,
-                output: result.output || result.error,
-                diff: (result as ToolResult & { diff?: string }).diff,
-                diffFiles: (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
+                status: controller.signal.aborted ? "stopped" : finalResult.success ? "done" : "failed",
+                result: finalResult,
+                output: finalResult.output || finalResult.error,
+                diff: controller.signal.aborted ? undefined : (result as ToolResult & { diff?: string }).diff,
+                diffFiles: controller.signal.aborted ? undefined : (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
                 endedAt: now(),
               });
               this.emit({ type: "tool_updated", tool: event });
-              return { call: scheduledCall, result, response: compactToolResultForModel(result, runtimeBudget) };
+              return { call: scheduledCall, result: finalResult, response: compactToolResultForModel(finalResult, runtimeBudget) };
             } catch (error) {
               const result: ToolResult = {
                 success: false,
@@ -860,6 +873,7 @@ export class AgentRuntime {
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
 
         const scheduledResults = await scheduler.drainOrdered();
+        if (controller.signal.aborted) throw new Error("Stopped.");
         for (const item of scheduledResults) {
           toolCount += 1;
           run.toolCount = toolCount;
