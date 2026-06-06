@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { compactProviderHistory } from "../src/main/agent/context";
+import {
+  COMPACTION_SUMMARY_PREFIX,
+  buildCompactedProviderHistory,
+  compactProviderHistory,
+} from "../src/main/agent/context";
 import type { ProviderMessage } from "../src/main/agent/providers/types";
 
 describe("provider history compaction", () => {
@@ -42,5 +46,21 @@ describe("provider history compaction", () => {
 
     expect(flatParts.some((part) => part.type === "function_response" && part.id === "call_older")).toBe(false);
     expect(compacted.some((message) => message.content.includes("Tool result preserved from compacted history"))).toBe(true);
+  });
+
+  it("builds handoff replacement history with retained recent user messages and one summary", () => {
+    const history: ProviderMessage[] = [
+      { role: "user", content: "old request", parts: [{ type: "text", text: "old request" }] },
+      { role: "assistant", content: "old answer", parts: [{ type: "text", text: "old answer" }] },
+      { role: "user", content: "latest important request", parts: [{ type: "text", text: "latest important request" }] },
+    ];
+
+    const compacted = buildCompactedProviderHistory(history, "Progress: changed src/app.ts. Next: run tests.");
+
+    expect(compacted.at(-1)?.content).toContain(COMPACTION_SUMMARY_PREFIX);
+    expect(compacted.at(-1)?.content).toContain("Progress: changed src/app.ts");
+    expect(compacted.filter((message) => message.content.includes(COMPACTION_SUMMARY_PREFIX))).toHaveLength(1);
+    expect(compacted.some((message) => message.content.includes("latest important request"))).toBe(true);
+    expect(compacted.every((message) => !(message.parts || []).some((part) => part.type === "function_response"))).toBe(true);
   });
 });

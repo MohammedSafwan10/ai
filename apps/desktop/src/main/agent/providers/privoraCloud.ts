@@ -101,8 +101,10 @@ export class PrivoraCloudAdapter implements ProviderAdapter {
         action: "chat",
         model: options.model,
         messages: toMessages(options.systemInstruction, options.messages),
-        tools: openRouterDesktopTools(options.collaborationMode),
-        toolChoice: "auto",
+        ...(!options.disableTools ? {
+          tools: openRouterDesktopTools(options.collaborationMode),
+          toolChoice: "auto",
+        } : {}),
         maxOutputTokens: options.maxOutputTokens,
         reasoning: options.reasoning,
       },

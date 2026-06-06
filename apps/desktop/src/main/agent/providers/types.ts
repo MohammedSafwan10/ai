@@ -31,6 +31,7 @@ export interface ProviderStreamOptions {
   signal: AbortSignal;
   threadId?: string;
   maxOutputTokens?: number;
+  disableTools?: boolean;
   cliproxyBaseUrl: string;
   appwriteEndpoint: string;
   appwriteProjectId: string;

@@ -1,13 +1,16 @@
 import type { BrowserWindow } from "electron";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
-import { getModelOption, getProviderForModel, resolveModelRuntimeBudget, type ReasoningEffort } from "../../shared/models";
+import { getModelOption, getProviderForModel, resolveModelRuntimeBudget, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
   ApprovalScopeRecord,
   AssistantThoughtPartRecord,
   ChatMessageRecord,
+  CompactionCheckpointRecord,
+  ContextCompactionReason,
+  ContextCompactionTrigger,
   DesktopEvent,
   DesktopToolCall,
   RequestUserInputQuestionRecord,
@@ -27,7 +30,19 @@ import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
 import { buildAgentsMdContext } from "./agentsMd";
-import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel, sanitizeProviderHistoryForModel } from "./context";
+import {
+  COMPACTION_PROMPT,
+  COMPACTION_SYSTEM_INSTRUCTION,
+  buildCompactedProviderHistory,
+  buildDeterministicCompactionSummary,
+  buildProviderHistory,
+  buildProviderHistoryWithCompaction,
+  buildRuntimeContext,
+  compactProviderHistoryWithInfo,
+  compactToolResultForModel,
+  estimateProviderHistoryTokens,
+  sanitizeProviderHistoryForModel,
+} from "./context";
 import { buildMentionContext } from "./contextMentions";
 import { loadSubagentRoles, pickSubagentNickname, type SubagentRoleConfig } from "./subagents";
 import {
@@ -271,7 +286,7 @@ export class AgentRuntime {
       this.store.upsertMessage(assistantMessage);
       this.emitSnapshot();
 
-      const priorMessages = buildProviderHistory(this.store, input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
+      const priorMessages = buildProviderHistoryWithCompaction(this.store, input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
       const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
       const history = mentionContext
         ? [...priorMessages, textProviderMessage(mentionContext)]
@@ -484,35 +499,30 @@ export class AgentRuntime {
 
     try {
       let continuousIterations = 0;
+      let lastCompactionAttemptTokens = 0;
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
         continuousIterations += 1;
         iteration += 1;
-        const compactInfo = shouldAutoCompactHistory(history, runtimeBudget)
-          ? compactProviderHistoryWithInfo(history, autoCompactTargetTokens(runtimeBudget))
-          : compactProviderHistoryWithInfo(history, runtimeBudget.inputBudgetTokens);
-        history = compactInfo.history;
-        if (compactInfo.compacted && compactInfo.beforeTokens > compactInfo.afterTokens) {
-          const markerCall: DesktopToolCall = {
-            id: `context_compaction_${options.assistantMessage.id}_${iteration}`,
-            name: "context_compaction" as DesktopToolCall["name"],
-            arguments: {
-              beforeTokens: compactInfo.beforeTokens,
-              afterTokens: compactInfo.afterTokens,
-            },
-          };
-          const marker = this.updateToolEvent(options.threadId, options.assistantMessage.id, markerCall, {
-            title: "Context compacted",
-            category: "other",
-            status: "done",
-            result: {
-              success: true,
-              output: `Compacted older context from about ${compactInfo.beforeTokens.toLocaleString()} to ${compactInfo.afterTokens.toLocaleString()} tokens.`,
-            },
+        const estimatedHistoryTokens = estimateProviderHistoryTokens(history);
+        if (
+          shouldAutoCompactHistory(history, runtimeBudget) &&
+          estimatedHistoryTokens > lastCompactionAttemptTokens + 2_000
+        ) {
+          const compacted = await this.compactHistoryForRuntime({
+            threadId: options.threadId,
+            assistantMessageId: options.assistantMessage.id,
+            workspaceRoot: options.workspaceRoot,
+            history,
+            model: effectiveModel,
+            reasoningEffort: effectiveReasoning,
+            collaborationMode: effectiveCollaborationMode,
+            controller,
+            trigger: iteration === 1 && toolCount === 0 ? "pre_turn" : "mid_turn",
+            reason: "context_limit",
             textOffset: assistantText.length,
-            startedAt: now(),
-            endedAt: now(),
           });
-          this.emit({ type: "tool_updated", tool: marker });
+          history = sanitizeProviderHistoryForModel(compacted.history, effectiveModel);
+          lastCompactionAttemptTokens = compacted.afterTokens;
         }
         this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
         run.iteration = iteration;
@@ -1077,6 +1087,151 @@ export class AgentRuntime {
     });
     this.saveCheckpoint(params.options, params.history, params.assistantText, params.assistantThought, params.iteration, params.toolCount, params.recoveryAttempts, params.run);
     return bundle;
+  }
+
+  private async compactHistoryForRuntime(input: {
+    threadId: string;
+    assistantMessageId: string;
+    workspaceRoot: string;
+    history: ProviderMessage[];
+    model: string;
+    reasoningEffort: ReasoningEffort;
+    collaborationMode: CollaborationMode;
+    controller: AbortController;
+    trigger: ContextCompactionTrigger;
+    reason: ContextCompactionReason;
+    textOffset: number;
+  }) {
+    const beforeTokens = estimateProviderHistoryTokens(input.history);
+    const call: DesktopToolCall = {
+      id: `context_compaction_${input.assistantMessageId}_${Date.now()}`,
+      name: "context_compaction" as DesktopToolCall["name"],
+      arguments: {
+        trigger: input.trigger,
+        reason: input.reason,
+        beforeTokens,
+      },
+    };
+    const startedAt = now();
+    const started = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
+      title: "Compacting context",
+      category: "other",
+      status: "running",
+      risk: "safe",
+      liveStatus: "Building handoff summary",
+      textOffset: input.textOffset,
+      startedAt,
+    });
+    this.emit({ type: "tool_updated", tool: started });
+
+    let summary = "";
+    let replacementHistory: ProviderMessage[] = [];
+    let error: string | undefined;
+    try {
+      summary = await this.generateCompactionSummary(input);
+      replacementHistory = buildCompactedProviderHistory(input.history, summary);
+    } catch (candidateError) {
+      error = errorMessage(candidateError);
+      summary = buildDeterministicCompactionSummary(input.history);
+      replacementHistory = buildCompactedProviderHistory(input.history, summary);
+    }
+
+    const afterTokens = estimateProviderHistoryTokens(replacementHistory);
+    const compactedThrough = this.store
+      .listRecentMessages(input.threadId, 50)
+      .filter((message) => message.id !== input.assistantMessageId)
+      .at(-1);
+    const checkpoint: CompactionCheckpointRecord = {
+      id: crypto.randomUUID(),
+      threadId: input.threadId,
+      assistantMessageId: input.assistantMessageId,
+      compactedThroughMessageId: compactedThrough?.id,
+      compactedThroughMessageCreatedAt: compactedThrough?.createdAt,
+      workspaceRoot: input.workspaceRoot,
+      model: input.model,
+      trigger: error ? "fallback" : input.trigger,
+      reason: error ? "model_compaction_failed" : input.reason,
+      status: "completed",
+      summary,
+      replacementHistory,
+      beforeTokens,
+      afterTokens,
+      error,
+      createdAt: now(),
+    };
+    this.store.saveCompactionCheckpoint(checkpoint);
+
+    const output = error
+      ? `Model compaction failed; used deterministic fallback.\n${error}\n\n${summary}`
+      : summary;
+    const completed = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
+      title: error ? "Context compacted with fallback" : "Context compacted",
+      category: "other",
+      status: "done",
+      risk: "safe",
+      liveStatus: undefined,
+      result: {
+        success: true,
+        output,
+        data: {
+          trigger: checkpoint.trigger,
+          reason: checkpoint.reason,
+          beforeTokens,
+          afterTokens,
+          checkpointId: checkpoint.id,
+        },
+      },
+      output,
+      preview: `${beforeTokens.toLocaleString()} -> ${afterTokens.toLocaleString()} tokens`,
+      endedAt: now(),
+    });
+    this.emit({ type: "tool_updated", tool: completed });
+
+    return { history: replacementHistory, beforeTokens, afterTokens, checkpoint };
+  }
+
+  private async generateCompactionSummary(input: {
+    threadId: string;
+    history: ProviderMessage[];
+    model: string;
+    reasoningEffort: ReasoningEffort;
+    collaborationMode: CollaborationMode;
+    controller: AbortController;
+  }) {
+    const settings = this.store.getSettings();
+    let summary = "";
+    let thought = "";
+    await streamProviderResponse({
+      provider: getProviderForModel(input.model),
+      model: input.model,
+      systemInstruction: COMPACTION_SYSTEM_INSTRUCTION,
+      messages: [
+        ...input.history,
+        textProviderMessage(COMPACTION_PROMPT),
+      ],
+      reasoning: input.reasoningEffort,
+      collaborationMode: input.collaborationMode,
+      signal: input.controller.signal,
+      threadId: input.threadId,
+      disableTools: true,
+      cliproxyBaseUrl: settings.cliproxyBaseUrl,
+      appwriteEndpoint: settings.appwriteEndpoint,
+      appwriteProjectId: settings.appwriteProjectId,
+      privoraGatewayFunctionId: settings.privoraGatewayFunctionId,
+      privoraSessionCookie: this.store.getSecret("privora_session_cookie"),
+      privoraUserJwt: this.store.getPrivoraUserJwt(),
+      openRouterApiKey: this.store.getSecret("openrouter_api_key"),
+      geminiApiKey: this.store.getSecret("gemini_api_key"),
+      maxOutputTokens: 4096,
+      onTextDelta: (delta) => { summary += delta; },
+      onThoughtDelta: (delta) => { thought += delta; },
+      onToolDraft: () => undefined,
+      onToolCall: () => undefined,
+    });
+    const trimmed = summary.trim();
+    if (trimmed) return trimmed;
+    if (thought.trim()) return thought.trim();
+    throw new Error("Compaction model returned no summary text.");
   }
 
   private markSubagentFinished(threadId: string, status: SubagentRecord["status"], text: string) {

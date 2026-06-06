@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildProviderHistoryWithCompaction } from "../src/main/agent/context";
 import { DesktopStore } from "../src/main/db/store";
-import type { ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
+import type { ChatMessageRecord, CompactionCheckpointRecord, ToolEventRecord } from "../src/shared/types";
 
 let tempDir = "";
 let store: DesktopStore | null = null;
@@ -140,6 +141,99 @@ describe("long chat SQLite repository", () => {
 
     expect(store.getThread(thread.id)?.id).toBe(thread.id);
     expect(store.getMessage("persisted")?.content).toBe("persisted");
+  });
+
+  it("persists compaction checkpoints without deleting visible chat history", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const assistant = message("assistant", thread.id, 1);
+    const user = message("user", thread.id, 0);
+    db.upsertMessage(user);
+    db.upsertMessage(assistant);
+    const checkpoint: CompactionCheckpointRecord = {
+      id: "compact-1",
+      threadId: thread.id,
+      assistantMessageId: assistant.id,
+      compactedThroughMessageId: user.id,
+      compactedThroughMessageCreatedAt: user.createdAt,
+      workspaceRoot: tempDir,
+      model: "gemini-3.5-flash",
+      trigger: "pre_turn",
+      reason: "context_limit",
+      status: "completed",
+      summary: "Summary",
+      replacementHistory: [{ role: "user", content: "Summary", parts: [{ type: "text", text: "Summary" }] }],
+      beforeTokens: 100_000,
+      afterTokens: 4_000,
+      createdAt: 10,
+    };
+
+    db.saveCompactionCheckpoint(checkpoint);
+
+    expect(db.getLatestCompactionCheckpoint(thread.id)?.summary).toBe("Summary");
+    expect(db.listCompactionCheckpoints(thread.id)).toHaveLength(1);
+    expect(db.getThreadHistoryPage(thread.id).messages.map((item) => item.id)).toEqual(["user", "assistant"]);
+
+    const providerHistory = buildProviderHistoryWithCompaction(db, thread.id, "next-assistant");
+    expect(providerHistory.some((item) => item.content === "Summary")).toBe(true);
+    expect(providerHistory.some((item) => item.content === "assistant")).toBe(true);
+    expect(providerHistory.filter((item) => item.content === "user")).toHaveLength(0);
+  });
+
+  it("drops stale compaction checkpoints when a thread is pruned", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const user = message("user", thread.id, 0);
+    const assistant = message("assistant", thread.id, 1);
+    db.upsertMessage(user);
+    db.upsertMessage(assistant);
+    db.saveCompactionCheckpoint({
+      id: "compact-1",
+      threadId: thread.id,
+      assistantMessageId: assistant.id,
+      compactedThroughMessageId: user.id,
+      compactedThroughMessageCreatedAt: user.createdAt,
+      workspaceRoot: tempDir,
+      model: "gemini-3.5-flash",
+      trigger: "pre_turn",
+      reason: "context_limit",
+      status: "completed",
+      summary: "Stale summary",
+      replacementHistory: [{ role: "user", content: "Stale summary", parts: [{ type: "text", text: "Stale summary" }] }],
+      beforeTokens: 100_000,
+      afterTokens: 4_000,
+      createdAt: 10,
+    });
+
+    db.pruneThreadAfterMessage(thread.id, user.id);
+
+    expect(db.getLatestCompactionCheckpoint(thread.id)).toBeNull();
+    expect(buildProviderHistoryWithCompaction(db, thread.id, "next-assistant").some((item) => item.content === "Stale summary")).toBe(false);
+  });
+
+  it("ignores malformed compaction replacement history", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    db.upsertMessage(message("visible", thread.id, 0));
+    db.saveCompactionCheckpoint({
+      id: "compact-1",
+      threadId: thread.id,
+      workspaceRoot: tempDir,
+      model: "gemini-3.5-flash",
+      trigger: "pre_turn",
+      reason: "context_limit",
+      status: "completed",
+      summary: "Malformed summary",
+      replacementHistory: [{ role: "user", content: "bad checkpoint", parts: [{ type: "bogus" }] }],
+      beforeTokens: 100_000,
+      afterTokens: 4_000,
+      createdAt: 10,
+    } as CompactionCheckpointRecord);
+
+    const providerHistory = buildProviderHistoryWithCompaction(db, thread.id, "next-assistant");
+
+    expect(providerHistory.some((item) => item.content === "bad checkpoint")).toBe(false);
+    expect(providerHistory.some((item) => item.content === "visible")).toBe(true);
   });
 
   it("resets incompatible development SQLite schemas instead of crashing", () => {

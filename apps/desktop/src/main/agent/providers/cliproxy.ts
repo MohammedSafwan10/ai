@@ -216,8 +216,10 @@ export class CliproxyAdapter implements ProviderAdapter {
         model: resolveCliproxyModelId(options.model),
         instructions: options.systemInstruction,
         input: toInput(options.messages),
-        tools: cliproxyToolsForModel(options.model, options.collaborationMode),
-        parallel_tool_calls: true,
+        ...(!options.disableTools ? {
+          tools: cliproxyToolsForModel(options.model, options.collaborationMode),
+          parallel_tool_calls: true,
+        } : {}),
         ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),

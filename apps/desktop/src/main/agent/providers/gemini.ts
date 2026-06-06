@@ -56,7 +56,9 @@ export const supportsGeminiGoogleSearch = (model: string) =>
 export const geminiToolsForModel = (
   model: string,
   collaborationMode: ProviderStreamOptions["collaborationMode"],
+  disableTools = false,
 ) => {
+  if (disableTools) return [];
   const tools: Array<Record<string, unknown>> = [
     { functionDeclarations: geminiDesktopFunctionDeclarations(collaborationMode) as any },
   ];
@@ -124,8 +126,10 @@ export class GeminiAdapter implements ProviderAdapter {
               },
             }
           : {}),
-        tools: geminiToolsForModel(options.model, options.collaborationMode) as any,
-        toolConfig: { functionCallingConfig: { mode: "AUTO" } } as any,
+        ...(!options.disableTools ? {
+          tools: geminiToolsForModel(options.model, options.collaborationMode) as any,
+          toolConfig: { functionCallingConfig: { mode: "AUTO" } } as any,
+        } : {}),
       },
     });
 

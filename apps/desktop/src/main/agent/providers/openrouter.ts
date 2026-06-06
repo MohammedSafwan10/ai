@@ -117,9 +117,11 @@ export class OpenRouterAdapter implements ProviderAdapter {
       body: JSON.stringify({
         model: options.model,
         messages: toMessages(options.systemInstruction, options.messages),
-        tools: openRouterDesktopTools(options.collaborationMode),
-        tool_choice: "auto",
-        parallel_tool_calls: true,
+        ...(!options.disableTools ? {
+          tools: openRouterDesktopTools(options.collaborationMode),
+          tool_choice: "auto",
+          parallel_tool_calls: true,
+        } : {}),
         ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
         ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),
         stream: true,

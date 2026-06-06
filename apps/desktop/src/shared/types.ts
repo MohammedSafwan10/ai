@@ -1182,6 +1182,29 @@ export interface AgentRunCheckpointRecord {
   updatedAt: number;
 }
 
+export type ContextCompactionTrigger = "pre_turn" | "mid_turn" | "fallback";
+export type ContextCompactionReason = "context_limit" | "model_compaction_failed";
+export type ContextCompactionStatus = "completed" | "failed";
+
+export interface CompactionCheckpointRecord {
+  id: string;
+  threadId: string;
+  assistantMessageId?: string;
+  compactedThroughMessageId?: string;
+  compactedThroughMessageCreatedAt?: number;
+  workspaceRoot: string;
+  model: string;
+  trigger: ContextCompactionTrigger;
+  reason: ContextCompactionReason;
+  status: ContextCompactionStatus;
+  summary: string;
+  replacementHistory: unknown[];
+  beforeTokens: number;
+  afterTokens: number;
+  error?: string;
+  createdAt: number;
+}
+
 export type SubagentStatus =
   | "pending"
   | "running"
@@ -1317,6 +1340,7 @@ export interface ActiveRunState {
 }
 
 export type DesktopToolName =
+  | "context_compaction"
   | "request_user_input"
   | "spawn_agent"
   | "send_message"

@@ -11,6 +11,7 @@ import type {
   AssistantTextPartRecord,
   BrowserWorkspaceStateRecord,
   ChatMessageRecord,
+  CompactionCheckpointRecord,
   DesktopAttachmentRecord,
   SettingsRecord,
   SubagentRecord,
@@ -62,7 +63,7 @@ type StoredMessage = Omit<ChatMessageRecord, "attachments"> & {
 };
 
 const now = () => Date.now();
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const INITIAL_HISTORY_LIMIT = 60;
 const TOOL_PAGE_LIMIT = 2_000;
 const APP_TABLES = [
@@ -76,6 +77,7 @@ const APP_TABLES = [
   "approval_scopes",
   "approval_history",
   "checkpoints",
+  "compaction_checkpoints",
   "browser_workspaces",
 ] as const;
 export const PLACEHOLDER_THREAD_TITLE = "New chat";
@@ -447,6 +449,23 @@ export class DesktopStore {
   getRunCheckpoint(threadId: string) { return this.one<AgentRunCheckpointRecord>("SELECT payload FROM checkpoints WHERE thread_id = ?", threadId); }
   saveRunCheckpoint(checkpoint: AgentRunCheckpointRecord) { const next = { ...checkpoint, updatedAt: now() }; this.putRecord("checkpoints", checkpoint.threadId, next, { threadId: checkpoint.threadId, updatedAt: next.updatedAt }); return next; }
   clearRunCheckpoint(threadId: string) { this.run("DELETE FROM checkpoints WHERE thread_id = ?", threadId); }
+  saveCompactionCheckpoint(record: CompactionCheckpointRecord) {
+    this.putRecord("compaction_checkpoints", record.id, record, {
+      threadId: record.threadId,
+      assistantMessageId: record.assistantMessageId ?? null,
+      compactedThroughMessageId: record.compactedThroughMessageId ?? null,
+      status: record.status,
+      createdAt: record.createdAt,
+    });
+    this.run("DELETE FROM compaction_checkpoints WHERE id IN (SELECT id FROM compaction_checkpoints WHERE thread_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET 20)", record.threadId);
+    return record;
+  }
+  getLatestCompactionCheckpoint(threadId: string) {
+    return this.one<CompactionCheckpointRecord>("SELECT payload FROM compaction_checkpoints WHERE thread_id = ? AND status = 'completed' ORDER BY created_at DESC, id DESC LIMIT 1", threadId);
+  }
+  listCompactionCheckpoints(threadId: string, limit = 20) {
+    return this.all<CompactionCheckpointRecord>("SELECT payload FROM compaction_checkpoints WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?", threadId, Math.max(1, Math.min(100, limit)));
+  }
   getBrowserWorkspaceState(workspaceId: string) { return this.one<BrowserWorkspaceStateRecord>("SELECT payload FROM browser_workspaces WHERE workspace_id = ?", workspaceId); }
   saveBrowserWorkspaceState(state: BrowserWorkspaceStateRecord) {
     const timestamp = now(); const compact = { workspaceId: state.workspaceId, activeTabId: state.activeTabId, updatedAt: timestamp, tabs: state.tabs.slice(0, 6).map((tab) => ({ ...tab, loading: false, canGoBack: false, canGoForward: false, createdAt: tab.createdAt || timestamp, updatedAt: tab.updatedAt || timestamp })) };
@@ -456,7 +475,12 @@ export class DesktopStore {
     const removed = this.listMessagesAfter(threadId, messageId); const ids = removed.map((message) => message.id); if (!ids.length) return { removedMessages: 0, removedToolEvents: 0, removedTurnUndos: 0 };
     const removedToolEvents = this.count(`SELECT COUNT(*) count FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
     const removedTurnUndos = this.count(`SELECT COUNT(*) count FROM turn_undos WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
-    this.transaction(() => { this.run(`DELETE FROM checkpoints WHERE thread_id = ? AND json_extract(payload, '$.assistantMessageId') IN (${placeholders(ids.length)})`, threadId, ...ids); this.run(`DELETE FROM messages WHERE id IN (${placeholders(ids.length)})`, ...ids); this.touchThread(threadId); });
+    this.transaction(() => {
+      this.run(`DELETE FROM checkpoints WHERE thread_id = ? AND json_extract(payload, '$.assistantMessageId') IN (${placeholders(ids.length)})`, threadId, ...ids);
+      this.run(`DELETE FROM compaction_checkpoints WHERE thread_id = ? AND (assistant_message_id IN (${placeholders(ids.length)}) OR json_extract(payload, '$.compactedThroughMessageId') IN (${placeholders(ids.length)}))`, threadId, ...ids, ...ids);
+      this.run(`DELETE FROM messages WHERE id IN (${placeholders(ids.length)})`, ...ids);
+      this.touchThread(threadId);
+    });
     this.pruneArtifacts(); return { removedMessages: ids.length, removedToolEvents, removedTurnUndos };
   }
 
@@ -475,6 +499,8 @@ export class DesktopStore {
       CREATE TABLE IF NOT EXISTS approval_scopes (id TEXT PRIMARY KEY, workspace_id TEXT, thread_id TEXT, updated_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS approval_history (id TEXT PRIMARY KEY, workspace_id TEXT, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
+      CREATE TABLE IF NOT EXISTS compaction_checkpoints (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, assistant_message_id TEXT, compacted_through_message_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
+      CREATE INDEX IF NOT EXISTS compaction_thread_created ON compaction_checkpoints(thread_id, created_at DESC);
       CREATE TABLE IF NOT EXISTS browser_workspaces (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE INDEX IF NOT EXISTS threads_workspace_updated ON threads(workspace_id, updated_at DESC);
       PRAGMA user_version = ${SCHEMA_VERSION};
@@ -501,6 +527,7 @@ export class DesktopStore {
     this.run(`DELETE FROM subagents WHERE parent_thread_id IN (${placeholders(removed.size)}) OR thread_id IN (${placeholders(removed.size)})`, ...removed, ...removed);
     this.run(`DELETE FROM approval_scopes WHERE thread_id IN (${placeholders(removed.size)})`, ...removed);
     this.run(`DELETE FROM approval_history WHERE thread_id IN (${placeholders(removed.size)})`, ...removed);
+    this.run(`DELETE FROM compaction_checkpoints WHERE thread_id IN (${placeholders(removed.size)})`, ...removed);
     this.run(`DELETE FROM threads WHERE id IN (${placeholders(removed.size)})`, ...removed);
   }
   private listToolEventsForMessagesWithSubagents(parentThreadId: string, messageIds: string[]) {

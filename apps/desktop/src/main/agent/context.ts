@@ -1,15 +1,41 @@
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
-import type { ProviderMessage } from "./providers/types";
+import type { ProviderMessage, ProviderPart } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
 import { detectProjectProfileSync } from "./diagnostics";
 import { getModelOption, type ModelRuntimeBudget } from "../../shared/models";
+import type { ChatMessageRecord, ToolResult } from "../../shared/types";
 
 const MAX_HISTORY_MESSAGES = 18;
 const MAX_MESSAGE_CHARS = 12_000;
 const MAX_TOOL_OUTPUT_CHARS = 2_000;
 const MAX_PROVIDER_HISTORY_TOKENS = 28_000;
 const MIN_RECENT_PROVIDER_MESSAGES = 12;
+const RETAINED_USER_MESSAGE_TOKENS = 20_000;
+
+export const COMPACTION_SYSTEM_INSTRUCTION = [
+  "You are performing a CONTEXT CHECKPOINT COMPACTION for Privora Desktop.",
+  "Create a handoff summary for another coding agent that will resume the task.",
+  "Be concise, structured, and preserve operational details that affect future work.",
+].join("\n");
+
+export const COMPACTION_PROMPT = [
+  "Create a handoff summary from the conversation so far.",
+  "",
+  "Include:",
+  "- Current user goal and success criteria.",
+  "- Current progress and key decisions made.",
+  "- Important constraints, user preferences, and workspace facts.",
+  "- Files read or changed, commands run, diagnostics, approvals, browser evidence, and subagent findings.",
+  "- What remains to be done, with concrete next steps.",
+  "- Any critical data, examples, errors, or references needed to continue.",
+  "",
+  "Do not include generic filler. Do not claim tests passed unless the transcript shows they passed.",
+].join("\n");
+
+export const COMPACTION_SUMMARY_PREFIX = [
+  "Another Privora Desktop agent compacted the earlier context. Use this handoff summary and the retained recent user messages to continue without repeating completed work.",
+].join("\n");
 
 export const buildProviderHistory = (
   store: DesktopStore,
@@ -17,28 +43,61 @@ export const buildProviderHistory = (
   assistantMessageId: string,
   messageCharLimit = MAX_MESSAGE_CHARS,
 ): ProviderMessage[] =>
-  store
+  messagesToProviderHistory(store
     .listRecentMessages(threadId, MAX_HISTORY_MESSAGES + 1)
     .filter((message) => message.id !== assistantMessageId)
-    .slice(-MAX_HISTORY_MESSAGES)
-    .map((message): ProviderMessage => {
-      const content = compactTextForModel(message.content, messageCharLimit) || "";
-      const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/"));
-      const parts: ProviderMessage["parts"] = [
-        ...(content ? [{ type: "text" as const, text: content }] : []),
-        ...attachments.map((attachment) => ({
-          type: "image" as const,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          data: attachment.base64 || "",
-        })),
-      ];
-      return {
-        role: message.role,
-        content,
-        parts: parts.length ? parts : undefined,
-      };
-    });
+    .slice(-MAX_HISTORY_MESSAGES), messageCharLimit);
+
+export const buildProviderHistoryWithCompaction = (
+  store: DesktopStore,
+  threadId: string,
+  assistantMessageId: string,
+  messageCharLimit = MAX_MESSAGE_CHARS,
+): ProviderMessage[] => {
+  const checkpoint = store.getLatestCompactionCheckpoint(threadId);
+  const replacementHistory = checkpoint ? validateProviderHistory(checkpoint.replacementHistory) : [];
+  if (!replacementHistory.length) {
+    return buildProviderHistory(store, threadId, assistantMessageId, messageCharLimit);
+  }
+  if (checkpoint?.compactedThroughMessageId) {
+    return [
+      ...replacementHistory,
+      ...messagesToProviderHistory(
+        store
+          .listMessagesAfter(threadId, checkpoint.compactedThroughMessageId)
+          .filter((message) => message.id !== assistantMessageId),
+        messageCharLimit,
+      ),
+    ];
+  }
+  return [
+    ...replacementHistory,
+    ...buildProviderHistory(store, threadId, assistantMessageId, messageCharLimit),
+  ];
+};
+
+export const messagesToProviderHistory = (
+  messages: ChatMessageRecord[],
+  messageCharLimit = MAX_MESSAGE_CHARS,
+): ProviderMessage[] =>
+  messages.map((message): ProviderMessage => {
+    const content = compactTextForModel(message.content, messageCharLimit) || "";
+    const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/"));
+    const parts: ProviderMessage["parts"] = [
+      ...(content ? [{ type: "text" as const, text: content }] : []),
+      ...attachments.map((attachment) => ({
+        type: "image" as const,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        data: attachment.base64 || "",
+      })),
+    ];
+    return {
+      role: message.role,
+      content,
+      parts: parts.length ? parts : undefined,
+    };
+  });
 
 export const sanitizeProviderHistoryForModel = (history: ProviderMessage[], modelId: string): ProviderMessage[] => {
   const model = getModelOption(modelId);
@@ -118,6 +177,26 @@ export const compactProviderHistory = (history: ProviderMessage[], maxTokens = M
   if (omitted.length === 0) return repairProviderToolPairs(recent);
   return repairProviderToolPairs([summaryMessage(omitted), ...recent]);
 };
+
+export const buildCompactedProviderHistory = (
+  history: ProviderMessage[],
+  summary: string,
+  maxRetainedUserTokens = RETAINED_USER_MESSAGE_TOKENS,
+): ProviderMessage[] => {
+  const retainedUsers = retainRecentUserMessages(history, maxRetainedUserTokens);
+  const summaryText = [
+    COMPACTION_SUMMARY_PREFIX,
+    "",
+    summary.trim() || "(no compaction summary available)",
+  ].join("\n");
+  return repairProviderToolPairs([
+    ...retainedUsers,
+    textProviderMessage(summaryText),
+  ]);
+};
+
+export const buildDeterministicCompactionSummary = (history: ProviderMessage[]) =>
+  summaryMessage(history).content;
 
 const repairProviderToolPairs = (messages: ProviderMessage[]): ProviderMessage[] => {
   const outputIds = new Set<string>();
@@ -219,6 +298,99 @@ export const compactProviderHistoryWithInfo = (
 };
 
 const estimatedTokens = estimateProviderHistoryTokens;
+
+const retainRecentUserMessages = (history: ProviderMessage[], maxTokens: number) => {
+  const retained: ProviderMessage[] = [];
+  let remaining = Math.max(0, maxTokens);
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (message.role !== "user" || messageHasOnlyToolResponses(message)) continue;
+    const tokens = estimateMessageTokens(message);
+    if (tokens <= remaining) {
+      retained.unshift(message);
+      remaining -= tokens;
+      continue;
+    }
+    if (remaining > 200) {
+      const compacted = compactTextForModel(message.content, remaining * 4);
+      if (compacted?.trim()) {
+        retained.unshift({
+          role: "user",
+          content: compacted,
+          parts: [{ type: "text", text: compacted }],
+        });
+      }
+    }
+    break;
+  }
+  return retained;
+};
+
+const messageHasOnlyToolResponses = (message: ProviderMessage) => {
+  const parts = message.parts || [];
+  return parts.length > 0 && parts.every((part) => part.type === "function_response");
+};
+
+const validateProviderHistory = (value: unknown): ProviderMessage[] => {
+  if (!Array.isArray(value)) return [];
+  const messages: ProviderMessage[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || (item.role !== "user" && item.role !== "assistant") || typeof item.content !== "string") {
+      return [];
+    }
+    const rawParts = item.parts;
+    if (rawParts !== undefined && !Array.isArray(rawParts)) return [];
+    const parts = rawParts?.map((part) => validateProviderPart(part));
+    if (parts?.some((part) => !part)) return [];
+    messages.push({
+      role: item.role,
+      content: item.content,
+      parts: parts as ProviderMessage["parts"],
+    });
+  }
+  return messages;
+};
+
+const validateProviderPart = (part: unknown): ProviderPart | null => {
+  if (!isRecord(part) || typeof part.type !== "string") return null;
+  if (part.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
+  if (part.type === "image" && typeof part.name === "string" && typeof part.mimeType === "string" && typeof part.data === "string") {
+    return { type: "image", name: part.name, mimeType: part.mimeType, data: part.data };
+  }
+  if (part.type === "function_call" && typeof part.id === "string" && typeof part.name === "string" && isRecord(part.arguments)) {
+    return {
+      type: "function_call",
+      id: part.id,
+      name: part.name,
+      arguments: part.arguments,
+      thoughtSignature: typeof part.thoughtSignature === "string" ? part.thoughtSignature : undefined,
+    };
+  }
+  if (part.type === "function_response" && typeof part.id === "string" && typeof part.name === "string" && isRecord(part.response) && typeof part.response.success === "boolean") {
+    const response: ToolResult = {
+      success: part.response.success,
+      output: typeof part.response.output === "string" ? part.response.output : undefined,
+      error: typeof part.response.error === "string" ? part.response.error : undefined,
+      data: isRecord(part.response.data) ? part.response.data : undefined,
+    };
+    return {
+      type: "function_response",
+      id: part.id,
+      name: part.name,
+      response,
+    };
+  }
+  return null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const textProviderMessage = (content: string): ProviderMessage => ({
+  role: "user",
+  content,
+  parts: [{ type: "text", text: content }],
+});
 
 const estimateMessageTokens = (message: ProviderMessage) => {
   const text = [

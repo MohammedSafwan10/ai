@@ -133,6 +133,8 @@ export const summarizeArgs = (args: Record<string, unknown>) =>
 export const titleForTool = (call: DesktopToolCall) => {
   const args = call.arguments;
   switch (call.name) {
+    case "context_compaction":
+      return "Compact context";
     case "web_search":
       return String(args.query || "").trim() ? `Search web: ${args.query}` : "Search web";
     case "desktop_read_file":
@@ -265,6 +267,7 @@ export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["categor
   if (call.name.startsWith("browser_")) return "other";
   if (call.name.startsWith("notes_")) return "other";
   if (call.name.startsWith("computer_")) return "other";
+  if (call.name === "context_compaction") return "other";
   if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
   if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
   if (call.name === "desktop_run_diagnostics") return "diagnostic";
@@ -279,6 +282,7 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
   if (status === "done") return undefined;
   if (status === "awaiting_approval") return "Waiting for approval";
   if (status === "running") {
+    if (call.name === "context_compaction") return "Compacting context";
     if (call.name === "desktop_spawn_process") return "Running command";
     if (call.name === "desktop_write_process") return "Polling process";
     if (call.name === "desktop_resize_process") return "Resizing process";
