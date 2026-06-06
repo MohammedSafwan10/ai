@@ -49,4 +49,42 @@ describe("desktop browser tool executor gate", () => {
     expect(result).toMatchObject({ success: true });
     expect(result.output).toContain("browser_workflow");
   });
+
+  it("routes browser_open_link through the top-level desktop executor", async () => {
+    const openLink = vi.fn(async () => ({ output: "opened", data: { url: "https://youtube.com/watch?v=abc" } }));
+    const executor = new DesktopToolExecutor({ openLink, recordWorkflowTool: vi.fn() } as never);
+
+    const result = await executor.execute(call("browser_open_link", { ref: "b19" }), context);
+
+    expect(result).toMatchObject({ success: true, output: "opened" });
+    expect(openLink).toHaveBeenCalledWith("workspace", expect.objectContaining({ ref: "b19" }), { agentApproved: true });
+  });
+
+  it("passes full access to browser tools as external approval", async () => {
+    const openUrl = vi.fn(async () => ({
+      workspaceId: "workspace",
+      url: "https://www.youtube.com/results?search_query=MrBeast",
+      title: "YouTube",
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      viewport: { width: 900, height: 700 },
+      consoleErrorCount: 0,
+      failedRequestCount: 0,
+      tabs: [],
+      activeTabId: "tab",
+    }));
+    const executor = new DesktopToolExecutor({ openUrl, recordWorkflowTool: vi.fn() } as never);
+
+    await executor.execute(call("browser_open", { url: "https://www.youtube.com/results?search_query=MrBeast" }), {
+      ...context,
+      browserExternalApproved: false,
+      permissionMode: "yolo",
+    });
+
+    expect(openUrl).toHaveBeenCalledWith("workspace", "https://www.youtube.com/results?search_query=MrBeast", expect.objectContaining({
+      scope: "user",
+      rememberAgentApproval: true,
+    }));
+  });
 });

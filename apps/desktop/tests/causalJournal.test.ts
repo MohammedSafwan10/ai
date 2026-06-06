@@ -20,7 +20,8 @@ describe("causal journal", () => {
     journal.begin("Clicked Sign in", { url: "http://localhost:5173/", title: "App" });
     const finding = await journal.finish(fakeContents(), { url: "http://localhost:5173/", title: "App" });
 
-    expect(finding?.finding).toContain("Clicked Sign in");
+    expect(finding?.finding).toContain("Click attempted on Sign in");
+    expect(finding?.finding).toContain("navigation did not complete");
     expect(finding?.finding).toContain("POST http://localhost:5173/api/session?...");
     expect(finding?.consoleErrors[0]?.message).toContain("[redacted]");
   });
@@ -48,6 +49,26 @@ describe("causal journal", () => {
     journal.recordConsole({ level: "error", message: "Boom", sourceId: "app.js", lineNumber: 10 });
 
     expect(journal.recentConsole()).toHaveLength(1);
+  });
+
+  it("does not treat Shields blocks as failed request evidence", async () => {
+    const journal = new CausalJournal("workspace");
+    const startedAt = Date.now();
+    journal.begin("Clicked Learn more", { url: "https://example.com/", title: "Example" });
+    journal.recordRequest({
+      id: "shields:block",
+      url: "https://tracker.example/pixel",
+      method: "GET",
+      blockedByShields: true,
+      blockedReason: "Privora Shields blocked an ad/tracker request.",
+      startedAt,
+      endedAt: startedAt,
+    });
+
+    const finding = await journal.finish(fakeContents(), { url: "https://example.com/", title: "Example" });
+
+    expect(finding?.failedRequests).toEqual([]);
+    expect(finding?.finding).toContain("no console or network failures captured");
   });
 });
 

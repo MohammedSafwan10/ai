@@ -88,6 +88,18 @@ describe("desktop permission classifier", () => {
       risk: "risky",
       requiresApproval: true,
     });
+    expect(classifyToolCall(call("browser_open_link", { ref: "b2" }), "ask_risky", {
+      browserCurrentPageRequiresApproval: true,
+    })).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("browser_open_link", { ref: "b2" }), "yolo", {
+      browserCurrentPageRequiresApproval: true,
+    })).toMatchObject({
+      risk: "risky",
+      requiresApproval: false,
+    });
   });
 
   it("keeps read-only browser extraction safe", () => {
@@ -109,6 +121,21 @@ describe("desktop permission classifier", () => {
       requiresApproval: true,
     });
     expect(classifyToolCall(call("browser_downloads", { action: "allow_next" }), "yolo")).toMatchObject({
+      risk: "risky",
+      requiresApproval: false,
+    });
+  });
+
+  it("keeps Shields inspection safe and gates Shields changes outside full access", () => {
+    expect(classifyToolCall(call("browser_shields", { action: "get" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("browser_shields", { action: "toggle_site", enabled: false }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("browser_shields", { action: "toggle_site", enabled: false }), "yolo")).toMatchObject({
       risk: "risky",
       requiresApproval: false,
     });

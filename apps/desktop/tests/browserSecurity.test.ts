@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserOriginDecision, normalizeBrowserUrl, redactHeaders, redactSensitiveText, shouldRestorePersistedBrowserUrl } from "../src/main/browser/browserSecurity";
+import { browserOriginDecision, normalizeBrowserUrl, redactHeaders, redactSensitiveText, safeExactBrowserUrl, shouldRestorePersistedBrowserUrl } from "../src/main/browser/browserSecurity";
 
 describe("browser security", () => {
   it("normalizes bare localhost urls", () => {
@@ -41,5 +41,14 @@ describe("browser security", () => {
     });
     expect(redactSensitiveText("token=abc123 password: hunter2 email test@example.com")).toContain("[redacted]");
     expect(redactSensitiveText("token=abc123 password: hunter2 email test@example.com")).toContain("[email]");
+  });
+
+  it("keeps safe final URLs exact while redacting sensitive query values", () => {
+    expect(safeExactBrowserUrl("https://www.youtube.com/watch?v=GpQSUjNsNm0&list=abc#frag")).toBe(
+      "https://www.youtube.com/watch?v=GpQSUjNsNm0&list=abc",
+    );
+    expect(safeExactBrowserUrl("https://example.com/callback?code=secret&token=abc&next=/home")).toBe(
+      "https://example.com/callback?code=%5Bredacted%5D&token=%5Bredacted%5D&next=%2Fhome",
+    );
   });
 });

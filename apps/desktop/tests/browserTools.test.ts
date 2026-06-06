@@ -48,6 +48,36 @@ describe("browser tool executor", () => {
     expect(JSON.stringify(result.data)).not.toContain("wf-open-noise");
   });
 
+  it("treats full access as approved external browser opens", async () => {
+    const openUrl = vi.fn(async () => ({
+      workspaceId: "workspace",
+      url: "https://youtube.com/results?search_query=MrBeast",
+      title: "YouTube",
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      viewport: { width: 1280, height: 900 },
+      local: false,
+      consoleErrorCount: 0,
+      failedRequestCount: 0,
+      lastFinding: "Opened YouTube",
+      workflow: { status: "idle", stepCount: 0, assertionCount: 0, workflows: [], recentEvidence: [], updatedAt: 1 },
+    }));
+    const executor = new BrowserToolExecutor({ openUrl } as never);
+
+    await executor.execute(browserCall("browser_open", { url: "https://youtube.com/results?search_query=MrBeast" }), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: new AbortController().signal,
+      permissionMode: "yolo",
+    });
+
+    expect(openUrl).toHaveBeenCalledWith("workspace", "https://youtube.com/results?search_query=MrBeast", expect.objectContaining({
+      scope: "user",
+      rememberAgentApproval: true,
+    }));
+  });
+
   it("routes browser search with bounded options", async () => {
     const search = vi.fn(async () => ({
       output: "1. Result — https://example.com",
@@ -67,6 +97,46 @@ describe("browser tool executor", () => {
       limit: 3,
       newTab: false,
     }));
+  });
+
+  it("routes browser open link with approval context", async () => {
+    const openLink = vi.fn(async () => ({
+      output: "Opened link Latest video -> https://youtube.com/watch?v=abc",
+      data: { text: "Latest video", href: "https://youtube.com/watch?v=abc", url: "https://youtube.com/watch?v=abc" },
+    }));
+    const executor = new BrowserToolExecutor({ openLink } as never);
+
+    const result = await executor.execute(browserCall("browser_open_link", { ref: "b7", newTab: true }), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: new AbortController().signal,
+      browserExternalApproved: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(openLink).toHaveBeenCalledWith("workspace", expect.objectContaining({
+      ref: "b7",
+      newTab: true,
+    }), { agentApproved: true });
+  });
+
+  it("treats full access as approved external browser link navigation", async () => {
+    const openLink = vi.fn(async () => ({
+      output: "Opened link MrBeast -> https://youtube.com/watch?v=abc",
+      data: { text: "MrBeast", href: "https://youtube.com/watch?v=abc", url: "https://youtube.com/watch?v=abc" },
+    }));
+    const executor = new BrowserToolExecutor({ openLink } as never);
+
+    await executor.execute(browserCall("browser_open_link", { text: "MrBeast" }), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: new AbortController().signal,
+      permissionMode: "yolo",
+    });
+
+    expect(openLink).toHaveBeenCalledWith("workspace", expect.objectContaining({ text: "MrBeast" }), {
+      agentApproved: true,
+    });
   });
 
   it("routes browser search newTab and tabId options", async () => {
@@ -128,6 +198,29 @@ describe("browser tool executor", () => {
       activeTabId: "tab-1",
     });
     expect(JSON.stringify(result.data)).not.toContain("wf-stale");
+  });
+
+  it("routes browser shields actions through the manager", async () => {
+    const shieldsAction = vi.fn(async () => ({
+      output: "Mode: standard\nEffective mode: standard",
+      data: { shields: { mode: "standard", effectiveMode: "standard" } },
+    }));
+    const executor = new BrowserToolExecutor({ shieldsAction } as never);
+
+    const result = await executor.execute(browserCall("browser_shields", { action: "toggle_site", enabled: false }), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.success).toBe(true);
+    expect(shieldsAction).toHaveBeenCalledWith("workspace", {
+      workspaceId: "workspace",
+      action: "toggle_site",
+      enabled: false,
+      mode: undefined,
+      origin: undefined,
+    });
   });
 
   it("reports browser capabilities without recording a workflow step", async () => {
