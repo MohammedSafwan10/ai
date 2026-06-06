@@ -62,8 +62,22 @@ type StoredMessage = Omit<ChatMessageRecord, "attachments"> & {
 };
 
 const now = () => Date.now();
+const SCHEMA_VERSION = 1;
 const INITIAL_HISTORY_LIMIT = 60;
 const TOOL_PAGE_LIMIT = 2_000;
+const APP_TABLES = [
+  "kv",
+  "workspaces",
+  "threads",
+  "messages",
+  "tool_events",
+  "subagents",
+  "turn_undos",
+  "approval_scopes",
+  "approval_history",
+  "checkpoints",
+  "browser_workspaces",
+] as const;
 export const PLACEHOLDER_THREAD_TITLE = "New chat";
 const LEGACY_PLACEHOLDER_THREAD_TITLES = new Set(["New local agent chat", PLACEHOLDER_THREAD_TITLE]);
 
@@ -96,6 +110,7 @@ export class DesktopStore {
     });
     this.artifacts = new ArtifactStore(userDataPath);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
+    this.resetIncompatibleSchema();
     this.createSchema();
     this.ensureDefaultSettings();
   }
@@ -460,7 +475,21 @@ export class DesktopStore {
       CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
       CREATE TABLE IF NOT EXISTS browser_workspaces (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE INDEX IF NOT EXISTS threads_workspace_updated ON threads(workspace_id, updated_at DESC);
+      PRAGMA user_version = ${SCHEMA_VERSION};
     `);
+  }
+  private resetIncompatibleSchema() {
+    const existingTables = this.count(`SELECT COUNT(*) count FROM sqlite_schema WHERE type = 'table' AND name IN (${placeholders(APP_TABLES.length)})`, ...APP_TABLES);
+    if (existingTables === 0) return;
+    const version = Number((this.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined)?.user_version || 0);
+    const compatible = version === SCHEMA_VERSION && this.hasColumn("tool_events", "call_id");
+    if (compatible) return;
+    console.warn(`[desktop-store] Resetting incompatible SQLite schema version ${version}; development data migration is intentionally unsupported.`);
+    this.statements.clear();
+    this.db.exec("PRAGMA foreign_keys = OFF;");
+    for (const table of [...APP_TABLES].reverse()) this.db.exec(`DROP TABLE IF EXISTS ${table};`);
+    this.db.exec(`PRAGMA foreign_keys = ON; PRAGMA user_version = ${SCHEMA_VERSION};`);
+    this.artifacts.deleteUnreferenced(new Set());
   }
   private ensureDefaultSettings() { if (!this.getKv("settings", "default")) this.putKv("settings", "default", defaultSettings()); }
   private removeThreadRecords(threadId: string) {
@@ -538,6 +567,9 @@ export class DesktopStore {
     return this.allStoredToolPreviews(`SELECT payload FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(messageIds.length)}) ORDER BY created_at DESC, id DESC LIMIT ${TOOL_PAGE_LIMIT}`, threadId, ...messageIds).reverse();
   }
   private count(sql: string, ...params: unknown[]) { return Number((this.prepare(sql).get(...params as never[]) as { count: number }).count); }
+  private hasColumn(table: string, column: string) {
+    return (this.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>).some((row) => row.name === column);
+  }
   private run(sql: string, ...params: unknown[]) { return this.prepare(sql).run(...params as never[]); }
   private prepare(sql: string) { let statement = this.statements.get(sql); if (!statement) { statement = this.db.prepare(sql); this.statements.set(sql, statement); } return statement; }
   private transaction<T>(fn: () => T): T {

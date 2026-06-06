@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DesktopStore } from "../src/main/db/store";
 import type { ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
@@ -139,6 +140,29 @@ describe("long chat SQLite repository", () => {
 
     expect(store.getThread(thread.id)?.id).toBe(thread.id);
     expect(store.getMessage("persisted")?.content).toBe("persisted");
+  });
+
+  it("resets incompatible development SQLite schemas instead of crashing", () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-long-chat-"));
+    const raw = new DatabaseSync(path.join(tempDir, "privora-desktop.sqlite"));
+    raw.exec(`
+      CREATE TABLE tool_events (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        payload TEXT NOT NULL
+      ) STRICT;
+      PRAGMA user_version = 0;
+    `);
+    raw.close();
+
+    store = new DesktopStore(tempDir);
+    const thread = store.createThread(null);
+    const assistant = message("assistant", thread.id, 1);
+    store.upsertMessage(assistant);
+    store.upsertToolEvent(tool("tool", thread.id, assistant.id, "ok"));
+
+    expect(store.getToolEvent("tool")?.callId).toBe("tool-call");
   });
 });
 

@@ -48,6 +48,8 @@ protocol.registerSchemesAsPrivileged([{
 if (isDevMode) {
   app.setName("Privora Dev");
   app.setPath("userData", path.join(app.getPath("appData"), "Privora Dev"));
+} else {
+  app.setName("Privora");
 }
 const singleInstanceLock = app.requestSingleInstanceLock();
 
