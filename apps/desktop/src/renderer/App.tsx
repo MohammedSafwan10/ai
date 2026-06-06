@@ -232,6 +232,7 @@ export default function App() {
   } = usePromptQueue({
     activeThreadId: activeThread?.id || null,
     running,
+    resumableBlocked: resumable,
     onDraft: setComposerDraft,
     startTurn: window.privoraDesktop.startTurn,
     stopTurn: window.privoraDesktop.stopTurn,

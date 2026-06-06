@@ -18,6 +18,7 @@ export interface QueuedPrompt {
 interface PromptQueueInput {
   activeThreadId: string | null;
   running: boolean;
+  resumableBlocked?: boolean;
   onDraft: (draft: ComposerDraft | null) => void;
   startTurn: (input: StartTurnInput) => Promise<void>;
   stopTurn: (threadId: string) => Promise<void>;
@@ -26,6 +27,7 @@ interface PromptQueueInput {
 export const usePromptQueue = ({
   activeThreadId,
   running,
+  resumableBlocked = false,
   onDraft,
   startTurn,
   stopTurn,
@@ -55,6 +57,10 @@ export const usePromptQueue = ({
   useEffect(() => {
     if (!running && stoppingThreadId === activeThreadId) setStoppingThreadId(null);
   }, [activeThreadId, running, stoppingThreadId]);
+
+  useEffect(() => {
+    if (resumableBlocked && queuedPrompts.length > 0) setQueuePaused(true);
+  }, [queuedPrompts.length, resumableBlocked]);
 
   useEffect(() => {
     if (running) {
@@ -108,7 +114,7 @@ export const usePromptQueue = ({
 
   useEffect(() => {
     if (running) queuedSubmitInFlightRef.current = false;
-    if (!activeThreadId || running || queuePaused || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
+    if (!activeThreadId || running || resumableBlocked || queuePaused || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
     const [next, ...rest] = queuedPrompts;
     queuedSubmitInFlightRef.current = true;
     setQueuedPrompts(rest);
@@ -121,7 +127,7 @@ export const usePromptQueue = ({
       queuedSubmitInFlightRef.current = false;
       setQueuedPrompts((current) => [next, ...current]);
     });
-  }, [activeThreadId, queuePaused, queuedPrompts, running, startTurn]);
+  }, [activeThreadId, queuePaused, queuedPrompts, resumableBlocked, running, startTurn]);
 
   const runQueuedPrompt = useCallback((item: QueuedPrompt) => {
     if (!activeThreadId || running || queuedSubmitInFlightRef.current) return;

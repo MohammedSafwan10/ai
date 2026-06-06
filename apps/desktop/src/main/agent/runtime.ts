@@ -238,6 +238,7 @@ export class AgentRuntime {
   }
 
   async startTurn(input: StartTurnInput) {
+    this.discardResumableRun(input.threadId);
     if (this.startingThreads.has(input.threadId) || this.isThreadBusy(input.threadId)) {
       throw new Error("This chat is already running. Stop it before starting another turn.");
     }
@@ -348,6 +349,22 @@ export class AgentRuntime {
     if (Array.from(this.pendingApprovalByCallId.values()).some((item) => item.threadId === threadId)) return true;
     if (Array.from(this.pendingUserInputByCallId.values()).some((item) => item.threadId === threadId)) return true;
     return false;
+  }
+
+  private discardResumableRun(threadId: string) {
+    const run = this.activeRuns.get(threadId);
+    if (run && run.resumable && (run.phase === "stopped" || run.phase === "stalled" || run.phase === "failed")) {
+      this.activeRuns.delete(threadId);
+      this.store.clearRunCheckpoint(threadId);
+      this.emit({ type: "run_state", threadId, run: null });
+      return;
+    }
+    const checkpoint = this.store.getRunCheckpoint(threadId);
+    if (!checkpoint) return;
+    const message = this.store.getMessage(checkpoint.assistantMessageId);
+    if (!message || (message.status !== "stopped" && message.status !== "stalled")) return;
+    this.store.clearRunCheckpoint(threadId);
+    this.emit({ type: "run_state", threadId, run: null });
   }
 
   stopTurn(threadId: string) {
