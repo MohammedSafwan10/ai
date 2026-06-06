@@ -55,6 +55,7 @@ The renderer includes:
 - Tool timeline with live shimmer, compact activity grouping, expandable terminal output, file-change summaries, and answered-question details.
 - Review/undo surfaces for file changes.
 - Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
+- Built-in Notes panel with global/workspace drafts, file-backed notes, Save As, and agent notes tools.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
 - Recovery notice if the local JSON store is corrupt and Privora has to back it up.
@@ -152,6 +153,10 @@ AI credits are consumed based on model, input size, output size, and tool usage.
 ## Browser Agent
 
 The built-in browser agent is documented in [docs/browser-agent.md](docs/browser-agent.md). It covers Phase 2A tabs/downloads/PDF evidence, Phase 2B form workflows, Phase 2C workflow replay, assertions, evidence vault, and failure diagnosis, Phase 2D-lite storage cleanup, and Phase 2E-lite Privora Shields ad/tracker blocking.
+
+## Notes
+
+The built-in notepad is documented in [docs/notes.md](docs/notes.md). It covers global/workspace notes, file-backed notes, autosaved local drafts, large-note behavior, and agent note tools.
 
 ## Production Updates
 
