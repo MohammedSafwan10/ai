@@ -5,20 +5,14 @@
   flex-direction: column;
   gap: 14px;
   border-right: 1px solid color-mix(in srgb, var(--privora-border) 42%, transparent);
-  background:
-    linear-gradient(118deg, color-mix(in srgb, #17333b 18%, transparent), transparent 42%),
-    linear-gradient(180deg, color-mix(in srgb, var(--privora-surface) 58%, transparent), color-mix(in srgb, var(--privora-surface) 38%, transparent));
-  box-shadow: inset -1px 0 0 color-mix(in srgb, #fff 7%, transparent);
+  background: var(--privora-bg);
   padding: 16px 10px 14px;
-  backdrop-filter: blur(28px) saturate(1.18);
   overflow: hidden;
   transition: opacity 0.18s ease, padding 0.2s ease;
 }
 
 :root[data-theme="dark"] .sidebar {
-  background:
-    linear-gradient(116deg, color-mix(in srgb, #1f5660 22%, transparent), transparent 42%),
-    linear-gradient(180deg, color-mix(in srgb, #303030 78%, transparent), color-mix(in srgb, #252525 86%, transparent));
+  background: var(--privora-bg);
   border-right-color: color-mix(in srgb, #fff 12%, transparent);
 }
 
