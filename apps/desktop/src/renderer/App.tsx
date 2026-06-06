@@ -26,7 +26,7 @@ export default function App() {
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideCollapsedByUser, setIdeCollapsedByUser] = useState(false);
   const [ideWidth, setIdeWidth] = useState(620);
-  const [workspacePanelRequest, setWorkspacePanelRequest] = useState<{ mode: "files" | "review" | "browser"; key: number } | null>(null);
+  const [workspacePanelRequest, setWorkspacePanelRequest] = useState<{ mode: "files" | "review" | "browser" | "notes"; key: number } | null>(null);
   const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const creditRefreshStarted = useRef(false);

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject, type WheelEvent } from "react";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, Globe2, PanelRightClose, Search, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, Globe2, NotebookTabs, PanelRightClose, PanelRightOpen, Pin, PinOff, Search, X } from "lucide-react";
 import clsx from "clsx";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { WorkspaceDirectoryEntry, WorkspaceDirectoryListing, WorkspaceFileReadResult, WorkspaceRecord } from "../../shared/types";
@@ -9,6 +9,7 @@ import type { ReviewFileModel, ReviewSession } from "../reviewModels";
 import { languageForPath } from "../reviewModels";
 import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows, type WorkspaceTreeVirtualRow } from "../workspaceTreeRows";
 import { BrowserPanel } from "../features/browser/BrowserPanel";
+import { NotesPanel } from "../features/notes/NotesPanel";
 
 loader.config({ monaco });
 
@@ -31,7 +32,7 @@ interface OpenTab {
 }
 
 type ActiveIdeTab = { type: "file"; path: string | null } | { type: "review" };
-type WorkspacePanelMode = "files" | "review" | "browser";
+type WorkspacePanelMode = "files" | "review" | "browser" | "notes";
 
 export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedPanelMode, requestedPanelModeKey, onReviewClosed, onToggleCollapsed }: WorkspaceIdeShellProps) {
   const [listings, setListings] = useState<Record<string, WorkspaceDirectoryListing>>({});
@@ -44,12 +45,21 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
   const [panelMode, setPanelMode] = useState<WorkspacePanelMode>("files");
   const [selectedReviewPath, setSelectedReviewPath] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false);
+  const [pinnedPaths, setPinnedPaths] = useState<Set<string>>(() => new Set());
+  const [tabMenu, setTabMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const treeScrollerRef = useRef<HTMLDivElement | null>(null);
   const activeFileTab = activeTab.type === "file" ? tabs.find((tab) => tab.path === activeTab.path) || null : null;
   const activeReviewFile = reviewSession?.files.find((file) => file.path === selectedReviewPath) || reviewSession?.files[0] || null;
   const reviewActive = activeTab.type === "review" && Boolean(reviewSession);
+  const orderedTabs = useMemo(
+    () => tabs.map((tab, index) => ({ tab, index }))
+      .sort((a, b) => Number(pinnedPaths.has(b.tab.path)) - Number(pinnedPaths.has(a.tab.path)) || a.index - b.index)
+      .map(({ tab }) => tab),
+    [pinnedPaths, tabs],
+  );
 
   useEffect(() => {
     setListings({});
@@ -58,11 +68,25 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
     setTreeError(null);
     setFilter("");
     setTabs([]);
+    setPinnedPaths(new Set());
     setActiveTab({ type: "file", path: null });
     setPanelMode("files");
     setSelectedReviewPath(null);
     if (workspace) void loadDirectory(".");
   }, [workspace?.id]);
+
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    window.addEventListener("blur", close);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("blur", close);
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("scroll", close, true);
+    };
+  }, [tabMenu]);
 
   useEffect(() => {
     if (!reviewSession) {
@@ -146,12 +170,30 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
   };
 
   const closeTab = (path: string) => {
+    closeTabs([path]);
+  };
+
+  const closeTabs = (paths: string[]) => {
     setTabs((current) => {
-      const index = current.findIndex((tab) => tab.path === path);
-      const next = current.filter((tab) => tab.path !== path);
-      if (activeTab.type === "file" && activeTab.path === path) setActiveTab({ type: "file", path: next[Math.max(0, index - 1)]?.path || next[0]?.path || null });
+      const activeIndex = activeTab.type === "file" ? current.findIndex((tab) => tab.path === activeTab.path) : -1;
+      const next = current.filter((tab) => !paths.includes(tab.path));
+      if (activeTab.type === "file" && activeTab.path && paths.includes(activeTab.path)) {
+        setActiveTab({ type: "file", path: next[Math.max(0, activeIndex - 1)]?.path || next[0]?.path || null });
+      }
       return next;
     });
+    setPinnedPaths((current) => new Set([...current].filter((path) => !paths.includes(path))));
+    setTabMenu(null);
+  };
+
+  const togglePinnedPath = (path: string) => {
+    setPinnedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+    setTabMenu(null);
   };
 
   const copyActiveFile = async () => {
@@ -165,6 +207,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
   const activeExternalPath = reviewActive ? activeReviewFile?.path : activeFileTab?.path;
   const fileMode = panelMode === "files" || (panelMode === "review" && !reviewSession);
   const browserMode = panelMode === "browser";
+  const notesMode = panelMode === "notes";
   const reviewMode = panelMode === "review" && Boolean(reviewSession);
 
   return (
@@ -183,9 +226,13 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
             <Globe2 size={15} />
             <span>Browser</span>
           </button>
+          <button type="button" className={clsx(notesMode && "active")} onClick={() => setPanelMode("notes")}>
+            <NotebookTabs size={15} />
+            <span>Notes</span>
+          </button>
         </div>
         {fileMode || reviewMode ? (
-        <div className="workspace-ide-tabs" role="tablist" aria-label="Open files">
+        <div className="workspace-ide-tabs" role="tablist" aria-label="Open files" onWheel={scrollTabsHorizontally}>
           {reviewSession && (
             <button
               type="button"
@@ -217,16 +264,21 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
               <File size={16} />
               <span>Open file</span>
             </button>
-          ) : tabs.map((tab) => (
+          ) : orderedTabs.map((tab) => (
             <button
               type="button"
               key={tab.path}
               className={clsx("workspace-tab", activeTab.type === "file" && activeTab.path === tab.path && "active")}
               onClick={() => setActiveTab({ type: "file", path: tab.path })}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setTabMenu(fileTabMenuPosition(tab.path, event.clientX, event.clientY));
+              }}
               title={tab.path}
             >
               <FileIcon name={tab.name} />
               <span>{tab.name}</span>
+              {pinnedPaths.has(tab.path) && <Pin size={11} className="workspace-tab-pin" />}
               <span
                 role="button"
                 tabIndex={0}
@@ -260,10 +312,10 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
               </button>
             </>
           )}
-          <button type="button" className="workspace-icon-button" title="Copy contents" disabled={browserMode || (reviewMode ? !activeReviewFile : !activeFileTab?.result || activeFileTab.result.binary)} onClick={copyActiveFile}>
+          <button type="button" className="workspace-icon-button" title="Copy contents" disabled={browserMode || notesMode || (reviewMode ? !activeReviewFile : !activeFileTab?.result || activeFileTab.result.binary)} onClick={copyActiveFile}>
             {copied ? <Check size={15} /> : <Copy size={15} />}
           </button>
-          <button type="button" className="workspace-icon-button" title="Open externally" disabled={browserMode || !activeExternalPath} onClick={() => activeExternalPath && window.privoraDesktop.openPath(activeExternalPath)}>
+          <button type="button" className="workspace-icon-button" title="Open externally" disabled={browserMode || notesMode || !activeExternalPath} onClick={() => activeExternalPath && window.privoraDesktop.openPath(activeExternalPath)}>
             <ExternalLink size={15} />
           </button>
           <button type="button" className="workspace-icon-button" title="Hide workspace" onClick={onToggleCollapsed}>
@@ -271,11 +323,22 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
           </button>
         </div>
       </header>
+      {tabMenu && (
+        <div className="tab-context-menu" style={{ left: tabMenu.x, top: tabMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
+          <button type="button" onClick={() => togglePinnedPath(tabMenu.path)}>{pinnedPaths.has(tabMenu.path) ? <PinOff size={14} /> : <Pin size={14} />}<span>{pinnedPaths.has(tabMenu.path) ? "Unpin" : "Pin"}</span></button>
+          <div />
+          <button type="button" onClick={() => closeTabs([tabMenu.path])}><X size={14} /><span>Close</span></button>
+          <button type="button" disabled={tabs.length <= 1} onClick={() => closeTabs(tabs.filter((tab) => tab.path !== tabMenu.path).map((tab) => tab.path))}><X size={14} /><span>Close others</span></button>
+          <button type="button" onClick={() => closeTabs(tabs.map((tab) => tab.path))}><X size={14} /><span>Close all</span></button>
+        </div>
+      )}
 
       {browserMode ? (
         <BrowserPanel workspace={workspace} active={browserMode} hidden={hidden} />
+      ) : notesMode ? (
+        <NotesPanel workspace={workspace} active={notesMode} />
       ) : (
-      <div className="workspace-ide-main">
+      <div className={clsx("workspace-ide-main", fileTreeCollapsed && "tree-collapsed")}>
         <section className="workspace-editor-panel" aria-label="Read-only file viewer">
           <div className="workspace-breadcrumb">
             {reviewActive && reviewSession ? (
@@ -291,6 +354,14 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
                 {activeFileTab && <><ChevronRight size={14} /><strong>{activeFileTab.path}</strong></>}
               </>
             ) : <span>No project selected</span>}
+            <button
+              type="button"
+              className="workspace-icon-button workspace-tree-toggle"
+              title={fileTreeCollapsed ? "Show file tree" : "Hide file tree"}
+              onClick={() => setFileTreeCollapsed((collapsed) => !collapsed)}
+            >
+              {fileTreeCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
+            </button>
           </div>
           {reviewMode && reviewSession ? (
             <ReviewSurface
@@ -610,3 +681,15 @@ const formatBytes = (bytes: number) => {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
+
+const scrollTabsHorizontally = (event: WheelEvent<HTMLDivElement>) => {
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  event.currentTarget.scrollLeft += event.deltaY;
+  event.preventDefault();
+};
+
+const fileTabMenuPosition = (path: string, x: number, y: number) => ({
+  path,
+  x: Math.max(8, Math.min(x, window.innerWidth - 198)),
+  y: Math.max(8, Math.min(y, window.innerHeight - 214)),
+});
