@@ -47,6 +47,7 @@ const MAX_EVIDENCE_PER_WORKFLOW = 20;
 const MAX_EVIDENCE_PER_WORKSPACE = 160;
 const WORKFLOW_TOOL_ACTIONS = new Set([
   "browser_open",
+  "browser_open_link",
   "browser_wait",
   "browser_act",
   "browser_trace",

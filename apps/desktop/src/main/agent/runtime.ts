@@ -538,6 +538,7 @@ export class AgentRuntime {
                 options.threadId,
                 options.assistantMessage.id,
                 browserExternalApproved,
+                settings.permissionMode,
               );
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
                 status: result.success ? "done" : "failed",
@@ -1174,6 +1175,7 @@ export class AgentRuntime {
     threadId: string,
     messageId: string,
     browserExternalApproved = false,
+    permissionMode = this.store.getSettings().permissionMode,
   ) {
     if (isSubagentTool(call.name)) {
       return await this.executeSubagentTool(call, workspaceRoot, controller, run, threadId, messageId);
@@ -1186,6 +1188,7 @@ export class AgentRuntime {
       workspaceRoot,
       signal: controller.signal,
       browserExternalApproved,
+      permissionMode,
       onCommandOutput: (callId, delta) => {
         markRunProgress(run);
         this.queueToolOutput(threadId, messageId, call, callId, delta);

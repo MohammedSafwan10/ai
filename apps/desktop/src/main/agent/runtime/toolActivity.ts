@@ -163,6 +163,8 @@ export const titleForTool = (call: DesktopToolCall) => {
       return `Check ${args.kind || args.command || "workspace"}`;
     case "browser_open":
       return `Open browser ${args.url || ""}`.trim();
+    case "browser_open_link":
+      return `Open browser link ${args.text || args.ref || args.targetRef || ""}`.trim();
     case "browser_snapshot":
       return "Capture browser snapshot";
     case "browser_act":
@@ -183,6 +185,8 @@ export const titleForTool = (call: DesktopToolCall) => {
       return `Browser tab ${args.action || "list"}`;
     case "browser_downloads":
       return `Browser downloads ${args.action || "list"}`;
+    case "browser_shields":
+      return `Privora Shields ${args.action || "get"}`;
     case "browser_pdf":
       return `Inspect browser PDF ${args.mode || "summary"}`;
     case "browser_form_analyze":
@@ -251,6 +255,7 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "desktop_search") return "Searching workspace";
     if (call.name === "web_search") return "Searching web";
     if (call.name === "browser_open") return "Opening browser";
+    if (call.name === "browser_open_link") return "Opening browser link";
     if (call.name === "browser_snapshot") return "Capturing browser";
     if (call.name === "browser_act") return "Using browser";
     if (call.name === "browser_inspect") return "Inspecting browser";
@@ -261,6 +266,7 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "browser_search") return "Searching browser";
     if (call.name === "browser_tab") return "Managing browser tabs";
     if (call.name === "browser_downloads") return "Managing downloads";
+    if (call.name === "browser_shields") return "Checking Shields";
     if (call.name === "browser_pdf") return "Inspecting PDF";
     if (call.name === "browser_form_analyze") return "Analyzing forms";
     if (call.name === "browser_form_fill") return "Filling form";

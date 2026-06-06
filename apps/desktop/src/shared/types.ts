@@ -129,6 +129,31 @@ export interface BrowserDownloadRecord {
   updatedAt: number;
 }
 
+export type BrowserShieldsMode = "off" | "standard";
+
+export interface BrowserShieldsBlockedRequestRecord {
+  id: string;
+  url: string;
+  displayUrl: string;
+  resourceType: string;
+  sourceUrl?: string;
+  blockedReason: string;
+  ruleSource?: string;
+  timestamp: number;
+}
+
+export interface BrowserShieldsStateRecord {
+  mode: BrowserShieldsMode;
+  effectiveMode: BrowserShieldsMode;
+  origin: string;
+  siteOverride?: BrowserShieldsMode;
+  blockedCount: number;
+  recentBlocked: BrowserShieldsBlockedRequestRecord[];
+  engineReady: boolean;
+  loadError?: string;
+  updatedAt: number;
+}
+
 export type BrowserFormRisk = "safe" | "sensitive" | "sensitive_payment" | "irreversible";
 
 export interface BrowserFormControlRecord {
@@ -334,6 +359,7 @@ export interface BrowserPanelStateRecord {
   activeTabId: string;
   downloads: BrowserDownloadRecord[];
   forms: BrowserFormRecord[];
+  shields: BrowserShieldsStateRecord;
   workflow: BrowserWorkflowPanelStateRecord;
   evidenceUpdatedAt?: number;
   updatedAt: number;
@@ -370,6 +396,14 @@ export interface BrowserActionInput {
   includeScreenshot?: boolean;
 }
 
+export interface BrowserOpenLinkInput {
+  ref?: string;
+  text?: string;
+  href?: string;
+  tabId?: string;
+  newTab?: boolean;
+}
+
 export interface BrowserNavigationInput {
   workspaceId: string;
   direction: "back" | "forward" | "reload" | "stop";
@@ -398,6 +432,14 @@ export interface BrowserDownloadInput {
   workspaceId: string;
   action: "list" | "allow_next" | "cancel" | "reveal";
   downloadId?: string;
+}
+
+export interface BrowserShieldsInput {
+  workspaceId: string;
+  action: "get" | "set_mode" | "toggle_site" | "list_blocked";
+  mode?: BrowserShieldsMode;
+  enabled?: boolean;
+  origin?: string;
 }
 
 export interface BrowserFormFieldValueInput {
@@ -518,6 +560,8 @@ export type BrowserToolsMenuAction =
   | "replay_workflow"
   | "save_evidence"
   | "downloads"
+  | "toggle_shields_site"
+  | "list_shields_blocked"
   | "workflow_vault";
 
 export interface BrowserToolsMenuInput {
@@ -525,6 +569,7 @@ export interface BrowserToolsMenuInput {
   hasUrl: boolean;
   hasWorkflows: boolean;
   recording: boolean;
+  shieldsEnabled?: boolean;
 }
 
 export interface BrowserOverlayInput {
@@ -1004,6 +1049,7 @@ export type DesktopToolName =
   | "desktop_git_status"
   | "desktop_git_diff"
   | "browser_open"
+  | "browser_open_link"
   | "browser_snapshot"
   | "browser_act"
   | "browser_inspect"
@@ -1014,6 +1060,7 @@ export type DesktopToolName =
   | "browser_search"
   | "browser_tab"
   | "browser_downloads"
+  | "browser_shields"
   | "browser_pdf"
   | "browser_form_analyze"
   | "browser_form_fill"
@@ -1185,6 +1232,7 @@ export interface PrivoraDesktopApi {
   inspectBrowser(input: BrowserInspectInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserTab(input: BrowserTabInput): Promise<BrowserPanelStateRecord>;
   browserDownload(input: BrowserDownloadInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  browserShields(input: BrowserShieldsInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserFormAnalyze(input: BrowserFormAnalyzeInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserFormFill(input: BrowserFormFillInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   browserFormValidate(input: BrowserFormValidateInput): Promise<{ output: string; data?: Record<string, unknown> }>;

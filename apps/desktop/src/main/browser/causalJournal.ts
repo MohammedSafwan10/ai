@@ -18,6 +18,9 @@ export interface BrowserNetworkEntry {
   status?: number;
   failed?: boolean;
   errorText?: string;
+  blockedByShields?: boolean;
+  blockedReason?: string;
+  ruleSource?: string;
   startedAt: number;
   endedAt?: number;
 }
@@ -113,7 +116,7 @@ export class CausalJournal {
       .filter((entry) => entry.timestamp >= since && (entry.level === "error" || entry.level === "warning"))
       .slice(-8);
     const failedRequests = this.networkEntries
-      .filter((entry) => entry.startedAt >= since && (entry.failed || (typeof entry.status === "number" && entry.status >= 400)))
+      .filter((entry) => entry.startedAt >= since && !entry.blockedByShields && (entry.failed || (typeof entry.status === "number" && entry.status >= 400)))
       .slice(-8);
     const screenshotPath = active.includeScreenshot ? await this.captureScreenshot(contents, active.id).catch(() => undefined) : undefined;
     const finding = buildFinding(active.action, active.before, after, consoleErrors, failedRequests);
@@ -169,9 +172,10 @@ const buildFinding = (
   consoleErrors: BrowserConsoleEntry[],
   failedRequests: BrowserNetworkEntry[],
 ) => {
-  const parts = [action];
+  const blockedNavigation = before.url === after.url && (failedRequests.length > 0 || consoleErrors.length > 0) && /^Clicked\b/i.test(action);
+  const parts = [blockedNavigation ? action.replace(/^Clicked\b/i, "Click attempted on") : action];
   if (before.url !== after.url) parts.push(`navigated to ${after.url}`);
-  else parts.push("stayed on the same page");
+  else parts.push(blockedNavigation ? "navigation did not complete" : "stayed on the same page");
   if (failedRequests.length) {
     const first = failedRequests[0];
     parts.push(`${first.method} ${first.url} ${first.status || first.errorText || "failed"}`);

@@ -318,6 +318,18 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
+    name: "browser_open_link",
+    description: "Open a visible page link directly by browser_snapshot ref or visible link text. Prefer this over a synthetic click for dynamic sites such as YouTube/search results when the goal is navigation.",
+    parameters: schema({
+      ref: textProperty("Link ref from browser_snapshot, such as b3."),
+      targetRef: textProperty("Alias for ref."),
+      text: textProperty("Visible link text to match when a ref is unavailable."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
+      newTab: boolProperty("If true, open the link in a new browser tab."),
+    }, []),
+  },
+  {
+    type: "function",
     name: "browser_snapshot",
     description: "Capture a concise accessibility-oriented snapshot of the current built-in browser page. Use refs from this output with browser_act.",
     parameters: schema({
@@ -430,6 +442,17 @@ export const desktopToolDefinitions = [
     parameters: schema({
       action: textProperty("Download action: list, allow_next, cancel, or reveal."),
       downloadId: textProperty("Download id for cancel or reveal. Defaults to latest where safe."),
+    }, ["action"]),
+  },
+  {
+    type: "function",
+    name: "browser_shields",
+    description: "Inspect or manage Privora Shields for the built-in browser. Shields block ad/tracker subresources and report them separately from real network failures.",
+    parameters: schema({
+      action: textProperty("Shields action: get, set_mode, toggle_site, or list_blocked."),
+      mode: textProperty("Mode for set_mode: off or standard."),
+      enabled: boolProperty("For toggle_site, true enables Shields for the current/origin site and false disables it."),
+      origin: textProperty("Optional origin to override. Defaults to current page origin."),
     }, ["action"]),
   },
   {

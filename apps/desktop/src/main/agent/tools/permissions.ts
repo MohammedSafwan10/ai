@@ -95,6 +95,14 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     }
   }
 
+  if (call.name === "browser_open_link" && context.browserCurrentPageRequiresApproval) {
+    return {
+      risk: "risky",
+      requiresApproval: mode !== "yolo",
+      reason: "Agent link navigation on the current external browser page needs approval.",
+    };
+  }
+
   if (call.name === "browser_act" || call.name === "browser_trace") {
     if (browserActionLooksSensitive(call)) {
       return {
@@ -119,6 +127,17 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
         risk: "risky",
         requiresApproval: mode !== "yolo",
         reason: "Browser download actions need explicit approval.",
+      };
+    }
+  }
+
+  if (call.name === "browser_shields") {
+    const action = String(call.arguments.action || "get").toLowerCase();
+    if (action === "set_mode" || action === "toggle_site") {
+      return {
+        risk: "risky",
+        requiresApproval: mode !== "yolo",
+        reason: "Changing Privora Shields can alter how external pages load.",
       };
     }
   }

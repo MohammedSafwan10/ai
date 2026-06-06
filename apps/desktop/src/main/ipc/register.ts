@@ -29,6 +29,7 @@ import type {
   BrowserNavigationInput,
   BrowserOpenInput,
   BrowserOverlayInput,
+  BrowserShieldsInput,
   BrowserTabInput,
   BrowserToolsMenuAction,
   BrowserToolsMenuInput,
@@ -358,6 +359,10 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return browserManager.downloadAction(input.workspaceId, input);
   });
 
+  handle(channels.browserShields, z.tuple([browserShieldsInputSchema]), async (_event, input: BrowserShieldsInput) => {
+    return browserManager.shieldsAction(input.workspaceId, input);
+  });
+
   handle(channels.browserFormAnalyze, z.tuple([browserFormAnalyzeInputSchema]), async (_event, input: BrowserFormAnalyzeInput) => {
     return browserManager.formAnalyze(input.workspaceId, input.tabId);
   });
@@ -447,6 +452,12 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     const template: MenuItemConstructorOptions[] = [
       { label: "Current evidence", enabled: input.hasUrl, click: () => sendAction("current_evidence") },
       { label: "Forms", enabled: input.hasUrl, click: () => sendAction("forms") },
+      {
+        label: input.shieldsEnabled ? "Turn off Shields for this site" : "Turn on Shields for this site",
+        enabled: input.hasUrl,
+        click: () => sendAction("toggle_shields_site"),
+      },
+      { label: "Show Shields blocks", enabled: input.hasUrl, click: () => sendAction("list_shields_blocked") },
       { type: "separator" },
       { label: input.recording ? "Stop recording" : "Record workflow", enabled: input.hasUrl || input.recording, click: () => sendAction("record_workflow") },
       { label: "Replay workflow", enabled: input.hasWorkflows, click: () => sendAction("replay_workflow") },
@@ -586,6 +597,13 @@ const browserDownloadInputSchema = z.object({
   action: z.enum(["list", "allow_next", "cancel", "reveal"]),
   downloadId: idSchema.optional(),
 });
+const browserShieldsInputSchema = z.object({
+  workspaceId: idSchema,
+  action: z.enum(["get", "set_mode", "toggle_site", "list_blocked"]),
+  mode: z.enum(["off", "standard"]).optional(),
+  enabled: z.boolean().optional(),
+  origin: z.string().trim().max(4096).optional(),
+});
 const browserFormFieldValueInputSchema = z.object({
   fieldId: idSchema.optional(),
   name: z.string().trim().max(200).optional(),
@@ -654,6 +672,7 @@ const browserToolsMenuInputSchema = z.object({
   hasUrl: z.boolean(),
   hasWorkflows: z.boolean(),
   recording: z.boolean(),
+  shieldsEnabled: z.boolean().optional(),
 });
 const browserOverlayInputSchema = z.object({
   title: z.string().trim().min(1).max(120),

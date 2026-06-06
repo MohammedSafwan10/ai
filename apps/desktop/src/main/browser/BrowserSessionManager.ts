@@ -6,10 +6,12 @@ import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, shell, session as electronSession, WebContentsView, type DownloadItem, type Event, type Rectangle, type WebContents } from "electron";
 import { BrowserCdpClient, type BrowserSnapshotOptions } from "./browserCdp";
 import { buildBrowserExtractScript, browserExtractionOutput, normalizeExtractMode, sanitizeBrowserExtraction, type BrowserExtractMode, type BrowserExtractionResult } from "./browserExtraction";
-import { browserOriginDecision, compactUrl, installBrowserSessionSecurity, installBrowserWebContentsSecurity, normalizeBrowserUrl, redactSensitiveText, shouldRestorePersistedBrowserUrl, type BrowserControlScope } from "./browserSecurity";
+import { browserOriginDecision, compactUrl, installBrowserSessionSecurity, installBrowserWebContentsSecurity, normalizeBrowserUrl, redactSensitiveText, safeExactBrowserUrl, shouldRestorePersistedBrowserUrl, type BrowserControlScope } from "./browserSecurity";
 import { hideBrowserCursorOverlay, showBrowserCursorOverlay, type BrowserCursorBox, type BrowserCursorPoint } from "./browserCursorOverlay";
 import { CausalJournal, pageSummary, type BrowserActionFinding, type BrowserNetworkEntry } from "./causalJournal";
 import { inspectDevBridge } from "./devBridge";
+import { BrowserNetworkPipeline } from "./shields/BrowserNetworkPipeline";
+import { ShieldsManager } from "./shields/ShieldsManager";
 import {
   browserFormOperationOutput,
   browserFormsOutput,
@@ -43,7 +45,10 @@ import type {
   BrowserFormRecord,
   BrowserFormSubmitInput,
   BrowserFormValidateInput,
+  BrowserOpenLinkInput,
   BrowserPanelStateRecord,
+  BrowserShieldsBlockedRequestRecord,
+  BrowserShieldsInput,
   BrowserTabInput,
   BrowserTabRecord,
   BrowserViewportPreset,
@@ -83,6 +88,7 @@ interface BrowserElementRef {
   ref: string;
   role: string;
   name: string;
+  href?: string;
   x: number;
   y: number;
   width: number;
@@ -137,6 +143,7 @@ export class BrowserSessionManager {
   private allowNextDownload = new Set<string>();
   private downloadHandlers = new Set<string>();
   private workflows = new BrowserWorkflowManager(app.getPath("userData"));
+  private shields = new ShieldsManager(app.getPath("userData"));
   private replayingWorkflows = new Set<string>();
   private latestAdHocDiagnosis = new Map<string, { diagnosis: BrowserWorkflowDiagnosisRecord; createdAt: number }>();
 
@@ -170,6 +177,18 @@ export class BrowserSessionManager {
       await session.view.webContents.loadURL(url);
     } catch (error) {
       const message = cleanLoadError(error);
+      const softNavigation = isSoftNavigationAbort(error, url, session.view.webContents.getURL());
+      if (softNavigation) {
+        session.journal.recordConsole({
+          level: "warning",
+          message: `Navigation finished after soft load abort: ${message}`,
+        });
+        await waitForBrowserSettle(session.view.webContents, 350);
+        this.syncAttachment(session);
+        this.updateStateFromContents(session);
+        this.updateState(session, { lastFinding: `Opened ${compactUrl(session.view.webContents.getURL())} after a soft load abort.` });
+        return session.state;
+      }
       session.journal.recordConsole({ level: "error", message });
       this.updateStateFromContents(session);
       this.updateState(session, { lastFinding: message, loading: false });
@@ -180,6 +199,33 @@ export class BrowserSessionManager {
     this.syncAttachment(session);
     this.updateStateFromContents(session);
     return session.state;
+  }
+
+  async openLink(workspaceId: string, input: BrowserOpenLinkInput, options: { agentApproved?: boolean } = {}) {
+    const session = this.ensureSession(workspaceId, input.tabId);
+    this.assertAgentMayControl(session, options.agentApproved === true);
+    const link = await this.resolvePageLink(session, input);
+    const targetUrl = normalizeBrowserUrl(link.href);
+    const decision = browserOriginDecision(targetUrl, options.agentApproved ? "user" : "agent");
+    if (!decision.allowed) throw new Error(decision.reason || "Agent browser link navigation needs approval.");
+    if (options.agentApproved) session.approvedAgentOrigins.add(decision.origin);
+    const state = await this.openUrl(workspaceId, targetUrl, {
+      scope: options.agentApproved ? "user" : "agent",
+      rememberAgentApproval: options.agentApproved,
+      throwOnLoadFailure: true,
+      tabId: input.tabId,
+      newTab: input.newTab,
+    });
+    return {
+      output: `Opened link ${link.text || targetUrl} -> ${state.url}`,
+      data: {
+        text: link.text,
+        href: compactUrl(targetUrl),
+        url: state.url,
+        title: state.title,
+        activeTabId: state.activeTabId,
+      },
+    };
   }
 
   setVisible(workspaceId: string | null | undefined, visible: boolean) {
@@ -266,9 +312,14 @@ export class BrowserSessionManager {
     const session = this.ensureSession(workspaceId, tabId);
     if (kind === "console") {
       const consoleEntries = session.journal.recentConsole();
+      const shields = this.shields.stateFor(workspaceId, session.view.webContents.getURL(), session.view.webContents.id);
+      const shieldsRelated = classifyShieldsRelatedConsole(consoleEntries, shields.recentBlocked);
       return {
-        output: consoleEntries.map((entry) => `${entry.level}: ${entry.message}`).join("\n") || "No recent console messages.",
-        data: { console: consoleEntries },
+        output: [
+          consoleEntries.map((entry) => `${entry.level}: ${entry.message}`).join("\n") || "No recent console messages.",
+          shieldsRelated.length ? `\nLikely Shields-related console entries: ${shieldsRelated.length}` : "",
+        ].filter(Boolean).join("\n"),
+        data: { console: consoleEntries, shieldsRelatedConsole: shieldsRelated },
       };
     }
     if (kind === "network") {
@@ -381,9 +432,13 @@ export class BrowserSessionManager {
       : null;
     const consoleEntries = includeConsole ? session.journal.recentConsole() : [];
     const requests = includeNetwork ? session.journal.recentNetwork() : [];
+    const shields = this.shields.stateFor(workspaceId, session.view.webContents.getURL(), session.view.webContents.id);
+    const shieldsRelatedConsole = classifyShieldsRelatedConsole(consoleEntries, shields.recentBlocked);
     const pageViewport = await this.pageViewport(session);
+    const exactUrl = safeExactBrowserUrl(session.view.webContents.getURL());
     const data = {
-      url: compactUrl(session.view.webContents.getURL()),
+      url: exactUrl,
+      displayUrl: compactUrl(session.view.webContents.getURL()),
       title: redactSensitiveText(session.view.webContents.getTitle(), 240),
       timestamp: new Date().toISOString(),
       viewport: pageViewport,
@@ -392,7 +447,9 @@ export class BrowserSessionManager {
       metadata: metadata?.metadata,
       visibleText: visibleText?.text,
       console: consoleEntries,
+      shieldsRelatedConsole,
       requests,
+      shields,
       screenshotPath: screenshot?.screenshotPath,
       screenshotError: screenshot?.error,
       pdf: looksLikePdfUrl(session.view.webContents.getURL()) ? { available: true } : { available: false },
@@ -483,6 +540,37 @@ export class BrowserSessionManager {
         ? downloads.map((item) => `${item.state}: ${item.filename} ${item.receivedBytes}/${item.totalBytes || "?"}`).join("\n")
         : "No browser downloads recorded.",
       data: { downloads },
+    };
+  }
+
+  async shieldsAction(workspaceId: string, input: BrowserShieldsInput) {
+    const session = this.ensureSession(workspaceId);
+    const currentUrl = session.view.webContents.getURL();
+    if (input.action === "set_mode") {
+      const mode = normalizeShieldsMode(input.mode);
+      this.shields.setMode(workspaceId, mode);
+      this.updateState(session, {
+        lastFinding: `Privora Shields ${mode === "standard" ? "enabled" : "disabled"} by default.`,
+      });
+    }
+    if (input.action === "toggle_site") {
+      const state = this.shields.toggleSite(workspaceId, input.origin || currentUrl, input.enabled);
+      this.updateState(session, {
+        lastFinding: `Privora Shields ${state.effectiveMode === "standard" ? "enabled" : "disabled"} for ${state.origin || "this site"}.`,
+      });
+    }
+    const state = this.shields.stateFor(workspaceId, currentUrl, session.view.webContents.id);
+    if (input.action === "list_blocked") {
+      return {
+        output: state.recentBlocked.length
+          ? state.recentBlocked.map((item) => `${item.resourceType} ${item.displayUrl}`).join("\n")
+          : "No recent Privora Shields blocks on this page.",
+        data: { shields: state, blocked: state.recentBlocked },
+      };
+    }
+    return {
+      output: shieldsOutput(state),
+      data: { shields: state },
     };
   }
 
@@ -747,7 +835,7 @@ export class BrowserSessionManager {
       lastAction: actionLabel,
       lastFinding: finding?.finding || summarizeFormResult(output),
       consoleErrorCount: session.journal.recentConsole().filter((entry) => entry.level === "error").length,
-      failedRequestCount: session.journal.recentNetwork().filter((entry) => entry.failed || (entry.status || 0) >= 400).length,
+      failedRequestCount: countRealFailedRequests(session.journal.recentNetwork()),
     });
     return {
       output,
@@ -780,7 +868,7 @@ export class BrowserSessionManager {
     }
     const last = session.journal.lastFinding();
     const recentErrors = session.journal.recentConsole().filter((entry) => entry.level === "error").slice(-4);
-    const recentFailures = session.journal.recentNetwork().filter((entry) => entry.failed || (entry.status || 0) >= 400).slice(-4);
+    const recentFailures = session.journal.recentNetwork().filter((entry) => !entry.blockedByShields && (entry.failed || (entry.status || 0) >= 400)).slice(-4);
     const passed = recentErrors.length === 0 && recentFailures.length === 0;
     return {
       passed,
@@ -869,7 +957,12 @@ export class BrowserSessionManager {
       throw new Error(`Privora Browser supports up to ${MAX_BROWSER_TABS} tabs per workspace.`);
     }
     const partition = `persist:privora-browser:${workspaceId.replace(/[^\w.-]/g, "_")}`;
-    const browserSession = installBrowserSessionSecurity(partition);
+    const pipeline = new BrowserNetworkPipeline({
+      workspaceId,
+      shields: this.shields,
+      onShieldsBlocked: (record, details) => this.recordShieldsBlocked(workspaceId, record, details),
+    });
+    const browserSession = installBrowserSessionSecurity(partition, (details) => pipeline.handleBeforeRequest(details));
     if (!this.downloadHandlers.has(partition)) {
       this.downloadHandlers.add(partition);
       browserSession.on("will-download", (event, item, webContents) => {
@@ -1027,6 +1120,35 @@ export class BrowserSessionManager {
     return (this.workspaceTabs.get(workspaceId) || []).find((tab) => tab.view.webContents.id === contents.id) || null;
   }
 
+  private findTabByWebContentsId(workspaceId: string, webContentsId: number | undefined) {
+    if (typeof webContentsId !== "number") return null;
+    return (this.workspaceTabs.get(workspaceId) || []).find((tab) => tab.view.webContents.id === webContentsId) || null;
+  }
+
+  private recordShieldsBlocked(
+    workspaceId: string,
+    record: BrowserShieldsBlockedRequestRecord,
+    details: Electron.OnBeforeRequestListenerDetails,
+  ) {
+    const tab = this.findTabByWebContentsId(workspaceId, details.webContentsId) || this.sessions.get(workspaceId);
+    if (!tab) return;
+    const entry: BrowserNetworkEntry = {
+      id: `shields:${record.id}`,
+      url: record.url,
+      method: details.method || "GET",
+      blockedByShields: true,
+      blockedReason: record.blockedReason,
+      ruleSource: record.ruleSource,
+      startedAt: record.timestamp,
+      endedAt: record.timestamp,
+    };
+    tab.network.set(entry.id, entry);
+    tab.journal.recordRequest(entry);
+    this.updateState(tab, {
+      shields: this.shields.stateFor(workspaceId, tab.view.webContents.getURL(), tab.view.webContents.id),
+    });
+  }
+
   private installContentsListeners(session: BrowserSessionRecord) {
     const contents = session.view.webContents;
     contents.on("page-title-updated", () => this.updateStateFromContents(session));
@@ -1125,18 +1247,20 @@ export class BrowserSessionManager {
 
   private updateFailedRequestCount(session: BrowserSessionRecord) {
     this.updateState(session, {
-      failedRequestCount: session.journal.recentNetwork().filter((entry) => entry.failed || (entry.status || 0) >= 400).length,
+      failedRequestCount: countRealFailedRequests(session.journal.recentNetwork()),
     });
   }
 
   private clearPageEvidence(session: BrowserSessionRecord) {
     session.network.clear();
     session.journal.clearPageEvidence();
+    this.shields.clearPage(session.view.webContents.id);
     this.updateState(session, {
       consoleErrorCount: 0,
       failedRequestCount: 0,
       lastFinding: undefined,
       forms: [],
+      shields: this.shields.stateFor(session.workspaceId, session.view.webContents.getURL(), session.view.webContents.id),
     });
     session.forms = [];
   }
@@ -1209,6 +1333,15 @@ export class BrowserSessionManager {
         newTab: args.newTab === true,
       });
       return { success: true, output: `Opened ${state.url}`, data: state as unknown as Record<string, unknown> };
+    }
+    if (step.action === "browser_open_link") {
+      const result = await this.openLink(workspaceId, {
+        ref: typeof args.ref === "string" ? args.ref : typeof args.targetRef === "string" ? args.targetRef : undefined,
+        text: typeof args.text === "string" ? args.text : undefined,
+        href: typeof args.href === "string" ? args.href : undefined,
+        newTab: args.newTab === true || args.new_tab === true,
+      }, { agentApproved: options.agentApproved });
+      return { success: true, output: result.output, data: result.data };
     }
     if (step.action === "browser_wait") {
       const result = await this.wait(workspaceId, {
@@ -1439,6 +1572,16 @@ export class BrowserSessionManager {
         y: Number.isFinite(Number(call.arguments.y)) ? Number(call.arguments.y) : entry ? Math.round(entry.y + entry.height / 2) : undefined,
       };
     }
+    if (call.name === "browser_open_link") {
+      const ref = String(call.arguments.ref || call.arguments.targetRef || "");
+      const entry = ref ? session.refs.get(ref) : null;
+      return {
+        ref: ref || undefined,
+        role: entry?.role,
+        name: entry?.name,
+        text: typeof call.arguments.text === "string" ? call.arguments.text : entry?.name,
+      };
+    }
     if (call.name === "browser_form_fill" || call.name === "browser_form_submit") {
       const formId = typeof call.arguments.formId === "string" ? call.arguments.formId : undefined;
       const form = formId ? session.forms.find((item) => item.id === formId) : session.forms[0];
@@ -1451,6 +1594,15 @@ export class BrowserSessionManager {
   }
 
   private workflowArgsForCall(session: BrowserSessionRecord | null, call: DesktopToolCall) {
+    if (call.name === "browser_open_link" && session) {
+      const ref = String(call.arguments.ref || call.arguments.targetRef || "");
+      const entry = ref ? session.refs.get(ref) : null;
+      return {
+        ...call.arguments,
+        text: typeof call.arguments.text === "string" ? call.arguments.text : entry?.name,
+        href: entry?.href,
+      };
+    }
     if (call.name !== "browser_form_fill" || !session) return call.arguments;
     const fields = Array.isArray(call.arguments.fields) ? call.arguments.fields : [];
     const formId = typeof call.arguments.formId === "string" ? call.arguments.formId : undefined;
@@ -1510,6 +1662,7 @@ export class BrowserSessionManager {
       tabs: this.tabRecords(session.workspaceId),
       downloads: this.downloads.get(session.workspaceId) || [],
       forms: session.forms,
+      shields: this.shields.stateFor(session.workspaceId, session.view.webContents.getURL(), session.view.webContents.id),
       workflow: this.workflows.panelState(session.workspaceId),
       updatedAt: Date.now(),
     };
@@ -1546,13 +1699,34 @@ export class BrowserSessionManager {
 
   private async collectInteractiveSnapshot(session: BrowserSessionRecord, options: BrowserSnapshotOptions) {
     const result = await session.view.webContents.executeJavaScript(SNAPSHOT_SCRIPT, true) as { lines: string[]; refs: BrowserElementRef[] };
-    session.refs = new Map(result.refs.map((item) => [item.ref, item]));
+    session.refs = new Map(result.refs.map((item) => [item.ref, sanitizeBrowserElementRef(item)]));
     const maxDepth = Math.max(1, Math.min(8, Number(options.depth) || 5));
     const lines = result.lines.slice(0, Math.max(40, maxDepth * 60));
     if (options.includeBoxes) {
       return lines.join("\n");
     }
     return lines.map((line) => line.replace(/\s\[box=[^\]]+\]/g, "")).join("\n") || "(empty page)";
+  }
+
+  private async resolvePageLink(session: BrowserSessionRecord, input: BrowserOpenLinkInput) {
+    if (input.href) {
+      return { text: redactSensitiveText(String(input.text || input.href), 180), href: String(input.href) };
+    }
+    if (input.ref) {
+      let ref = session.refs.get(input.ref);
+      if (!ref) {
+        await this.collectInteractiveSnapshot(session, { depth: 5 }).catch(() => undefined);
+        ref = session.refs.get(input.ref);
+      }
+      if (!ref) throw new Error(`Browser ref ${input.ref} was not found. Capture a fresh browser_snapshot and try again.`);
+      if (ref.role !== "link" || !ref.href) throw new Error(`Browser ref ${input.ref} is not a navigable link.`);
+      return { text: ref.name, href: ref.href };
+    }
+    const text = String(input.text || "").trim();
+    if (!text) throw new Error("browser_open_link needs a link ref or visible text.");
+    const result = await session.view.webContents.executeJavaScript(buildFindLinkByTextScript(text), true) as { text?: string; href?: string } | null;
+    if (!result?.href) throw new Error(`No visible link matched "${redactSensitiveText(text, 120)}". Capture a snapshot or use browser_extract mode=links.`);
+    return { text: redactSensitiveText(result.text || text, 180), href: String(result.href) };
   }
 
   private async extractPage(session: BrowserSessionRecord, mode: BrowserExtractMode) {
@@ -1590,8 +1764,13 @@ export class BrowserSessionManager {
     this.updateState(session, { agentActive: true, lastAction: actionLabel });
     await this.showActionCursor(session, action, input, actionLabel);
     try {
+      const beforeUrl = session.view.webContents.getURL();
       await this.dispatchAction(session, action, input);
       await this.waitForActionEvidenceSettle(session, actionStartedAt);
+      if (action === "click") {
+        const usedFallback = await this.maybeOpenClickedLinkFallback(session, input, beforeUrl, options.agentApproved === true);
+        if (usedFallback) await this.waitForActionEvidenceSettle(session, actionStartedAt);
+      }
     } finally {
       void hideBrowserCursorOverlay(session.view.webContents);
     }
@@ -1601,7 +1780,7 @@ export class BrowserSessionManager {
       lastAction: actionLabel,
       lastFinding: finding?.finding,
       consoleErrorCount: session.journal.recentConsole().filter((entry) => entry.level === "error").length,
-      failedRequestCount: session.journal.recentNetwork().filter((entry) => entry.failed || (entry.status || 0) >= 400).length,
+      failedRequestCount: countRealFailedRequests(session.journal.recentNetwork()),
     });
     if (!finding) throw new Error("Browser action did not produce a trace.");
     return finding;
@@ -1643,6 +1822,33 @@ export class BrowserSessionManager {
       return;
     }
     throw new Error(`Unsupported browser action: ${action}`);
+  }
+
+  private async maybeOpenClickedLinkFallback(
+    session: BrowserSessionRecord,
+    input: BrowserActionInput,
+    beforeUrl: string,
+    agentApproved: boolean,
+  ) {
+    const ref = input.ref ? session.refs.get(input.ref) : null;
+    if (!ref || ref.role !== "link" || !ref.href) return false;
+    const currentUrl = session.view.webContents.getURL();
+    if (currentUrl !== beforeUrl) return false;
+    const targetUrl = normalizeBrowserUrl(ref.href);
+    if (!isLinkFallbackCandidate(beforeUrl, targetUrl)) return false;
+    const decision = browserOriginDecision(targetUrl, agentApproved ? "user" : "agent");
+    if (!decision.allowed) return false;
+    if (agentApproved) session.approvedAgentOrigins.add(decision.origin);
+    try {
+      await session.view.webContents.loadURL(targetUrl);
+      return true;
+    } catch (error) {
+      session.journal.recordConsole({
+        level: "error",
+        message: `Link fallback navigation failed: ${cleanLoadError(error)}`,
+      });
+      return false;
+    }
   }
 
   private assertAgentMayControl(session: BrowserSessionRecord, approved: boolean) {
@@ -1726,7 +1932,7 @@ export class BrowserSessionManager {
         ...recentNetwork.map((entry) => entry.endedAt || entry.startedAt),
       );
       const hasFailureEvidence = recentConsole.some((entry) => entry.level === "error" || entry.level === "warning") ||
-        recentNetwork.some((entry) => entry.failed || (typeof entry.status === "number" && entry.status >= 400));
+        recentNetwork.some((entry) => !entry.blockedByShields && (entry.failed || (typeof entry.status === "number" && entry.status >= 400)));
       const hasYoungPendingRequest = recentNetwork.some((entry) => !entry.endedAt && Date.now() - entry.startedAt < 1500);
       if (hasFailureEvidence && Date.now() - latestEventAt >= 180) return;
       if (!session.view.webContents.isLoading() && !hasYoungPendingRequest && Date.now() - latestEventAt >= quietMs) return;
@@ -1858,7 +2064,18 @@ const createEmptyBrowserState = (workspaceId: string): BrowserPanelStateRecord =
   activeTabId: "",
   downloads: [],
   forms: [],
+  shields: emptyShieldsState(),
   workflow: emptyWorkflowPanelState(),
+  updatedAt: Date.now(),
+});
+
+const emptyShieldsState = () => ({
+  mode: "standard" as const,
+  effectiveMode: "off" as const,
+  origin: "",
+  blockedCount: 0,
+  recentBlocked: [],
+  engineReady: false,
   updatedAt: Date.now(),
 });
 
@@ -1870,6 +2087,25 @@ const emptyWorkflowPanelState = () => ({
   recentEvidence: [],
   updatedAt: Date.now(),
 });
+
+const countRealFailedRequests = (entries: BrowserNetworkEntry[]) =>
+  entries.filter((entry) => !entry.blockedByShields && (entry.failed || (entry.status || 0) >= 400)).length;
+
+const normalizeShieldsMode = (value: unknown) => {
+  const mode = String(value || "standard").trim().toLowerCase();
+  if (mode === "off" || mode === "standard") return mode;
+  throw new Error("Privora Shields mode must be off or standard.");
+};
+
+const shieldsOutput = (state: ReturnType<ShieldsManager["stateFor"]>) => [
+  `Mode: ${state.mode}`,
+  `Effective mode: ${state.effectiveMode}`,
+  state.origin ? `Origin: ${state.origin}` : "",
+  state.siteOverride ? `Site override: ${state.siteOverride}` : "",
+  `Blocked on page: ${state.blockedCount}`,
+  `Engine: ${state.engineReady ? "ready" : "loading"}`,
+  state.loadError ? `Load note: ${redactSensitiveText(state.loadError, 300)}` : "",
+].filter(Boolean).join("\n");
 
 const viewportForPreset = (preset: BrowserViewportPreset) => {
   if (preset === "mobile") return { width: 390, height: 844 };
@@ -1912,17 +2148,28 @@ const rectFromNumbers = (x: number, y: number, width: number, height: number): R
 
 const evidenceOutput = (data: {
   url: string;
+  displayUrl?: string;
   title: string;
   timestamp: string;
   viewport: { width: number; height: number };
   requestedViewport?: { width: number; height: number };
   visibleText?: string;
   console: unknown[];
+  shieldsRelatedConsole?: unknown[];
   requests: unknown[];
+  shields?: {
+    mode: string;
+    effectiveMode: string;
+    blockedCount: number;
+    recentBlocked: BrowserShieldsBlockedRequestRecord[];
+    engineReady: boolean;
+    loadError?: string;
+  };
   screenshotPath?: string;
   screenshotError?: string;
 }) => [
   `URL: ${data.url}`,
+  data.displayUrl && data.displayUrl !== data.url ? `Display URL: ${data.displayUrl}` : "",
   data.title ? `Title: ${data.title}` : "",
   `Captured: ${data.timestamp}`,
   `Effective viewport: ${data.viewport.width}x${data.viewport.height}`,
@@ -1931,11 +2178,55 @@ const evidenceOutput = (data: {
     ? "Viewport note: effective viewport is constrained by the current Browser panel bounds."
     : "",
   `Console entries: ${data.console.length}`,
+  data.shieldsRelatedConsole?.length ? `Likely Shields-related console entries: ${data.shieldsRelatedConsole.length}` : "",
   `Network entries: ${data.requests.length}`,
+  data.shields ? `Shields: ${data.shields.effectiveMode}${data.shields.engineReady ? "" : " (filters loading)"}` : "",
+  data.shields?.blockedCount ? `Blocked by Shields: ${data.shields.blockedCount}` : "",
+  data.shields?.recentBlocked?.length
+    ? `Recent Shields blocks:\n${data.shields.recentBlocked.slice(0, 8).map((item) => `- ${item.resourceType} ${item.displayUrl}`).join("\n")}`
+    : "",
+  data.shields?.loadError ? `Shields load note: ${redactSensitiveText(data.shields.loadError, 300)}` : "",
   data.screenshotPath ? `Screenshot: ${data.screenshotPath}` : "",
   data.screenshotError ? `Screenshot error: ${redactSensitiveText(data.screenshotError, 300)}` : "",
   data.visibleText ? `\nVisible text:\n${redactSensitiveText(data.visibleText, 2400)}` : "",
 ].filter(Boolean).join("\n");
+
+const classifyShieldsRelatedConsole = (
+  consoleEntries: Array<{ message: string; level?: string }>,
+  blocked: BrowserShieldsBlockedRequestRecord[],
+) => {
+  if (!blocked.length || !consoleEntries.length) return [];
+  const blockedTokens = new Set<string>();
+  for (const request of blocked) {
+    addUrlTokens(blockedTokens, request.url);
+    addUrlTokens(blockedTokens, request.displayUrl);
+  }
+  const knownGlobals = ["bugsnag", "sentry", "gtag", "ga", "dataLayer", "fbq", "hj", "ym", "googletag"];
+  return consoleEntries.filter((entry) => {
+    const message = String(entry.message || "").toLowerCase();
+    if (!message) return false;
+    if (knownGlobals.some((token) => message.includes(token.toLowerCase()))) return true;
+    if (!/not defined|failed to load|blocked|refused|net::|cors/i.test(message)) return false;
+    return Array.from(blockedTokens).some((token) => token.length >= 4 && message.includes(token));
+  });
+};
+
+const addUrlTokens = (tokens: Set<string>, rawUrl: string) => {
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    hostname.split(".").forEach((part) => {
+      if (part.length >= 4) tokens.add(part);
+    });
+    parsed.pathname.toLowerCase().split(/[^\w]+/).forEach((part) => {
+      if (part.length >= 4) tokens.add(part);
+    });
+  } catch {
+    rawUrl.toLowerCase().split(/[^\w]+/).forEach((part) => {
+      if (part.length >= 4) tokens.add(part);
+    });
+  }
+};
 
 type BrowserSearchEngine = "duckduckgo" | "bing" | "google";
 
@@ -2094,7 +2385,7 @@ const workflowActionTitle = (name: string) =>
   name.replace(/^browser_/, "").replace(/_/g, " ");
 
 const shouldScreenshotWorkflowStep = (action: string) =>
-  action === "browser_act" || action === "browser_trace" || action === "browser_form_submit" || action === "browser_open";
+  action === "browser_act" || action === "browser_trace" || action === "browser_form_submit" || action === "browser_open" || action === "browser_open_link";
 
 const workflowDetailOutput = (workflow: { id: string; name: string; steps: BrowserWorkflowStep[]; assertions: unknown[] }) => [
   `${workflow.name} (${workflow.id})`,
@@ -2225,6 +2516,61 @@ const actionLabelForInput = (action: string, input: BrowserActionInput, ref?: Br
   return `${action.charAt(0).toUpperCase()}${action.slice(1)}ed ${target}`;
 };
 
+const sanitizeBrowserElementRef = (item: BrowserElementRef): BrowserElementRef => ({
+  ref: String(item.ref || ""),
+  role: String(item.role || ""),
+  name: redactSensitiveText(String(item.name || ""), 180),
+  href: item.href ? String(item.href) : undefined,
+  x: Number(item.x) || 0,
+  y: Number(item.y) || 0,
+  width: Math.max(0, Number(item.width) || 0),
+  height: Math.max(0, Number(item.height) || 0),
+});
+
+const isLinkFallbackCandidate = (beforeUrl: string, targetUrl: string) => {
+  try {
+    const before = new URL(beforeUrl);
+    const target = new URL(targetUrl);
+    if (target.protocol !== "http:" && target.protocol !== "https:") return false;
+    const beforeWithoutHash = `${before.origin}${before.pathname}${before.search}`;
+    const targetWithoutHash = `${target.origin}${target.pathname}${target.search}`;
+    return beforeWithoutHash !== targetWithoutHash;
+  } catch {
+    return false;
+  }
+};
+
+const buildFindLinkByTextScript = (text: string) => `
+(() => {
+  const needle = ${JSON.stringify(text.toLowerCase())};
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 1 && rect.height > 1 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') > 0.02;
+  };
+  const labelFor = (el) => (
+    el.getAttribute('aria-label') ||
+    el.innerText ||
+    el.textContent ||
+    el.getAttribute('title') ||
+    el.getAttribute('href') ||
+    ''
+  ).replace(/\\s+/g, ' ').trim();
+  const links = Array.from(document.querySelectorAll('a[href]')).filter(visible);
+  const exact = links.find((link) => labelFor(link).toLowerCase() === needle);
+  const partial = links.find((link) => labelFor(link).toLowerCase().includes(needle));
+  const link = exact || partial || null;
+  if (!link) return null;
+  const raw = link.getAttribute('href') || '';
+  if (!raw || raw.startsWith('javascript:') || raw.startsWith('data:') || raw.startsWith('file:')) return null;
+  try {
+    return { text: labelFor(link).slice(0, 180), href: new URL(raw, location.href).toString() };
+  } catch {
+    return null;
+  }
+})()
+`;
+
 const waitForBrowserSettle = (contents: WebContents, timeoutMs: number) =>
   new Promise<void>((resolve) => {
     if (!contents.isLoading()) {
@@ -2244,6 +2590,20 @@ const delay = (ms: number) =>
 const cleanLoadError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || "Page load failed.");
   return message.replace(/\s+at\s+.*$/s, "").slice(0, 500);
+};
+
+const isSoftNavigationAbort = (error: unknown, requestedUrl: string, currentUrl: string) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (!/ERR_ABORTED|-3/i.test(message)) return false;
+  try {
+    const requested = new URL(requestedUrl);
+    const current = new URL(currentUrl);
+    if (requested.origin !== current.origin) return false;
+    if (requested.pathname === current.pathname) return true;
+    return current.pathname !== "/" && requested.pathname !== "/" && current.pathname.startsWith(requested.pathname);
+  } catch {
+    return Boolean(currentUrl && currentUrl !== "about:blank" && currentUrl !== requestedUrl);
+  }
 };
 
 const SNAPSHOT_SCRIPT = `
@@ -2272,6 +2632,12 @@ const SNAPSHOT_SCRIPT = `
     const fromLabel = el.labels && Array.from(el.labels).map((label) => label.innerText).join(' ').trim();
     return (el.getAttribute('aria-label') || fromLabelledBy || fromLabel || el.getAttribute('placeholder') || el.innerText || el.value || el.getAttribute('href') || '').replace(/\\s+/g, ' ').trim().slice(0, 140);
   };
+  const hrefFor = (el) => {
+    if (el.tagName.toLowerCase() !== 'a') return '';
+    const raw = el.getAttribute('href') || '';
+    if (!raw || raw.startsWith('javascript:') || raw.startsWith('data:') || raw.startsWith('file:')) return '';
+    try { return new URL(raw, location.href).toString(); } catch { return ''; }
+  };
   const visible = (el) => {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
@@ -2287,7 +2653,7 @@ const SNAPSHOT_SCRIPT = `
     const name = nameFor(el);
     const interactive = /button|link|textbox|searchbox|combobox|checkbox|radio|switch|slider|tab|menuitem|option/.test(role);
     const ref = interactive ? 'b' + (refs.length + 1) : '';
-    if (ref) refs.push({ ref, role, name, x: rect.left, y: rect.top, width: rect.width, height: rect.height });
+    if (ref) refs.push({ ref, role, name, href: hrefFor(el), x: rect.left, y: rect.top, width: rect.width, height: rect.height });
     lines.push('- ' + role + (name ? ' "' + name.replace(/"/g, '\\\\"') + '"' : '') + (ref ? ' [ref=' + ref + ']' : '') + ' [box=' + Math.round(rect.left) + ',' + Math.round(rect.top) + ',' + Math.round(rect.width) + ',' + Math.round(rect.height) + ']');
   });
   return { lines, refs };

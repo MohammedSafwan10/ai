@@ -79,7 +79,7 @@
 
 .browser-toolbar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 30px 30px 30px;
+  grid-template-columns: auto minmax(0, 1fr) repeat(4, 30px);
   align-items: center;
   gap: 8px;
   min-height: 50px;
@@ -148,6 +148,29 @@
 
 .browser-go-button {
   color: var(--privora-accent) !important;
+}
+
+.browser-shields-button {
+  position: relative;
+}
+
+.browser-shields-button.active {
+  color: var(--privora-accent) !important;
+}
+
+.browser-shields-button span {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  border: 1px solid var(--privora-bg);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-accent) 82%, white);
+  color: #06130f;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 12px;
 }
 
 .browser-preset-row {

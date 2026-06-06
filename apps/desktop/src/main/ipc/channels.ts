@@ -33,6 +33,7 @@ export const channels = {
   inspectBrowser: "desktop:inspectBrowser",
   browserTab: "desktop:browserTab",
   browserDownload: "desktop:browserDownload",
+  browserShields: "desktop:browserShields",
   browserFormAnalyze: "desktop:browserFormAnalyze",
   browserFormFill: "desktop:browserFormFill",
   browserFormValidate: "desktop:browserFormValidate",

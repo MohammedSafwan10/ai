@@ -82,17 +82,22 @@ export const browserOriginDecision = (rawUrl: string, scope: BrowserControlScope
   };
 };
 
-export const installBrowserSessionSecurity = (partition: string) => {
+export const isHardBlockedUrl = (url: string) =>
+  url.startsWith("file:") ||
+  url.startsWith("javascript:") ||
+  url.startsWith("data:");
+
+export const installBrowserSessionSecurity = (
+  partition: string,
+  beforeRequest?: (details: Electron.OnBeforeRequestListenerDetails) => { cancel: boolean },
+) => {
   const browserSession = session.fromPartition(partition);
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
   browserSession.setPermissionCheckHandler(() => false);
   browserSession.webRequest.onBeforeRequest((details, callback) => {
-    const blocked = details.url.startsWith("file:") ||
-      details.url.startsWith("javascript:") ||
-      details.url.startsWith("data:");
-    callback({ cancel: blocked });
+    callback(beforeRequest ? beforeRequest(details) : { cancel: isHardBlockedUrl(details.url) });
   });
   browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
     callback({ requestHeaders: redactHeaders(details.requestHeaders) });
@@ -153,5 +158,20 @@ export const compactUrl = (rawUrl: string) => {
     return parsed.toString();
   } catch {
     return rawUrl.slice(0, 180);
+  }
+};
+
+export const safeExactBrowserUrl = (rawUrl: string) => {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = "";
+    parsed.searchParams.forEach((_value, key) => {
+      if (/token|secret|password|passwd|pwd|api[_-]?key|session|auth|code|jwt|bearer|credential|cookie/i.test(key)) {
+        parsed.searchParams.set(key, "[redacted]");
+      }
+    });
+    return parsed.toString();
+  } catch {
+    return redactSensitiveText(rawUrl, 500);
   }
 };

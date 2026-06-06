@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Bug, Database, Download, ExternalLink, Globe2, Loader2, Monitor, MoreHorizontal, Play, Plus, RefreshCw, RotateCw, Save, Smartphone, Square, Tablet, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bug, Database, Download, ExternalLink, Globe2, Loader2, Monitor, MoreHorizontal, Play, Plus, RefreshCw, RotateCw, Save, Shield, Smartphone, Square, Tablet, X } from "lucide-react";
 import clsx from "clsx";
 import type { BrowserPanelStateRecord, BrowserToolsMenuAction, BrowserViewportPreset, WorkspaceRecord } from "../../../shared/types";
 
@@ -26,6 +26,15 @@ const EMPTY_STATE = (workspaceId: string): BrowserPanelStateRecord => ({
   activeTabId: "",
   downloads: [],
   forms: [],
+  shields: {
+    mode: "standard",
+    effectiveMode: "off",
+    origin: "",
+    blockedCount: 0,
+    recentBlocked: [],
+    engineReady: false,
+    updatedAt: Date.now(),
+  },
   workflow: {
     status: "idle",
     stepCount: 0,
@@ -216,6 +225,27 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     }
   };
 
+  const toggleShieldsSite = async () => {
+    if (!activeWorkspaceId) return;
+    try {
+      const nextEnabled = browserStateRef.current?.shields.effectiveMode !== "standard";
+      const result = await window.privoraDesktop.browserShields({ workspaceId: activeWorkspaceId, action: "toggle_site", enabled: nextEnabled });
+      await showOverlay("Privora Shields", result.output || "(empty)", { width: 420, height: 260 });
+    } catch (error) {
+      await showOverlay("Privora Shields", error instanceof Error ? error.message : String(error), { width: 420, height: 260 });
+    }
+  };
+
+  const listShieldsBlocked = async () => {
+    if (!activeWorkspaceId) return;
+    try {
+      const result = await window.privoraDesktop.browserShields({ workspaceId: activeWorkspaceId, action: "list_blocked" });
+      await showOverlay("Privora Shields", result.output || "(empty)", { width: 560, height: 420 });
+    } catch (error) {
+      await showOverlay("Privora Shields", error instanceof Error ? error.message : String(error), { width: 560, height: 420 });
+    }
+  };
+
   const analyzeForms = async () => {
     if (!activeWorkspaceId) return;
     try {
@@ -312,6 +342,7 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
       hasUrl: Boolean(currentState.url),
       hasWorkflows: currentState.workflow.workflows.length > 0,
       recording: currentState.workflow.status === "recording",
+      shieldsEnabled: currentState.shields.effectiveMode === "standard",
     });
   };
 
@@ -322,6 +353,8 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     if (action === "replay_workflow") void replayWorkflow();
     if (action === "save_evidence") void saveEvidence();
     if (action === "workflow_vault") showWorkflowVault();
+    if (action === "toggle_shields_site") void toggleShieldsSite();
+    if (action === "list_shields_blocked") void listShieldsBlocked();
   };
   toolsMenuActionRef.current = runToolsMenuAction;
 
@@ -414,6 +447,18 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
         <button type="button" title="Open DevTools" aria-label="Open DevTools" disabled={!browserState.url} onClick={openDevTools}>
           <Bug size={14} />
         </button>
+        {browserState.url && (
+          <button
+            type="button"
+            title={`Privora Shields: ${browserState.shields.effectiveMode}${browserState.shields.blockedCount ? `, ${browserState.shields.blockedCount} blocked` : ""}`}
+            aria-label="Privora Shields"
+            className={clsx("browser-shields-button", browserState.shields.effectiveMode === "standard" && "active")}
+            onClick={listShieldsBlocked}
+          >
+            <Shield size={14} />
+            {browserState.shields.blockedCount > 0 && <span>{browserState.shields.blockedCount}</span>}
+          </button>
+        )}
       </form>
       <div className="browser-preset-row" role="toolbar" aria-label="Browser viewport">
         <PresetButton preset="responsive" active={browserState.viewportPreset === "responsive"} onClick={setPreset} icon={<Monitor size={14} />} />
@@ -435,11 +480,12 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
           )}
         </div>
       </div>
-      {(browserState.agentActive || browserState.failedRequestCount > 0 || browserState.consoleErrorCount > 0 || browserState.lastFinding) && (
+      {(browserState.agentActive || browserState.failedRequestCount > 0 || browserState.consoleErrorCount > 0 || browserState.shields.blockedCount > 0 || browserState.lastFinding) && (
         <div className="browser-status-strip" role="status">
           {browserState.agentActive && <button type="button" onClick={() => browserState.lastFinding && void showOverlay("Last action", browserState.lastFinding)}>{browserState.lastAction || "Agent using browser"}</button>}
           {browserState.failedRequestCount > 0 && <button type="button" onClick={() => inspect("network")}>{browserState.failedRequestCount} failed request{browserState.failedRequestCount === 1 ? "" : "s"}</button>}
           {browserState.consoleErrorCount > 0 && <button type="button" onClick={() => inspect("console")}>{browserState.consoleErrorCount} console error{browserState.consoleErrorCount === 1 ? "" : "s"}</button>}
+          {browserState.shields.blockedCount > 0 && <button type="button" onClick={listShieldsBlocked}>{browserState.shields.blockedCount} blocked by Shields</button>}
           {browserState.lastFinding && <button type="button" onClick={() => void showOverlay("Last finding", browserState.lastFinding || "")}>{browserState.lastFinding}</button>}
         </div>
       )}

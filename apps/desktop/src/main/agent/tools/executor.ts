@@ -11,12 +11,14 @@ import { FileOperationService, hashBuffer, recordFileObservation, recordFileObse
 import { FileMutationCoordinator } from "./mutationCoordinator";
 import { BrowserToolExecutor } from "../../browser/browserTools";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
+import type { PermissionMode } from "../../../shared/models";
 
 export interface ToolExecutionContext {
   workspaceId?: string;
   workspaceRoot: string;
   signal: AbortSignal;
   browserExternalApproved?: boolean;
+  permissionMode?: PermissionMode;
   onCommandOutput: (callId: string, delta: string) => void;
   onTerminalProcessStarted?: (processId: number) => void;
   onTerminalProcessEnded?: (processId: number) => void;
@@ -105,6 +107,7 @@ export class DesktopToolExecutor {
         case "desktop_git_diff":
           return await this.gitDiff(call, context);
         case "browser_open":
+        case "browser_open_link":
         case "browser_snapshot":
         case "browser_act":
         case "browser_inspect":
@@ -115,6 +118,7 @@ export class DesktopToolExecutor {
         case "browser_search":
         case "browser_tab":
         case "browser_downloads":
+        case "browser_shields":
         case "browser_pdf":
         case "browser_form_analyze":
         case "browser_form_fill":

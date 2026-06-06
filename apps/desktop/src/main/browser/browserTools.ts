@@ -6,6 +6,7 @@ export interface BrowserToolContext {
   workspaceRoot: string;
   signal: AbortSignal;
   browserExternalApproved?: boolean;
+  permissionMode?: "ask_risky" | "yolo";
 }
 
 type ResolvedBrowserToolContext = BrowserToolContext & { workspaceId: string };
@@ -21,6 +22,9 @@ export class BrowserToolExecutor {
     switch (call.name) {
       case "browser_open":
         result = await this.open(args, resolvedContext);
+        break;
+      case "browser_open_link":
+        result = await this.openLink(args, resolvedContext);
         break;
       case "browser_snapshot":
         result = await this.snapshot(args, resolvedContext);
@@ -51,6 +55,9 @@ export class BrowserToolExecutor {
         break;
       case "browser_downloads":
         result = await this.downloads(args, resolvedContext);
+        break;
+      case "browser_shields":
+        result = await this.shields(args, resolvedContext);
         break;
       case "browser_pdf":
         result = await this.pdf(args, resolvedContext);
@@ -91,7 +98,7 @@ export class BrowserToolExecutor {
       default:
         return { success: false, error: `Unknown browser tool ${call.name}` };
     }
-    if (!["browser_capabilities", "browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"].includes(call.name)) {
+    if (!["browser_capabilities", "browser_shields", "browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"].includes(call.name)) {
       this.manager.recordWorkflowTool?.(resolvedContext.workspaceId, call, result);
     }
     return result;
@@ -99,9 +106,9 @@ export class BrowserToolExecutor {
 
   private capabilities(): ToolResult {
     const toolGroups = {
-      core: ["browser_open", "browser_snapshot", "browser_act", "browser_trace", "browser_verify"],
+      core: ["browser_open", "browser_open_link", "browser_snapshot", "browser_act", "browser_trace", "browser_verify"],
       evidence: ["browser_inspect", "browser_extract", "browser_wait", "browser_screenshot", "browser_evidence", "browser_search"],
-      tabsDownloadsPdf: ["browser_tab", "browser_downloads", "browser_pdf"],
+      tabsDownloadsPdf: ["browser_tab", "browser_downloads", "browser_shields", "browser_pdf"],
       forms: ["browser_form_analyze", "browser_form_fill", "browser_form_validate", "browser_form_submit"],
       workflows: ["browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"],
     };
@@ -130,10 +137,11 @@ export class BrowserToolExecutor {
   private async open(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const url = String(args.url || "").trim();
     const viewport = parseViewport(args.viewport);
+    const approved = browserApproved(context);
     const result = await this.manager.openUrl(context.workspaceId, url, {
-      scope: context.browserExternalApproved ? "user" : "agent",
+      scope: approved ? "user" : "agent",
       viewport,
-      rememberAgentApproval: context.browserExternalApproved,
+      rememberAgentApproval: approved,
       throwOnLoadFailure: true,
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       newTab: args.newTab === true || args.new_tab === true,
@@ -155,6 +163,17 @@ export class BrowserToolExecutor {
         failedRequestCount: result.failedRequestCount,
       },
     };
+  }
+
+  private async openLink(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
+    const result = await this.manager.openLink(context.workspaceId, {
+      ref: typeof args.ref === "string" ? args.ref : typeof args.targetRef === "string" ? args.targetRef : undefined,
+      text: typeof args.text === "string" ? args.text : undefined,
+      href: typeof args.href === "string" ? args.href : undefined,
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
+      newTab: args.newTab === true || args.new_tab === true,
+    }, { agentApproved: browserApproved(context) });
+    return { success: true, output: result.output, data: result.data };
   }
 
   private async snapshot(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
@@ -187,7 +206,7 @@ export class BrowserToolExecutor {
       value: typeof args.value === "string" ? args.value : undefined,
       width: Number.isFinite(Number(args.width)) ? Number(args.width) : undefined,
       height: Number.isFinite(Number(args.height)) ? Number(args.height) : undefined,
-    }, { agentApproved: context.browserExternalApproved });
+    }, { agentApproved: browserApproved(context) });
     return { success: true, output: result.finding, data: result as unknown as Record<string, unknown> };
   }
 
@@ -283,6 +302,17 @@ export class BrowserToolExecutor {
     return { success: true, output: result.output, data: result.data };
   }
 
+  private async shields(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
+    const result = await this.manager.shieldsAction(context.workspaceId, {
+      workspaceId: context.workspaceId,
+      action: normalizeShieldsAction(args.action),
+      mode: typeof args.mode === "string" && ["off", "standard"].includes(args.mode) ? args.mode as "off" | "standard" : undefined,
+      enabled: typeof args.enabled === "boolean" ? args.enabled : undefined,
+      origin: typeof args.origin === "string" ? args.origin : undefined,
+    });
+    return { success: true, output: result.output, data: result.data };
+  }
+
   private async pdf(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.pdf(context.workspaceId, args.mode || "summary", typeof args.tabId === "string" ? args.tabId : undefined);
     return { success: true, output: result.output, data: result.data };
@@ -299,7 +329,7 @@ export class BrowserToolExecutor {
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       formId: typeof args.formId === "string" ? args.formId : undefined,
       fields: normalizeFormFields(args.fields),
-    }, { agentApproved: context.browserExternalApproved === true });
+    }, { agentApproved: browserApproved(context) });
     return { success: true, output: result.output, data: result.data };
   }
 
@@ -318,7 +348,7 @@ export class BrowserToolExecutor {
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       formId: typeof args.formId === "string" ? args.formId : undefined,
       includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
-    }, { agentApproved: context.browserExternalApproved === true });
+    }, { agentApproved: browserApproved(context) });
     return { success: true, output: result.output, data: result.data };
   }
 
@@ -330,7 +360,7 @@ export class BrowserToolExecutor {
       name: typeof args.name === "string" ? args.name : undefined,
       description: typeof args.description === "string" ? args.description : undefined,
       newTab: args.newTab === true || args.new_tab === true,
-    }, { agentApproved: context.browserExternalApproved === true });
+    }, { agentApproved: browserApproved(context) });
     return { success: true, output: result.output, data: result.data };
   }
 
@@ -378,7 +408,7 @@ export class BrowserToolExecutor {
       x: Number.isFinite(Number(args.x)) ? Number(args.x) : undefined,
       y: Number.isFinite(Number(args.y)) ? Number(args.y) : undefined,
       includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
-    }, { agentApproved: context.browserExternalApproved });
+    }, { agentApproved: browserApproved(context) });
     return { success: true, output: result.finding, data: result as unknown as Record<string, unknown> };
   }
 
@@ -412,6 +442,14 @@ const normalizeDownloadAction = (value: unknown) => {
   throw new Error("browser_downloads action must be list, allow_next, cancel, or reveal.");
 };
 
+const normalizeShieldsAction = (value: unknown) => {
+  const action = String(value || "get").trim().toLowerCase();
+  if (["get", "set_mode", "toggle_site", "list_blocked"].includes(action)) {
+    return action as "get" | "set_mode" | "toggle_site" | "list_blocked";
+  }
+  throw new Error("browser_shields action must be get, set_mode, toggle_site, or list_blocked.");
+};
+
 const normalizeWorkflowAction = (value: unknown) => {
   const action = String(value || "list").trim().toLowerCase();
   if (["start_recording", "stop_recording", "list", "get", "replay", "delete", "rename"].includes(action)) {
@@ -431,6 +469,9 @@ const normalizeEvidenceVaultAction = (value: unknown) => {
   if (["save_current", "list", "get", "prune"].includes(action)) return action as "save_current" | "list" | "get" | "prune";
   throw new Error("browser_evidence_vault action must be save_current, list, get, or prune.");
 };
+
+const browserApproved = (context: BrowserToolContext) =>
+  context.browserExternalApproved === true || context.permissionMode === "yolo";
 
 const normalizeFormFields = (value: unknown) => {
   if (!Array.isArray(value)) throw new Error("browser_form_fill requires fields.");
