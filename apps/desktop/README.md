@@ -151,7 +151,7 @@ AI credits are consumed based on model, input size, output size, and tool usage.
 
 ## Browser Agent
 
-The built-in browser agent is documented in [docs/browser-agent.md](docs/browser-agent.md). It covers Phase 2A tabs/downloads/PDF evidence, Phase 2B form workflows, Phase 2C workflow replay, assertions, evidence vault, and failure diagnosis, plus the Phase 2D-lite storage cleanup surface.
+The built-in browser agent is documented in [docs/browser-agent.md](docs/browser-agent.md). It covers Phase 2A tabs/downloads/PDF evidence, Phase 2B form workflows, Phase 2C workflow replay, assertions, evidence vault, and failure diagnosis, Phase 2D-lite storage cleanup, and Phase 2E-lite Privora Shields ad/tracker blocking.
 
 ## Production Updates
 

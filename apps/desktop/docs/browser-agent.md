@@ -57,9 +57,22 @@ Phase 2D-lite added a Settings storage surface so browser artifacts do not grow 
 - Scans and deletes run in small async chunks so large artifact folders do not freeze the app.
 - Browser profile cleanup clears active Electron sessions and persisted cache/storage folders for Privora browser partitions.
 
+## Phase 2E-lite: Privora Shields
+
+Phase 2E-lite added Brave-style network ad/tracker blocking to the built-in browser without giving up Privora's evidence model.
+
+- Shields use a single main-process browser network pipeline, so Electron `webRequest` listeners do not compete with security or evidence capture.
+- V1 uses `@ghostery/adblocker` in manual matching mode; Privora does not let the package install its own Electron request listener.
+- External websites default to `standard` Shields, while localhost and workspace dev origins default to `off`.
+- Shields never block top-level `mainFrame` navigation in v1; only subresource requests can be blocked.
+- `browser_shields` lets the agent inspect mode, toggle a site override, change the default mode, and list recent blocked requests.
+- `browser_evidence` reports Shields blocks separately from real failed network requests, and marks likely Shields-related console errors such as missing blocked monitoring globals.
+- The Browser toolbar shows a compact shield icon and blocked count; the three-dot menu exposes per-site Shields controls.
+
 ## Safety Defaults
 
 - Localhost and workspace dev origins are smooth by default.
+- Privora Shields stay off on local/dev origins unless explicitly enabled for that site.
 - External-origin clicks, typing, downloads, form fill/submit, uploads, purchases, bookings, applications, password/MFA/payment flows, file reveal, and irreversible actions need approval unless Full access is active.
 - Hard blocks remain even in Full access: blocked URL schemes, CAPTCHA bypass, hidden secret extraction, credential scraping, and auto-opening downloaded files.
 - Persisted local dev tabs are not auto-restored on app startup, so stopped dev servers do not create noisy connection errors.
@@ -71,6 +84,7 @@ Current coverage includes:
 - Browser security and URL restore policy tests.
 - Browser tool routing and schema tests.
 - Causal journal console/network compaction tests.
+- Privora Shields tests for local/external defaults, hard-block ordering, main-frame safety, subresource blocking, tool routing, and approval behavior.
 - Workflow manager tests for recording, redaction, evidence retention, assertions, and diagnosis.
 - Storage cleanup tests for app-owned cleanup, download separation, and workflow-history pruning.
 - Desktop tool executor tests for browser workflow tool routing.
