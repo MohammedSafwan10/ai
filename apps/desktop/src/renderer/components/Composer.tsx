@@ -366,7 +366,7 @@ export function Composer({
         return;
       }
       const accepted = incoming.slice(0, remaining);
-      const next = await Promise.all(accepted.map(readImageAttachment));
+      const next = await Promise.all(accepted.map(importImageAttachment));
       const currentBytes = attachments.reduce((sum, item) => sum + item.size, 0);
       const nextBytes = next.reduce((sum, item) => sum + item.size, 0);
       if (currentBytes + nextBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
@@ -910,31 +910,20 @@ const expandPastedBlocks = (value: string, blocks: PastedBlock[]) =>
     value,
   ].filter((part) => part.trim()).join("\n\n");
 
-const readImageAttachment = async (file: File): Promise<DesktopAttachmentRecord> => {
+const importImageAttachment = async (file: File): Promise<DesktopAttachmentRecord> => {
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
     throw new Error(`${file.name} is not a supported image type.`);
   }
-  const base64 = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      resolve(result.includes(",") ? result.split(",").pop() || "" : result);
-    };
-    reader.readAsDataURL(file);
-  });
-  return {
+  return window.privoraDesktop.importAttachment({
     id: crypto.randomUUID(),
     name: file.name,
     mimeType: file.type,
-    size: file.size,
-    base64,
+    bytes: new Uint8Array(await file.arrayBuffer()),
     createdAt: Date.now(),
-  };
+  });
 };
 
-const attachmentDataUrl = (attachment: DesktopAttachmentRecord) =>
-  `data:${attachment.mimeType};base64,${attachment.base64}`;
+const attachmentDataUrl = (attachment: DesktopAttachmentRecord) => attachment.url;
 
 const formatBytes = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;

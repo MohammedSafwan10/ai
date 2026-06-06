@@ -916,6 +916,33 @@
   scroll-padding-bottom: 92px;
 }
 
+.history-load-control {
+  position: sticky;
+  top: 10px;
+  z-index: 4;
+  display: block;
+  margin: 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--privora-border);
+  border-radius: 6px;
+  background: var(--privora-surface);
+  color: var(--privora-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.history-load-control:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.history-tool-limit {
+  width: fit-content;
+  margin: 4px auto 0;
+  color: var(--privora-muted);
+  font-size: 11px;
+}
+
 .virtual-message-spacer {
   position: relative;
   width: 100%;

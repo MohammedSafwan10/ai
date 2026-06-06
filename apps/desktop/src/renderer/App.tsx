@@ -18,7 +18,7 @@ import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentReco
 type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
 
 export default function App() {
-  const { snapshot, activeThread, activeWorkspace, toast, refresh } = useDesktopState();
+  const { snapshot, activeThread, activeWorkspace, toast, refresh, loadOlderMessages, historyLoading, historyError } = useDesktopState();
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -83,8 +83,11 @@ export default function App() {
     showJumpButton,
   } = useMessageAutoScroll({
     activeThreadId: activeThread?.id || null,
+    hasOlder: snapshot.historyPage?.hasOlder === true,
+    historyLoading,
     latestActivityKey,
     messages,
+    onLoadOlder: loadOlderMessages,
     settingsOpen,
   });
 
@@ -375,6 +378,21 @@ export default function App() {
           onPointerDown={handleMessagePointerDown}
           onScroll={handleMessageScroll}
         >
+          {(snapshot.historyPage?.hasOlder || historyLoading || historyError) && (
+            <button
+              type="button"
+              className="history-load-control"
+              disabled={historyLoading}
+              onClick={() => void loadOlderMessages()}
+            >
+              {historyLoading ? "Loading earlier messages..." : historyError ? "Retry loading earlier messages" : "Load earlier messages"}
+            </button>
+          )}
+          {snapshot.historyPage?.toolEventsTruncated && (
+            <div className="history-tool-limit" role="status">
+              Earlier tool steps are compacted for performance.
+            </div>
+          )}
           {messages.length === 0 && (
             <EmptyThreadState
               workspaceName={activeWorkspace?.name || null}

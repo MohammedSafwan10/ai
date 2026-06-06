@@ -5,15 +5,21 @@ import type { ChatMessageRecord } from "../../../shared/types";
 
 interface MessageAutoScrollInput {
   activeThreadId: string | null;
+  hasOlder: boolean;
+  historyLoading: boolean;
   latestActivityKey: string;
   messages: ChatMessageRecord[];
+  onLoadOlder: () => Promise<boolean>;
   settingsOpen: boolean;
 }
 
 export const useMessageAutoScroll = ({
   activeThreadId,
+  hasOlder,
+  historyLoading,
   latestActivityKey,
   messages,
+  onLoadOlder,
   settingsOpen,
 }: MessageAutoScrollInput) => {
   const [showJumpButton, setShowJumpButton] = useState(false);
@@ -22,12 +28,16 @@ export const useMessageAutoScroll = ({
   const manualScrollHoldUntilRef = useRef(0);
   const userScrollLockRef = useRef(false);
   const programmaticScrollRef = useRef(false);
+  const loadOlderRequestedRef = useRef(false);
   const messageVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollerRef.current,
     estimateSize: () => 190,
     overscan: 6,
     getItemKey: (index) => messages[index]?.id ?? index,
+    anchorTo: "end",
+    followOnAppend: true,
+    scrollEndThreshold: 96,
   });
 
   const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
@@ -85,7 +95,7 @@ export const useMessageAutoScroll = ({
     if (settingsOpen) return;
     if (userScrollLockRef.current) return;
     scrollToLatestMessage();
-  }, [activeThreadId, settingsOpen, messages.length]);
+  }, [activeThreadId, settingsOpen]);
 
   const handleMessageWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
@@ -102,6 +112,12 @@ export const useMessageAutoScroll = ({
   const handleMessageScroll = () => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
+    if (hasOlder && !historyLoading && scroller.scrollTop < 420 && !loadOlderRequestedRef.current) {
+      loadOlderRequestedRef.current = true;
+      void onLoadOlder().finally(() => {
+        loadOlderRequestedRef.current = false;
+      });
+    }
     const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     if (!programmaticScrollRef.current) {
       if (userScrollLockRef.current) {

@@ -17,8 +17,13 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
+  const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
   const messageActive = isActiveMessageStatus(messageStatus);
-  const normalizedTools = useMemo(() => normalizeStaleTools(tools, messageActive), [tools, messageActive]);
+  const resolvedTools = useMemo(
+    () => tools.map((tool) => detailedTools[tool.id] ? { ...tool, ...detailedTools[tool.id] } : tool),
+    [detailedTools, tools],
+  );
+  const normalizedTools = useMemo(() => normalizeStaleTools(resolvedTools, messageActive), [resolvedTools, messageActive]);
   const compactedTools = useMemo(() => compactTimelineTools(normalizedTools), [normalizedTools]);
   const hasLive = normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing");
   const currentLiveToolId = useMemo(() => latestLiveToolId(normalizedTools), [normalizedTools]);
@@ -64,12 +69,19 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
     );
   const pendingCallIds = normalizedTools.filter((tool) => tool.status === "awaiting_approval").map((tool) => tool.callId);
   const toggleOutput = (toolId: string) => {
+    const opening = !expandedOutputIds.has(toolId);
     setExpandedOutputIds((current) => {
       const next = new Set(current);
       if (next.has(toolId)) next.delete(toolId);
       else next.add(toolId);
       return next;
     });
+    const tool = tools.find((item) => item.id === toolId);
+    if (opening && tool?.detailAvailable && !detailedTools[toolId]) {
+      void window.privoraDesktop.getToolEventDetail(toolId)
+        .then(({ tool: detail }) => setDetailedTools((current) => ({ ...current, [toolId]: detail })))
+        .catch((error) => console.error("Could not load tool detail", error));
+    }
   };
 
   return (

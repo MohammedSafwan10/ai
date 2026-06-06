@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coalesceDesktopEvents, reduceDesktopEvents } from "../src/renderer/state/useDesktopState";
+import { coalesceDesktopEvents, prependHistoryPage, reduceDesktopEvents } from "../src/renderer/state/useDesktopState";
 import type { ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
 
 const baseSnapshot = () => ({
@@ -33,12 +33,6 @@ const baseSnapshot = () => ({
   activeWorkspaceId: null,
   activeRun: null,
   activeRuns: [],
-  messagesByThread: {
-    "old-thread": [message("old-message", "old-thread", "old visible message")],
-  },
-  toolEventsByThread: {},
-  subagentsByThread: {},
-  turnUndosByThread: {},
   activeRunsByThread: {},
   pendingUserInputsByThread: {},
   pendingUserInput: null,
@@ -136,7 +130,7 @@ describe("renderer thread isolation", () => {
     ]);
 
     expect(next.subagents.map((agent) => agent.taskName)).toEqual(["reviewer"]);
-    expect(next.subagentsByThread["old-thread"]).toHaveLength(1);
+    expect(next.subagents).toHaveLength(1);
   });
 
   it("surfaces child tool events in the active parent timeline", () => {
@@ -167,7 +161,7 @@ describe("renderer thread isolation", () => {
     ]);
 
     expect(next.toolEvents.map((item) => item.id)).toContain("child-tool");
-    expect(next.toolEventsByThread["old-thread"].find((item) => item.id === "child-tool")?.messageId).toBe("old-assistant");
+    expect(next.toolEvents.find((item) => item.id === "child-tool")?.messageId).toBe("old-assistant");
   });
 
   it("coalesces run states independently per thread", () => {
@@ -197,6 +191,25 @@ describe("renderer thread isolation", () => {
     ]);
 
     expect(events.filter((event) => event.type === "run_state")).toHaveLength(2);
+  });
+
+  it("prepends history pages without duplicating existing messages", () => {
+    const current = baseSnapshot();
+    const next = prependHistoryPage(current, {
+      threadId: "old-thread",
+      messages: [
+        message("earlier", "old-thread", "earlier"),
+        message("old-message", "old-thread", "updated visible message"),
+      ],
+      toolEvents: [],
+      turnUndos: [],
+      beforeCursor: "next-cursor",
+      hasOlder: true,
+    });
+
+    expect(next.messages.map((item) => item.id)).toEqual(["old-message", "earlier"]);
+    expect(next.messages.find((item) => item.id === "old-message")?.content).toBe("old visible message");
+    expect(next.historyPage?.beforeCursor).toBe("next-cursor");
   });
 });
 

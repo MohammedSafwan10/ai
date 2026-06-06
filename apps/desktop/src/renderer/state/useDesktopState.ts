@@ -11,6 +11,7 @@ import type {
   WorkspaceRecord,
   RequestUserInputRequestRecord,
   SubagentRecord,
+  ThreadHistoryPage,
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID } from "../../shared/models";
 
@@ -48,13 +49,7 @@ const emptySnapshot: AppSnapshot = {
   aiCredits: undefined,
 };
 
-type ThreadBuckets<T> = Record<string, T[]>;
-
 type DesktopUiSnapshot = AppSnapshot & {
-  messagesByThread: ThreadBuckets<ChatMessageRecord>;
-  toolEventsByThread: ThreadBuckets<ToolEventRecord>;
-  turnUndosByThread: ThreadBuckets<TurnUndoRecord>;
-  subagentsByThread: ThreadBuckets<SubagentRecord>;
   activeRunsByThread: Record<string, ActiveRunState>;
   pendingUserInputsByThread: Record<string, RequestUserInputRequestRecord>;
   pendingUserInput: RequestUserInputRequestRecord | null;
@@ -62,10 +57,6 @@ type DesktopUiSnapshot = AppSnapshot & {
 
 const emptyUiSnapshot: DesktopUiSnapshot = {
   ...emptySnapshot,
-  messagesByThread: {},
-  toolEventsByThread: {},
-  turnUndosByThread: {},
-  subagentsByThread: {},
   activeRunsByThread: {},
   pendingUserInputsByThread: {},
   pendingUserInput: null,
@@ -74,6 +65,8 @@ const emptyUiSnapshot: DesktopUiSnapshot = {
 export const useDesktopState = () => {
   const [snapshot, setSnapshot] = useState<DesktopUiSnapshot>(emptyUiSnapshot);
   const [toast, setToast] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const queuedEventsRef = useRef<DesktopEvent[]>([]);
   const frameRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -83,6 +76,24 @@ export const useDesktopState = () => {
     const next = await window.privoraDesktop.getSnapshot();
     setSnapshot((current) => applySnapshot(current, next));
   }, []);
+
+  const loadOlderMessages = useCallback(async () => {
+    const threadId = snapshot.activeThreadId;
+    const before = snapshot.historyPage?.beforeCursor;
+    if (!threadId || !snapshot.historyPage?.hasOlder || !before || historyLoading) return false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const page = await window.privoraDesktop.getThreadHistoryPage({ threadId, before, limit: 50 });
+      setSnapshot((current) => current.activeThreadId === threadId ? prependHistoryPage(current, page) : current);
+      return true;
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [historyLoading, snapshot.activeThreadId, snapshot.historyPage?.beforeCursor, snapshot.historyPage?.hasOlder]);
 
   const flushEvents = useCallback(() => {
     frameRef.current = null;
@@ -141,6 +152,9 @@ export const useDesktopState = () => {
     activeWorkspace,
     toast,
     refresh,
+    loadOlderMessages,
+    historyLoading,
+    historyError,
     setSnapshot,
   };
 };
@@ -153,26 +167,18 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       continue;
     }
     if (event.type === "message_updated") {
-      const messagesByThread = upsertBucketById(next.messagesByThread, event.message.threadId, event.message);
-      const messages = event.message.threadId === next.activeThreadId ? messagesByThread[event.message.threadId] || [] : next.messages;
-      if (messagesByThread !== next.messagesByThread || messages !== next.messages) next = { ...next, messagesByThread, messages };
+      if (event.message.threadId === next.activeThreadId) next = { ...next, messages: upsertById(next.messages, event.message) };
       continue;
     }
     if (event.type === "tool_updated") {
-      const toolEventsByThread = upsertBucketById(next.toolEventsByThread, event.tool.threadId, event.tool);
-      const childParentId = parentThreadForChildTool(next, event.tool.threadId);
-      const parentThreadId = childParentId || event.tool.threadId;
-      const parentBuckets = childParentId && next.activeThreadId === childParentId
-        ? upsertBucketById(toolEventsByThread, childParentId, { ...event.tool, messageId: childParentMessageId(next, event.tool.threadId) || event.tool.messageId })
-        : toolEventsByThread;
-      const toolEvents = parentThreadId === next.activeThreadId ? parentBuckets[parentThreadId] || [] : next.toolEvents;
-      if (parentBuckets !== next.toolEventsByThread || toolEvents !== next.toolEvents) next = { ...next, toolEventsByThread: parentBuckets, toolEvents };
+      const parent = next.subagents.find((agent) => agent.threadId === event.tool.threadId);
+      if (event.tool.threadId === next.activeThreadId || parent?.parentThreadId === next.activeThreadId) {
+        next = { ...next, toolEvents: upsertById(next.toolEvents, parent ? { ...event.tool, messageId: parent.parentMessageId } : event.tool) };
+      }
       continue;
     }
     if (event.type === "turn_undo_updated") {
-      const turnUndosByThread = upsertBucketById(next.turnUndosByThread, event.undo.threadId, event.undo);
-      const turnUndos = event.undo.threadId === next.activeThreadId ? turnUndosByThread[event.undo.threadId] || [] : next.turnUndos;
-      if (turnUndosByThread !== next.turnUndosByThread || turnUndos !== next.turnUndos) next = { ...next, turnUndosByThread, turnUndos };
+      if (event.undo.threadId === next.activeThreadId) next = { ...next, turnUndos: upsertById(next.turnUndos, event.undo) };
       continue;
     }
     if (event.type === "context_usage_updated") {
@@ -222,72 +228,69 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
     if (event.type === "command_output_delta") {
       const timestamp = Date.now();
       let changed = false;
-      const toolEventsByThread = mapBuckets(next.toolEventsByThread, (tool) => {
+      const toolEvents = next.toolEvents.map((tool) => {
         if (tool.callId !== event.callId) return tool;
         changed = true;
         return { ...tool, output: compactLiveOutput(`${tool.output || ""}${event.delta}`), updatedAt: timestamp };
       });
-      if (changed) {
-        const toolEvents = next.activeThreadId ? toolEventsByThread[next.activeThreadId] || [] : [];
-        next = { ...next, toolEventsByThread, toolEvents };
-      }
+      if (changed) next = { ...next, toolEvents };
     }
   }
   return next;
 };
 
-const parentThreadForChildTool = (snapshot: DesktopUiSnapshot, childThreadId: string) =>
-  Object.values(snapshot.subagentsByThread)
-    .flat()
-    .find((agent) => agent.threadId === childThreadId)?.parentThreadId || null;
-
-const childParentMessageId = (snapshot: DesktopUiSnapshot, childThreadId: string) =>
-  Object.values(snapshot.subagentsByThread)
-    .flat()
-    .find((agent) => agent.threadId === childThreadId)?.parentMessageId || null;
-
 const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): DesktopUiSnapshot => {
   const activeThreadId = snapshot.activeThreadId;
-  const messagesByThread = { ...current.messagesByThread };
-  const toolEventsByThread = { ...current.toolEventsByThread };
-  const turnUndosByThread = { ...current.turnUndosByThread };
-  const subagentsByThread = { ...current.subagentsByThread };
-
-  if (activeThreadId) {
-    messagesByThread[activeThreadId] = snapshot.messages;
-    toolEventsByThread[activeThreadId] = snapshot.toolEvents;
-    turnUndosByThread[activeThreadId] = snapshot.turnUndos;
-    subagentsByThread[activeThreadId] = snapshot.subagents || [];
-  }
-
-  const liveThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
-  pruneBuckets(messagesByThread, liveThreadIds);
-  pruneBuckets(toolEventsByThread, liveThreadIds);
-  pruneBuckets(turnUndosByThread, liveThreadIds);
-  pruneBuckets(subagentsByThread, liveThreadIds);
-
+  const sameThread = Boolean(activeThreadId && activeThreadId === current.activeThreadId);
+  const messages = sameThread ? mergeUnique(current.messages, snapshot.messages) : snapshot.messages;
+  const toolEvents = sameThread ? mergeUnique(current.toolEvents, snapshot.toolEvents) : snapshot.toolEvents;
+  const turnUndos = sameThread ? mergeUnique(current.turnUndos, snapshot.turnUndos) : snapshot.turnUndos;
   const activeRunsByThread = Object.fromEntries((snapshot.activeRuns || []).map((run) => [run.threadId, run]));
   if (snapshot.activeRun) activeRunsByThread[snapshot.activeRun.threadId] = snapshot.activeRun;
 
   return {
     ...snapshot,
-    messages: activeThreadId ? messagesByThread[activeThreadId] || [] : [],
-    toolEvents: activeThreadId ? toolEventsByThread[activeThreadId] || [] : [],
-    turnUndos: activeThreadId ? turnUndosByThread[activeThreadId] || [] : [],
-    subagents: activeThreadId ? subagentsByThread[activeThreadId] || [] : [],
+    messages,
+    toolEvents,
+    turnUndos,
+    historyPage: sameThread && current.historyPage
+      ? { ...current.historyPage, messages, toolEvents, turnUndos }
+      : snapshot.historyPage,
     contextUsage: snapshot.contextUsage || (
       current.contextUsage?.threadId === activeThreadId ? current.contextUsage : undefined
     ),
     activeRun: activeThreadId ? activeRunsByThread[activeThreadId] || null : null,
     activeRuns: Object.values(activeRunsByThread),
-    messagesByThread,
-    toolEventsByThread,
-    turnUndosByThread,
-    subagentsByThread,
     activeRunsByThread,
     pendingUserInputsByThread: current.pendingUserInputsByThread,
     pendingUserInput: activeThreadId ? current.pendingUserInputsByThread[activeThreadId] || null : null,
   };
+};
+
+export const prependHistoryPage = (current: DesktopUiSnapshot, page: ThreadHistoryPage): DesktopUiSnapshot => {
+  const messages = mergeUnique(page.messages, current.messages);
+  const toolEvents = mergeUnique(page.toolEvents, current.toolEvents);
+  const turnUndos = mergeUnique(page.turnUndos, current.turnUndos);
+  return {
+    ...current,
+    messages,
+    toolEvents,
+    turnUndos,
+    historyPage: {
+      threadId: page.threadId,
+      messages,
+      toolEvents,
+      turnUndos,
+      beforeCursor: page.beforeCursor,
+      hasOlder: page.hasOlder,
+    },
+  };
+};
+
+const mergeUnique = <T extends { id: string; createdAt?: number; updatedAt?: number }>(older: T[], current: T[]) => {
+  const byId = new Map(older.map((item) => [item.id, item]));
+  current.forEach((item) => byId.set(item.id, item));
+  return [...byId.values()].sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0) || a.id.localeCompare(b.id));
 };
 
 export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
@@ -361,39 +364,6 @@ const upsertById = <T extends { id: string; createdAt?: number; updatedAt?: numb
   const next = [...items, item];
   next.sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0));
   return next;
-};
-
-const upsertBucketById = <T extends { id: string; createdAt?: number; updatedAt?: number }>(
-  buckets: ThreadBuckets<T>,
-  threadId: string,
-  item: T,
-) => {
-  const current = buckets[threadId] || [];
-  const nextItems = upsertById(current, item);
-  if (nextItems === current) return buckets;
-  return { ...buckets, [threadId]: nextItems };
-};
-
-const mapBuckets = <T,>(buckets: ThreadBuckets<T>, mapper: (item: T) => T): ThreadBuckets<T> => {
-  let changed = false;
-  const next: ThreadBuckets<T> = {};
-  Object.entries(buckets).forEach(([threadId, items]) => {
-    let bucketChanged = false;
-    const mapped = items.map((item) => {
-      const nextItem = mapper(item);
-      if (nextItem !== item) bucketChanged = true;
-      return nextItem;
-    });
-    next[threadId] = bucketChanged ? mapped : items;
-    changed ||= bucketChanged;
-  });
-  return changed ? next : buckets;
-};
-
-const pruneBuckets = <T,>(buckets: ThreadBuckets<T>, liveThreadIds: Set<string>) => {
-  Object.keys(buckets).forEach((threadId) => {
-    if (!liveThreadIds.has(threadId)) delete buckets[threadId];
-  });
 };
 
 const compactLiveOutput = (value: string, maxChars = 140_000) => {

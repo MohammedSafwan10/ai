@@ -24,6 +24,8 @@ const USER_MESSAGE_COLLAPSE_LINES = 16;
 const PROPOSED_PLAN_COLLAPSE_CHARS = 1800;
 const PROPOSED_PLAN_COLLAPSE_LINES = 26;
 const STREAM_MARKDOWN_THROTTLE_MS = 90;
+const LARGE_ASSISTANT_TEXT_CHARS = 32_000;
+const LARGE_ASSISTANT_PREVIEW_CHARS = 8_000;
 const markdownComponents = {
   a: MarkdownExternalLink,
 };
@@ -489,8 +491,23 @@ function AssistantTextPart({
   onImplementPlan?: (plan: string) => void;
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const committedMarkdown = useStreamingCommittedMarkdown(text, active);
   if (!active) {
+    const shouldDefer = text.length > LARGE_ASSISTANT_TEXT_CHARS && !expanded;
+    if (shouldDefer) {
+      return (
+        <div className="large-message-preview">
+          <AssistantMarkdownWithPlan
+            text={`${text.slice(0, LARGE_ASSISTANT_PREVIEW_CHARS)}\n\n...`}
+            showPlanActions={false}
+          />
+          <button type="button" onClick={() => setExpanded(true)}>
+            Show full response
+          </button>
+        </div>
+      );
+    }
     return (
       <AssistantMarkdownWithPlan
         text={text}
@@ -893,8 +910,7 @@ function AttachmentGrid({ attachments }: { attachments: DesktopAttachmentRecord[
   );
 }
 
-const attachmentSrc = (attachment: DesktopAttachmentRecord) =>
-  `data:${attachment.mimeType};base64,${attachment.base64}`;
+const attachmentSrc = (attachment: DesktopAttachmentRecord) => attachment.url;
 
 function ThoughtPanel({ thought, active }: { thought: string; active: boolean }) {
   const hasThought = thought.trim().length > 0;

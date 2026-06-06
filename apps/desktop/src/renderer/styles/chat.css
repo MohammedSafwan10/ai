@@ -510,6 +510,35 @@
   text-underline-offset: 0.18em;
 }
 
+.large-message-preview {
+  position: relative;
+  max-height: 560px;
+  overflow: hidden;
+}
+
+.large-message-preview::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 100px;
+  background: linear-gradient(transparent, var(--privora-bg));
+  pointer-events: none;
+}
+
+.large-message-preview > button {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  border: 1px solid var(--privora-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--privora-surface);
+  color: var(--privora-text);
+  cursor: pointer;
+}
+
 .markdown-body a:hover {
   color: color-mix(in srgb, var(--privora-accent) 72%, var(--privora-text));
 }
