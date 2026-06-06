@@ -4,6 +4,7 @@ import { ArrowDownToLine, LogIn, LogOut } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { account, isAppwriteConfigured } from "@/lib/appwrite";
 import { clearCurrentSessionIfAny, isUnauthenticatedAppwriteError } from "@/lib/auth";
+import { detectDesktopPlatform, getDesktopDownloadTarget, type DesktopPlatform } from "@/lib/desktop-download";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -14,6 +15,7 @@ const navItems = [
 
 export function SiteHeader() {
   const [userEmail, setUserEmail] = React.useState("");
+  const [desktopPlatform, setDesktopPlatform] = React.useState<DesktopPlatform>("unknown");
 
   React.useEffect(() => {
     let canceled = false;
@@ -37,6 +39,10 @@ export function SiteHeader() {
     };
   }, []);
 
+  React.useEffect(() => {
+    setDesktopPlatform(detectDesktopPlatform(window.navigator.userAgent, window.navigator.platform));
+  }, []);
+
   const signOut = async () => {
     try {
       await account.deleteSession({ sessionId: "current" });
@@ -47,6 +53,8 @@ export function SiteHeader() {
       if (window.location.pathname.startsWith("/account")) window.location.assign("/auth/sign-in");
     }
   };
+
+  const downloadTarget = getDesktopDownloadTarget(desktopPlatform);
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/8 bg-background/72 backdrop-blur-xl">
@@ -84,10 +92,14 @@ export function SiteHeader() {
               Sign in
             </Link>
           )}
-          <Link to="/download" className={buttonVariants({ size: "sm" })}>
+          <a
+            href={downloadTarget.href}
+            className={buttonVariants({ size: "sm" })}
+            aria-label={downloadTarget.ariaLabel}
+          >
             <ArrowDownToLine className="h-4 w-4" />
-            Download
-          </Link>
+            {downloadTarget.label}
+          </a>
         </div>
       </div>
     </header>
