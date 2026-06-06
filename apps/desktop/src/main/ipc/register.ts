@@ -120,6 +120,31 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     return snapshot;
   });
 
+  handle(channels.getThreadHistoryPage, z.tuple([z.object({
+    threadId: idSchema,
+    before: z.string().max(512).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  })]), (_event, input: { threadId: string; before?: string; limit?: number }) => {
+    if (!store.getThread(input.threadId)) throw new Error("Thread not found.");
+    return store.getThreadHistoryPage(input.threadId, input);
+  });
+
+  handle(channels.getMessageDetail, z.tuple([idSchema]), (_event, messageId: string) => {
+    const message = store.getMessagePreview(messageId);
+    if (!message) throw new Error("Message not found.");
+    return { message };
+  });
+
+  handle(channels.getToolEventDetail, z.tuple([idSchema]), (_event, toolId: string) => {
+    const tool = store.getToolEvent(toolId);
+    if (!tool) throw new Error("Tool event not found.");
+    return { tool };
+  });
+
+  handle(channels.importAttachment, z.tuple([importAttachmentSchema]), (_event, input: z.infer<typeof importAttachmentSchema>) => {
+    return store.importAttachment(input);
+  });
+
   handle(channels.createThread, z.tuple([optionalNullableId.optional()]), (_event, workspaceId?: string | null) => {
     if (workspaceId && !store.getWorkspace(workspaceId)) throw new Error("Workspace not found.");
     const thread = store.createThread(workspaceId ?? state.activeWorkspaceId ?? null);
@@ -824,7 +849,15 @@ const attachmentSchema = z.object({
   name: z.string().max(260),
   mimeType: z.string().max(120),
   size: z.number().nonnegative().max(20_000_000),
-  base64: z.string().max(30_000_000),
+  artifactId: z.string().min(1).max(200),
+  url: z.string().startsWith("privora-attachment://").max(1000),
+  createdAt: z.number(),
+});
+const importAttachmentSchema = z.object({
+  id: idSchema,
+  name: z.string().max(260),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  bytes: z.custom<Uint8Array>((value) => value instanceof Uint8Array && value.byteLength <= 20_000_000),
   createdAt: z.number(),
 });
 

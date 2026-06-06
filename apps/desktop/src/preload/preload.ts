@@ -28,6 +28,7 @@ import type {
   BrowserEvidenceVaultInput,
   BrowserWorkflowAssertInput,
   BrowserWorkflowInput,
+  ImportAttachmentInput,
   NotesCloseTabInput,
   NotesCreateInput,
   NotesDeleteInput,
@@ -44,6 +45,10 @@ import { channels } from "../main/ipc/channels";
 const api: PrivoraDesktopApi = {
   debugEnabled: typeof process !== "undefined" && process.env.PRIVORA_DEBUG === "1",
   getSnapshot: () => ipcRenderer.invoke(channels.getSnapshot),
+  getThreadHistoryPage: (input) => ipcRenderer.invoke(channels.getThreadHistoryPage, input),
+  getMessageDetail: (messageId) => ipcRenderer.invoke(channels.getMessageDetail, messageId),
+  getToolEventDetail: (toolId) => ipcRenderer.invoke(channels.getToolEventDetail, toolId),
+  importAttachment: (input: ImportAttachmentInput) => ipcRenderer.invoke(channels.importAttachment, input),
   createThread: (workspaceId?: string | null) => ipcRenderer.invoke(channels.createThread, workspaceId),
   renameThread: (threadId: string, title: string) => ipcRenderer.invoke(channels.renameThread, threadId, title),
   toggleThreadStar: (threadId: string) => ipcRenderer.invoke(channels.toggleThreadStar, threadId),

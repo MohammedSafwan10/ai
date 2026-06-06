@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, protocol, screen, shell, type MenuItemConstructorOptions } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -36,8 +36,14 @@ const state: IpcState = {
 };
 const isDevMode = Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL);
 const PRIVORA_PROTOCOL = "privora";
+const PRIVORA_ATTACHMENT_PROTOCOL = "privora-attachment";
 
 if (squirrelStartup) app.quit();
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: PRIVORA_ATTACHMENT_PROTOCOL,
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false },
+}]);
 
 if (isDevMode) {
   app.setName("Privora Dev");
@@ -339,6 +345,27 @@ if (!singleInstanceLock) {
     const icon = appIcon();
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
     store = new DesktopStore();
+    protocol.handle(PRIVORA_ATTACHMENT_PROTOCOL, (request) => {
+      if (!store || request.method !== "GET") return new Response(null, { status: 404 });
+      try {
+        const url = new URL(request.url);
+        if (url.hostname !== "artifact") return new Response(null, { status: 404 });
+        const artifactId = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+        if (!/^[a-f0-9]{64}\.bin$/.test(artifactId)) return new Response(null, { status: 400 });
+        const mimeType = url.searchParams.get("mime") || "application/octet-stream";
+        if (!/^image\/(?:png|jpeg|webp|gif)$/.test(mimeType)) return new Response(null, { status: 415 });
+        return new Response(store.loadAttachment(artifactId), {
+          status: 200,
+          headers: {
+            "Content-Type": mimeType,
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      } catch {
+        return new Response(null, { status: 404 });
+      }
+    });
     notesStore = new NotesStore(app.getPath("userData"));
     browserManager = new BrowserSessionManager(
       () => mainWindow,

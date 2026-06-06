@@ -719,6 +719,34 @@ export interface ChatMessageRecord {
   updatedAt: number;
 }
 
+export interface ThreadHistoryPage {
+  threadId: string;
+  messages: ChatMessageRecord[];
+  toolEvents: ToolEventRecord[];
+  turnUndos: TurnUndoRecord[];
+  beforeCursor?: string;
+  hasOlder: boolean;
+  toolEventsTruncated?: boolean;
+}
+
+export interface ThreadHistoryCursor {
+  value: string;
+}
+
+export interface ThreadHistoryPageInput {
+  threadId: string;
+  before?: string;
+  limit?: number;
+}
+
+export interface MessageDetailRecord {
+  message: ChatMessageRecord;
+}
+
+export interface ToolEventDetailRecord {
+  tool: ToolEventRecord;
+}
+
 export type AssistantTextPhase = "commentary" | "final_answer";
 
 export interface AssistantTextPartRecord {
@@ -745,7 +773,17 @@ export interface DesktopAttachmentRecord {
   name: string;
   mimeType: string;
   size: number;
-  base64: string;
+  artifactId: string;
+  url: string;
+  base64?: string;
+  createdAt: number;
+}
+
+export interface ImportAttachmentInput {
+  id: string;
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
   createdAt: number;
 }
 
@@ -960,6 +998,8 @@ export interface ToolEventRecord {
   activities?: ToolActivityItemRecord[];
   terminal?: ToolTerminalRecord;
   preview?: string;
+  detailAvailable?: boolean;
+  outputSizeBytes?: number;
   approvalGroupId?: string;
   approvalReason?: string;
   startedAt?: number;
@@ -1026,6 +1066,7 @@ export interface AppSnapshot {
   activeWorkspaceId: string | null;
   activeRun: ActiveRunState | null;
   activeRuns: ActiveRunState[];
+  historyPage?: ThreadHistoryPage;
   contextUsage?: ContextUsageRecord;
   aiCredits?: AiCreditSummaryRecord;
   recoveryNotice?: StoreRecoveryNoticeRecord;
@@ -1295,6 +1336,10 @@ export interface PrivoraBrowserAuthStartRecord {
 export interface PrivoraDesktopApi {
   debugEnabled: boolean;
   getSnapshot(): Promise<AppSnapshot>;
+  getThreadHistoryPage(input: ThreadHistoryPageInput): Promise<ThreadHistoryPage>;
+  getMessageDetail(messageId: string): Promise<MessageDetailRecord>;
+  getToolEventDetail(toolId: string): Promise<ToolEventDetailRecord>;
+  importAttachment(input: ImportAttachmentInput): Promise<DesktopAttachmentRecord>;
   createThread(workspaceId?: string | null): Promise<ThreadRecord>;
   renameThread(threadId: string, title: string): Promise<ThreadRecord | null>;
   toggleThreadStar(threadId: string): Promise<ThreadRecord | null>;

@@ -1,5 +1,8 @@
 # Privora Desktop
 
+See [docs/LONG_CHAT_ARCHITECTURE.md](docs/LONG_CHAT_ARCHITECTURE.md) for the
+SQLite-backed paginated chat architecture and long-session performance rules.
+
 Privora Desktop is a local-first Electron coding-agent app for working inside real project folders. It gives an AI agent controlled access to workspace files, search, git, terminal processes, diagnostics, approvals, and reviewable file changes from a desktop UI.
 
 The app is inspired by Codex-style local agent workflows, but is built as a desktop application with persistent workspaces, project chats, visual tool timelines, approvals, undo metadata, Plan Mode, and provider settings.

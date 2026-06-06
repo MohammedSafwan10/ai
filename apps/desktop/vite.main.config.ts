@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 
-const external = ["electron", "@vscode/ripgrep", "node-pty", "pdfjs-dist", "bufferutil", "utf-8-validate"];
+const external = ["electron", "node:sqlite", "@vscode/ripgrep", "node-pty", "pdfjs-dist", "bufferutil", "utf-8-validate"];
 
 export default defineConfig({
   build: {

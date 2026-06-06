@@ -1,5 +1,9 @@
 export const channels = {
   getSnapshot: "desktop:getSnapshot",
+  getThreadHistoryPage: "desktop:getThreadHistoryPage",
+  getMessageDetail: "desktop:getMessageDetail",
+  getToolEventDetail: "desktop:getToolEventDetail",
+  importAttachment: "desktop:importAttachment",
   createThread: "desktop:createThread",
   renameThread: "desktop:renameThread",
   toggleThreadStar: "desktop:toggleThreadStar",
