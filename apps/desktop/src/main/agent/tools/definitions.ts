@@ -307,6 +307,65 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
+    name: "notes_list",
+    description: "List Privora Notes visible in the current workspace, including global notes, workspace notes, and recent file-backed notes.",
+    parameters: schema({
+      query: textProperty("Optional title/content/path filter."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "notes_create",
+    description: "Create a Privora draft note. Drafts autosave locally. Use scope workspace by default, or global for notes visible in every project.",
+    parameters: schema({
+      title: textProperty("Optional note title."),
+      content: textProperty("Initial note content. Do not include secrets unless the user explicitly asks."),
+      scope: textProperty("workspace or global. Default workspace."),
+      pinned: boolProperty("Pin the note above unpinned notes."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "notes_read",
+    description: "Read a Privora note by id. Returns bounded content and note metadata.",
+    parameters: schema({
+      noteId: textProperty("Note id."),
+      maxBytes: numberProperty("Optional maximum bytes to return. Default 120000."),
+    }, ["noteId"]),
+  },
+  {
+    type: "function",
+    name: "notes_update",
+    description: "Update a Privora note draft. For file-backed notes, this updates the local draft and marks it unsaved until notes_save.",
+    parameters: schema({
+      noteId: textProperty("Note id."),
+      title: textProperty("Optional new title."),
+      content: textProperty("Optional replacement content."),
+      scope: textProperty("Optional scope change: workspace or global. File-backed notes cannot change scope."),
+      pinned: boolProperty("Optional pinned state."),
+    }, ["noteId"]),
+  },
+  {
+    type: "function",
+    name: "notes_save",
+    description: "Save a note. If filePath is provided, Save As converts the note to a file-backed note at that absolute path. Requires approval outside Full Access.",
+    parameters: schema({
+      noteId: textProperty("Note id."),
+      filePath: textProperty("Optional absolute file path for Save As."),
+    }, ["noteId"]),
+  },
+  {
+    type: "function",
+    name: "notes_delete",
+    description: "Delete a Privora draft or remove a file-backed note from Privora. Set deleteFile only when the user explicitly wants the external file moved to the OS Recycle Bin.",
+    parameters: schema({
+      noteId: textProperty("Note id."),
+      deleteFile: boolProperty("For file-backed notes only: move the external file to the OS Recycle Bin before removing it from Privora."),
+      permanent: boolProperty("Permanent deletion is reserved for explicit user UI actions and is rejected for agent note tools."),
+    }, ["noteId"]),
+  },
+  {
+    type: "function",
     name: "browser_open",
     description: "Open an http(s) URL in Privora's built-in workspace browser. Use the exact local dev/static server URL being tested. Agent control is automatic for localhost and requires approval for external origins.",
     parameters: schema({

@@ -1,14 +1,15 @@
 import type { PermissionMode } from "../../../shared/models";
 import type { DesktopToolCall } from "../../../shared/types";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
+import type { NotesStore } from "../../notes/NotesStore";
 import { DesktopToolExecutor, type ToolExecutionContext } from "./executor";
 import { classifyToolCall } from "./permissions";
 
 export class DesktopToolOrchestrator {
   private executor: DesktopToolExecutor;
 
-  constructor(private browserManager?: BrowserSessionManager) {
-    this.executor = new DesktopToolExecutor(browserManager);
+  constructor(private browserManager?: BrowserSessionManager, notesStore?: NotesStore) {
+    this.executor = new DesktopToolExecutor(browserManager, notesStore);
   }
 
   assess(call: DesktopToolCall, permissionMode: PermissionMode, workspaceId?: string | null) {

@@ -201,6 +201,18 @@ export const titleForTool = (call: DesktopToolCall) => {
       return `Trace browser ${args.action || "action"}`;
     case "browser_verify":
       return "Verify browser";
+    case "notes_list":
+      return "List notes";
+    case "notes_create":
+      return `Create note ${args.title || ""}`.trim();
+    case "notes_read":
+      return `Read note ${args.noteId || args.note_id || ""}`.trim();
+    case "notes_update":
+      return `Update note ${args.title || args.noteId || args.note_id || ""}`.trim();
+    case "notes_save":
+      return `Save note ${args.noteId || args.note_id || ""}`.trim();
+    case "notes_delete":
+      return `Delete note ${args.noteId || args.note_id || ""}`.trim();
     case "request_user_input":
       return `Questions`;
     case "spawn_agent":
@@ -223,6 +235,7 @@ export const titleForTool = (call: DesktopToolCall) => {
 export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["category"] => {
   if (isSubagentToolName(call.name)) return "agent";
   if (call.name.startsWith("browser_")) return "other";
+  if (call.name.startsWith("notes_")) return "other";
   if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
   if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
   if (call.name === "desktop_run_diagnostics") return "diagnostic";
@@ -274,6 +287,12 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "browser_form_submit") return "Submitting form";
     if (call.name === "browser_trace") return "Tracing browser";
     if (call.name === "browser_verify") return "Verifying browser";
+    if (call.name === "notes_list") return "Listing notes";
+    if (call.name === "notes_create") return "Creating note";
+    if (call.name === "notes_read") return "Reading note";
+    if (call.name === "notes_update") return "Updating note";
+    if (call.name === "notes_save") return "Saving note";
+    if (call.name === "notes_delete") return "Deleting note";
     if (call.name === "desktop_read_file") return "Reading file";
     if (call.name === "desktop_list_dir") return "Inspecting workspace";
     return status.replace(/_/g, " ");

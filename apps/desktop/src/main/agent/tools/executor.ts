@@ -11,6 +11,7 @@ import { FileOperationService, hashBuffer, recordFileObservation, recordFileObse
 import { FileMutationCoordinator } from "./mutationCoordinator";
 import { BrowserToolExecutor } from "../../browser/browserTools";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
+import type { NotesStore } from "../../notes/NotesStore";
 import type { PermissionMode } from "../../../shared/models";
 
 export interface ToolExecutionContext {
@@ -48,7 +49,7 @@ export class DesktopToolExecutor {
   private diagnostics = new DiagnosticsEngine(this.terminal);
   private browser?: BrowserToolExecutor;
 
-  constructor(browserManager?: BrowserSessionManager) {
+  constructor(browserManager?: BrowserSessionManager, private notesStore?: NotesStore) {
     this.browser = browserManager ? new BrowserToolExecutor(browserManager) : undefined;
   }
 
@@ -106,6 +107,18 @@ export class DesktopToolExecutor {
           return await this.gitStatus(call, context);
         case "desktop_git_diff":
           return await this.gitDiff(call, context);
+        case "notes_list":
+          return await this.notesList(call, context);
+        case "notes_create":
+          return await this.notesCreate(call, context);
+        case "notes_read":
+          return await this.notesRead(call, context);
+        case "notes_update":
+          return await this.notesUpdate(call, context);
+        case "notes_save":
+          return await this.notesSave(call, context);
+        case "notes_delete":
+          return await this.notesDelete(call, context);
         case "browser_open":
         case "browser_open_link":
         case "browser_snapshot":
@@ -156,6 +169,94 @@ export class DesktopToolExecutor {
     });
     recordFileObservation(context.workspaceRoot, result.snapshot);
     return { success: true, output: result.output, data: result.data };
+  }
+
+  private requireNotes() {
+    if (!this.notesStore) throw new Error("Privora Notes is not available.");
+    return this.notesStore;
+  }
+
+  private async notesList(call: DesktopToolCall, context: ToolExecutionContext) {
+    const store = this.requireNotes();
+    const state = store.list(context.workspaceId, String(call.arguments.query || ""));
+    return {
+      success: true,
+      output: state.notes.map(formatNoteLine).join("\n") || "No notes found.",
+      data: { notes: state.notes, openTabs: state.openTabs, activeNoteId: state.activeNoteId },
+    };
+  }
+
+  private async notesCreate(call: DesktopToolCall, context: ToolExecutionContext) {
+    const store = this.requireNotes();
+    const scope = String(call.arguments.scope || "workspace") === "global" ? "global" : "workspace";
+    const result = store.create({
+      workspaceId: context.workspaceId,
+      scope,
+      title: String(call.arguments.title || "Untitled note"),
+      content: typeof call.arguments.content === "string" ? call.arguments.content : "",
+      pinned: call.arguments.pinned === true,
+    });
+    return {
+      success: true,
+      output: `Created ${formatNoteLine(result.note)}`,
+      data: { note: result.note, content: boundedNoteContent(result.content) },
+    };
+  }
+
+  private async notesRead(call: DesktopToolCall, context: ToolExecutionContext) {
+    const store = this.requireNotes();
+    const result = store.open({ noteId: String(call.arguments.noteId || call.arguments.note_id || ""), workspaceId: context.workspaceId });
+    const maxBytes = Number(call.arguments.maxBytes || call.arguments.max_bytes) || 120_000;
+    return {
+      success: true,
+      output: boundedNoteContent(result.content, maxBytes),
+      data: { note: result.note, largeMode: result.largeMode, readonly: result.readonly, truncated: result.truncated },
+    };
+  }
+
+  private async notesUpdate(call: DesktopToolCall, context: ToolExecutionContext) {
+    const store = this.requireNotes();
+    const result = store.update({
+      noteId: String(call.arguments.noteId || call.arguments.note_id || ""),
+      workspaceId: context.workspaceId,
+      title: typeof call.arguments.title === "string" ? call.arguments.title : undefined,
+      content: typeof call.arguments.content === "string" ? call.arguments.content : undefined,
+      scope: call.arguments.scope === "global" ? "global" : call.arguments.scope === "workspace" ? "workspace" : undefined,
+      pinned: typeof call.arguments.pinned === "boolean" ? call.arguments.pinned : undefined,
+    });
+    return {
+      success: true,
+      output: `Updated ${formatNoteLine(result.note)}`,
+      data: { note: result.note },
+    };
+  }
+
+  private async notesSave(call: DesktopToolCall, context: ToolExecutionContext) {
+    const store = this.requireNotes();
+    const result = store.save({
+      noteId: String(call.arguments.noteId || call.arguments.note_id || ""),
+      workspaceId: context.workspaceId,
+      filePath: typeof call.arguments.filePath === "string" ? call.arguments.filePath : typeof call.arguments.file_path === "string" ? call.arguments.file_path : undefined,
+    });
+    return {
+      success: true,
+      output: `Saved ${formatNoteLine(result.note)}`,
+      data: { note: result.note },
+    };
+  }
+
+  private async notesDelete(call: DesktopToolCall, context: ToolExecutionContext) {
+    const store = this.requireNotes();
+    const noteId = String(call.arguments.noteId || call.arguments.note_id || "");
+    if (call.arguments.deleteFile === true || call.arguments.delete_file === true) {
+      throw new Error("Agent file deletion must use the guarded desktop filesystem tools. notes_delete only removes the note from Privora.");
+    }
+    const state = store.delete({ noteId, workspaceId: context.workspaceId });
+    return {
+      success: true,
+      output: `Deleted note ${noteId}.`,
+      data: { notes: state.notes },
+    };
   }
 
   private async listDir(call: DesktopToolCall, context: ToolExecutionContext) {
@@ -372,6 +473,15 @@ const terminalFallbackOutput = (
   if (result.status === "timed_out") return "Command timed out.";
   if (result.status === "failed") return "Terminal process failed to start.";
   return `Process exited with code ${result.exitCode}`;
+};
+
+const formatNoteLine = (note: { id: string; title: string; scope: string; filePath?: string; dirty?: boolean; sizeBytes?: number }) =>
+  `${note.title} (${note.scope}${note.filePath ? `, ${note.filePath}` : ""}, ${note.sizeBytes || 0}B${note.dirty ? ", unsaved" : ""}) [${note.id}]`;
+
+const boundedNoteContent = (content: string, maxBytes = 120_000) => {
+  const buffer = Buffer.from(content, "utf8");
+  if (buffer.length <= maxBytes) return content;
+  return `${buffer.subarray(0, maxBytes).toString("utf8")}\n\n[truncated: ${buffer.length - maxBytes} bytes omitted]`;
 };
 
 const readYieldTimeMs = (args: Record<string, unknown>, keys: string[]) => {

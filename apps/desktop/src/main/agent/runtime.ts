@@ -24,6 +24,7 @@ import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } fro
 import { streamProviderResponse } from "./providers";
 import { DesktopToolOrchestrator } from "./tools/orchestrator";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
+import type { NotesStore } from "../notes/NotesStore";
 import { buildAgentsMdContext } from "./agentsMd";
 import { buildProviderHistory, buildRuntimeContext, compactProviderHistoryWithInfo, compactToolResultForModel, sanitizeProviderHistoryForModel } from "./context";
 import { buildMentionContext } from "./contextMentions";
@@ -178,8 +179,9 @@ export class AgentRuntime {
     private getMainWindow: () => BrowserWindow | null,
     private getActiveIds: () => { activeThreadId: string | null; activeWorkspaceId: string | null },
     browserManager?: BrowserSessionManager,
+    notesStore?: NotesStore,
   ) {
-    this.tools = new DesktopToolOrchestrator(browserManager);
+    this.tools = new DesktopToolOrchestrator(browserManager, notesStore);
   }
 
   getActiveRun(threadId: string) {

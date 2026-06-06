@@ -129,6 +129,96 @@ export interface BrowserDownloadRecord {
   updatedAt: number;
 }
 
+export type NoteScope = "global" | "workspace" | "file";
+export type NoteLargeMode = "normal" | "large" | "readonly";
+
+export interface NoteRecord {
+  id: string;
+  scope: NoteScope;
+  workspaceId?: string;
+  title: string;
+  filePath?: string;
+  dirty: boolean;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastOpenedAt: number;
+  sizeBytes: number;
+  excerpt?: string;
+}
+
+export interface NoteOpenResult {
+  note: NoteRecord;
+  content: string;
+  largeMode: NoteLargeMode;
+  readonly: boolean;
+  truncated: boolean;
+  warning?: string;
+}
+
+export interface NotesPanelStateRecord {
+  workspaceId?: string;
+  notes: NoteRecord[];
+  openTabs: NoteRecord[];
+  activeNoteId?: string;
+}
+
+export interface NotesListInput {
+  workspaceId?: string;
+  query?: string;
+}
+
+export interface NotesCreateInput {
+  workspaceId?: string;
+  scope: NoteScope;
+  title?: string;
+  content?: string;
+  pinned?: boolean;
+}
+
+export interface NotesOpenInput {
+  workspaceId?: string;
+  noteId: string;
+}
+
+export interface NotesOpenFileInput {
+  workspaceId?: string;
+  filePath?: string;
+}
+
+export interface NotesUpdateInput {
+  workspaceId?: string;
+  noteId: string;
+  title?: string;
+  content?: string;
+  scope?: Extract<NoteScope, "global" | "workspace">;
+  pinned?: boolean;
+}
+
+export interface NotesSaveInput {
+  workspaceId?: string;
+  noteId: string;
+  filePath?: string;
+}
+
+export interface NotesRenameInput {
+  workspaceId?: string;
+  noteId: string;
+  title: string;
+}
+
+export interface NotesDeleteInput {
+  workspaceId?: string;
+  noteId: string;
+  deleteFile?: boolean;
+  permanent?: boolean;
+}
+
+export interface NotesCloseTabInput {
+  workspaceId?: string;
+  noteId: string;
+}
+
 export type BrowserShieldsMode = "off" | "standard";
 
 export interface BrowserShieldsBlockedRequestRecord {
@@ -1048,6 +1138,12 @@ export type DesktopToolName =
   | "desktop_run_diagnostics"
   | "desktop_git_status"
   | "desktop_git_diff"
+  | "notes_list"
+  | "notes_create"
+  | "notes_read"
+  | "notes_update"
+  | "notes_save"
+  | "notes_delete"
   | "browser_open"
   | "browser_open_link"
   | "browser_snapshot"
@@ -1216,6 +1312,17 @@ export interface PrivoraDesktopApi {
   searchContextMentions(input: SearchContextMentionsInput): Promise<ContextMentionSuggestion[]>;
   listWorkspaceDirectory(input: { path: string }): Promise<WorkspaceDirectoryListing>;
   readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;
+  listNotes(input: NotesListInput): Promise<NotesPanelStateRecord>;
+  createNote(input: NotesCreateInput): Promise<NoteOpenResult>;
+  openNote(input: NotesOpenInput): Promise<NoteOpenResult>;
+  openNoteFile(input: NotesOpenFileInput): Promise<NoteOpenResult | null>;
+  updateNote(input: NotesUpdateInput): Promise<NoteOpenResult>;
+  saveNote(input: NotesSaveInput): Promise<NoteOpenResult>;
+  saveNoteAs(input: NotesSaveInput): Promise<NoteOpenResult | null>;
+  renameNote(input: NotesRenameInput): Promise<NoteOpenResult>;
+  deleteNote(input: NotesDeleteInput): Promise<NotesPanelStateRecord>;
+  closeNoteTab(input: NotesCloseTabInput): Promise<NotesPanelStateRecord>;
+  revealNote(input: NotesOpenInput): Promise<void>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   saveThreadSettings(input: SaveThreadSettingsInput): Promise<ThreadRecord | null>;
   startPrivoraBrowserAuth(): Promise<PrivoraBrowserAuthStartRecord>;

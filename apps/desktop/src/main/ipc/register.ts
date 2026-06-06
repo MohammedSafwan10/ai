@@ -15,6 +15,7 @@ import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditS
 import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
 import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
+import type { NotesStore } from "../notes/NotesStore";
 import type {
   ApprovalDecisionInput,
   BrowserBoundsInput,
@@ -37,6 +38,15 @@ import type {
   BrowserWorkflowAssertInput,
   BrowserWorkflowInput,
   DesktopEvent,
+  NotesCloseTabInput,
+  NotesCreateInput,
+  NotesDeleteInput,
+  NotesListInput,
+  NotesOpenFileInput,
+  NotesOpenInput,
+  NotesRenameInput,
+  NotesSaveInput,
+  NotesUpdateInput,
   RequestUserInputResponseInput,
   SaveSettingsInput,
   SearchContextMentionsInput,
@@ -51,7 +61,7 @@ export interface IpcState {
   activeWorkspaceId: string | null;
 }
 
-export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager) => {
+export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager, notesStore: NotesStore) => {
   let browserOverlayWindow: BrowserWindow | null = null;
   const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
   const storageCleanup = new StorageCleanupService({
@@ -229,6 +239,76 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (!workspace) throw new Error("Choose a workspace first.");
     return readWorkspaceFile(workspace.path, input.path);
+  });
+
+  handle(channels.listNotes, z.tuple([notesListInputSchema]), (_event, input: NotesListInput) => {
+    return notesStore.list(input.workspaceId || state.activeWorkspaceId || undefined, input.query);
+  });
+
+  handle(channels.createNote, z.tuple([notesCreateInputSchema]), (_event, input: NotesCreateInput) => {
+    return notesStore.create({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.openNote, z.tuple([notesOpenInputSchema]), (_event, input: NotesOpenInput) => {
+    return notesStore.open({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.openNoteFile, z.tuple([notesOpenFileInputSchema]), async (_event, input: NotesOpenFileInput) => {
+    const filePath = input.filePath || (await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [
+        { name: "Text notes", extensions: ["txt", "md", "markdown", "json", "log", "csv", "yaml", "yml", "toml"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    })).filePaths[0];
+    if (!filePath) return null;
+    return notesStore.openFile({ filePath, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.updateNote, z.tuple([notesUpdateInputSchema]), (_event, input: NotesUpdateInput) => {
+    return notesStore.update({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.saveNote, z.tuple([notesSaveInputSchema]), (_event, input: NotesSaveInput) => {
+    return notesStore.save({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.saveNoteAs, z.tuple([notesSaveInputSchema]), async (_event, input: NotesSaveInput) => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: input.filePath,
+      filters: [
+        { name: "Markdown", extensions: ["md"] },
+        { name: "Text", extensions: ["txt"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return notesStore.save({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined, filePath: result.filePath });
+  });
+
+  handle(channels.renameNote, z.tuple([notesRenameInputSchema]), (_event, input: NotesRenameInput) => {
+    return notesStore.rename({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.deleteNote, z.tuple([notesDeleteInputSchema]), async (_event, input: NotesDeleteInput) => {
+    const workspaceId = input.workspaceId || state.activeWorkspaceId || undefined;
+    if (input.deleteFile) {
+      const result = notesStore.open({ noteId: input.noteId, workspaceId });
+      if (!result.note.filePath) throw new Error("Only file-backed notes can be moved to the Recycle Bin.");
+      if (input.permanent) notesStore.deleteExternalFile(input.noteId);
+      else await shell.trashItem(result.note.filePath);
+    }
+    return notesStore.delete({ ...input, workspaceId });
+  });
+
+  handle(channels.closeNoteTab, z.tuple([notesCloseTabInputSchema]), (_event, input: NotesCloseTabInput) => {
+    return notesStore.closeTab({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+  });
+
+  handle(channels.revealNote, z.tuple([notesOpenInputSchema]), (_event, input: NotesOpenInput) => {
+    const result = notesStore.open({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+    if (!result.note.filePath) throw new Error("Only file-backed notes can be revealed in Explorer.");
+    shell.showItemInFolder(result.note.filePath);
   });
 
   handle(channels.saveSettings, z.tuple([saveSettingsInputSchema]), (_event, input: SaveSettingsInput) => {
@@ -554,6 +634,56 @@ const optionalNullableId = z.string().trim().min(1).max(200).nullable();
 const workspacePathInputSchema = z.string().trim().min(1).max(2000);
 const workspacePathObjectInputSchema = z.object({ path: z.string().trim().min(0).max(2000) });
 const workspaceOpenTargetSchema = z.string().trim().min(1).max(2000);
+const noteScopeSchema = z.enum(["global", "workspace", "file"]);
+const notesListInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  query: z.string().max(240).optional(),
+});
+const notesCreateInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  scope: noteScopeSchema,
+  title: z.string().trim().max(120).optional(),
+  content: z.string().max(25 * 1024 * 1024).optional(),
+  pinned: z.boolean().optional(),
+});
+const notesOpenInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  noteId: idSchema,
+});
+const notesOpenFileInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  filePath: z.string().trim().max(4000).optional(),
+});
+const notesUpdateInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  noteId: idSchema,
+  title: z.string().trim().max(120).optional(),
+  content: z.string().max(25 * 1024 * 1024).optional(),
+  scope: z.enum(["global", "workspace"]).optional(),
+  pinned: z.boolean().optional(),
+});
+const notesSaveInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  noteId: idSchema,
+  filePath: z.string().trim().max(4000).optional(),
+});
+const notesRenameInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  noteId: idSchema,
+  title: z.string().trim().min(1).max(120),
+});
+const notesDeleteInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  noteId: idSchema,
+  deleteFile: z.boolean().optional(),
+  permanent: z.boolean().optional(),
+}).refine((input) => !input.permanent || input.deleteFile, {
+  message: "Permanent deletion requires deleteFile.",
+});
+const notesCloseTabInputSchema = z.object({
+  workspaceId: idSchema.optional(),
+  noteId: idSchema,
+});
 const browserViewportSchema = z.object({
   width: z.number().min(1).max(10000),
   height: z.number().min(1).max(10000),

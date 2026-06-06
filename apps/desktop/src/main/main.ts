@@ -3,6 +3,7 @@ import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopStore } from "./db/store";
+import { NotesStore } from "./notes/NotesStore";
 import { AgentRuntime } from "./agent/runtime";
 import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
@@ -20,6 +21,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 
 let mainWindow: BrowserWindow | null = null;
 let store: DesktopStore | null = null;
+let notesStore: NotesStore | null = null;
 let runtime: AgentService | null = null;
 let browserManager: BrowserSessionManager | null = null;
 const MIN_ZOOM_FACTOR = 0.5;
@@ -337,6 +339,7 @@ if (!singleInstanceLock) {
     const icon = appIcon();
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
     store = new DesktopStore();
+    notesStore = new NotesStore(app.getPath("userData"));
     browserManager = new BrowserSessionManager(
       () => mainWindow,
       (browserState) => {
@@ -351,8 +354,8 @@ if (!singleInstanceLock) {
     const workspaces = store.listWorkspaces();
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
-    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager));
-    registerIpc(store, runtime, state, browserManager);
+    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager, notesStore));
+    registerIpc(store, runtime, state, browserManager, notesStore);
     installUpdateService();
     await createWindow();
     handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));

@@ -177,6 +177,29 @@ describe("desktop permission classifier", () => {
     });
   });
 
+  it("guards note saves and deletes unless full access is active", () => {
+    expect(classifyToolCall(call("notes_create", { title: "Plan" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("notes_update", { noteId: "n1", content: "draft" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("notes_save", { noteId: "n1", filePath: "D:\\Notes\\plan.md" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("notes_delete", { noteId: "n1" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("notes_save", { noteId: "n1" }), "yolo")).toMatchObject({
+      risk: "risky",
+      requiresApproval: false,
+    });
+  });
+
   it("matches reusable workspace tool approval scopes", () => {
     const scope = approvalScope({ kind: "tool_workspace", toolName: "desktop_delete_path" });
     expect(findMatchingApprovalScope(call("desktop_delete_path", { path: "old.txt" }), [scope])).toBe(scope);

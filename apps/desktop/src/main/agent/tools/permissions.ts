@@ -76,6 +76,24 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     };
   }
 
+  if (call.name === "notes_save") {
+    return {
+      risk: "risky",
+      requiresApproval: mode !== "yolo",
+      reason: "Saving a note can write to a user-selected file path.",
+    };
+  }
+
+  if (call.name === "notes_delete") {
+    return {
+      risk: "risky",
+      requiresApproval: mode !== "yolo",
+      reason: call.arguments.deleteFile === true || call.arguments.delete_file === true
+        ? "Deleting this note can move its external file to the OS Recycle Bin."
+        : "Deleting a note removes its local Privora draft or saved reference.",
+    };
+  }
+
   if (call.name === "browser_open") {
     try {
       const decision = browserOriginDecision(String(call.arguments.url || ""), "agent");
