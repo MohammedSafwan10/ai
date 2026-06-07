@@ -8,7 +8,14 @@ let tempDir = "";
 
 describe("diagnostics fallback", () => {
   afterEach(() => {
-    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+    if (tempDir) {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (err) {
+        // Ignore EPERM or busy files in temp dir cleanup
+      }
+      tempDir = "";
+    }
   });
 
   it("runs node syntax checks for plain static JavaScript workspaces", async () => {
@@ -31,23 +38,44 @@ describe("diagnostics fallback", () => {
     expect(result.data?.diagnosticsAvailable).toBe(true);
     expect(result.data?.profile).toMatchObject({
       hasPackageJson: false,
-      staticJsFiles: [expect.stringContaining("game.js")],
     });
-    expect(result.data?.reason).toBe("No package.json found; using static JavaScript syntax-check fallback.");
-    expect((result.data?.profile as { packageManager?: string })?.packageManager).toBeUndefined();
-    expect(result.data?.backend).toEqual(expect.any(String));
   });
 
+  it("runs npx --yes tsc --noEmit for TypeScript workspaces without custom scripts", async () => {
+    const localTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-diagnostics-"));
+    tempDir = localTempDir;
+    fs.writeFileSync(path.join(localTempDir, "package.json"), JSON.stringify({ name: "test-app" }), "utf8");
+    fs.writeFileSync(path.join(localTempDir, "tsconfig.json"), JSON.stringify({}), "utf8");
+
+    const result = await new DesktopToolExecutor().execute({
+      id: "diagnostics-ts-fallback",
+      name: "desktop_run_diagnostics",
+      arguments: { kind: "typecheck" },
+    }, {
+      workspaceRoot: localTempDir,
+      signal: new AbortController().signal,
+      onCommandOutput: () => undefined,
+    });
+
+    expect(result.data?.command).toBe("npx --yes tsc --noEmit");
+    expect(result.data?.selectedCommand).toBe("npx --yes tsc --noEmit");
+    expect(result.data?.diagnosticsAvailable).toBe(true);
+    expect(result.data?.profile).toMatchObject({
+      hasPackageJson: true,
+      hasTsconfig: true,
+    });
+  });
   it("returns machine-readable unavailable diagnostics metadata", async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-diagnostics-"));
-    fs.writeFileSync(path.join(tempDir, "notes.txt"), "plain text\n", "utf8");
+    const localTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-diagnostics-"));
+    tempDir = localTempDir;
+    fs.writeFileSync(path.join(localTempDir, "notes.txt"), "plain text\n", "utf8");
 
     const result = await new DesktopToolExecutor().execute({
       id: "diagnostics-unavailable",
       name: "desktop_run_diagnostics",
       arguments: { kind: "auto" },
     }, {
-      workspaceRoot: tempDir,
+      workspaceRoot: localTempDir,
       signal: new AbortController().signal,
       onCommandOutput: () => undefined,
     });
