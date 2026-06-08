@@ -13,6 +13,7 @@ import type {
   ContextCompactionTrigger,
   DesktopEvent,
   DesktopToolCall,
+  GeneratedImageEventRecord,
   RequestUserInputQuestionRecord,
   RequestUserInputResponseInput,
   StartTurnInput,
@@ -128,6 +129,121 @@ const isAutoApprovedRiskyBrowserTool = (
   call.name.startsWith("browser_") &&
   decision.risk === "risky" &&
   !decision.requiresApproval;
+
+export const isImageGenerationToolName = (name: string) =>
+  name === "generate_image" || name === "edit_image";
+
+export const hasSuccessfulImageToolResult = (
+  results: Array<{ call: DesktopToolCall; result: ToolResult }>,
+) =>
+  results.some((item) => isImageGenerationToolName(item.call.name) && item.result.success);
+
+export const shouldCompleteAfterSuccessfulImageStall = (input: {
+  hasSuccessfulImageAwaitingFollowup: boolean;
+  providerProducedProgress: boolean;
+  userRequestedPostImageWork?: boolean;
+}) =>
+  input.hasSuccessfulImageAwaitingFollowup && !input.providerProducedProgress && !input.userRequestedPostImageWork;
+
+export const userRequestedPostImageWork = (history: ProviderMessage[]) => {
+  const text = history
+    .filter((message) => message.role === "user")
+    .map((message) => message.content || "")
+    .filter((content) => !content.startsWith("The stream stalled."))
+    .join("\n")
+    .toLowerCase();
+  if (!text) return false;
+  const postImagePatterns = [
+    /\b(after|then|next|continue|do not stop|don't stop)\b/,
+    /\b(save|copy|rename|move|place|write|create|edit|update|modify|wire|use it|asset)\b/,
+    /\b(workspace|public\/|assets?\/|src\/|file|path|id|report|verify|check|exists|size)\b/,
+  ];
+  return postImagePatterns.some((pattern) => pattern.test(text));
+};
+
+const stringArg = (value: unknown, fallback = "") =>
+  typeof value === "string" && value.trim() ? value.trim() : fallback;
+
+const numberArg = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const imageModelFallback = (provider: string) =>
+  provider === "gemini" ? "gemini-3.1-flash-image" : "gpt-image-2";
+
+const imageStartEvent = (
+  call: DesktopToolCall,
+  threadId: string,
+  messageId: string,
+): GeneratedImageEventRecord => {
+  const provider = stringArg(call.arguments.provider, "cliproxy");
+  const timestamp = now();
+  return {
+    id: `${call.id}:image`,
+    callId: call.id,
+    threadId,
+    messageId,
+    status: "started",
+    provider,
+    model: stringArg(call.arguments.model, imageModelFallback(provider)),
+    prompt: stringArg(call.arguments.prompt),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+};
+
+const imageCompletedEventsFromResult = (
+  call: DesktopToolCall,
+  result: ToolResult,
+  threadId: string,
+  messageId: string,
+): GeneratedImageEventRecord[] => {
+  const images = Array.isArray(result.data?.images) ? result.data.images : [];
+  return images.map((image, index) => {
+    const record = image && typeof image === "object" ? image as Record<string, unknown> : {};
+    const provider = stringArg(record.provider, stringArg(call.arguments.provider, "cliproxy"));
+    const createdAt = numberArg(record.createdAt) ?? now();
+    return {
+      id: stringArg(record.id, `${call.id}:image:${index + 1}`),
+      callId: call.id,
+      threadId,
+      messageId,
+      status: "completed",
+      provider,
+      model: stringArg(record.model, stringArg(call.arguments.model, imageModelFallback(provider))),
+      prompt: stringArg(record.prompt, stringArg(call.arguments.prompt)),
+      previewUrl: stringArg(record.previewUrl) || undefined,
+      path: stringArg(record.path) || undefined,
+      workspacePath: stringArg(record.workspacePath) || undefined,
+      mimeType: stringArg(record.mimeType) || undefined,
+      sizeBytes: numberArg(record.sizeBytes),
+      createdAt,
+      updatedAt: now(),
+    };
+  });
+};
+
+const imageFailedEvent = (
+  call: DesktopToolCall,
+  result: Pick<ToolResult, "error">,
+  threadId: string,
+  messageId: string,
+): GeneratedImageEventRecord => {
+  const provider = stringArg(call.arguments.provider, "cliproxy");
+  const timestamp = now();
+  return {
+    id: `${call.id}:image`,
+    callId: call.id,
+    threadId,
+    messageId,
+    status: "failed",
+    provider,
+    model: stringArg(call.arguments.model, imageModelFallback(provider)),
+    prompt: stringArg(call.arguments.prompt),
+    error: result.error || "Image generation failed.",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+};
 
 interface ApprovalBundle {
   id: string;
@@ -551,12 +667,16 @@ export class AgentRuntime {
       }
     };
 
+    let successfulImageAwaitingFollowup = false;
+    let providerProducedProgress = false;
+
     try {
       let continuousIterations = 0;
       let lastCompactionAttemptTokens = 0;
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
         continuousIterations += 1;
         iteration += 1;
+        providerProducedProgress = false;
         const estimatedHistoryTokens = estimateProviderHistoryTokens(history);
         if (
           shouldAutoCompactHistory(history, runtimeBudget) &&
@@ -714,6 +834,8 @@ export class AgentRuntime {
               });
               const filtered = filterVisibleDelta(assistantText, titleFiltered, visibleFingerprints);
               if (!filtered) return;
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
               const startOffset = assistantText.length;
               assistantText += filtered;
               recordAssistantTextPart(options.assistantMessage, "commentary", startOffset, assistantText.length);
@@ -722,6 +844,8 @@ export class AgentRuntime {
               this.emitRun(run);
             },
             onThoughtDelta: (delta) => {
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
               const thoughtPart = ensureThoughtPart();
               assistantThought += delta;
               thoughtPart.updatedAt = now();
@@ -730,6 +854,8 @@ export class AgentRuntime {
               this.emitRun(run);
             },
             onToolDraft: (draft) => {
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
               endThoughtPart();
               markRunProgress(run);
               const call: DesktopToolCall = {
@@ -746,6 +872,8 @@ export class AgentRuntime {
               this.emit({ type: "tool_updated", tool: event });
             },
             onToolCall: (call) => {
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
               endThoughtPart();
               markRunProgress(run);
               calls.push(call);
@@ -820,6 +948,8 @@ export class AgentRuntime {
               endThoughtPart();
               const previousIterationText = assistantText.slice(textStart);
               if (text === previousIterationText) return;
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
               const previousParts = options.assistantMessage.textParts || [];
               assistantText = `${assistantText.slice(0, textStart)}${text}`;
               options.assistantMessage.textParts = previousParts.filter((part) => part.endOffset <= textStart);
@@ -829,6 +959,8 @@ export class AgentRuntime {
               this.emitRun(run);
             },
             onWebSearch: (search) => {
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
               endThoughtPart();
               markRunProgress(run);
               const call: DesktopToolCall = {
@@ -906,6 +1038,7 @@ export class AgentRuntime {
           run.toolCount = toolCount;
           this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         }
+        if (hasSuccessfulImageToolResult(scheduledResults)) successfulImageAwaitingFollowup = true;
         const results = scheduledResults.map((item) => ({
           id: item.id,
           name: item.name,
@@ -963,6 +1096,21 @@ export class AgentRuntime {
     } catch (error) {
       if (error instanceof StreamStalledError) {
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+        if (shouldCompleteAfterSuccessfulImageStall({
+          hasSuccessfulImageAwaitingFollowup: successfulImageAwaitingFollowup,
+          providerProducedProgress,
+          userRequestedPostImageWork: userRequestedPostImageWork(history),
+        })) {
+          transitionRun(run, "draining", { iteration, toolCount });
+          transitionRun(run, "completed", { iteration, toolCount });
+          this.ensureFallbackThreadTitle(options.threadId);
+          flushAssistant("completed", true);
+          this.store.clearRunCheckpoint(options.threadId);
+          this.activeRuns.delete(options.threadId);
+          this.markSubagentFinished(options.threadId, "completed", assistantText || "Generated image.");
+          this.emit({ type: "run_state", threadId: options.threadId, run: null });
+          return;
+        }
         if (recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
           const nextController = new AbortController();
           run.controller = nextController;
@@ -1402,6 +1550,10 @@ export class AgentRuntime {
     if (call.name === "request_user_input") {
       return await this.requestUserInput(call, controller, run, threadId, messageId);
     }
+    const isImageTool = isImageGenerationToolName(call.name);
+    if (isImageTool) {
+      this.emit({ type: "image_generation_started", image: imageStartEvent(call, threadId, messageId) });
+    }
     const result = await this.tools.execute(call, {
       workspaceId: this.store.getThread(threadId)?.workspaceId || "",
       workspaceRoot,
@@ -1409,6 +1561,8 @@ export class AgentRuntime {
       browserExternalApproved,
       permissionMode,
       computerUseEnabled,
+      cliproxyBaseUrl: this.store.getSettings().cliproxyBaseUrl,
+      geminiApiKey: this.store.getSecret("gemini_api_key"),
       onCommandOutput: (callId, delta) => {
         markRunProgress(run);
         this.queueToolOutput(threadId, messageId, call, callId, delta);
@@ -1416,6 +1570,18 @@ export class AgentRuntime {
       onTerminalProcessStarted: (processId) => this.trackThreadProcess(threadId, processId),
       onTerminalProcessEnded: (processId) => this.untrackThreadProcess(threadId, processId),
     });
+    if (isImageTool) {
+      const completedImages = result.success
+        ? imageCompletedEventsFromResult(call, result, threadId, messageId)
+        : [];
+      if (completedImages.length > 0) {
+        completedImages.forEach((image) => this.emit({ type: "image_generation_completed", image }));
+      } else {
+        this.emit({ type: "image_generation_failed", image: imageFailedEvent(call, {
+          error: result.error || (result.success ? "Image generation did not return a saved image." : undefined),
+        }, threadId, messageId) });
+      }
+    }
     this.flushToolOutput(call.id);
     this.emitRun(run);
     return result;

@@ -1,10 +1,11 @@
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
+import path from "node:path";
 import type { ProviderMessage, ProviderPart } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
 import { detectProjectProfileSync } from "./diagnostics";
 import { getModelOption, type ModelRuntimeBudget } from "../../shared/models";
-import type { ChatMessageRecord, ToolResult } from "../../shared/types";
+import type { ChatMessageRecord, ToolEventRecord, ToolResult } from "../../shared/types";
 
 const MAX_HISTORY_MESSAGES = 18;
 const MAX_MESSAGE_CHARS = 12_000;
@@ -127,9 +128,11 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
   const threadTitleInstruction = thread && isPlaceholderThreadTitle(thread)
     ? "- Chat title: untitled. If the user's request has a clear topic, emit one hidden title tag early in the turn: <thread_title>Short task title</thread_title>. Keep it under 48 characters, no punctuation flourish, no newline, and do not mention this tag in normal chat text."
     : `- Chat title: ${thread?.title ? `"${thread.title}"` : "already named"}. Do not emit a <thread_title> tag.`;
-  const recentTools = store
+  const recentToolEvents = store
     .listRecentToolEvents(threadId, 14)
-    .filter((tool) => tool.status !== "preparing")
+    .filter((tool) => tool.status !== "preparing");
+  const generatedImageHint = buildGeneratedImageRuntimeHint(recentToolEvents);
+  const recentTools = recentToolEvents
     .map((tool) => {
       const status = tool.status.replace(/_/g, " ");
       const output = compactTextForModel(tool.output || tool.result?.error || "", MAX_TOOL_OUTPUT_CHARS);
@@ -144,9 +147,33 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
     "- Terminal protocol: start commands with exec_command. Prefer argv arrays for exact execution; use cmd strings only for shell syntax. Default tty:true gives native PTY fidelity and resize; use tty:false for reliable pipe stdin/stdout/stderr and close_stdin EOF. If a session_id is returned, the process is still running; use write_stdin with empty chars to poll, non-empty chars to interact, close_stdin to close pipe input, terminal_read for retained output, terminal_resize for PTY resize, terminal_list for sessions, or terminal_stop to stop it.",
     "- Terminal output is streamed live to the user, but model-visible tool results may be head/tail compacted.",
     "- Prefer finite, non-interactive commands. Use desktop_run_diagnostics for lint/typecheck/test/build when you need verification.",
+    generatedImageHint,
     recentTools.length ? "Recent tool activity:" : "",
     ...recentTools,
   ].filter(Boolean).join("\n");
+};
+
+const buildGeneratedImageRuntimeHint = (tools: ToolEventRecord[]) => {
+  for (const tool of tools) {
+    if (tool.name !== "generate_image" && tool.name !== "edit_image") continue;
+    if (!tool.result?.success) continue;
+    const images = Array.isArray(tool.result.data?.images) ? tool.result.data.images : [];
+    for (const image of images) {
+      if (!image || typeof image !== "object") continue;
+      const record = image as Record<string, unknown>;
+      const imagePath = typeof record.path === "string" ? record.path : "";
+      const imageId = typeof record.id === "string" ? record.id : "";
+      if (!imagePath && !imageId) continue;
+      const dir = imagePath ? path.dirname(imagePath) : "the generated-images store";
+      return [
+        `- Generated images are saved under ${dir}.`,
+        "Use save_generated_image to copy or rename a generated image into the workspace.",
+        imageId ? `Latest generated image id: ${imageId}.` : "",
+        imagePath ? `Latest generated image path: ${imagePath}.` : "",
+      ].filter(Boolean).join(" ");
+    }
+  }
+  return "";
 };
 
 export const compactToolResultForModel = <T extends { output?: string; error?: string }>(
