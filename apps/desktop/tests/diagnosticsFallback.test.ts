@@ -41,7 +41,7 @@ describe("diagnostics fallback", () => {
     });
   });
 
-  it("runs npx --yes tsc --noEmit for TypeScript workspaces without custom scripts", async () => {
+  it("runs npx --yes with the TypeScript package for TypeScript workspaces without custom scripts", async () => {
     const localTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-diagnostics-"));
     tempDir = localTempDir;
     fs.writeFileSync(path.join(localTempDir, "package.json"), JSON.stringify({ name: "test-app" }), "utf8");
@@ -57,8 +57,8 @@ describe("diagnostics fallback", () => {
       onCommandOutput: () => undefined,
     });
 
-    expect(result.data?.command).toBe("npx --yes tsc --noEmit");
-    expect(result.data?.selectedCommand).toBe("npx --yes tsc --noEmit");
+    expect(result.data?.command).toBe("npx --yes --package typescript tsc --noEmit");
+    expect(result.data?.selectedCommand).toBe("npx --yes --package typescript tsc --noEmit");
     expect(result.data?.diagnosticsAvailable).toBe(true);
     expect(result.data?.profile).toMatchObject({
       hasPackageJson: true,

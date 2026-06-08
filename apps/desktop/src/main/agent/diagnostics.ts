@@ -146,13 +146,13 @@ const pickDiagnosticCommand = (profile: ProjectProfile, kind: DiagnosticKind) =>
     if (kind === "build" && scripts.has("build")) return run("build");
     if (kind === "typecheck") {
       if (scripts.has("typecheck")) return run("typecheck");
-      if (profile.hasTsconfig) return "npx --yes tsc --noEmit";
+      if (profile.hasTsconfig) return "npx --yes --package typescript tsc --noEmit";
     }
     if (kind === "auto") {
       if (scripts.has("lint")) return run("lint");
       if (scripts.has("typecheck")) return run("typecheck");
       if (scripts.has("build")) return run("build");
-      if (profile.hasTsconfig) return "npx --yes tsc --noEmit";
+      if (profile.hasTsconfig) return "npx --yes --package typescript tsc --noEmit";
       if (scripts.has("test")) return pm === "npm" ? "npm test" : `${pm} test`;
     }
   }

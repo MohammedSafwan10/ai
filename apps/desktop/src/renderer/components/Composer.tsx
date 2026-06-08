@@ -353,8 +353,15 @@ export function Composer({
   };
 
   const addFiles = async (files: FileList | File[]) => {
-    const incoming = Array.from(files).filter((file) => file.type.startsWith("image/"));
-    if (incoming.length === 0) return;
+    const allFiles = Array.from(files);
+    const incoming = allFiles.filter((file) => SUPPORTED_IMAGE_TYPES.includes(file.type));
+    const unsupported = allFiles.filter((file) => !SUPPORTED_IMAGE_TYPES.includes(file.type));
+    if (incoming.length === 0) {
+      if (unsupported.length > 0) {
+        setAttachmentError("Privora currently supports PNG, JPEG, WebP, and GIF image attachments.");
+      }
+      return;
+    }
     if (!activeModel.supportsImageInput) {
       setAttachmentError(`${activeModel.label} is text-only. Switch to a vision model before adding images.`);
       return;
@@ -365,16 +372,17 @@ export function Composer({
         setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} images.`);
         return;
       }
-      const accepted = incoming.slice(0, remaining);
-      const next = await Promise.all(accepted.map(importImageAttachment));
       const currentBytes = attachments.reduce((sum, item) => sum + item.size, 0);
-      const nextBytes = next.reduce((sum, item) => sum + item.size, 0);
+      const accepted = incoming.slice(0, remaining);
+      const nextBytes = accepted.reduce((sum, item) => sum + item.size, 0);
       if (currentBytes + nextBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
         setAttachmentError("Images are over the 20 MB request limit.");
         return;
       }
+      const next = await Promise.all(accepted.map(importImageAttachment));
       setAttachments((current) => [...current, ...next]);
-      setAttachmentError(incoming.length > accepted.length ? `Added ${accepted.length}; ${incoming.length - accepted.length} skipped.` : null);
+      const skipped = incoming.length - accepted.length + unsupported.length;
+      setAttachmentError(skipped > 0 ? `Added ${accepted.length}; ${skipped} unsupported or over-limit file${skipped === 1 ? "" : "s"} skipped.` : null);
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : "Could not attach that image.");
     }
@@ -871,7 +879,7 @@ const modelDisplayLabel = (label: string) =>
 
 const MAX_ATTACHMENTS = 15;
 const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"];
+const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const COMPOSER_LONG_PROMPT_CHARS = 1200;
 const COMPOSER_LONG_PROMPT_LINES = 12;
 const LARGE_PASTE_CHARS = 4000;

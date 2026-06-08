@@ -28,6 +28,7 @@ const LARGE_ASSISTANT_TEXT_CHARS = 32_000;
 const LARGE_ASSISTANT_PREVIEW_CHARS = 8_000;
 const markdownComponents = {
   a: MarkdownExternalLink,
+  table: MarkdownTable,
 };
 
 interface ChatMessageProps {
@@ -652,6 +653,16 @@ function MarkdownExternalLink({
     >
       {children}
     </a>
+  );
+}
+
+function MarkdownTable({
+  children,
+}: React.TableHTMLAttributes<HTMLTableElement>) {
+  return (
+    <div className="markdown-table-scroll" role="region" aria-label="Scrollable table" tabIndex={0}>
+      <table>{children}</table>
+    </div>
   );
 }
 
