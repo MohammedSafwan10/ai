@@ -469,6 +469,142 @@
   overflow-wrap: anywhere;
 }
 
+.image-tool-panel {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 0 20px;
+  max-width: min(100%, 54rem);
+  border-left: 1px solid color-mix(in srgb, var(--privora-border) 72%, transparent);
+  padding-left: 12px;
+}
+
+.generated-image-card {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  max-width: 720px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 68%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--privora-panel) 72%, transparent);
+  padding: 10px;
+}
+
+.generated-image-card.is-generating {
+  display: inline-block;
+  width: 220px;
+  max-width: min(220px, 100%);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.generated-image-preview-button {
+  display: block;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.generated-image-preview-button:focus-visible {
+  outline: 2px solid var(--privora-accent);
+  outline-offset: 2px;
+}
+
+.generated-image-card img,
+.generated-image-preview-button img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--privora-bg) 80%, black);
+}
+
+.generated-image-shimmer {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  min-height: 132px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 52%, transparent);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 30% 28%, color-mix(in srgb, var(--privora-text) 16%, transparent) 0%, transparent 28%),
+    radial-gradient(circle at 72% 70%, color-mix(in srgb, var(--privora-accent) 12%, transparent) 0%, transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--privora-surface) 92%, var(--privora-text) 4%), color-mix(in srgb, var(--privora-panel) 84%, var(--privora-bg)));
+  background-size: 120% 120%, 120% 120%, 100% 100%;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+  animation: generated-image-shimmer 3.8s ease-in-out infinite;
+}
+
+.generated-image-shimmer::before {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--privora-text) 10%, transparent);
+  filter: blur(22px);
+  opacity: 0.55;
+  animation: generated-image-soft-pulse 2.8s ease-in-out infinite;
+}
+
+.generated-image-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: -42%;
+  background: linear-gradient(115deg, transparent 36%, rgba(255,255,255,0.12) 49%, transparent 62%);
+  transform: translateX(-38%) rotate(8deg);
+  animation: generated-image-light-sweep 2.9s ease-in-out infinite;
+}
+
+.generated-image-card div {
+  min-width: 0;
+}
+
+.generated-image-card small {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--privora-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.generated-image-card pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .generated-image-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes generated-image-shimmer {
+  0%, 100% { background-position: 0% 0%, 100% 100%, 0 0; }
+  50% { background-position: 12% 10%, 88% 84%, 0 0; }
+}
+
+@keyframes generated-image-light-sweep {
+  0% { transform: translateX(-46%) rotate(8deg); opacity: 0; }
+  24% { opacity: 0.48; }
+  64% { opacity: 0.34; }
+  100% { transform: translateX(46%) rotate(8deg); opacity: 0; }
+}
+
+@keyframes generated-image-soft-pulse {
+  0%, 100% { transform: scale(0.88); opacity: 0.38; }
+  50% { transform: scale(1.08); opacity: 0.62; }
+}
+
 .question-answer-panel {
   display: grid;
   gap: 8px;

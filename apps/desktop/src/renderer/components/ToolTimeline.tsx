@@ -1,5 +1,6 @@
-import { Bot, Globe2, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, SubagentRecord, ToolEventRecord } from "../../shared/types";
 import { InlineFileChangeList } from "./InlineDiff";
@@ -18,6 +19,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
   const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
+  const [imagePreview, setImagePreview] = useState<GeneratedImagePreview | null>(null);
   const messageActive = isActiveMessageStatus(messageStatus);
   const resolvedTools = useMemo(
     () => tools.map((tool) => detailedTools[tool.id] ? { ...tool, ...detailedTools[tool.id] } : tool),
@@ -129,10 +131,14 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
-                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool)) && (
+                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
                   isTerminalOutputTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
+                    )
+                  ) : isImageTool(tool) ? (
+                    (expandedOutputIds.has(tool.id) || isLiveOutput(tool)) && (
+                      <ImageOutputPanel tool={tool} onPreview={setImagePreview} />
                     )
                   ) : isBrowserTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
@@ -182,6 +188,9 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
           ))}
         </div>
       )}
+      {imagePreview && (
+        <GeneratedImageLightbox image={imagePreview} onClose={() => setImagePreview(null)} />
+      )}
     </div>
   );
 }
@@ -223,8 +232,10 @@ function ToolTitleLine({
   const canExpand = (
     (isTerminalOutputTool(tool) && hasTerminalOutput(tool, output)) ||
     (isQuestionTool(tool) && hasUsefulOutput(output))
-  ) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool);
-  const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
+  ) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
+  const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) && !isImageTool(tool)
+    ? compactOutputPreview(output.trimEnd())
+    : "";
   if (!canExpand) {
     return (
       <div className="tool-title-line">
@@ -239,7 +250,7 @@ function ToolTitleLine({
       onClick={onToggle}
       title={expanded ? "Collapse output" : "Expand output"}
     >
-      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : isComputerTool(tool) ? <MonitorCog size={13} /> : <Terminal size={13} />}
+      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isImageTool(tool) ? <ImageIcon size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : isComputerTool(tool) ? <MonitorCog size={13} /> : <Terminal size={13} />}
       <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
       {preview && <code>{preview}</code>}
     </button>
@@ -337,6 +348,130 @@ function BrowserOutputPanel({ tool }: { tool: ToolEventRecord }) {
   );
 }
 
+type GeneratedImagePreview = ReturnType<typeof generatedImagesFromTool>[number];
+
+function ImageOutputPanel({ tool, onPreview }: { tool: ToolEventRecord; onPreview: (image: GeneratedImagePreview) => void }) {
+  const images = generatedImagesFromTool(tool);
+  const running = isLiveOutput(tool);
+  if (images.length === 0) {
+    if (running) {
+      return (
+        <div className="image-tool-panel">
+          <section className="generated-image-card is-generating">
+            <div className="generated-image-shimmer" aria-hidden="true" />
+          </section>
+        </div>
+      );
+    }
+    return (
+      <div className="image-tool-panel">
+        <section className="generated-image-card">
+          <div>
+            <small>Output</small>
+            <pre>{displayOutput(tool).trim() || "(no generated images)"}</pre>
+          </div>
+        </section>
+      </div>
+    );
+  }
+  return (
+    <div className="image-tool-panel">
+      {images.map((image, index) => (
+        <section className="generated-image-card" key={image.id || image.path || index}>
+          {image.previewUrl && (
+            <button
+              type="button"
+              className="generated-image-preview-button"
+              title="Open image preview"
+              onClick={() => onPreview(image)}
+            >
+              <img src={image.previewUrl} alt={image.prompt ? `Generated image: ${image.prompt}` : "Generated image"} />
+            </button>
+          )}
+          <div>
+            <small>{image.provider || "image"} {image.model ? `· ${image.model}` : ""}</small>
+            <pre>{[
+              image.path,
+              image.workspacePath ? `workspace: ${image.workspacePath}` : "",
+              image.mimeType ? `mime: ${image.mimeType}` : "",
+              image.sizeBytes ? `size: ${formatBytes(Number(image.sizeBytes))}` : "",
+              image.id ? `id: ${image.id}` : "",
+            ].filter(Boolean).join("\n")}</pre>
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function GeneratedImageLightbox({ image, onClose }: { image: GeneratedImagePreview; onClose: () => void }) {
+  const [zoom, setZoom] = useState(1);
+  const [busy, setBusy] = useState<"reveal" | null>(null);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const title = image.workspacePath || image.path || image.id || "Generated image";
+  const imageInput = { id: image.id || undefined, sourcePath: image.path || undefined };
+  const revealImage = async () => {
+    setBusy("reveal");
+    try {
+      await window.privoraDesktop.revealGeneratedImage(imageInput);
+    } catch (error) {
+      console.error("Could not reveal generated image", error);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return createPortal(
+    <div
+      className="image-lightbox generated-image-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Generated image preview"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="image-lightbox-topbar">
+        <div className="image-lightbox-title">
+          <strong>{image.model || "Generated image"}</strong>
+          <span>{title}</span>
+        </div>
+        <div className="image-lightbox-actions">
+          {(image.id || image.path) && (
+            <button type="button" onClick={() => void revealImage()} disabled={busy !== null} title="Show saved file" aria-label="Show saved file">
+              <ImageIcon size={18} />
+            </button>
+          )}
+          <button type="button" onClick={onClose} title="Close" aria-label="Close">
+            <X size={20} />
+          </button>
+        </div>
+      </div>
+      <div className="image-lightbox-stage">
+        {image.previewUrl && (
+          <img src={image.previewUrl} alt={image.prompt || "Generated image preview"} style={{ transform: `scale(${zoom})` }} />
+        )}
+      </div>
+      <div className="image-lightbox-zoom" aria-label="Image zoom">
+        <button type="button" onClick={() => setZoom((value) => Math.max(0.5, Number((value - 0.1).toFixed(2))))} title="Zoom out">
+          <Minus size={18} />
+        </button>
+        <span>{Math.round(zoom * 100)}%</span>
+        <button type="button" onClick={() => setZoom((value) => Math.min(2.5, Number((value + 0.1).toFixed(2))))} title="Zoom in">
+          <Plus size={18} />
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function ComputerOutputPanel({ tool }: { tool: ToolEventRecord }) {
   const details = computerDetails(tool);
   return (
@@ -413,6 +548,9 @@ const isBrowserTool = (tool: ToolEventRecord) =>
 
 const isComputerTool = (tool: ToolEventRecord) =>
   tool.name.startsWith("computer_");
+
+const isImageTool = (tool: ToolEventRecord) =>
+  ["generate_image", "edit_image", "list_generated_images", "save_generated_image"].includes(tool.name);
 
 const isQuestionTool = (tool: ToolEventRecord) =>
   tool.name === "request_user_input";
@@ -704,6 +842,25 @@ const arraySummary = (value: unknown, format: (item: unknown) => string) => {
 
 const objectValue = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? value as Record<string, unknown> : {};
+
+const generatedImagesFromTool = (tool: ToolEventRecord) => {
+  const data = objectValue(tool.result?.data);
+  const images = Array.isArray(data.images) ? data.images : data.record ? [data.record] : [];
+  return images
+    .map((item) => objectValue(item))
+    .filter((item) => stringValue(item.previewUrl) || stringValue(item.path))
+    .map((item) => ({
+      id: stringValue(item.id),
+      provider: stringValue(item.provider),
+      model: stringValue(item.model),
+      prompt: stringValue(item.prompt),
+      path: stringValue(item.path),
+      workspacePath: stringValue(item.workspacePath),
+      previewUrl: stringValue(item.previewUrl),
+      mimeType: stringValue(item.mimeType),
+      sizeBytes: typeof item.sizeBytes === "number" ? item.sizeBytes : undefined,
+    }));
+};
 
 const compactBrowserText = (value: string, max = 1800) => {
   const trimmed = value.trim();
