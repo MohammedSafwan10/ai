@@ -107,7 +107,7 @@ function main() {
     .forEach((doc) => updateReleaseDocument(doc.$id, { latest: false }));
 
   updateReleaseDocument(releaseDocumentId, { latest: true });
-  verifyFeed(targetVersion);
+  verifyFeed(targetVersion, artifacts.releases.path);
 
   log(`Published ${targetVersion}.`);
   log(`Installer: ${artifacts.installer.path}`);
@@ -246,9 +246,17 @@ function updatePackageVersion(targetVersion, previousVersion) {
 }
 
 function uploadFileIfNeeded(artifact) {
-  if (storageFileExists(artifact.id)) {
-    log(`Storage file exists, skipping upload: ${artifact.id}`);
-    return;
+  const existing = getStorageFile(artifact.id);
+  if (existing) {
+    const localSize = fs.statSync(artifact.path).size;
+    const remoteSize = Number(existing.sizeOriginal ?? existing.sizeActual ?? -1);
+    if (remoteSize === localSize) {
+      log(`Storage file exists, skipping upload: ${artifact.id}`);
+      return;
+    }
+
+    log(`Storage file differs, replacing: ${artifact.id} (${remoteSize} -> ${localSize} bytes)`);
+    run("appwrite", ["storage", "delete-file", "--bucket-id", config.bucketId, "--file-id", artifact.id]);
   }
 
   run("appwrite", [
@@ -263,12 +271,11 @@ function uploadFileIfNeeded(artifact) {
   ]);
 }
 
-function storageFileExists(fileId) {
+function getStorageFile(fileId) {
   try {
-    runJson("appwrite", ["-j", "storage", "get-file", "--bucket-id", config.bucketId, "--file-id", fileId]);
-    return true;
+    return runJson("appwrite", ["-j", "storage", "get-file", "--bucket-id", config.bucketId, "--file-id", fileId]);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -353,15 +360,16 @@ function appwriteRequest(method, route, body) {
   return parsed;
 }
 
-function verifyFeed(expectedVersion) {
+function verifyFeed(expectedVersion, localReleasesPath) {
   const feed = fetchJson(config.feedUrl);
   if (feed.version !== expectedVersion) {
     throw new Error(`Feed verification failed. Expected ${expectedVersion}, got ${feed.version || "unknown"}.`);
   }
 
   const releasesText = fetchText(`${config.feedUrl}/RELEASES`);
-  if (!releasesText.includes(`Privora-${expectedVersion}-full.nupkg`)) {
-    throw new Error("RELEASES verification failed; it does not mention the new package.");
+  const localReleasesText = fs.readFileSync(localReleasesPath, "utf8").trim();
+  if (releasesText !== localReleasesText) {
+    throw new Error("RELEASES verification failed; public feed does not match the generated manifest.");
   }
 }
 
