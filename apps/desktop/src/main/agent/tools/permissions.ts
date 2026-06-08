@@ -50,8 +50,8 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     };
   }
 
-  if (call.name === "desktop_spawn_process" || call.name === "desktop_run_diagnostics") {
-    const command = normalizedTerminalCommand(call) || String(call.arguments.command || (call.name === "desktop_run_diagnostics" ? call.arguments.kind || "" : ""));
+  if (call.name === "exec_command" || call.name === "desktop_run_diagnostics") {
+    const command = normalizedTerminalCommand(call) || String(call.arguments.cmd || call.arguments.command || (call.name === "desktop_run_diagnostics" ? call.arguments.kind || "" : ""));
     const risky =
       riskyArgv(call.arguments.argv) ||
       destructiveCommandPattern.test(command) ||
@@ -64,8 +64,8 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     };
   }
 
-  if (call.name === "desktop_write_process") {
-    const input = String(call.arguments.input || "");
+  if (call.name === "write_stdin") {
+    const input = String(call.arguments.chars || call.arguments.input || "");
     const risky =
       destructiveCommandPattern.test(input) ||
       networkCommandPattern.test(input) ||
@@ -257,13 +257,13 @@ export const approvalCommandPrefix = (call: DesktopToolCall) => {
 };
 
 const normalizedTerminalCommand = (call: DesktopToolCall) => {
-  if (call.name === "desktop_spawn_process") {
+  if (call.name === "exec_command") {
     const argv = normalizedArgv(call.arguments.argv);
     if (argv.length > 0) return argv.join(" ");
-    return normalizeCommand(String(call.arguments.command || ""));
+    return normalizeCommand(String(call.arguments.cmd || call.arguments.command || ""));
   }
-  if (call.name === "desktop_write_process") {
-    return normalizeCommand(String(call.arguments.input || ""));
+  if (call.name === "write_stdin") {
+    return normalizeCommand(String(call.arguments.chars || call.arguments.input || ""));
   }
   return "";
 };
@@ -317,7 +317,7 @@ export const approvalCwd = (call: DesktopToolCall) =>
   callCwd(call);
 
 const callCwd = (call: DesktopToolCall) =>
-  normalizeCwd(String(call.arguments.cwd || "."));
+  normalizeCwd(String(call.arguments.cwd || call.arguments.workdir || "."));
 
 const normalizeCwd = (value: string) =>
   value.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "") || ".";

@@ -5,7 +5,7 @@ import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../s
 import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../../security/pathSandbox";
 import { redactSecrets } from "../../security/redact";
 import { resolveRipgrepExecutablePath } from "../../resources";
-import { TerminalSessionManager } from "../../terminal/sessionManager";
+import { TerminalSessionManager, type TerminalManagerEventListener } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
 import { FileOperationService, hashBuffer, recordFileObservation, recordFileObservationData } from "./fileOperationService";
 import { FileMutationCoordinator } from "./mutationCoordinator";
@@ -24,8 +24,8 @@ export interface ToolExecutionContext {
   permissionMode?: PermissionMode;
   computerUseEnabled?: boolean;
   onCommandOutput: (callId: string, delta: string) => void;
-  onTerminalProcessStarted?: (processId: number) => void;
-  onTerminalProcessEnded?: (processId: number) => void;
+  onTerminalProcessStarted?: (sessionId: number) => void;
+  onTerminalProcessEnded?: (sessionId: number) => void;
 }
 
 const runProcess = (command: string, args: string[], cwd: string, signal: AbortSignal) =>
@@ -47,19 +47,33 @@ const MAX_METADATA_HASH_BYTES = 10 * 1024 * 1024;
 export class DesktopToolExecutor {
   private static mutationLocks = new Map<string, Promise<void>>();
   private files = new FileOperationService();
-  private terminal = new TerminalSessionManager();
+  private terminal: TerminalSessionManager;
   private mutations = new FileMutationCoordinator();
-  private diagnostics = new DiagnosticsEngine(this.terminal);
+  private diagnostics: DiagnosticsEngine;
   private browser?: BrowserToolExecutor;
   private computer?: ComputerUseToolExecutor;
 
-  constructor(browserManager?: BrowserSessionManager, private notesStore?: NotesStore, computerUseManager?: ComputerUseManager) {
+  constructor(browserManager?: BrowserSessionManager, private notesStore?: NotesStore, computerUseManager?: ComputerUseManager, onTerminalEvent?: TerminalManagerEventListener) {
+    this.terminal = new TerminalSessionManager(undefined, onTerminalEvent);
+    this.diagnostics = new DiagnosticsEngine(this.terminal);
     this.browser = browserManager ? new BrowserToolExecutor(browserManager) : undefined;
     this.computer = computerUseManager ? new ComputerUseToolExecutor(computerUseManager) : undefined;
   }
 
-  async stopTerminalProcess(processId: number) {
-    return await this.terminal.stopProcess({ processId });
+  async stopTerminalProcess(sessionId: number) {
+    return await this.terminal.stopProcess({ processId: sessionId });
+  }
+
+  getTerminalState() {
+    return { sessions: this.terminal.listSessions(true), updatedAt: Date.now() };
+  }
+
+  readTerminalSession(sessionId: number, maxOutputChars?: number) {
+    return this.terminal.readSession(sessionId, maxOutputChars);
+  }
+
+  resizeTerminalSession(sessionId: number, rows: number, cols: number) {
+    return this.terminal.resizeProcess({ processId: sessionId, rows, cols });
   }
 
   private async withMutationLock<T>(workspaceRoot: string, operation: () => Promise<T>) {
@@ -98,14 +112,18 @@ export class DesktopToolExecutor {
           return await this.withMutationLock(context.workspaceRoot, () => this.mutations.deletePath(call, context));
         case "desktop_rename_path":
           return await this.withMutationLock(context.workspaceRoot, () => this.mutations.renamePath(call, context));
-        case "desktop_spawn_process":
+        case "exec_command":
           return await this.execCommand(call, context);
-        case "desktop_write_process":
+        case "write_stdin":
           return await this.writeStdin(call, context);
-        case "desktop_kill_process":
+        case "terminal_stop":
           return await this.stopProcess(call, context);
-        case "desktop_resize_process":
+        case "terminal_resize":
           return await this.resizeProcess(call);
+        case "terminal_list":
+          return this.terminalList(call);
+        case "terminal_read":
+          return this.terminalRead(call);
         case "desktop_run_diagnostics":
           return await this.diagnostics.run(call, context);
         case "desktop_git_status":
@@ -356,58 +374,78 @@ export class DesktopToolExecutor {
   }
 
   private async execCommand(call: DesktopToolCall, context: ToolExecutionContext) {
-    const cwd = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.cwd || ".")).absolutePath;
+    const cwd = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.cwd || call.arguments.workdir || ".")).absolutePath;
     const argv = readArgv(call.arguments.argv);
-    const command = String(call.arguments.command || "");
-    const label = argv.length ? argv.map(displayArg).join(" ") : command;
+    const command = String(call.arguments.cmd || call.arguments.command || "");
+    const label = redactSecrets(argv.length ? argv.map(displayArg).join(" ") : command);
     context.onCommandOutput(call.id, `Running ${label}\n`);
     const result = await this.terminal.execCommand({
       cwd,
       command: argv.length ? undefined : command,
       argv: argv.length ? argv : undefined,
       tty: call.arguments.tty !== false,
-      yieldTimeMs: readYieldTimeMs(call.arguments, ["yieldTimeMs", "yield_time_ms", "timeoutMs"]),
-      maxOutputChars: Number(call.arguments.maxOutputChars) || undefined,
+      yieldTimeMs: readYieldTimeMs(call.arguments, ["yieldTimeMs", "yield_time_ms", "timeoutMs", "timeout_ms"]),
+      maxOutputChars: Number(call.arguments.maxOutputChars || call.arguments.max_output_chars || call.arguments.max_output_tokens) || undefined,
       signal: context.signal,
       onOutput: (delta) => context.onCommandOutput(call.id, delta),
     });
-    if (result.processId && result.running) context.onTerminalProcessStarted?.(result.processId);
-    if (result.processId && !result.running) context.onTerminalProcessEnded?.(result.processId);
+    if (result.sessionId && result.running) context.onTerminalProcessStarted?.(result.sessionId);
+    if (result.sessionId && !result.running) context.onTerminalProcessEnded?.(result.sessionId);
     return terminalToolResult(result, result.processId
-      ? `Command is still running as process ${result.processId}.`
+      ? `Command is still running as session ${result.sessionId ?? result.processId}.`
       : `Command exited with code ${result.exitCode}`);
   }
 
   private async writeStdin(call: DesktopToolCall, context: ToolExecutionContext) {
+    const sessionId = Number(call.arguments.sessionId || call.arguments.session_id || call.arguments.processId);
     const result = await this.terminal.writeStdin({
-      processId: Number(call.arguments.processId),
-      input: String(call.arguments.input ?? ""),
+      processId: sessionId,
+      input: String(call.arguments.chars ?? call.arguments.input ?? ""),
       closeStdin: call.arguments.closeStdin === true || call.arguments.close_stdin === true,
       yieldTimeMs: readYieldTimeMs(call.arguments, ["yieldTimeMs", "yield_time_ms"]),
-      maxOutputChars: Number(call.arguments.maxOutputChars) || undefined,
+      maxOutputChars: Number(call.arguments.maxOutputChars || call.arguments.max_output_chars || call.arguments.max_output_tokens) || undefined,
       signal: context.signal,
       onOutput: (delta) => context.onCommandOutput(call.id, delta),
     });
-    if (result.processId && !result.running) context.onTerminalProcessEnded?.(result.processId);
+    if (result.sessionId && !result.running) context.onTerminalProcessEnded?.(result.sessionId);
     return terminalToolResult(result, result.processId
-      ? `Process ${result.processId} is still running.`
+      ? `Session ${result.sessionId ?? result.processId} is still running.`
       : `Process exited with code ${result.exitCode}`);
   }
 
   private async stopProcess(call: DesktopToolCall, context: ToolExecutionContext) {
-    const processId = Number(call.arguments.processId);
-    const result = await this.terminal.stopProcess({ processId });
-    context.onTerminalProcessEnded?.(processId);
-    return terminalToolResult(result, terminalFallbackOutput(result, processId));
+    const sessionId = Number(call.arguments.sessionId || call.arguments.session_id || call.arguments.processId);
+    const result = await this.terminal.stopProcess({ processId: sessionId });
+    context.onTerminalProcessEnded?.(sessionId);
+    return terminalToolResult(result, terminalFallbackOutput(result, sessionId));
   }
 
   private async resizeProcess(call: DesktopToolCall) {
+    const sessionId = Number(call.arguments.sessionId || call.arguments.session_id || call.arguments.processId);
     const result = await this.terminal.resizeProcess({
-      processId: Number(call.arguments.processId),
+      processId: sessionId,
       rows: Number(call.arguments.rows),
       cols: Number(call.arguments.cols),
     });
     return terminalToolResult(result, result.output || "Resize request processed.");
+  }
+
+  private terminalList(call: DesktopToolCall): ToolResult {
+    const includeExited = call.arguments.includeExited !== false && call.arguments.include_exited !== false;
+    const sessions = this.terminal.listSessions(includeExited);
+    return {
+      success: true,
+      output: sessions.length
+        ? sessions.map((session) => `${session.sessionId} ${session.status} ${session.command}`).join("\n")
+        : "No terminal sessions.",
+      data: { sessions, updatedAt: Date.now() },
+    };
+  }
+
+  private terminalRead(call: DesktopToolCall): ToolResult {
+    const sessionId = Number(call.arguments.sessionId || call.arguments.session_id);
+    const maxOutputChars = Number(call.arguments.maxOutputChars || call.arguments.max_output_chars || call.arguments.max_output_tokens) || undefined;
+    return this.terminal.readSession(sessionId, maxOutputChars);
   }
 
   private async gitStatus(call: DesktopToolCall, context: ToolExecutionContext) {
@@ -440,6 +478,7 @@ export class DesktopToolExecutor {
 const terminalToolResult = (
   result: {
     success: boolean;
+    sessionId?: number | null;
     output: string;
     stdout?: string;
     stderr?: string;
@@ -455,6 +494,7 @@ const terminalToolResult = (
     backend?: string;
     tty?: boolean;
     streamsMerged?: boolean;
+    partialChunk?: boolean;
   },
   fallbackOutput: string,
 ): ToolResult => ({
@@ -462,16 +502,26 @@ const terminalToolResult = (
   output: result.output || fallbackOutput,
   error: result.timedOut ? "Command timed out." : undefined,
   data: {
+    session_id: result.sessionId ?? result.processId,
+    sessionId: result.sessionId ?? result.processId,
+    process_id: result.processId,
     processId: result.processId,
     running: result.running,
+    exit_code: result.exitCode,
     exitCode: result.exitCode,
+    wall_time_ms: result.durationMs,
     durationMs: result.durationMs,
+    duration_ms: result.durationMs,
     processDurationMs: typeof result.processDurationMs === "number" ? result.processDurationMs : result.durationMs,
     operationDurationMs: typeof result.operationDurationMs === "number" ? result.operationDurationMs : result.durationMs,
+    timed_out: result.timedOut,
     timedOut: result.timedOut,
+    omitted_bytes: result.omittedBytes,
     omittedBytes: result.omittedBytes,
     status: result.status,
     stopped: result.status === "stopped",
+    partial_chunk: result.partialChunk === true,
+    partialChunk: result.partialChunk === true,
     stdout: result.stdout || "",
     stderr: result.stderr || "",
     backend: result.backend,
@@ -486,14 +536,15 @@ const terminalFallbackOutput = (
     exitCode: number | null;
     status: string;
   },
-  requestedProcessId?: number,
+  requestedSessionId?: number,
 ) => {
-  if (result.status === "running") return `Process ${result.processId || requestedProcessId || ""} is still running.`.trim();
-  if (result.status === "stopped") return `Stopped process ${requestedProcessId || ""}.`.trim();
-  if (result.status === "not_found") return `Process ${requestedProcessId || ""} is not running.`.trim();
+  const id = requestedSessionId || result.processId || "";
+  if (result.status === "running") return `Session ${id} is still running.`.trim();
+  if (result.status === "stopped") return `Stopped session ${id}.`.trim();
+  if (result.status === "not_found") return `Session ${id} is not running.`.trim();
   if (result.status === "timed_out") return "Command timed out.";
-  if (result.status === "failed") return "Terminal process failed to start.";
-  return `Process exited with code ${result.exitCode}`;
+  if (result.status === "failed") return "Terminal session failed to start.";
+  return `Session exited with code ${result.exitCode}`;
 };
 
 const formatNoteLine = (note: { id: string; title: string; scope: string; filePath?: string; dirty?: boolean; sizeBytes?: number }) =>

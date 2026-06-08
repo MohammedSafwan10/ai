@@ -48,6 +48,7 @@ const emptySnapshot: AppSnapshot = {
   activeRuns: [],
   contextUsage: undefined,
   aiCredits: undefined,
+  terminal: { sessions: [], updatedAt: 0 },
 };
 
 type DesktopUiSnapshot = AppSnapshot & {
@@ -235,7 +236,19 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
         return { ...tool, output: compactLiveOutput(`${tool.output || ""}${event.delta}`), updatedAt: timestamp };
       });
       if (changed) next = { ...next, toolEvents };
+      continue;
     }
+    if (event.type === "terminal_session_started" || event.type === "terminal_session_updated" || event.type === "terminal_session_ended") {
+      next = {
+        ...next,
+        terminal: {
+          sessions: upsertBySessionId(next.terminal?.sessions || [], event.session),
+          updatedAt: event.session.updatedAt,
+        },
+      };
+      continue;
+    }
+    if (event.type === "terminal_output_delta") continue;
   }
   return next;
 };
@@ -260,6 +273,7 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): Deskt
     contextUsage: snapshot.contextUsage || (
       current.contextUsage?.threadId === activeThreadId ? current.contextUsage : undefined
     ),
+    terminal: snapshot.terminal || current.terminal || { sessions: [], updatedAt: 0 },
     activeRun: activeThreadId ? activeRunsByThread[activeThreadId] || null : null,
     activeRuns: Object.values(activeRunsByThread),
     activeRunsByThread,
@@ -367,10 +381,20 @@ const upsertById = <T extends { id: string; createdAt?: number; updatedAt?: numb
   return next;
 };
 
-const compactLiveOutput = (value: string, maxChars = 140_000) => {
+const upsertBySessionId = <T extends { sessionId: number; updatedAt?: number }>(items: T[], item: T): T[] => {
+  const index = items.findIndex((candidate) => candidate.sessionId === item.sessionId);
+  const next = index >= 0
+    ? items.map((candidate, currentIndex) => currentIndex === index ? item : candidate)
+    : [item, ...items];
+  return next
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0) || b.sessionId - a.sessionId)
+    .slice(0, 24);
+};
+
+const compactLiveOutput = (value: string, maxChars = 40_000) => {
   if (value.length <= maxChars) return value;
-  const head = value.slice(0, 40_000);
-  const tail = value.slice(-(maxChars - 40_000));
+  const head = value.slice(0, 10_000);
+  const tail = value.slice(-(maxChars - 10_000));
   return `${head}\n\n[... live output compacted ...]\n\n${tail}`;
 };
 

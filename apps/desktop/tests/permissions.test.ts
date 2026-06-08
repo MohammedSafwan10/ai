@@ -31,14 +31,14 @@ describe("desktop permission classifier", () => {
   });
 
   it("requires approval for chained terminal commands", () => {
-    expect(classifyToolCall(call("desktop_spawn_process", { command: "npm install && npm run build" }), "ask_risky")).toMatchObject({
+    expect(classifyToolCall(call("exec_command", { cmd: "npm install && npm run build" }), "ask_risky")).toMatchObject({
       risk: "risky",
       requiresApproval: true,
     });
   });
 
   it("requires approval for risky terminal stdin", () => {
-    expect(classifyToolCall(call("desktop_write_process", { processId: 7, input: "rm -rf dist\n" }), "ask_risky")).toMatchObject({
+    expect(classifyToolCall(call("write_stdin", { session_id: 7, chars: "rm -rf dist\n" }), "ask_risky")).toMatchObject({
       risk: "risky",
       requiresApproval: true,
     });
@@ -54,7 +54,7 @@ describe("desktop permission classifier", () => {
   });
 
   it("requires approval for risky argv terminal commands", () => {
-    expect(classifyToolCall(call("desktop_spawn_process", { argv: ["git", "push"] }), "ask_risky")).toMatchObject({
+    expect(classifyToolCall(call("exec_command", { argv: ["git", "push"] }), "ask_risky")).toMatchObject({
       risk: "risky",
       requiresApproval: true,
     });
@@ -275,19 +275,19 @@ describe("desktop permission classifier", () => {
   });
 
   it("matches terminal command prefixes on command boundaries", () => {
-    const terminalCall = call("desktop_spawn_process", { command: "npm install lodash", cwd: "apps/desktop" });
+    const terminalCall = call("exec_command", { cmd: "npm install lodash", workdir: "apps/desktop" });
     const scope = approvalScope({
       kind: "terminal_prefix",
       commandPrefix: approvalCommandPrefix(terminalCall),
       cwd: "apps/desktop",
     });
     expect(findMatchingApprovalScope(terminalCall, [scope])).toBe(scope);
-    expect(findMatchingApprovalScope(call("desktop_spawn_process", { command: "npm installer", cwd: "apps/desktop" }), [scope])).toBeNull();
-    expect(findMatchingApprovalScope(call("desktop_spawn_process", { command: "npm install lodash", cwd: "other" }), [scope])).toBeNull();
+    expect(findMatchingApprovalScope(call("exec_command", { cmd: "npm installer", workdir: "apps/desktop" }), [scope])).toBeNull();
+    expect(findMatchingApprovalScope(call("exec_command", { cmd: "npm install lodash", workdir: "other" }), [scope])).toBeNull();
   });
 
   it("matches terminal argv prefixes on argv boundaries", () => {
-    const terminalCall = call("desktop_spawn_process", { argv: ["npm", "install", "lodash"], cwd: "apps/desktop" });
+    const terminalCall = call("exec_command", { argv: ["npm", "install", "lodash"], workdir: "apps/desktop" });
     const scope = approvalScope({
       kind: "terminal_prefix",
       commandPrefix: approvalCommandPrefix(terminalCall),
@@ -295,8 +295,8 @@ describe("desktop permission classifier", () => {
     });
     expect(scope.commandPrefix).toBe("npm install");
     expect(findMatchingApprovalScope(terminalCall, [scope])).toBe(scope);
-    expect(findMatchingApprovalScope(call("desktop_spawn_process", { argv: ["npm", "installer"], cwd: "apps/desktop" }), [scope])).toBeNull();
-    expect(findMatchingApprovalScope(call("desktop_spawn_process", { argv: ["npm", "install", "lodash"], cwd: "other" }), [scope])).toBeNull();
+    expect(findMatchingApprovalScope(call("exec_command", { argv: ["npm", "installer"], workdir: "apps/desktop" }), [scope])).toBeNull();
+    expect(findMatchingApprovalScope(call("exec_command", { argv: ["npm", "install", "lodash"], workdir: "other" }), [scope])).toBeNull();
   });
 });
 

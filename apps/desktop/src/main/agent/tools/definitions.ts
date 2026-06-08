@@ -236,46 +236,65 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
-    name: "desktop_spawn_process",
-    description: "Start a native workspace process. Prefer argv for exact execution; use command only when shell syntax is required. Default tty:true uses a PTY for terminal fidelity and resize. Use tty:false when the process needs real stdin EOF via closeStdin.",
+    name: "exec_command",
+    description: "Run a native workspace command in Privora's unified terminal. Returns output and, for long-running commands, a session_id that can be read, resized, written to, or stopped later.",
     parameters: schema({
       argv: stringArrayProperty("Preferred argv vector, for example [\"node\", \"-v\"]. Use this when pipes, redirects, and shell expansion are not needed."),
-      command: textProperty("Optional shell command string. Use only when shell syntax such as pipes, redirects, or && is required."),
-      cwd: textProperty("Optional workspace-relative working directory."),
-      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 2000, max 30000. Snake_case yield_time_ms is also accepted."),
-      maxOutputChars: numberProperty("Optional retained output budget before head/tail compaction."),
+      cmd: textProperty("Optional shell command string. Use only when shell syntax such as pipes, redirects, glob expansion, or && is required."),
+      command: textProperty("Alias for cmd."),
+      workdir: textProperty("Optional workspace-relative working directory."),
+      cwd: textProperty("Alias for workdir."),
+      yield_time_ms: numberProperty("Optional milliseconds to wait before yielding control. Default 2000, max 30000."),
+      max_output_tokens: numberProperty("Optional retained output budget before head/tail compaction."),
       tty: boolProperty("Use a PTY terminal backend. Default true. Set false for pipe-backed stdin/stdout/stderr and reliable closeStdin."),
     }, []),
   },
   {
     type: "function",
-    name: "desktop_write_process",
-    description: "Write stdin to, close stdin for, or poll a running process returned by desktop_spawn_process. Empty input polls without writing and returns unread buffered output since the last read, not only output produced during the wait window.",
+    name: "write_stdin",
+    description: "Write stdin to or poll a running unified terminal session. Empty chars polls unread output without writing.",
     parameters: schema({
-      processId: numberProperty("Running process id returned by desktop_spawn_process."),
-      input: textProperty("Input to write. Use an empty string to poll without sending input."),
-      closeStdin: boolProperty("Whether to close stdin after writing/polling."),
-      yieldTimeMs: numberProperty("Optional milliseconds to wait before yielding control. Default 5000 for empty polls, max 30000. Snake_case yield_time_ms is also accepted."),
-      maxOutputChars: numberProperty("Optional retained output budget before head/tail compaction."),
-    }, ["processId", "input"]),
+      session_id: numberProperty("Running terminal session id returned by exec_command."),
+      chars: textProperty("Input to write. Use an empty string to poll without sending input."),
+      close_stdin: boolProperty("Whether to close stdin after writing/polling. Use with tty:false pipe workflows."),
+      yield_time_ms: numberProperty("Optional milliseconds to wait before yielding control. Default 5000 for empty polls, max 30000."),
+      max_output_tokens: numberProperty("Optional retained output budget before head/tail compaction."),
+    }, ["session_id", "chars"]),
   },
   {
     type: "function",
-    name: "desktop_resize_process",
-    description: "Resize a running native PTY process.",
+    name: "terminal_read",
+    description: "Read retained output and metadata for a unified terminal session without writing to it.",
     parameters: schema({
-      processId: numberProperty("Running process id returned by desktop_spawn_process."),
+      session_id: numberProperty("Terminal session id."),
+      max_output_tokens: numberProperty("Optional retained output budget before head/tail compaction."),
+    }, ["session_id"]),
+  },
+  {
+    type: "function",
+    name: "terminal_stop",
+    description: "Stop a running unified terminal session. Stop returns immediately after issuing the kill request; process-tree cleanup continues in the background if needed.",
+    parameters: schema({
+      session_id: numberProperty("Running terminal session id to stop."),
+    }, ["session_id"]),
+  },
+  {
+    type: "function",
+    name: "terminal_resize",
+    description: "Resize a running unified PTY terminal session.",
+    parameters: schema({
+      session_id: numberProperty("Running terminal session id."),
       rows: numberProperty("Terminal rows."),
       cols: numberProperty("Terminal columns."),
-    }, ["processId", "rows", "cols"]),
+    }, ["session_id", "rows", "cols"]),
   },
   {
     type: "function",
-    name: "desktop_kill_process",
-    description: "Terminate a running process started by desktop_spawn_process. Stop is idempotent: a missing or already-ended process returns success with status:not_found because the desired not-running state is already true.",
+    name: "terminal_list",
+    description: "List live and recent unified terminal sessions.",
     parameters: schema({
-      processId: numberProperty("Running process id to terminate."),
-    }, ["processId"]),
+      include_exited: boolProperty("If false, return only currently running sessions. Default true."),
+    }, []),
   },
   {
     type: "function",
@@ -870,7 +889,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "query", "patch", "processId", "input", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "cmd", "query", "patch", "processId", "session_id", "sessionId", "input", "chars", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "workdir", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }

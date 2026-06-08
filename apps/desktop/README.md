@@ -28,7 +28,7 @@ Current desktop tools include:
 - `desktop_list_dir` - list workspace folders, optionally with metadata.
 - `desktop_search` - search workspace files with ripgrep.
 - `desktop_delete_path` and `desktop_rename_path` - controlled workspace mutations.
-- `desktop_spawn_process`, `desktop_write_process`, `desktop_resize_process`, `desktop_kill_process` - terminal lifecycle tools.
+- `exec_command`, `write_stdin`, `terminal_read`, `terminal_resize`, `terminal_stop`, and `terminal_list` - Codex-style terminal sessions.
 - `desktop_run_diagnostics` - run the best detected project check.
 - `desktop_git_status` and `desktop_git_diff` - concise git inspection, including clean non-repo messages.
 - `request_user_input` - Plan Mode questions with user-selected answers.
@@ -60,6 +60,7 @@ The renderer includes:
 - Review/undo surfaces for file changes.
 - Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
 - Built-in Notes panel with global/workspace drafts, file-backed notes, Save As, and agent notes tools.
+- Expandable terminal activity rows in chat with compact streamed output and session controls.
 - Optional Computer Use mode for guarded native Windows app control with semantic snapshots, action traces, and hard safety blocks.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
@@ -163,6 +164,10 @@ The built-in browser agent is documented in [docs/browser-agent.md](docs/browser
 ## Notes
 
 The built-in notepad is documented in [docs/notes.md](docs/notes.md). It covers global/workspace notes, file-backed notes, autosaved local drafts, large-note behavior, and agent note tools.
+
+## Terminal
+
+The unified terminal runtime is documented in [docs/terminal.md](docs/terminal.md). It covers the `exec_command` lifecycle, persistent sessions, `write_stdin`, `terminal_read`, immediate stop behavior, diagnostics routing, and the Terminal panel.
 
 ## Computer Use
 

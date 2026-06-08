@@ -135,6 +135,7 @@ export default function App() {
     setWorkspacePanelRequest({ mode: "browser", key: Date.now() });
   }, [activeWorkspace?.id, ideCollapsedByUser, latestBrowserToolKey, settingsOpen]);
 
+
   useEffect(() => {
     const clearZoomToastTimers = () => {
       zoomToastTimers.current.forEach((timer) => clearTimeout(timer));

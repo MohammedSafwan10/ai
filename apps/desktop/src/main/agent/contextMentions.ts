@@ -38,20 +38,20 @@ export const searchContextMentions = async (
     return store
       .listRecentToolEvents(threadId, 100)
       .filter((tool) =>
-        ["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(tool.name) &&
+        ["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics"].includes(tool.name) &&
         (tool.output || tool.result?.output)
       )
       .slice(-10)
       .reverse()
       .filter((tool) => {
-        const command = String(tool.args.command || "");
+        const command = String(tool.args.cmd || tool.args.command || "");
         return !parsed.search || command.toLowerCase().includes(parsed.search);
       })
       .slice(0, MAX_SUGGESTIONS)
       .map((tool) => ({
         id: tool.callId,
         type: "terminal" as const,
-        label: shortLabel(String(tool.args.command || "Terminal output"), 54),
+        label: shortLabel(String(tool.args.cmd || tool.args.command || "Terminal output"), 54),
         sublabel: tool.status === "done" ? "Completed command output" : tool.status.replace(/_/g, " "),
       }));
   }
@@ -101,7 +101,7 @@ export const buildMentionContext = async (
     }
     if (mention.type === "terminal") {
       const tool = store.findToolEventByCall(threadId, mention.id) || store.getToolEvent(mention.id);
-      const command = String(tool?.args.command || mention.label || "Terminal output");
+      const command = String(tool?.args.cmd || tool?.args.command || mention.label || "Terminal output");
       const output = compactTextForModel(tool?.output || tool?.result?.output || "", MAX_TERMINAL_CONTEXT_CHARS);
       blocks.push([
         `<attached_terminal command="${escapeAttr(command)}">`,

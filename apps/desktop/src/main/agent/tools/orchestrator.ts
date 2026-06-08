@@ -3,14 +3,15 @@ import type { DesktopToolCall } from "../../../shared/types";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../../computer/ComputerUseManager";
 import type { NotesStore } from "../../notes/NotesStore";
+import type { TerminalManagerEventListener } from "../../terminal/sessionManager";
 import { DesktopToolExecutor, type ToolExecutionContext } from "./executor";
 import { classifyToolCall } from "./permissions";
 
 export class DesktopToolOrchestrator {
   private executor: DesktopToolExecutor;
 
-  constructor(private browserManager?: BrowserSessionManager, notesStore?: NotesStore, private computerUseManager?: ComputerUseManager) {
-    this.executor = new DesktopToolExecutor(browserManager, notesStore, computerUseManager);
+  constructor(private browserManager?: BrowserSessionManager, notesStore?: NotesStore, private computerUseManager?: ComputerUseManager, onTerminalEvent?: TerminalManagerEventListener) {
+    this.executor = new DesktopToolExecutor(browserManager, notesStore, computerUseManager, onTerminalEvent);
   }
 
   setComputerUseEnabled(enabled: boolean) {
@@ -27,8 +28,20 @@ export class DesktopToolOrchestrator {
     return this.executor.execute(call, context);
   }
 
-  stopTerminalProcess(processId: number) {
-    return this.executor.stopTerminalProcess(processId);
+  stopTerminalProcess(sessionId: number) {
+    return this.executor.stopTerminalProcess(sessionId);
+  }
+
+  getTerminalState() {
+    return this.executor.getTerminalState();
+  }
+
+  readTerminalSession(sessionId: number, maxOutputChars?: number) {
+    return this.executor.readTerminalSession(sessionId, maxOutputChars);
+  }
+
+  resizeTerminalSession(sessionId: number, rows: number, cols: number) {
+    return this.executor.resizeTerminalSession(sessionId, rows, cols);
   }
 
   supportsParallelExecution(call: DesktopToolCall) {

@@ -220,7 +220,10 @@ function ToolTitleLine({
   live: boolean;
   onToggle: () => void;
 }) {
-  const canExpand = ((isTerminalOutputTool(tool) || isQuestionTool(tool)) && hasUsefulOutput(output)) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool);
+  const canExpand = (
+    (isTerminalOutputTool(tool) && hasTerminalOutput(tool, output)) ||
+    (isQuestionTool(tool) && hasUsefulOutput(output))
+  ) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool);
   const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) ? compactOutputPreview(output.trimEnd()) : "";
   if (!canExpand) {
     return (
@@ -300,11 +303,17 @@ function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagen
 }
 
 function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: string }) {
+  const sections = terminalOutputSections(tool, output);
   return (
     <div className="terminal-output-wrap">
-      <pre className="terminal-output-panel">
-        {output.trimEnd() || "(no output)"}
-      </pre>
+      {sections.map((section) => (
+        <section className="terminal-output-section" key={section.label}>
+          <small>{section.label}</small>
+          <pre className="terminal-output-panel">
+            {section.value.trimEnd() || "(no output)"}
+          </pre>
+        </section>
+      ))}
       <TerminalStats tool={tool} />
     </div>
   );
@@ -384,14 +393,16 @@ const liveLineClass = (line: string) => {
 const cleanTitle = (title: string) => title.replace(/\s+\.$/, "").trim() || "Tool";
 
 const isTerminalApproval = (tool: ToolEventRecord) =>
-  tool.name === "desktop_spawn_process" || tool.name === "desktop_write_process";
+  tool.name === "exec_command" || tool.name === "write_stdin";
 
 const isTerminalOutputTool = (tool: ToolEventRecord) =>
   [
-    "desktop_spawn_process",
-    "desktop_write_process",
-    "desktop_kill_process",
-    "desktop_resize_process",
+    "exec_command",
+    "write_stdin",
+    "terminal_stop",
+    "terminal_resize",
+    "terminal_read",
+    "terminal_list",
     "desktop_run_diagnostics",
     "desktop_git_status",
     "desktop_git_diff",
@@ -485,6 +496,36 @@ const hasUsefulOutput = (output?: string) => {
 
 const displayOutput = (tool: ToolEventRecord) =>
   tool.output || tool.result?.output || tool.result?.error || "";
+
+const hasTerminalOutput = (tool: ToolEventRecord, output: string) =>
+  terminalOutputSections(tool, output).some((section) => hasUsefulOutput(section.value));
+
+const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: string): Array<{ label: string; value: string }> => {
+  const data = objectValue(tool.result?.data);
+  const stdout = stringValue(data.stdout);
+  const stderr = stringValue(data.stderr);
+  const resultOutput = stringValue(tool.result?.output);
+  const resultError = stringValue(tool.result?.error);
+  const session = objectValue(data.session);
+  const sessionOutput = stringValue(session.outputPreview) || stringValue(session.output);
+  const liveOutput = stringValue(fallbackOutput);
+  const sections: Array<{ label: string; value: string }> = [];
+  const streamsMerged = data.streamsMerged === true || data.streams_merged === true;
+
+  if (stdout) sections.push({ label: streamsMerged ? "Terminal output" : "Stdout", value: stdout });
+  if (stderr) sections.push({ label: "Stderr", value: stderr });
+  if (!stdout && !stderr && sessionOutput) sections.push({ label: "Terminal output", value: sessionOutput });
+
+  const primary = stdout || stderr || sessionOutput;
+  if (!primary && resultOutput) sections.push({ label: "Output", value: resultOutput });
+  if (resultError && resultError !== resultOutput) sections.push({ label: "Error", value: resultError });
+
+  if (sections.length === 0 && liveOutput) {
+    sections.push({ label: tool.status === "running" || tool.status === "preparing" ? "Live output" : "Output", value: liveOutput });
+  }
+
+  return sections.length > 0 ? sections : [{ label: "Output", value: "" }];
+};
 
 const browserDetails = (tool: ToolEventRecord): Array<{ label: string; value: string }> => {
   const data = tool.result?.data || {};
@@ -1006,7 +1047,7 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
   ).length;
   const commands = tools.filter((tool) =>
     tool.status === "done" &&
-    ["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
+    ["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
   ).length;
   const reads = tools.filter((tool) =>
     tool.status === "done" &&

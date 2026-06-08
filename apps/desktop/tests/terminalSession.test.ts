@@ -155,6 +155,40 @@ describe("TerminalSessionManager", () => {
     expect(result.output).not.toContain("\u001b");
   });
 
+  it("redacts command labels and secrets split across output chunks", async () => {
+    const cwd = await tempWorkspace();
+    const events: Array<{ type: string; session?: { command: string } }> = [];
+    const terminal = new TerminalSessionManager(undefined, (event) => events.push(event));
+    const secret = "sk-abcdefghijklmnopqrstuvwxyz123456";
+    const result = await terminal.execCommand({
+      cwd,
+      argv: [process.execPath, "-e", `process.stdout.write('sk-'); setTimeout(()=>process.stdout.write('abcdefghijklmnopqrstuvwxyz123456\\n'),25)`],
+      signal: new AbortController().signal,
+      onOutput: () => undefined,
+    });
+
+    expect(result.output).toContain("[redacted]");
+    expect(result.output).not.toContain(secret);
+
+    const labeled = await terminal.execCommand({
+      cwd,
+      argv: [process.execPath, "-e", "console.log('done')", secret],
+      signal: new AbortController().signal,
+      onOutput: () => undefined,
+    });
+    expect(labeled.success).toBe(true);
+    expect(events.some((event) => event.session?.command.includes(secret))).toBe(false);
+
+    const constructed = await terminal.execCommand({
+      cwd,
+      command: `node -e "console.log('sk-'+'abcdefghijklmnopqrstuvwxyz123456')"`,
+      signal: new AbortController().signal,
+      onOutput: () => undefined,
+    });
+    expect(constructed.success).toBe(true);
+    expect(terminal.listSessions(true).some((session) => session.command === "[redacted command]")).toBe(true);
+  });
+
   it("yields a long command and can poll it to completion", async () => {
     const cwd = await tempWorkspace();
     const terminal = new TerminalSessionManager();
@@ -213,6 +247,36 @@ describe("TerminalSessionManager", () => {
     await terminal.stopProcess({ processId: result.processId! });
   });
 
+  it("returns retained output when an empty poll races with natural process exit", async () => {
+    const cwd = await tempWorkspace();
+    const terminal = new TerminalSessionManager();
+    const result = await terminal.execCommand({
+      cwd,
+      command: "node -e \"setTimeout(()=>console.log('completed-between-polls'),300)\"",
+      signal: new AbortController().signal,
+      yieldTimeMs: 100,
+      onOutput: () => undefined,
+    });
+
+    expect(result.processId).toEqual(expect.any(Number));
+    const deadline = Date.now() + 5000;
+    while (terminal.listSessions(true).find((session) => session.sessionId === result.processId)?.running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const poll = await terminal.writeStdin({
+      processId: result.processId!,
+      input: "",
+      signal: new AbortController().signal,
+      yieldTimeMs: 100,
+      onOutput: () => undefined,
+    });
+
+    expect(poll.success).toBe(true);
+    expect(poll.running).toBe(false);
+    expect(poll.status).toBe("exited");
+    expect(poll.output).toContain("completed-between-polls");
+  });
+
   it("reports stopped processes as successful stop actions", async () => {
     const cwd = await tempWorkspace();
     const terminal = new TerminalSessionManager();
@@ -231,10 +295,29 @@ describe("TerminalSessionManager", () => {
     expect(stopped.running).toBe(false);
     expect(stopped.processId).toBeNull();
     expect(stopped.status).toBe("stopped");
-    expect(stopped.output).toBe(`Stopped process ${result.processId}.`);
+    expect(stopped.output).toMatch(new RegExp(`^(Stopped|Stop requested for) session ${result.processId}\\.`));
     expect(stopped.output).not.toContain("tick");
     expect(stopped.operationDurationMs).toBeGreaterThan(0);
     expect(stopped.processDurationMs).toBeGreaterThanOrEqual(stopped.operationDurationMs);
+    expect(terminal.listSessions(false)).toHaveLength(0);
+  });
+
+  it("retains bounded completed-session output for terminal_read", async () => {
+    const cwd = await tempWorkspace();
+    const terminal = new TerminalSessionManager();
+    const result = await terminal.execCommand({
+      cwd,
+      argv: [process.execPath, "-e", "console.log('A'.repeat(30000)); console.log('retained-middle-marker'); console.log('B'.repeat(30000))"],
+      signal: new AbortController().signal,
+      maxOutputChars: 100_000,
+      onOutput: () => undefined,
+    });
+
+    expect(result.running).toBe(false);
+    expect(result.sessionId).toEqual(expect.any(Number));
+    const read = terminal.readSession(result.sessionId!, 100_000);
+    expect(read.output).toContain("retained-middle-marker");
+    expect(read.output.length).toBeGreaterThan(50_000);
   });
 
   it("closes stdin cleanly after writing interactive input", async () => {
@@ -334,17 +417,17 @@ describe("TerminalSessionManager", () => {
     expect(resized.backend).toBe("pty");
     expect(resized.tty).toBe(true);
     expect(resized.stderr).toBe("");
-    expect(resized.output).toContain("Resized process");
+    expect(resized.output).toContain("Resized session");
     expect(resized.operationDurationMs).toBeGreaterThan(0);
     expect(resized.operationDurationMs).toBeLessThan(1500);
     await terminal.stopProcess({ processId: result.processId! });
   });
 
-  it("reports missing stop requests as already not running", async () => {
+  it("reports missing stop requests as not found failures", async () => {
     const terminal = new TerminalSessionManager();
     const stopped = await terminal.stopProcess({ processId: 987654 });
 
-    expect(stopped.success).toBe(true);
+    expect(stopped.success).toBe(false);
     expect(stopped.running).toBe(false);
     expect(stopped.processId).toBeNull();
     expect(stopped.status).toBe("not_found");

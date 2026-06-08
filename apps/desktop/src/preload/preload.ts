@@ -39,6 +39,9 @@ import type {
   NotesSaveInput,
   NotesUpdateInput,
   StorageCleanupInput,
+  TerminalReadInput,
+  TerminalResizeInput,
+  TerminalStopInput,
 } from "../shared/types";
 import { channels } from "../main/ipc/channels";
 
@@ -105,6 +108,10 @@ const api: PrivoraDesktopApi = {
   browserEvidence: (workspaceId: string) => ipcRenderer.invoke(channels.browserEvidence, workspaceId),
   getStorageUsage: () => ipcRenderer.invoke(channels.getStorageUsage),
   cleanupStorage: (input: StorageCleanupInput) => ipcRenderer.invoke(channels.cleanupStorage, input),
+  listTerminalSessions: () => ipcRenderer.invoke(channels.listTerminalSessions),
+  readTerminal: (input: TerminalReadInput) => ipcRenderer.invoke(channels.readTerminal, input),
+  stopTerminal: (input: TerminalStopInput) => ipcRenderer.invoke(channels.stopTerminal, input),
+  resizeTerminal: (input: TerminalResizeInput) => ipcRenderer.invoke(channels.resizeTerminal, input),
   openBrowserDevTools: (workspaceId: string) => ipcRenderer.invoke(channels.openBrowserDevTools, workspaceId),
   showBrowserToolsMenu: (input: BrowserToolsMenuInput) => ipcRenderer.invoke(channels.showBrowserToolsMenu, input),
   showBrowserOverlay: (input: BrowserOverlayInput) => ipcRenderer.invoke(channels.showBrowserOverlay, input),

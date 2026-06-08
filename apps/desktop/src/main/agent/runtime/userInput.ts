@@ -15,7 +15,7 @@ export const planModeBlockReason = (
   if (call.name === "request_user_input") return null;
   if (["desktop_read_file", "desktop_list_dir", "desktop_search", "desktop_git_status", "desktop_git_diff", "desktop_run_diagnostics"].includes(call.name)) return null;
   if ((call.name === "desktop_apply_patch" || call.name === "desktop_edit_file") && call.arguments.dryRun === true) return null;
-  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) {
+  if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list"].includes(call.name)) {
     return decision.risk === "safe" && !decision.requiresApproval
       ? null
       : "Plan Mode blocks risky terminal actions. Use read-only inspection or diagnostics instead.";

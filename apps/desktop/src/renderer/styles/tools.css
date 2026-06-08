@@ -396,9 +396,22 @@
 
 .terminal-output-wrap {
   display: grid;
-  gap: 4px;
+  gap: 7px;
   margin: 5px 0 0 20px;
   max-width: min(100%, 52rem);
+}
+
+.terminal-output-section {
+  display: grid;
+  gap: 3px;
+}
+
+.terminal-output-section small {
+  color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .terminal-output-panel {

@@ -141,7 +141,7 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
     `- Workspace root: ${workspaceRoot}`,
     threadTitleInstruction,
     `- Workspace profile: ${formatProfile(profile)}`,
-    "- Terminal protocol: start commands with desktop_spawn_process. Prefer argv arrays for exact execution; use command strings only for shell syntax. Default tty:true gives native PTY fidelity and resize; use tty:false for reliable pipe stdin/stdout/stderr and closeStdin EOF. If a processId is returned, the process is still running; use desktop_write_process with empty input to poll, non-empty input to interact, closeStdin to close pipe input, desktop_resize_process for PTY resize, or desktop_kill_process to stop it.",
+    "- Terminal protocol: start commands with exec_command. Prefer argv arrays for exact execution; use cmd strings only for shell syntax. Default tty:true gives native PTY fidelity and resize; use tty:false for reliable pipe stdin/stdout/stderr and close_stdin EOF. If a session_id is returned, the process is still running; use write_stdin with empty chars to poll, non-empty chars to interact, close_stdin to close pipe input, terminal_read for retained output, terminal_resize for PTY resize, terminal_list for sessions, or terminal_stop to stop it.",
     "- Terminal output is streamed live to the user, but model-visible tool results may be head/tail compacted.",
     "- Prefer finite, non-interactive commands. Use desktop_run_diagnostics for lint/typecheck/test/build when you need verification.",
     recentTools.length ? "Recent tool activity:" : "",

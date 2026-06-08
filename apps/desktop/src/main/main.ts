@@ -76,6 +76,7 @@ const emitSnapshot = () => {
   const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
   snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
   snapshot.activeRuns = runtime.listActiveRuns();
+  snapshot.terminal = runtime.getTerminalState();
   mainWindow?.webContents.send(channels.event, { type: "snapshot", snapshot });
 };
 

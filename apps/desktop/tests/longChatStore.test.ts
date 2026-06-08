@@ -116,6 +116,32 @@ describe("long chat SQLite repository", () => {
     expect(providerAttachment?.base64).toBe(Buffer.from([137, 80, 78, 71]).toString("base64"));
   });
 
+  it("hydrates image attachments for provider history without bloating the history page", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const attachment = db.importAttachment({
+      id: "attachment",
+      name: "screenshot.png",
+      mimeType: "image/png",
+      bytes: imageBytes,
+      createdAt: 1,
+    });
+    db.upsertMessage({ ...message("see image", thread.id, 1), role: "user", attachments: [attachment] });
+
+    const pageAttachment = db.getThreadHistoryPage(thread.id).messages[0].attachments?.[0];
+    const providerHistory = buildProviderHistoryWithCompaction(db, thread.id, "next-assistant");
+    const providerImage = providerHistory[0]?.parts?.find((part) => part.type === "image");
+
+    expect(pageAttachment?.base64).toBeUndefined();
+    expect(providerImage).toMatchObject({
+      type: "image",
+      name: "screenshot.png",
+      mimeType: "image/png",
+      data: Buffer.from(imageBytes).toString("base64"),
+    });
+  });
+
   it("deletes thread records and unreferenced artifacts together", () => {
     const db = createStore();
     const thread = db.createThread(null);
@@ -275,7 +301,7 @@ const tool = (id: string, threadId: string, messageId: string, output: string): 
   threadId,
   messageId,
   callId: `${id}-call`,
-  name: "desktop_spawn_process",
+  name: "exec_command",
   title: "Run command",
   status: "done",
   risk: "safe",

@@ -53,6 +53,9 @@ import type {
   SearchContextMentionsInput,
   StartTurnInput,
   StorageCleanupInput,
+  TerminalReadInput,
+  TerminalResizeInput,
+  TerminalStopInput,
   WorkspaceOpenTarget,
   PrivoraAuthInput,
 } from "../../shared/types";
@@ -99,6 +102,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     snapshot.activeRuns = runtime.listActiveRuns();
+    snapshot.terminal = runtime.getTerminalState();
     emit({ type: "snapshot", snapshot });
   };
 
@@ -118,6 +122,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     snapshot.activeRuns = runtime.listActiveRuns();
+    snapshot.terminal = runtime.getTerminalState();
     return snapshot;
   });
 
@@ -655,6 +660,41 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   handle(channels.cleanupStorage, z.tuple([storageCleanupInputSchema]), async (_event, input: StorageCleanupInput) => {
     return storageCleanup.cleanup(input);
   });
+
+  handle(channels.listTerminalSessions, z.tuple([]), () => {
+    return runtime.getTerminalState();
+  });
+
+  handle(channels.readTerminal, z.tuple([terminalReadInputSchema]), (_event, input: TerminalReadInput) => {
+    return runtime.readTerminalSession(input.sessionId, input.maxOutputChars);
+  });
+
+  handle(channels.stopTerminal, z.tuple([terminalStopInputSchema]), async (_event, input: TerminalStopInput) => {
+    const result = await runtime.stopTerminalSession(input.sessionId);
+    return {
+      output: result.output,
+      data: {
+        session_id: result.sessionId,
+        process_id: result.processId,
+        status: result.status,
+        running: result.running,
+        exit_code: result.exitCode,
+      },
+    };
+  });
+
+  handle(channels.resizeTerminal, z.tuple([terminalResizeInputSchema]), async (_event, input: TerminalResizeInput) => {
+    const result = await runtime.resizeTerminalSession(input.sessionId, input.rows, input.cols);
+    return {
+      output: result.output,
+      data: {
+        session_id: result.sessionId,
+        process_id: result.processId,
+        status: result.status,
+        running: result.running,
+      },
+    };
+  });
 };
 
 const idSchema = z.string().trim().min(1).max(200);
@@ -824,6 +864,18 @@ const browserDiagnoseInputSchema = z.object({
 });
 const storageCleanupInputSchema = z.object({
   categoryIds: z.array(z.enum(["browser_artifacts", "browser_workflow_history", "browser_cache", "browser_downloads"])).min(1).max(4),
+});
+const terminalReadInputSchema = z.object({
+  sessionId: z.number().int().positive(),
+  maxOutputChars: z.number().int().min(1_000).max(1_000_000).optional(),
+});
+const terminalStopInputSchema = z.object({
+  sessionId: z.number().int().positive(),
+});
+const terminalResizeInputSchema = z.object({
+  sessionId: z.number().int().positive(),
+  rows: z.number().int().min(8).max(200),
+  cols: z.number().int().min(20).max(400),
 });
 const browserToolsMenuInputSchema = z.object({
   workspaceId: idSchema,

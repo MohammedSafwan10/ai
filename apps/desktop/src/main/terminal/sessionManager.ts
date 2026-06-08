@@ -41,6 +41,7 @@ export interface StopProcessOptions {
 
 export interface TerminalSessionResult {
   success: boolean;
+  sessionId: number | null;
   output: string;
   stdout: string;
   stderr: string;
@@ -56,10 +57,37 @@ export interface TerminalSessionResult {
   backend: TerminalBackendKind;
   tty: boolean;
   streamsMerged: boolean;
+  partialChunk: boolean;
 }
 
 export type TerminalBackendKind = "pty" | "process";
 export type TerminalSessionStatus = "running" | "exited" | "stopped" | "timed_out" | "not_found" | "failed";
+
+export interface TerminalSessionListRecord {
+  sessionId: number;
+  processId: number | null;
+  command: string;
+  cwd: string;
+  status: TerminalSessionStatus;
+  running: boolean;
+  exitCode: number | null;
+  backend: TerminalBackendKind;
+  tty: boolean;
+  streamsMerged: boolean;
+  outputPreview: string;
+  omittedBytes: number;
+  startedAt: number;
+  updatedAt: number;
+  endedAt?: number;
+}
+
+export type TerminalManagerEvent =
+  | { type: "terminal_session_started"; session: TerminalSessionListRecord }
+  | { type: "terminal_output_delta"; sessionId: number; processId: number | null; stream: "stdout" | "stderr"; delta: string; chunkId: string; updatedAt: number }
+  | { type: "terminal_session_updated"; session: TerminalSessionListRecord }
+  | { type: "terminal_session_ended"; session: TerminalSessionListRecord };
+
+export type TerminalManagerEventListener = (event: TerminalManagerEvent) => void;
 
 const OUTPUT_DELTA_MAX_BYTES = 8192;
 const TERMINAL_OUTPUT_MAX_BYTES = 1024 * 1024;
@@ -68,10 +96,11 @@ const DEFAULT_YIELD_TIME_MS = 2000;
 const SHORT_COMMAND_CLOSE_GRACE_MS = 4500;
 const DEFAULT_EMPTY_POLL_YIELD_TIME_MS = 5000;
 const MAX_YIELD_TIME_MS = 30_000;
-const STOP_GRACE_TIME_MS = 6000;
+const STOP_GRACE_TIME_MS = 250;
 const WINDOWS_STDIN_CLOSE_DELAY_MS = 75;
-const MAX_BACKGROUND_TERMINAL_TIMEOUT_MS = 5 * 60_000;
 const MAX_PROCESSES = 64;
+const RECENT_SESSION_LIMIT = 24;
+const RECENT_PREVIEW_CHARS = 24_000;
 
 const pty = tryLoadNativePty();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -118,21 +147,27 @@ interface TerminalSession {
   timedOut: boolean;
   stopRequested: boolean;
   closed: boolean;
-  timeout: NodeJS.Timeout;
+  endedAt?: number;
+  chunkSequence: number;
+  stdoutRedactionCarry: string;
+  stderrRedactionCarry: string;
+  timeout?: NodeJS.Timeout;
 }
 
 export class TerminalSessionManager {
   private sessions = new Map<number, TerminalSession>();
+  private recentSessions = new Map<number, TerminalSessionListRecord>();
+  private recentOutput = new Map<number, string>();
   private nextProcessId = Math.floor(Math.random() * 20_000) + 1;
   private backend: TerminalBackend;
 
-  constructor(backend: TerminalBackend = new NativeTerminalBackend()) {
+  constructor(backend: TerminalBackend = new NativeTerminalBackend(), private onEvent?: TerminalManagerEventListener) {
     this.backend = backend;
   }
 
   async execCommand(options: ExecCommandOptions): Promise<TerminalSessionResult> {
     if (this.sessions.size >= MAX_PROCESSES) {
-      throw new Error("Too many background terminal processes are already running.");
+      throw new Error("Too many background terminal sessions are already running.");
     }
 
     const id = this.allocateProcessId();
@@ -165,13 +200,13 @@ export class TerminalSessionManager {
       timedOut: false,
       stopRequested: false,
       closed: false,
-      timeout: setTimeout(() => {
-        session.timedOut = true;
-        backend.terminate();
-      }, MAX_BACKGROUND_TERMINAL_TIMEOUT_MS),
+      chunkSequence: 0,
+      stdoutRedactionCarry: "",
+      stderrRedactionCarry: "",
     };
 
     this.sessions.set(id, session);
+    this.emit({ type: "terminal_session_started", session: this.recordForSession(session) });
     backend.onStdout((chunk) => this.appendChunk(session, chunk, "stdout", options.onOutput));
     backend.onStderr((chunk) => this.appendChunk(session, chunk, "stderr", options.onOutput));
     backend.onError((error) => this.appendText(session, `${error.message}\n`, "stderr", options.onOutput));
@@ -183,9 +218,9 @@ export class TerminalSessionManager {
     };
     options.signal.addEventListener("abort", abort, { once: true });
 
-    await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, false));
+    await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, false), options.signal);
     if (shouldWaitForShortCommandClose(session, options.yieldTimeMs)) {
-      await this.waitForBoundary(session, SHORT_COMMAND_CLOSE_GRACE_MS);
+      await this.waitForBoundary(session, SHORT_COMMAND_CLOSE_GRACE_MS, options.signal);
     }
     options.signal.removeEventListener("abort", abort);
     return this.resultForSession(session, startedAt);
@@ -194,7 +229,13 @@ export class TerminalSessionManager {
   async writeStdin(options: WriteStdinOptions): Promise<TerminalSessionResult> {
     const operationStartedAt = Date.now();
     const session = this.sessions.get(options.processId);
-    if (!session) throw new Error(`No running terminal process ${options.processId}.`);
+    if (!session) {
+      const recent = this.recentSessions.get(options.processId);
+      if (!options.input && !options.closeStdin && recent) {
+        return this.resultForRecentSession(recent, operationStartedAt);
+      }
+      return this.notRunningResult(options.processId);
+    }
 
     if (options.input) {
       session.backend.write(options.input);
@@ -210,7 +251,7 @@ export class TerminalSessionManager {
       session.backend.terminate();
     };
     options.signal.addEventListener("abort", abort, { once: true });
-    await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, !options.input));
+    await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, !options.input), options.signal);
     options.signal.removeEventListener("abort", abort);
     return this.resultForSession(session, operationStartedAt);
   }
@@ -221,11 +262,11 @@ export class TerminalSessionManager {
     if (!session) return this.notRunningResult(options.processId);
     const resized = session.backend.resize(options.rows, options.cols);
     if (!resized) {
-      this.appendText(session, "PTY resize failed for this process.\n", "stderr", () => undefined);
+      this.appendText(session, "PTY resize failed for this terminal session.\n", "stderr", () => undefined);
     }
     return this.resultForSession(session, operationStartedAt, {
       clearUnread: !resized,
-      outputOverride: resized ? `Resized process ${options.processId} to ${options.rows}x${options.cols}.` : undefined,
+      outputOverride: resized ? `Resized session ${options.processId} to ${options.rows}x${options.cols}.` : undefined,
     });
   }
 
@@ -235,32 +276,67 @@ export class TerminalSessionManager {
     if (!session) return this.notRunningResult(processId);
 
     session.stopRequested = true;
+    session.updatedAt = Date.now();
+    this.emit({ type: "terminal_session_updated", session: this.recordForSession(session) });
     session.backend.terminate();
     await this.waitForBoundary(session, STOP_GRACE_TIME_MS);
-    const result = this.resultForSession(session, operationStartedAt, {
-      outputOverride: `Stopped process ${processId}.`,
-    });
-    return result.running
-      ? {
-          ...result,
-          success: false,
-          output: result.output || `Failed to stop process ${processId} within ${STOP_GRACE_TIME_MS}ms.`,
-        }
-      : result;
-  }
-
-  listSessions() {
-    return Array.from(this.sessions.values()).map((session) => ({
-      id: session.id,
-      command: session.command,
-      cwd: session.cwd,
-      startedAt: session.startedAt,
-      updatedAt: session.updatedAt,
-      running: !session.closed,
-      exitCode: session.exitCode,
+    if (session.closed) {
+      return this.resultForSession(session, operationStartedAt, {
+        outputOverride: `Stopped session ${processId}.`,
+      });
+    }
+    return {
+      success: true,
+      sessionId: session.id,
+      output: `Stop requested for session ${processId}.`,
+      stdout: "",
+      stderr: "",
+      processId: null,
+      exitCode: null,
+      durationMs: Date.now() - session.startedAt,
+      processDurationMs: Date.now() - session.startedAt,
+      operationDurationMs: Math.max(1, Date.now() - operationStartedAt),
+      omittedBytes: 0,
+      timedOut: false,
+      running: false,
+      status: "stopped",
       backend: session.backend.kind,
       tty: session.backend.tty,
-    }));
+      streamsMerged: session.backend.tty,
+      partialChunk: false,
+    };
+  }
+
+  listSessions(includeExited = true): TerminalSessionListRecord[] {
+    const live = Array.from(this.sessions.values())
+      .map((session) => this.recordForSession(session))
+      .filter((session) => includeExited || session.running);
+    const liveIds = new Set(live.map((session) => session.sessionId));
+    const recent = includeExited
+      ? Array.from(this.recentSessions.values()).filter((session) => !liveIds.has(session.sessionId))
+      : [];
+    return [...live, ...recent]
+      .sort((a, b) => b.updatedAt - a.updatedAt || b.sessionId - a.sessionId)
+      .slice(0, includeExited ? RECENT_SESSION_LIMIT : live.length);
+  }
+
+  readSession(processId: number, maxOutputChars = TERMINAL_OUTPUT_MAX_BYTES) {
+    const session = this.sessions.get(processId);
+    if (!session) {
+      const recent = this.recentSessions.get(processId);
+      if (!recent) throw new Error(`No terminal session ${processId}.`);
+      return {
+        success: true,
+        output: compactText(this.recentOutput.get(processId) || recent.outputPreview, maxOutputChars),
+        data: { session: recent },
+      };
+    }
+    const record = this.recordForSession(session);
+    return {
+      success: true,
+      output: compactText(session.output.toString(), maxOutputChars),
+      data: { session: record },
+    };
   }
 
   private allocateProcessId() {
@@ -283,7 +359,7 @@ export class TerminalSessionManager {
   }
 
   private appendText(session: TerminalSession, rawText: string, stream: "stdout" | "stderr", onOutput: (delta: string) => void) {
-    const text = cleanTerminalText(redactSecrets(rawText));
+    const text = this.redactOutputPiece(session, rawText, stream);
     if (!text) return;
     session.output.push(text);
     session[stream].push(text);
@@ -291,6 +367,16 @@ export class TerminalSessionManager {
     if (stream === "stdout") session.unreadStdout.push(text);
     else session.unreadStderr.push(text);
     session.updatedAt = Date.now();
+    session.chunkSequence += 1;
+    this.emit({
+      type: "terminal_output_delta",
+      sessionId: session.id,
+      processId: session.backend.pid ?? session.id,
+      stream,
+      delta: text,
+      chunkId: `${session.id}:${session.chunkSequence}`,
+      updatedAt: session.updatedAt,
+    });
     onOutput(text);
   }
 
@@ -304,13 +390,20 @@ export class TerminalSessionManager {
       this.appendText(session, lossyDecoder.decode(session.stderrPending), "stderr", onOutput);
       session.stderrPending = Buffer.alloc(0);
     }
+    this.flushRedactionCarry(session, "stdout", onOutput);
+    this.flushRedactionCarry(session, "stderr", onOutput);
     session.closed = true;
     session.exitCode = exitCode;
     session.updatedAt = Date.now();
-    clearTimeout(session.timeout);
+    session.endedAt = session.updatedAt;
+    if (session.timeout) clearTimeout(session.timeout);
+    const record = this.recordForSession(session);
+    this.rememberSession(record, session.output.toString());
+    this.emit({ type: "terminal_session_ended", session: record });
+    this.sessions.delete(session.id);
   }
 
-  private waitForBoundary(session: TerminalSession, ms: number) {
+  private waitForBoundary(session: TerminalSession, ms: number, signal?: AbortSignal) {
     if (session.closed) return Promise.resolve();
     return new Promise<void>((resolve) => {
       let done = false;
@@ -319,6 +412,7 @@ export class TerminalSessionManager {
         done = true;
         clearTimeout(timer);
         clearInterval(interval);
+        signal?.removeEventListener("abort", close);
         session.backend.offClose(close);
         resolve();
       };
@@ -327,6 +421,7 @@ export class TerminalSessionManager {
         if (session.closed) close();
       }, 25);
       session.backend.onceClose(close);
+      signal?.addEventListener("abort", close, { once: true });
       timer.unref?.();
       interval.unref?.();
     });
@@ -357,6 +452,7 @@ export class TerminalSessionManager {
     const operationDurationMs = Math.max(1, Date.now() - operationStartedAt);
     return {
       success: terminalSuccess(status, session.exitCode),
+      sessionId: running ? session.id : session.id,
       output,
       stdout,
       stderr,
@@ -372,15 +468,17 @@ export class TerminalSessionManager {
       backend: session.backend.kind,
       tty: session.backend.tty,
       streamsMerged: session.backend.tty,
+      partialChunk: isPartialTerminalChunk(output),
     };
   }
 
   private notRunningResult(processId: number): TerminalSessionResult {
     return {
-      success: true,
-      output: `Process ${processId} is not running.`,
+      success: false,
+      sessionId: null,
+      output: `Session ${processId} is not running.`,
       stdout: "",
-      stderr: `Process ${processId} is not running.`,
+      stderr: `Session ${processId} is not running.`,
       processId: null,
       exitCode: null,
       durationMs: 0,
@@ -393,6 +491,31 @@ export class TerminalSessionManager {
       backend: this.backend.kind,
       tty: true,
       streamsMerged: true,
+      partialChunk: false,
+    };
+  }
+
+  private resultForRecentSession(record: TerminalSessionListRecord, operationStartedAt: number): TerminalSessionResult {
+    const output = this.recentOutput.get(record.sessionId) || record.outputPreview;
+    return {
+      success: record.status !== "failed" && record.status !== "timed_out",
+      sessionId: record.sessionId,
+      output,
+      stdout: output,
+      stderr: "",
+      processId: null,
+      exitCode: record.exitCode,
+      durationMs: Math.max(0, (record.endedAt || record.updatedAt) - record.startedAt),
+      processDurationMs: Math.max(0, (record.endedAt || record.updatedAt) - record.startedAt),
+      operationDurationMs: Math.max(1, Date.now() - operationStartedAt),
+      omittedBytes: record.omittedBytes,
+      timedOut: record.status === "timed_out",
+      running: false,
+      status: record.status,
+      backend: record.backend,
+      tty: record.tty,
+      streamsMerged: record.streamsMerged,
+      partialChunk: isPartialTerminalChunk(output),
     };
   }
 
@@ -400,6 +523,7 @@ export class TerminalSessionManager {
     const message = spawnErrorMessage(command, cwd, error);
     return {
       success: false,
+      sessionId: null,
       output: message,
       stdout: "",
       stderr: message,
@@ -415,7 +539,80 @@ export class TerminalSessionManager {
       backend: this.backend.kind,
       tty: true,
       streamsMerged: true,
+      partialChunk: false,
     };
+  }
+
+  private recordForSession(session: TerminalSession): TerminalSessionListRecord {
+    const running = !session.closed && !session.stopRequested;
+    const status = terminalStatus(session, !session.closed);
+    const output = session.output.toString();
+    const stats = session.output.stats();
+    return {
+      sessionId: session.id,
+      processId: running ? session.id : null,
+      command: session.command,
+      cwd: session.cwd,
+      status,
+      running,
+      exitCode: session.exitCode,
+      backend: session.backend.kind,
+      tty: session.backend.tty,
+      streamsMerged: session.backend.tty,
+      outputPreview: compactText(output, RECENT_PREVIEW_CHARS),
+      omittedBytes: stats.omittedBytes,
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      endedAt: session.endedAt,
+    };
+  }
+
+  private rememberSession(record: TerminalSessionListRecord, retainedOutput: string) {
+    this.recentSessions.set(record.sessionId, record);
+    this.recentOutput.set(record.sessionId, retainedOutput);
+    const ordered = Array.from(this.recentSessions.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+    for (const stale of ordered.slice(RECENT_SESSION_LIMIT)) {
+      this.recentSessions.delete(stale.sessionId);
+      this.recentOutput.delete(stale.sessionId);
+    }
+  }
+
+  private emit(event: TerminalManagerEvent) {
+    this.onEvent?.(event);
+  }
+
+  private redactOutputPiece(session: TerminalSession, rawText: string, stream: "stdout" | "stderr") {
+    const carryKey = stream === "stdout" ? "stdoutRedactionCarry" : "stderrRedactionCarry";
+    const combined = cleanTerminalText(`${session[carryKey]}${rawText}`);
+    const { ready, carry } = splitRedactionWindow(combined);
+    session[carryKey] = carry;
+    return redactSecrets(ready);
+  }
+
+  private flushRedactionCarry(session: TerminalSession, stream: "stdout" | "stderr", onOutput: (delta: string) => void) {
+    const carryKey = stream === "stdout" ? "stdoutRedactionCarry" : "stderrRedactionCarry";
+    const carry = session[carryKey];
+    if (!carry) return;
+    session[carryKey] = "";
+    const text = redactSecrets(cleanTerminalText(carry));
+    if (!text) return;
+    session.output.push(text);
+    session[stream].push(text);
+    session.unreadOutput.push(text);
+    if (stream === "stdout") session.unreadStdout.push(text);
+    else session.unreadStderr.push(text);
+    session.updatedAt = Date.now();
+    session.chunkSequence += 1;
+    this.emit({
+      type: "terminal_output_delta",
+      sessionId: session.id,
+      processId: session.backend.pid ?? session.id,
+      stream,
+      delta: text,
+      chunkId: `${session.id}:${session.chunkSequence}`,
+      updatedAt: session.updatedAt,
+    });
+    onOutput(text);
   }
 }
 
@@ -609,7 +806,7 @@ const processCommand = (options: ExecCommandOptions) => {
     return { file: resolveExecutable(argv[0]), args: argv.slice(1) };
   }
   const command = options.command?.trim();
-  if (!command) throw new Error("desktop_spawn_process requires argv or command.");
+  if (!command) throw new Error("exec_command requires argv or cmd.");
   if (process.platform === "win32") {
     const cleanupPath = writeWindowsCommandScript(command);
     return { file: getShell(), args: getShellArgs(cleanupPath), cleanupPath };
@@ -619,9 +816,19 @@ const processCommand = (options: ExecCommandOptions) => {
 
 const commandLabel = (options: ExecCommandOptions) => {
   const argv = normalizeArgv(options.argv);
-  if (argv.length > 0) return argv.map(shellQuoteForDisplay).join(" ");
-  return options.command?.trim() || "";
+  const label = argv.length > 0 ? argv.map(shellQuoteForDisplay).join(" ") : options.command?.trim() || "";
+  return redactCommandLabel(label);
 };
+
+const redactCommandLabel = (label: string) => {
+  const redacted = redactSecrets(label);
+  if (redacted !== label) return redacted;
+  return hasConstructedSecretFragments(label) ? "[redacted command]" : redacted;
+};
+
+const hasConstructedSecretFragments = (value: string) =>
+  /(?:sk-|bearer|api[_-]?\s*key|api[_-]?key|token|secret|password)/i.test(value) &&
+  /(?:['"`]\s*[+.]|[+.]\s*['"`]|\\x|\\u|String\.fromCharCode|Buffer\.from|atob|concat\s*\()/i.test(value);
 
 const normalizeArgv = (argv: unknown) =>
   Array.isArray(argv) ? argv.map((item) => String(item)).filter(Boolean) : [];
@@ -682,7 +889,7 @@ const spawnErrorMessage = (command: string, cwd: string, error: unknown) => {
   const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code || "") : "";
   const attempted = command || "(empty command)";
   return [
-    `Failed to start terminal process: ${base || "unknown error"}`,
+    `Failed to start terminal session: ${base || "unknown error"}`,
     code ? `code: ${code}` : "",
     `attempted: ${attempted}`,
     `cwd: ${cwd}`,
@@ -776,6 +983,34 @@ const cleanTerminalText = (value: string) =>
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
     .replace(/\^Z|\^D|\u2426/g, "");
 
+const REDACTION_LOOKBEHIND_CHARS = 256;
+const REDACTION_MIN_CARRY_CHARS = 16;
+
+const splitRedactionWindow = (value: string) => {
+  if (value.length <= REDACTION_MIN_CARRY_CHARS) return { ready: "", carry: value };
+  const tailStart = Math.max(0, value.length - REDACTION_LOOKBEHIND_CHARS);
+  const tail = value.slice(tailStart);
+  const riskyRelativeIndex = firstRiskySecretPrefixIndex(tail);
+  const holdFrom = riskyRelativeIndex >= 0
+    ? tailStart + riskyRelativeIndex
+    : Math.max(0, value.length - REDACTION_MIN_CARRY_CHARS);
+  return {
+    ready: value.slice(0, holdFrom),
+    carry: value.slice(holdFrom),
+  };
+};
+
+const firstRiskySecretPrefixIndex = (value: string) => {
+  const lower = value.toLowerCase();
+  const indexes = [
+    lower.lastIndexOf("sk-"),
+    lower.lastIndexOf("aiza"),
+    lower.lastIndexOf("bearer "),
+    lower.search(/(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"'\s]*$/i),
+  ].filter((index) => index >= 0);
+  return indexes.length ? Math.min(...indexes) : -1;
+};
+
 const stripTerminalControlSequences = (value: string) => {
   let output = "";
   for (let index = 0; index < value.length;) {
@@ -840,14 +1075,25 @@ const shouldWaitForShortCommandClose = (session: TerminalSession, yieldTimeMs: n
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const terminalStatus = (session: TerminalSession, running: boolean): TerminalSessionStatus => {
+  if (session.stopRequested) return "stopped";
   if (running) return "running";
   if (session.timedOut) return "timed_out";
-  if (session.stopRequested) return "stopped";
   return "exited";
 };
 
 const terminalSuccess = (status: TerminalSessionStatus, exitCode: number | null) => {
-  if (status === "running" || status === "stopped" || status === "not_found") return true;
+  if (status === "running" || status === "stopped") return true;
+  if (status === "not_found") return false;
   if (status === "timed_out" || status === "failed") return false;
   return exitCode === 0;
+};
+
+const isPartialTerminalChunk = (value: string) =>
+  Boolean(value) && !value.endsWith("\n") && !value.endsWith("\r");
+
+const compactText = (value: string, maxChars: number) => {
+  if (value.length <= maxChars) return value;
+  const head = value.slice(0, Math.floor(maxChars * 0.35));
+  const tail = value.slice(-(maxChars - head.length));
+  return `${head}\n\n[... terminal output compacted ...]\n\n${tail}`;
 };

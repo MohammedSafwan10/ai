@@ -1029,6 +1029,7 @@ export interface ToolDiffFileRecord {
 export interface ToolTerminalRecord {
   command: string;
   cwd?: string;
+  sessionId?: number;
   processId?: number;
   running?: boolean;
   exitCode?: number | null;
@@ -1042,6 +1043,46 @@ export interface ToolTerminalRecord {
   backend?: string;
   tty?: boolean;
   streamsMerged?: boolean;
+}
+
+export type TerminalSessionStatus = "running" | "exited" | "stopped" | "timed_out" | "not_found" | "failed" | "orphaned";
+
+export interface TerminalSessionRecord {
+  sessionId: number;
+  processId: number | null;
+  command: string;
+  cwd: string;
+  status: TerminalSessionStatus;
+  running: boolean;
+  exitCode: number | null;
+  backend: "pty" | "process";
+  tty: boolean;
+  streamsMerged: boolean;
+  outputPreview: string;
+  omittedBytes: number;
+  startedAt: number;
+  updatedAt: number;
+  endedAt?: number;
+}
+
+export interface TerminalStateRecord {
+  sessions: TerminalSessionRecord[];
+  updatedAt: number;
+}
+
+export interface TerminalReadInput {
+  sessionId: number;
+  maxOutputChars?: number;
+}
+
+export interface TerminalStopInput {
+  sessionId: number;
+}
+
+export interface TerminalResizeInput {
+  sessionId: number;
+  rows: number;
+  cols: number;
 }
 
 export type TurnUndoStatus = "available" | "undoing" | "undone" | "partially_undone" | "failed";
@@ -1252,6 +1293,7 @@ export interface AppSnapshot {
   historyPage?: ThreadHistoryPage;
   contextUsage?: ContextUsageRecord;
   aiCredits?: AiCreditSummaryRecord;
+  terminal?: TerminalStateRecord;
   recoveryNotice?: StoreRecoveryNoticeRecord;
 }
 
@@ -1356,10 +1398,12 @@ export type DesktopToolName =
   | "desktop_search"
   | "desktop_delete_path"
   | "desktop_rename_path"
-  | "desktop_spawn_process"
-  | "desktop_write_process"
-  | "desktop_resize_process"
-  | "desktop_kill_process"
+  | "exec_command"
+  | "write_stdin"
+  | "terminal_stop"
+  | "terminal_resize"
+  | "terminal_list"
+  | "terminal_read"
   | "desktop_run_diagnostics"
   | "desktop_git_status"
   | "desktop_git_diff"
@@ -1473,6 +1517,10 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }
+  | { type: "terminal_session_started"; session: TerminalSessionRecord }
+  | { type: "terminal_output_delta"; sessionId: number; stream: "stdout" | "stderr"; delta: string; chunkId: string; updatedAt: number }
+  | { type: "terminal_session_updated"; session: TerminalSessionRecord }
+  | { type: "terminal_session_ended"; session: TerminalSessionRecord }
   | { type: "run_state"; threadId: string; run: ActiveRunState | null }
   | { type: "toast"; tone: "info" | "error" | "success"; message: string }
 );
@@ -1596,6 +1644,10 @@ export interface PrivoraDesktopApi {
   browserEvidence(workspaceId: string): Promise<{ output: string; data?: Record<string, unknown> }>;
   getStorageUsage(): Promise<StorageUsageSnapshot>;
   cleanupStorage(input: StorageCleanupInput): Promise<StorageCleanupResult>;
+  listTerminalSessions(): Promise<TerminalStateRecord>;
+  readTerminal(input: TerminalReadInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  stopTerminal(input: TerminalStopInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  resizeTerminal(input: TerminalResizeInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   openBrowserDevTools(workspaceId: string): Promise<void>;
   showBrowserToolsMenu(input: BrowserToolsMenuInput): Promise<void>;
   showBrowserOverlay(input: BrowserOverlayInput): Promise<void>;

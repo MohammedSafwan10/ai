@@ -9,6 +9,10 @@ export interface AgentService {
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
   getActiveRun(threadId: string): ReturnType<AgentRuntime["getActiveRun"]>;
   listActiveRuns(): ReturnType<AgentRuntime["listActiveRuns"]>;
+  getTerminalState(): ReturnType<AgentRuntime["getTerminalState"]>;
+  readTerminalSession(sessionId: number, maxOutputChars?: number): ReturnType<AgentRuntime["readTerminalSession"]>;
+  stopTerminalSession(sessionId: number): ReturnType<AgentRuntime["stopTerminalSession"]>;
+  resizeTerminalSession(sessionId: number, rows: number, cols: number): ReturnType<AgentRuntime["resizeTerminalSession"]>;
 }
 
 export class InProcessAgentService implements AgentService {
@@ -40,5 +44,21 @@ export class InProcessAgentService implements AgentService {
 
   listActiveRuns() {
     return this.runtime.listActiveRuns();
+  }
+
+  getTerminalState() {
+    return this.runtime.getTerminalState();
+  }
+
+  readTerminalSession(sessionId: number, maxOutputChars?: number) {
+    return this.runtime.readTerminalSession(sessionId, maxOutputChars);
+  }
+
+  stopTerminalSession(sessionId: number) {
+    return this.runtime.stopTerminalSession(sessionId);
+  }
+
+  resizeTerminalSession(sessionId: number, rows: number, cols: number) {
+    return this.runtime.resizeTerminalSession(sessionId, rows, cols);
   }
 }

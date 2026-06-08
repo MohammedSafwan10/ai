@@ -9,7 +9,7 @@ import {
   parseUnifiedDiffFiles,
 } from "../tools/diffFormatter";
 
-const LIVE_OUTPUT_MAX_CHARS = 140_000;
+const LIVE_OUTPUT_MAX_CHARS = 40_000;
 
 export const patchTargetLabel = (patch: string) => {
   const normalized = patch
@@ -88,7 +88,7 @@ export const diffStats = (diff?: string) => {
 
 export const previewForTool = (call: DesktopToolCall, output?: string, diff?: string) => {
   if (diff) return diff.slice(0, 12_000);
-  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) {
+  if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics"].includes(call.name)) {
     return output?.slice(-12_000);
   }
   return undefined;
@@ -97,7 +97,7 @@ export const previewForTool = (call: DesktopToolCall, output?: string, diff?: st
 export const terminalCommandLabel = (call: DesktopToolCall) => {
   const argv = call.arguments.argv;
   if (Array.isArray(argv) && argv.length > 0) return argv.map((item) => displayArg(String(item))).join(" ");
-  return String(call.arguments.command || call.arguments.kind || "").trim();
+  return String(call.arguments.cmd || call.arguments.command || call.arguments.kind || "").trim();
 };
 
 const displayArg = (value: string) =>
@@ -112,8 +112,8 @@ export const liveStatusFromOutput = (output: string) => {
 
 export const compactLiveOutput = (value: string, maxChars = LIVE_OUTPUT_MAX_CHARS) => {
   if (value.length <= maxChars) return value;
-  const head = value.slice(0, 35_000);
-  const tail = value.slice(-(maxChars - 35_000));
+  const head = value.slice(0, 10_000);
+  const tail = value.slice(-(maxChars - 10_000));
   return `${head}\n\n[... live output compacted ...]\n\n${tail}`;
 };
 
@@ -153,14 +153,18 @@ export const titleForTool = (call: DesktopToolCall) => {
       return `Delete ${args.path || "path"}`;
     case "desktop_rename_path":
       return `Rename ${args.fromPath || "path"}`;
-    case "desktop_spawn_process":
+    case "exec_command":
       return `Run ${terminalCommandLabel(call) || "command"}`;
-    case "desktop_write_process":
-      return `Terminal input ${args.processId || ""}`.trim();
-    case "desktop_resize_process":
-      return `Resize process ${args.processId || ""}`.trim();
-    case "desktop_kill_process":
-      return `Stop process ${args.processId || ""}`.trim();
+    case "write_stdin":
+      return `Terminal input ${args.session_id || args.sessionId || ""}`.trim();
+    case "terminal_read":
+      return `Read terminal ${args.session_id || args.sessionId || ""}`.trim();
+    case "terminal_resize":
+      return `Resize terminal ${args.session_id || args.sessionId || ""}`.trim();
+    case "terminal_stop":
+      return `Stop terminal ${args.session_id || args.sessionId || ""}`.trim();
+    case "terminal_list":
+      return "List terminals";
     case "desktop_run_diagnostics":
       return `Check ${args.kind || args.command || "workspace"}`;
     case "browser_open":
@@ -269,7 +273,7 @@ export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["categor
   if (call.name.startsWith("computer_")) return "other";
   if (call.name === "context_compaction") return "other";
   if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
-  if (["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process"].includes(call.name)) return "terminal";
+  if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list"].includes(call.name)) return "terminal";
   if (call.name === "desktop_run_diagnostics") return "diagnostic";
   if (call.name === "request_user_input") return "question";
   if (call.name === "desktop_search" || call.name === "web_search") return "search";
@@ -283,10 +287,12 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
   if (status === "awaiting_approval") return "Waiting for approval";
   if (status === "running") {
     if (call.name === "context_compaction") return "Compacting context";
-    if (call.name === "desktop_spawn_process") return "Running command";
-    if (call.name === "desktop_write_process") return "Polling process";
-    if (call.name === "desktop_resize_process") return "Resizing process";
-    if (call.name === "desktop_kill_process") return "Stopping process";
+    if (call.name === "exec_command") return "Running command";
+    if (call.name === "write_stdin") return "Writing terminal input";
+    if (call.name === "terminal_read") return "Reading terminal";
+    if (call.name === "terminal_resize") return "Resizing terminal";
+    if (call.name === "terminal_stop") return "Stopping terminal";
+    if (call.name === "terminal_list") return "Listing terminals";
     if (call.name === "desktop_run_diagnostics") return "Checking workspace";
     if (call.name === "request_user_input") return "Waiting for answer";
     if (call.name === "spawn_agent") return "Spawning agent";
@@ -348,18 +354,19 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
 };
 
 export const terminalMeta = (call: DesktopToolCall, result?: { data?: Record<string, unknown> }): ToolEventRecord["terminal"] | undefined => {
-  if (!["desktop_spawn_process", "desktop_write_process", "desktop_resize_process", "desktop_kill_process", "desktop_run_diagnostics"].includes(call.name)) return undefined;
+  if (!["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics"].includes(call.name)) return undefined;
   return {
     command: terminalCommandLabel(call),
-    cwd: typeof call.arguments.cwd === "string" ? call.arguments.cwd : undefined,
-    processId: typeof result?.data?.processId === "number" ? result.data.processId : typeof call.arguments.processId === "number" ? call.arguments.processId : undefined,
+    cwd: typeof call.arguments.cwd === "string" ? call.arguments.cwd : typeof call.arguments.workdir === "string" ? call.arguments.workdir : undefined,
+    sessionId: typeof result?.data?.session_id === "number" ? result.data.session_id : typeof call.arguments.session_id === "number" ? call.arguments.session_id : undefined,
+    processId: typeof result?.data?.process_id === "number" ? result.data.process_id : typeof result?.data?.processId === "number" ? result.data.processId : undefined,
     running: result?.data?.running === true,
-    exitCode: typeof result?.data?.exitCode === "number" || result?.data?.exitCode === null ? result.data.exitCode as number | null : undefined,
-    durationMs: typeof result?.data?.durationMs === "number" ? result.data.durationMs : undefined,
+    exitCode: typeof result?.data?.exit_code === "number" || result?.data?.exit_code === null ? result.data.exit_code as number | null : typeof result?.data?.exitCode === "number" || result?.data?.exitCode === null ? result.data.exitCode as number | null : undefined,
+    durationMs: typeof result?.data?.wall_time_ms === "number" ? result.data.wall_time_ms : typeof result?.data?.durationMs === "number" ? result.data.durationMs : undefined,
     processDurationMs: typeof result?.data?.processDurationMs === "number" ? result.data.processDurationMs : undefined,
     operationDurationMs: typeof result?.data?.operationDurationMs === "number" ? result.data.operationDurationMs : undefined,
-    timedOut: result?.data?.timedOut === true,
-    omittedBytes: typeof result?.data?.omittedBytes === "number" ? result.data.omittedBytes : undefined,
+    timedOut: result?.data?.timed_out === true || result?.data?.timedOut === true,
+    omittedBytes: typeof result?.data?.omitted_bytes === "number" ? result.data.omitted_bytes : typeof result?.data?.omittedBytes === "number" ? result.data.omittedBytes : undefined,
     status: typeof result?.data?.status === "string" ? result.data.status : undefined,
     backend: typeof result?.data?.backend === "string" ? result.data.backend : undefined,
     tty: result?.data?.tty === true,

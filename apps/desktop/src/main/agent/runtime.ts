@@ -116,8 +116,8 @@ const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
 const STREAM_STALL_TIMEOUT_MS = 45_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 75_000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
-const TOOL_OUTPUT_FLUSH_MS = 120;
-const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 24_000;
+const TOOL_OUTPUT_FLUSH_MS = 320;
+const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 80_000;
 
 const now = () => Date.now();
 
@@ -198,7 +198,34 @@ export class AgentRuntime {
     notesStore?: NotesStore,
     computerUseManager?: ComputerUseManager,
   ) {
-    this.tools = new DesktopToolOrchestrator(browserManager, notesStore, computerUseManager);
+    this.tools = new DesktopToolOrchestrator(browserManager, notesStore, computerUseManager, (event) => {
+      if (event.type === "terminal_output_delta") {
+        // Chat receives terminal output through command_output_delta batching.
+        // Do not mirror every terminal byte into the right-panel state; that
+        // doubles renderer work during high-volume commands.
+        return;
+      }
+      if (event.type === "terminal_session_ended") {
+        this.untrackTerminalSession(event.session.sessionId);
+      }
+      this.emit(event);
+    });
+  }
+
+  getTerminalState() {
+    return this.tools.getTerminalState();
+  }
+
+  readTerminalSession(sessionId: number, maxOutputChars?: number) {
+    return this.tools.readTerminalSession(sessionId, maxOutputChars);
+  }
+
+  stopTerminalSession(sessionId: number) {
+    return this.tools.stopTerminalProcess(sessionId);
+  }
+
+  resizeTerminalSession(sessionId: number, rows: number, cols: number) {
+    return this.tools.resizeTerminalSession(sessionId, rows, cols);
   }
 
   getActiveRun(threadId: string) {
@@ -1663,6 +1690,13 @@ export class AgentRuntime {
     if (processes.size === 0) this.processIdsByThread.delete(threadId);
   }
 
+  private untrackTerminalSession(sessionId: number) {
+    for (const [threadId, sessions] of this.processIdsByThread.entries()) {
+      sessions.delete(sessionId);
+      if (sessions.size === 0) this.processIdsByThread.delete(threadId);
+    }
+  }
+
   private stopThreadProcesses(threadId: string) {
     const processes = this.processIdsByThread.get(threadId);
     if (!processes) return;
@@ -2076,6 +2110,7 @@ export class AgentRuntime {
     const snapshot = this.store.snapshot(activeThreadId, activeWorkspaceId);
     snapshot.activeRun = activeThreadId ? this.getActiveRun(activeThreadId) : null;
     snapshot.activeRuns = this.listActiveRuns();
+    snapshot.terminal = this.getTerminalState();
     this.emit({ type: "snapshot", snapshot });
   }
 }
