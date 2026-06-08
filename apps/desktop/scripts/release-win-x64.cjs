@@ -273,11 +273,28 @@ function storageFileExists(fileId) {
 }
 
 function listReleaseDocuments() {
-  const response = appwriteRequest(
-    "GET",
-    `/databases/${config.databaseId}/collections/${config.collectionId}/documents?limit=100&ttl=0`,
-  );
-  return response.documents || [];
+  const documents = [];
+  let offset = 0;
+  let total = Infinity;
+  const pageSize = 100;
+
+  while (documents.length < total) {
+    const params = new URLSearchParams();
+    params.append("queries[]", JSON.stringify({ method: "limit", values: [pageSize] }));
+    params.append("queries[]", JSON.stringify({ method: "offset", values: [offset] }));
+    params.append("ttl", "0");
+    const response = appwriteRequest(
+      "GET",
+      `/databases/${config.databaseId}/collections/${config.collectionId}/documents?${params.toString()}`,
+    );
+    const page = response.documents || [];
+    documents.push(...page);
+    total = Number.isFinite(Number(response.total)) ? Number(response.total) : documents.length;
+    if (page.length === 0) break;
+    offset += page.length;
+  }
+
+  return documents;
 }
 
 function upsertReleaseDocument(documentId, data, exists) {
