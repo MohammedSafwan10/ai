@@ -15,6 +15,7 @@ import type { NotesStore } from "../../notes/NotesStore";
 import type { PermissionMode } from "../../../shared/models";
 import { ComputerUseToolExecutor } from "../../computer/computerTools";
 import type { ComputerUseManager } from "../../computer/ComputerUseManager";
+import { ImageGenerationManager } from "../../imageGeneration/ImageGenerationManager";
 
 export interface ToolExecutionContext {
   workspaceId?: string;
@@ -23,6 +24,8 @@ export interface ToolExecutionContext {
   browserExternalApproved?: boolean;
   permissionMode?: PermissionMode;
   computerUseEnabled?: boolean;
+  cliproxyBaseUrl?: string;
+  geminiApiKey?: string;
   onCommandOutput: (callId: string, delta: string) => void;
   onTerminalProcessStarted?: (sessionId: number) => void;
   onTerminalProcessEnded?: (sessionId: number) => void;
@@ -52,6 +55,7 @@ export class DesktopToolExecutor {
   private diagnostics: DiagnosticsEngine;
   private browser?: BrowserToolExecutor;
   private computer?: ComputerUseToolExecutor;
+  private images = new ImageGenerationManager();
 
   constructor(browserManager?: BrowserSessionManager, private notesStore?: NotesStore, computerUseManager?: ComputerUseManager, onTerminalEvent?: TerminalManagerEventListener) {
     this.terminal = new TerminalSessionManager(undefined, onTerminalEvent);
@@ -142,6 +146,14 @@ export class DesktopToolExecutor {
           return await this.notesSave(call, context);
         case "notes_delete":
           return await this.notesDelete(call, context);
+        case "generate_image":
+          return await this.generateImage(call, context);
+        case "edit_image":
+          return await this.generateImage(call, context);
+        case "list_generated_images":
+          return this.listGeneratedImages(call);
+        case "save_generated_image":
+          return await this.saveGeneratedImage(call, context);
         case "computer_capabilities":
         case "computer_list_windows":
         case "computer_find_apps":
@@ -295,6 +307,58 @@ export class DesktopToolExecutor {
       success: true,
       output: `Deleted note ${noteId}.`,
       data: { notes: state.notes },
+    };
+  }
+
+  private async generateImage(call: DesktopToolCall, context: ToolExecutionContext) {
+    const prompt = String(call.arguments.prompt || "");
+    const referenceImagePaths = readStringArray(call.arguments.referenceImagePaths || call.arguments.reference_image_paths || call.arguments.images || call.arguments.imagePaths || call.arguments.image_paths);
+    context.onCommandOutput(call.id, `${referenceImagePaths.length > 0 ? "Editing" : "Generating"} image with ${call.arguments.provider || "cliproxy"}\n`);
+    const records = await this.images.generate({
+      provider: typeof call.arguments.provider === "string" ? call.arguments.provider : undefined,
+      model: typeof call.arguments.model === "string" ? call.arguments.model : undefined,
+      prompt,
+      count: Number(call.arguments.count || call.arguments.n) || undefined,
+      size: typeof call.arguments.size === "string" ? call.arguments.size : undefined,
+      quality: typeof call.arguments.quality === "string" ? call.arguments.quality : undefined,
+      outputFormat: typeof call.arguments.outputFormat === "string" ? call.arguments.outputFormat : typeof call.arguments.output_format === "string" ? call.arguments.output_format : undefined,
+      referenceImagePaths,
+      saveToWorkspacePath: typeof call.arguments.saveToWorkspacePath === "string" ? call.arguments.saveToWorkspacePath : typeof call.arguments.save_to_workspace_path === "string" ? call.arguments.save_to_workspace_path : undefined,
+      overwrite: call.arguments.overwrite === true,
+      workspaceRoot: context.workspaceRoot,
+      workspaceId: context.workspaceId,
+      cliproxyBaseUrl: context.cliproxyBaseUrl,
+      geminiApiKey: context.geminiApiKey,
+      signal: context.signal,
+    });
+    return {
+      success: true,
+      output: formatGeneratedImages(records),
+      data: { images: records },
+    };
+  }
+
+  private listGeneratedImages(call: DesktopToolCall) {
+    const images = this.images.list(Number(call.arguments.limit) || 20);
+    return {
+      success: true,
+      output: images.length ? formatGeneratedImages(images) : "No generated images yet.",
+      data: { images },
+    };
+  }
+
+  private async saveGeneratedImage(call: DesktopToolCall, context: ToolExecutionContext) {
+    const result = await this.images.saveGeneratedImage({
+      id: typeof call.arguments.id === "string" ? call.arguments.id : typeof call.arguments.imageId === "string" ? call.arguments.imageId : typeof call.arguments.image_id === "string" ? call.arguments.image_id : undefined,
+      sourcePath: typeof call.arguments.sourcePath === "string" ? call.arguments.sourcePath : typeof call.arguments.source_path === "string" ? call.arguments.source_path : undefined,
+      destinationPath: String(call.arguments.destinationPath || call.arguments.destination_path || ""),
+      overwrite: call.arguments.overwrite === true,
+      workspaceRoot: context.workspaceRoot,
+    });
+    return {
+      success: true,
+      output: `Saved generated image to ${result.workspacePath}`,
+      data: result,
     };
   }
 
@@ -570,3 +634,18 @@ const readArgv = (value: unknown) =>
 
 const displayArg = (value: string) =>
   /\s/.test(value) ? JSON.stringify(value) : value;
+
+const readStringArray = (value: unknown) =>
+  Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+
+const formatGeneratedImages = (images: Array<{ id: string; provider: string; model: string; path: string; previewUrl?: string; workspacePath?: string; sizeBytes?: number; mimeType?: string }>) =>
+  images.map((image, index) => [
+    `${index + 1}. ${image.id}`,
+    `provider: ${image.provider}`,
+    `model: ${image.model}`,
+    `path: ${image.path}`,
+    image.workspacePath ? `workspace: ${image.workspacePath}` : "",
+    image.previewUrl ? `preview: ${image.previewUrl}` : "",
+    image.mimeType ? `mime: ${image.mimeType}` : "",
+    typeof image.sizeBytes === "number" ? `size: ${image.sizeBytes}B` : "",
+  ].filter(Boolean).join("\n")).join("\n\n");

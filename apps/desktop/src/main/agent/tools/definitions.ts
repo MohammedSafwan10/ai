@@ -326,6 +326,58 @@ export const desktopToolDefinitions = [
   },
   {
     type: "function",
+    name: "generate_image",
+    description: "Generate one or more images natively and save them as real local files. Defaults to CLIProxy gpt-image-2; use provider=gemini for Nano Banana 2. Optionally copy the first/each generated image into the workspace for assets, sprites, or hero images.",
+    parameters: schema({
+      prompt: textProperty("Image prompt. Include subject, style, composition, dimensions/use case, and constraints."),
+      provider: textProperty("cliproxy or gemini. Default cliproxy."),
+      model: textProperty("Optional image model. Defaults: gpt-image-2 for CLIProxy, gemini-3.1-flash-image for Gemini Nano Banana 2."),
+      count: numberProperty("Number of images to generate, 1-4. Default 1."),
+      size: textProperty("Preferred size such as 1024x1024, 1536x1024, auto, 1K, 2K, or 4K when supported."),
+      quality: textProperty("Provider quality such as auto, low, medium, high, or hd when supported."),
+      outputFormat: textProperty("png, jpeg, or webp. Default png."),
+      saveToWorkspacePath: textProperty("Optional workspace-relative destination path for the generated image. Use for assets like public/hero.png or assets/sprites/player.png."),
+      overwrite: boolProperty("If true, replace saveToWorkspacePath when it already exists."),
+    }, ["prompt"]),
+  },
+  {
+    type: "function",
+    name: "edit_image",
+    description: "Generate/edit an image using one or more workspace reference images, then save the result as a real local file with an inline preview URL.",
+    parameters: schema({
+      prompt: textProperty("Edit or generation prompt describing how the reference image(s) should change."),
+      referenceImagePaths: stringArrayProperty("Workspace-relative PNG/JPEG/WebP/GIF paths to use as image references."),
+      provider: textProperty("cliproxy or gemini. Default cliproxy."),
+      model: textProperty("Optional image model. Defaults: gpt-image-2 for CLIProxy, gemini-3.1-flash-image for Gemini Nano Banana 2."),
+      count: numberProperty("Number of images to produce, 1-4. Default 1."),
+      size: textProperty("Preferred output size when supported."),
+      quality: textProperty("Provider quality when supported."),
+      outputFormat: textProperty("png, jpeg, or webp. Default png."),
+      saveToWorkspacePath: textProperty("Optional workspace-relative destination path for the result."),
+      overwrite: boolProperty("If true, replace saveToWorkspacePath when it already exists."),
+    }, ["prompt", "referenceImagePaths"]),
+  },
+  {
+    type: "function",
+    name: "list_generated_images",
+    description: "List recently generated Privora images with ids, local paths, preview URLs, provider/model, and workspace copies.",
+    parameters: schema({
+      limit: numberProperty("Maximum images to return. Default 20, max 100."),
+    }, []),
+  },
+  {
+    type: "function",
+    name: "save_generated_image",
+    description: "Copy a generated image into the current workspace so it can be used as an asset. Use image id from generate_image/list_generated_images or a generated image sourcePath.",
+    parameters: schema({
+      id: textProperty("Generated image id from generate_image or list_generated_images."),
+      sourcePath: textProperty("Absolute generated image path if id is unavailable."),
+      destinationPath: textProperty("Workspace-relative destination path, such as public/hero.png or assets/sprites/player.png."),
+      overwrite: boolProperty("If true, replace the destination if it already exists."),
+    }, ["destinationPath"]),
+  },
+  {
+    type: "function",
     name: "notes_list",
     description: "List Privora Notes visible in the current workspace, including global notes, workspace notes, and recent file-backed notes.",
     parameters: schema({
@@ -889,7 +941,7 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "cmd", "query", "patch", "processId", "session_id", "sessionId", "input", "chars", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "workdir", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText"]) {
+  for (const key of ["path", "fromPath", "toPath", "command", "cmd", "query", "patch", "processId", "session_id", "sessionId", "input", "chars", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "workdir", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText", "prompt", "provider", "model", "size", "quality", "outputFormat", "saveToWorkspacePath", "destinationPath", "sourcePath", "id"]) {
     const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
     if (match?.[1]) args[key] = match[1];
   }

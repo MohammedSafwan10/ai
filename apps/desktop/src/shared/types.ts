@@ -1209,6 +1209,27 @@ export interface ToolEventRecord {
   updatedAt: number;
 }
 
+export type GeneratedImageLifecycleStatus = "started" | "completed" | "failed";
+
+export interface GeneratedImageEventRecord {
+  id: string;
+  callId: string;
+  threadId: string;
+  messageId: string;
+  status: GeneratedImageLifecycleStatus;
+  provider: string;
+  model: string;
+  prompt: string;
+  previewUrl?: string;
+  path?: string;
+  workspacePath?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AgentRunCheckpointRecord {
   threadId: string;
   assistantMessageId: string;
@@ -1407,6 +1428,10 @@ export type DesktopToolName =
   | "desktop_run_diagnostics"
   | "desktop_git_status"
   | "desktop_git_diff"
+  | "generate_image"
+  | "edit_image"
+  | "list_generated_images"
+  | "save_generated_image"
   | "notes_list"
   | "notes_create"
   | "notes_read"
@@ -1499,6 +1524,17 @@ export interface RequestUserInputResponseInput {
   answers: Record<string, RequestUserInputAnswerRecord>;
 }
 
+export interface GeneratedImageFileInput {
+  id?: string;
+  sourcePath?: string;
+}
+
+export interface GeneratedImageDownloadResult {
+  path: string;
+  filename: string;
+  sizeBytes: number;
+}
+
 export interface DesktopEventMeta {
   sequence?: number;
   emittedAt?: number;
@@ -1514,6 +1550,9 @@ export type DesktopEvent = DesktopEventMeta & (
   | { type: "browser_state_updated"; state: BrowserPanelStateRecord }
   | { type: "computer_state_updated"; state: ComputerUseStateRecord }
   | { type: "browser_tools_menu_action"; workspaceId: string; action: BrowserToolsMenuAction }
+  | { type: "image_generation_started"; image: GeneratedImageEventRecord }
+  | { type: "image_generation_completed"; image: GeneratedImageEventRecord }
+  | { type: "image_generation_failed"; image: GeneratedImageEventRecord }
   | { type: "request_user_input"; request: RequestUserInputRequestRecord }
   | { type: "request_user_input_resolved"; threadId: string; callId: string }
   | { type: "command_output_delta"; callId: string; delta: string }
@@ -1648,6 +1687,8 @@ export interface PrivoraDesktopApi {
   readTerminal(input: TerminalReadInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   stopTerminal(input: TerminalStopInput): Promise<{ output: string; data?: Record<string, unknown> }>;
   resizeTerminal(input: TerminalResizeInput): Promise<{ output: string; data?: Record<string, unknown> }>;
+  downloadGeneratedImage(input: GeneratedImageFileInput): Promise<GeneratedImageDownloadResult>;
+  revealGeneratedImage(input: GeneratedImageFileInput): Promise<void>;
   openBrowserDevTools(workspaceId: string): Promise<void>;
   showBrowserToolsMenu(input: BrowserToolsMenuInput): Promise<void>;
   showBrowserOverlay(input: BrowserOverlayInput): Promise<void>;

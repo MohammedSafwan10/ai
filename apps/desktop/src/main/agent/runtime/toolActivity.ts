@@ -167,6 +167,14 @@ export const titleForTool = (call: DesktopToolCall) => {
       return "List terminals";
     case "desktop_run_diagnostics":
       return `Check ${args.kind || args.command || "workspace"}`;
+    case "generate_image":
+      return `Generate image`;
+    case "edit_image":
+      return `Edit image`;
+    case "list_generated_images":
+      return "List generated images";
+    case "save_generated_image":
+      return `Save generated image ${args.destinationPath || args.destination_path || ""}`.trim();
     case "browser_open":
       return `Open browser ${args.url || ""}`.trim();
     case "browser_open_link":
@@ -271,6 +279,7 @@ export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["categor
   if (call.name.startsWith("browser_")) return "other";
   if (call.name.startsWith("notes_")) return "other";
   if (call.name.startsWith("computer_")) return "other";
+  if (["generate_image", "edit_image", "list_generated_images", "save_generated_image"].includes(call.name)) return "other";
   if (call.name === "context_compaction") return "other";
   if (["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name)) return "edit";
   if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list"].includes(call.name)) return "terminal";
@@ -294,6 +303,10 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "terminal_stop") return "Stopping terminal";
     if (call.name === "terminal_list") return "Listing terminals";
     if (call.name === "desktop_run_diagnostics") return "Checking workspace";
+    if (call.name === "generate_image") return "Generating image";
+    if (call.name === "edit_image") return "Editing image";
+    if (call.name === "list_generated_images") return "Listing generated images";
+    if (call.name === "save_generated_image") return "Saving generated image";
     if (call.name === "request_user_input") return "Waiting for answer";
     if (call.name === "spawn_agent") return "Spawning agent";
     if (call.name === "send_message") return "Sending to agent";

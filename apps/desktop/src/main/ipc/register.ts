@@ -17,6 +17,7 @@ import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
+import { ImageGenerationManager } from "../imageGeneration/ImageGenerationManager";
 import type {
   ApprovalDecisionInput,
   BrowserBoundsInput,
@@ -39,6 +40,7 @@ import type {
   BrowserWorkflowAssertInput,
   BrowserWorkflowInput,
   DesktopEvent,
+  GeneratedImageFileInput,
   NotesCloseTabInput,
   NotesCreateInput,
   NotesDeleteInput,
@@ -73,6 +75,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
     downloadsPath: app.getPath("downloads"),
     clearBrowserProfileData: () => browserManager.clearProfileData(),
   });
+  const imageGeneration = new ImageGenerationManager(app.getPath("userData"));
   const undoCoordinator = new TurnUndoCoordinator(store, (threadId) => {
     const run = runtime.getActiveRun(threadId);
     return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
@@ -695,6 +698,24 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
       },
     };
   });
+
+  handle(channels.downloadGeneratedImage, z.tuple([generatedImageFileInputSchema]), async (event, input: GeneratedImageFileInput) => {
+    const result = await imageGeneration.copyGeneratedImageToDownloads({
+      id: input.id,
+      sourcePath: input.sourcePath,
+      downloadsRoot: app.getPath("downloads"),
+    });
+    event.sender.send(channels.event, {
+      type: "toast",
+      tone: "success",
+      message: `Downloaded ${result.filename} to Downloads\\Privora.`,
+    } satisfies DesktopEvent);
+    return result;
+  });
+
+  handle(channels.revealGeneratedImage, z.tuple([generatedImageFileInputSchema]), async (_event, input: GeneratedImageFileInput) => {
+    shell.showItemInFolder(imageGeneration.revealGeneratedImage(input));
+  });
 };
 
 const idSchema = z.string().trim().min(1).max(200);
@@ -876,6 +897,12 @@ const terminalResizeInputSchema = z.object({
   sessionId: z.number().int().positive(),
   rows: z.number().int().min(8).max(200),
   cols: z.number().int().min(20).max(400),
+});
+const generatedImageFileInputSchema = z.object({
+  id: z.string().trim().min(1).max(200).optional(),
+  sourcePath: z.string().trim().min(1).max(4096).optional(),
+}).refine((input) => Boolean(input.id || input.sourcePath), {
+  message: "Generated image id or sourcePath is required.",
 });
 const browserToolsMenuInputSchema = z.object({
   workspaceId: idSchema,

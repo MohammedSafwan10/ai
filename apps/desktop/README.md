@@ -31,6 +31,7 @@ Current desktop tools include:
 - `exec_command`, `write_stdin`, `terminal_read`, `terminal_resize`, `terminal_stop`, and `terminal_list` - Codex-style terminal sessions.
 - `desktop_run_diagnostics` - run the best detected project check.
 - `desktop_git_status` and `desktop_git_diff` - concise git inspection, including clean non-repo messages.
+- `generate_image`, `edit_image`, `list_generated_images`, and `save_generated_image` - native image generation with durable local files, inline previews, and workspace asset export.
 - `request_user_input` - Plan Mode questions with user-selected answers.
 - `browser_*` - built-in browser tools for tabs, screenshots, extraction, search, PDF evidence, form workflows, workflow replay, assertions, evidence vault records, and failure diagnosis.
 - `computer_*` - optional native Computer Use tools for Windows app/window inspection, desktop snapshots, guarded actions, traces, screenshots, and failure diagnosis.
@@ -60,6 +61,7 @@ The renderer includes:
 - Review/undo surfaces for file changes.
 - Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
 - Built-in Notes panel with global/workspace drafts, file-backed notes, Save As, and agent notes tools.
+- Native image-generation timeline rows with inline generated previews and saved asset paths.
 - Expandable terminal activity rows in chat with compact streamed output and session controls.
 - Optional Computer Use mode for guarded native Windows app control with semantic snapshots, action traces, and hard safety blocks.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
@@ -75,6 +77,7 @@ src/
     billing/        Appwrite account handoff, local browser auth callback, AI credit summary
     computer/       Native Computer Use backends, safety rules, tool adapter
     db/             SQLite store, artifacts, workspaces, threads, settings, secrets
+    imageGeneration Native image generation providers, file storage, previews, workspace export
     ipc/            Main-process IPC channels and validation
     security/       Workspace path checks and redaction helpers
     terminal/       PTY/process session manager
@@ -164,6 +167,10 @@ The built-in browser agent is documented in [docs/browser-agent.md](docs/browser
 ## Notes
 
 The built-in notepad is documented in [docs/notes.md](docs/notes.md). It covers global/workspace notes, file-backed notes, autosaved local drafts, large-note behavior, and agent note tools.
+
+## Image Generation
+
+Native image generation is documented in [docs/image-generation.md](docs/image-generation.md). It covers CLIProxy `gpt-image-2`, Gemini Nano Banana 2, generated image storage, inline previews, and exporting generated images into workspace assets.
 
 ## Terminal
 

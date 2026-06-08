@@ -64,6 +64,8 @@ export const channels = {
   readTerminal: "desktop:readTerminal",
   stopTerminal: "desktop:stopTerminal",
   resizeTerminal: "desktop:resizeTerminal",
+  downloadGeneratedImage: "desktop:downloadGeneratedImage",
+  revealGeneratedImage: "desktop:revealGeneratedImage",
   openBrowserDevTools: "desktop:openBrowserDevTools",
   showBrowserToolsMenu: "desktop:showBrowserToolsMenu",
   showBrowserOverlay: "desktop:showBrowserOverlay",
