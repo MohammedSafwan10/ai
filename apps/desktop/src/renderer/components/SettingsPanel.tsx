@@ -348,6 +348,19 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                       );
                     })}
                   </div>
+                  <button
+                    type="button"
+                    className="settings-row-button settings-toggle-row"
+                    onClick={() => onSave({ keepRunningInTray: !settings.keepRunningInTray })}
+                  >
+                    <span>
+                      <strong>Keep Privora running in background</strong>
+                      <small>Closing the window hides it to the Windows tray.</small>
+                    </span>
+                    <span className={settings.keepRunningInTray ? "settings-toggle-pill active" : "settings-toggle-pill"}>
+                      {settings.keepRunningInTray ? "On" : "Off"}
+                    </span>
+                  </button>
                 </div>
               )}
 

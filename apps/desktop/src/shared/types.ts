@@ -837,6 +837,7 @@ export interface SettingsRecord {
   permissionMode: PermissionMode;
   collaborationMode: CollaborationMode;
   computerUseEnabled: boolean;
+  keepRunningInTray: boolean;
   theme: "light" | "dark" | "system";
   cliproxyBaseUrl: string;
   appwriteEndpoint: string;
@@ -1593,6 +1594,7 @@ export interface SaveSettingsInput {
   permissionMode?: PermissionMode;
   collaborationMode?: CollaborationMode;
   computerUseEnabled?: boolean;
+  keepRunningInTray?: boolean;
   theme?: "light" | "dark" | "system";
   cliproxyBaseUrl?: string;
   appwriteEndpoint?: string;

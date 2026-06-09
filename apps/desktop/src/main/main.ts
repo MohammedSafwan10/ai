@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, protocol, screen, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, protocol, screen, shell, Tray, type MenuItemConstructorOptions, type MessageBoxOptions } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,7 +10,7 @@ import { registerIpc, type IpcState } from "./ipc/register";
 import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
 import { resolveAppIconPath } from "./resources";
-import { installUpdateService } from "./updateService";
+import { checkForUpdates, getUpdateServiceStatus, installDownloadedUpdate, installUpdateService } from "./updateService";
 import { decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
 import { createTokenSession, getAppwriteAccount } from "./billing/appwriteAuth";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "./billing/creditService";
@@ -26,6 +26,9 @@ let notesStore: NotesStore | null = null;
 let runtime: AgentService | null = null;
 let browserManager: BrowserSessionManager | null = null;
 let computerUseManager: ComputerUseManager | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
+let isInstallingUpdate = false;
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 1.7;
 const ZOOM_STEP = 0.1;
@@ -67,8 +70,14 @@ const findPrivoraProtocolUrl = (argv: string[]) => argv.find((arg) => arg.starts
 
 const focusMainWindow = () => {
   if (!mainWindow) return;
+  if (!mainWindow.isVisible()) mainWindow.show();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.focus();
+};
+
+const showMainWindow = async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) await createWindow();
+  focusMainWindow();
 };
 
 const emitSnapshot = () => {
@@ -158,6 +167,108 @@ const getDefaultZoomFactor = (window?: BrowserWindow | null) => {
   return LARGE_ZOOM_FACTOR;
 };
 const appIcon = () => nativeImage.createFromPath(resolveAppIconPath());
+
+const shouldKeepRunningInTray = () =>
+  process.platform !== "darwin" && Boolean(store?.getSettings().keepRunningInTray);
+
+const runningTaskCount = () => {
+  const activeRuns = runtime?.listActiveRuns().length || 0;
+  const runningTerminals = runtime?.getTerminalState().sessions.filter((session) => session.running).length || 0;
+  return activeRuns + runningTerminals;
+};
+
+const stopActiveWork = () => {
+  for (const run of runtime?.listActiveRuns() || []) {
+    runtime?.stopTurn(run.threadId);
+  }
+  for (const session of runtime?.getTerminalState().sessions || []) {
+    if (session.running) runtime?.stopTerminalSession(session.sessionId);
+  }
+  computerUseManager?.stop();
+};
+
+const trayStatusLabel = () => {
+  const tasks = runningTaskCount();
+  if (tasks > 0) return `Running tasks: ${tasks}`;
+  const update = getUpdateServiceStatus();
+  if (update.state === "ready") return "Update ready";
+  if (update.state === "downloading") return "Downloading update";
+  if (update.state === "installing") return "Installing update";
+  return "Idle";
+};
+
+const rebuildTrayMenu = () => {
+  if (!tray) return;
+  const update = getUpdateServiceStatus();
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: "Open Privora",
+      click: () => void showMainWindow(),
+    },
+    {
+      label: "New Chat",
+      click: () => {
+        if (!store) return;
+        const thread = store.createThread(state.activeWorkspaceId);
+        state.activeThreadId = thread.id;
+        emitSnapshot();
+        void showMainWindow();
+      },
+    },
+    { type: "separator" },
+    { label: trayStatusLabel(), enabled: false },
+    {
+      label: update.state === "ready" ? "Install update and restart" : "Check updates",
+      enabled: update.supported !== false && update.state !== "checking" && update.state !== "downloading" && update.state !== "installing",
+      click: () => {
+        if (update.state === "ready") {
+          isInstallingUpdate = true;
+          isQuitting = true;
+          installDownloadedUpdate();
+          return;
+        }
+        checkForUpdates();
+        rebuildTrayMenu();
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit Privora",
+      click: () => void requestQuit("tray"),
+    },
+  ];
+  tray.setContextMenu(Menu.buildFromTemplate(template));
+};
+
+const createTray = () => {
+  if (tray || process.platform === "darwin") return;
+  const icon = appIcon();
+  if (icon.isEmpty()) return;
+  tray = new Tray(icon);
+  tray.setToolTip("Privora");
+  tray.on("double-click", () => void showMainWindow());
+  rebuildTrayMenu();
+};
+
+const requestQuit = async (_reason: "tray" | "menu" | "update") => {
+  const tasks = runningTaskCount();
+  if (tasks > 0 && !isInstallingUpdate) {
+    const options: MessageBoxOptions = {
+      type: "warning",
+      buttons: ["Stop tasks and quit", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      title: "Quit Privora?",
+      message: `Privora is running ${tasks} task(s). Stop tasks and quit?`,
+    };
+    const response = mainWindow
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    if (response.response !== 0) return;
+  }
+  isQuitting = true;
+  app.quit();
+};
 
 const setWindowZoom = (window: BrowserWindow, zoomFactor: number) => {
   const nextZoomFactor = clampZoomFactor(Number(zoomFactor.toFixed(2)));
@@ -314,6 +425,13 @@ const createWindow = async () => {
   const rendererEntryPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
   installExternalNavigationGuards(mainWindow, MAIN_WINDOW_VITE_DEV_SERVER_URL ? undefined : pathToFileURL(rendererEntryPath).toString());
 
+  mainWindow.on("close", (event) => {
+    if (isQuitting || isInstallingUpdate || !shouldKeepRunningInTray()) return;
+    event.preventDefault();
+    mainWindow?.hide();
+    rebuildTrayMenu();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -394,23 +512,38 @@ if (!singleInstanceLock) {
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
     computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
     runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager));
-    registerIpc(store, runtime, state, browserManager, notesStore, computerUseManager);
-    installUpdateService();
+    registerIpc(store, runtime, state, browserManager, notesStore, computerUseManager, {
+      onSettingsChanged: () => rebuildTrayMenu(),
+    });
+    installUpdateService({
+      onStatusChanged: () => rebuildTrayMenu(),
+      onBeforeInstall: () => {
+        isInstallingUpdate = true;
+        isQuitting = true;
+      },
+    });
+    createTray();
     await createWindow();
     handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+      void showMainWindow();
     });
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    if (process.platform !== "darwin" && !shouldKeepRunningInTray()) app.quit();
   });
 }
 
-app.on("before-quit", () => {
-  computerUseManager?.stop();
+app.on("before-quit", (event) => {
+  if (!isQuitting && !isInstallingUpdate && runningTaskCount() > 0) {
+    event.preventDefault();
+    void requestQuit("menu");
+    return;
+  }
+  isQuitting = true;
+  stopActiveWork();
   browserManager?.destroyAll();
   store?.close();
 });

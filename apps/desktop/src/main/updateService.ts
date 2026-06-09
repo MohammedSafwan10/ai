@@ -13,6 +13,8 @@ let status: UpdateStatus = {
 
 let checking = false;
 let lastMetadataFetch = 0;
+let onStatusChanged: ((status: UpdateStatus) => void) | undefined;
+let onBeforeInstall: (() => void) | undefined;
 
 const emitStatus = () => {
   BrowserWindow.getAllWindows().forEach((window) => {
@@ -23,9 +25,10 @@ const emitStatus = () => {
 const setStatus = (next: Partial<UpdateStatus>) => {
   status = { ...status, ...next };
   emitStatus();
+  onStatusChanged?.(status);
 };
 
-const checkForUpdates = () => {
+export const checkForUpdates = () => {
   void refreshLatestReleaseMetadata();
   if (!status.supported) {
     setStatus({
@@ -66,7 +69,22 @@ const refreshLatestReleaseMetadata = async () => {
   return status;
 };
 
-export const installUpdateService = () => {
+export const getUpdateServiceStatus = () => status;
+
+export const installDownloadedUpdate = () => {
+  if (status.state !== "ready") return status;
+  onBeforeInstall?.();
+  setStatus({ state: "installing", message: "Installing update..." });
+  autoUpdater.quitAndInstall();
+  return status;
+};
+
+export const installUpdateService = (options?: {
+  onStatusChanged?: (status: UpdateStatus) => void;
+  onBeforeInstall?: () => void;
+}) => {
+  onStatusChanged = options?.onStatusChanged;
+  onBeforeInstall = options?.onBeforeInstall;
   if (status.supported) {
     autoUpdater.setFeedURL({ url: UPDATE_FEED_URL });
   } else {
@@ -110,17 +128,13 @@ export const installUpdateService = () => {
   });
 
   autoUpdater.on("before-quit-for-update", () => {
+    onBeforeInstall?.();
     setStatus({ state: "installing", message: "Installing update..." });
   });
 
   ipcMain.handle(channels.getUpdateStatus, () => refreshLatestReleaseMetadata());
   ipcMain.handle(channels.checkForUpdates, () => checkForUpdates());
-  ipcMain.handle(channels.installUpdate, () => {
-    if (status.state !== "ready") return status;
-    setStatus({ state: "installing", message: "Installing update..." });
-    autoUpdater.quitAndInstall();
-    return status;
-  });
+  ipcMain.handle(channels.installUpdate, () => installDownloadedUpdate());
 
   if (status.supported) {
     setTimeout(() => {

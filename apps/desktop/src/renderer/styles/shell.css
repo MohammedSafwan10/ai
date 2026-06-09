@@ -519,6 +519,41 @@
   background: color-mix(in srgb, var(--privora-user-bubble) 68%, transparent);
 }
 
+.settings-toggle-row {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  width: min(100%, 560px);
+}
+
+.settings-toggle-row span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-toggle-row small {
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
+.settings-toggle-pill {
+  border: 1px solid var(--privora-border);
+  border-radius: 999px;
+  color: var(--privora-muted);
+  flex: 0 0 auto;
+  font-size: 12px;
+  min-width: 42px;
+  padding: 4px 10px;
+  text-align: center;
+}
+
+.settings-toggle-pill.active {
+  background: color-mix(in srgb, var(--privora-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--privora-accent) 45%, var(--privora-border));
+  color: var(--privora-text);
+}
+
 .settings-content {
   min-width: 0;
   overflow: auto;

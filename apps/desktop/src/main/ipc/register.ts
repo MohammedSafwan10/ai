@@ -67,7 +67,15 @@ export interface IpcState {
   activeWorkspaceId: string | null;
 }
 
-export const registerIpc = (store: DesktopStore, runtime: AgentService, state: IpcState, browserManager: BrowserSessionManager, notesStore: NotesStore, computerUseManager?: ComputerUseManager) => {
+export const registerIpc = (
+  store: DesktopStore,
+  runtime: AgentService,
+  state: IpcState,
+  browserManager: BrowserSessionManager,
+  notesStore: NotesStore,
+  computerUseManager?: ComputerUseManager,
+  options?: { onSettingsChanged?: () => void },
+) => {
   let browserOverlayWindow: BrowserWindow | null = null;
   const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
   const storageCleanup = new StorageCleanupService({
@@ -348,6 +356,7 @@ export const registerIpc = (store: DesktopStore, runtime: AgentService, state: I
   handle(channels.saveSettings, z.tuple([saveSettingsInputSchema]), (_event, input: SaveSettingsInput) => {
     const settings = store.saveSettings(input);
     if (typeof input.computerUseEnabled === "boolean") computerUseManager?.setEnabled(input.computerUseEnabled);
+    options?.onSettingsChanged?.();
     return settings;
   });
 
@@ -989,6 +998,7 @@ const saveSettingsInputSchema = z.object({
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   computerUseEnabled: z.boolean().optional(),
+  keepRunningInTray: z.boolean().optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   cliproxyBaseUrl: z.string().max(500).optional(),
   appwriteEndpoint: z.string().max(500).optional(),

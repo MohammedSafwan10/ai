@@ -82,6 +82,7 @@ const APP_TABLES = [
 ] as const;
 export const PLACEHOLDER_THREAD_TITLE = "New chat";
 const LEGACY_PLACEHOLDER_THREAD_TITLES = new Set(["New local agent chat", PLACEHOLDER_THREAD_TITLE]);
+const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(app?.isPackaged);
 
 const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "privoraAccountConnected"> => ({
   id: "default",
@@ -90,6 +91,7 @@ const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "gem
   permissionMode: "ask_risky",
   collaborationMode: "default",
   computerUseEnabled: false,
+  keepRunningInTray: defaultKeepRunningInTray(),
   theme: "system",
   cliproxyBaseUrl: "http://127.0.0.1:8317",
   appwriteEndpoint: "https://sgp.cloud.appwrite.io/v1",
@@ -170,6 +172,7 @@ export class DesktopStore {
       permissionMode: input.permissionMode ?? current.permissionMode,
       collaborationMode: input.collaborationMode ?? current.collaborationMode,
       computerUseEnabled: input.computerUseEnabled ?? current.computerUseEnabled,
+      keepRunningInTray: input.keepRunningInTray ?? current.keepRunningInTray,
       theme: input.theme ?? current.theme,
       cliproxyBaseUrl: input.cliproxyBaseUrl ?? current.cliproxyBaseUrl,
       appwriteEndpoint: input.appwriteEndpoint ?? current.appwriteEndpoint,
