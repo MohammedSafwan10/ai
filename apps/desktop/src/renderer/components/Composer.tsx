@@ -885,7 +885,8 @@ const COMPOSER_LONG_PROMPT_LINES = 12;
 const LARGE_PASTE_CHARS = 4000;
 const MAX_PROMPT_CHARS = 1_000_000;
 const PROMPT_HISTORY_STORAGE_KEY = "privora.promptHistory.v1";
-const MAX_PERSISTED_PROMPTS = 200;
+const MAX_PERSISTED_PROMPTS = 50;
+const MAX_PERSISTED_PROMPT_CHARS = 8_000;
 
 const mergePromptHistory = (currentThread: string[], persisted: string[]) => {
   const seen = new Set<string>();
@@ -909,14 +910,22 @@ const filterPromptHistory = (history: string[], query: string) => {
 const readPromptHistory = () => {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, MAX_PERSISTED_PROMPTS) : [];
+    const history = Array.isArray(parsed)
+      ? parsed
+        .filter((item): item is string => typeof item === "string")
+        .map(sanitizePersistedPrompt)
+        .filter(Boolean)
+        .slice(0, MAX_PERSISTED_PROMPTS)
+      : [];
+    window.localStorage.setItem(PROMPT_HISTORY_STORAGE_KEY, JSON.stringify(history));
+    return history;
   } catch {
     return [];
   }
 };
 
 const rememberPrompt = (prompt: string, current: string[]) => {
-  const trimmed = prompt.trim();
+  const trimmed = sanitizePersistedPrompt(prompt);
   if (!trimmed) return current;
   const next = [trimmed, ...current.filter((item) => item.trim() !== trimmed)].slice(0, MAX_PERSISTED_PROMPTS);
   try {
@@ -926,6 +935,16 @@ const rememberPrompt = (prompt: string, current: string[]) => {
   }
   return next;
 };
+
+const sanitizePersistedPrompt = (value: string) =>
+  redactPromptSecrets(value.trim()).slice(0, MAX_PERSISTED_PROMPT_CHARS).trim();
+
+const redactPromptSecrets = (value: string) => [
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /AIza[0-9A-Za-z_-]{20,}/g,
+  /(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"'\s]+/gi,
+  /Bearer\s+[A-Za-z0-9._~+/=-]{12,}/g,
+].reduce((text, pattern) => text.replace(pattern, "[redacted]"), value);
 
 const nextPasteLabel = (charCount: number, existing: PastedBlock[]) => {
   const base = `[Pasted Content ${charCount.toLocaleString()} chars]`;
