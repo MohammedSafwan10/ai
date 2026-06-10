@@ -1046,7 +1046,7 @@ export interface ToolTerminalRecord {
   streamsMerged?: boolean;
 }
 
-export type TerminalSessionStatus = "running" | "exited" | "stopped" | "timed_out" | "not_found" | "failed" | "orphaned";
+export type TerminalSessionStatus = "running" | "stop_requested" | "exited" | "stopped" | "timed_out" | "not_found" | "failed" | "orphaned";
 
 export interface TerminalSessionRecord {
   sessionId: number;

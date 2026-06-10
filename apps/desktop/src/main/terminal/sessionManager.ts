@@ -61,7 +61,7 @@ export interface TerminalSessionResult {
 }
 
 export type TerminalBackendKind = "pty" | "process";
-export type TerminalSessionStatus = "running" | "exited" | "stopped" | "timed_out" | "not_found" | "failed";
+export type TerminalSessionStatus = "running" | "stop_requested" | "exited" | "stopped" | "timed_out" | "not_found" | "failed";
 
 export interface TerminalSessionListRecord {
   sessionId: number;
@@ -291,15 +291,15 @@ export class TerminalSessionManager {
       output: `Stop requested for session ${processId}.`,
       stdout: "",
       stderr: "",
-      processId: null,
+      processId: session.id,
       exitCode: null,
       durationMs: Date.now() - session.startedAt,
       processDurationMs: Date.now() - session.startedAt,
       operationDurationMs: Math.max(1, Date.now() - operationStartedAt),
       omittedBytes: 0,
       timedOut: false,
-      running: false,
-      status: "stopped",
+      running: true,
+      status: "stop_requested",
       backend: session.backend.kind,
       tty: session.backend.tty,
       streamsMerged: session.backend.tty,
@@ -544,7 +544,7 @@ export class TerminalSessionManager {
   }
 
   private recordForSession(session: TerminalSession): TerminalSessionListRecord {
-    const running = !session.closed && !session.stopRequested;
+    const running = !session.closed;
     const status = terminalStatus(session, !session.closed);
     const output = session.output.toString();
     const stats = session.output.stats();
@@ -1075,14 +1075,14 @@ const shouldWaitForShortCommandClose = (session: TerminalSession, yieldTimeMs: n
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const terminalStatus = (session: TerminalSession, running: boolean): TerminalSessionStatus => {
-  if (session.stopRequested) return "stopped";
+  if (session.stopRequested) return running ? "stop_requested" : "stopped";
   if (running) return "running";
   if (session.timedOut) return "timed_out";
   return "exited";
 };
 
 const terminalSuccess = (status: TerminalSessionStatus, exitCode: number | null) => {
-  if (status === "running" || status === "stopped") return true;
+  if (status === "running" || status === "stop_requested" || status === "stopped") return true;
   if (status === "not_found") return false;
   if (status === "timed_out" || status === "failed") return false;
   return exitCode === 0;

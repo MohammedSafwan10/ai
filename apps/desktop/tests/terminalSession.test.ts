@@ -292,14 +292,14 @@ describe("TerminalSessionManager", () => {
     const stopped = await terminal.stopProcess({ processId: result.processId! });
 
     expect(stopped.success).toBe(true);
-    expect(stopped.running).toBe(false);
-    expect(stopped.processId).toBeNull();
-    expect(stopped.status).toBe("stopped");
+    expect(stopped.running).toBe(stopped.status === "stop_requested");
+    expect(stopped.processId).toBe(stopped.status === "stop_requested" ? result.processId : null);
+    expect(["stopped", "stop_requested"]).toContain(stopped.status);
     expect(stopped.output).toMatch(new RegExp(`^(Stopped|Stop requested for) session ${result.processId}\\.`));
     expect(stopped.output).not.toContain("tick");
     expect(stopped.operationDurationMs).toBeGreaterThan(0);
     expect(stopped.processDurationMs).toBeGreaterThanOrEqual(stopped.operationDurationMs);
-    expect(terminal.listSessions(false)).toHaveLength(0);
+    expect(terminal.listSessions(false)).toHaveLength(stopped.status === "stop_requested" ? 1 : 0);
   });
 
   it("retains bounded completed-session output for terminal_read", async () => {
