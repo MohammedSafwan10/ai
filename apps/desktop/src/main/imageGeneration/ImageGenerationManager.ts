@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { ArtifactStore } from "../db/artifactStore";
-import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../security/pathSandbox";
+import { resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../security/pathSandbox";
+import { atomicWriteFile, atomicWriteFileSync } from "../storage/atomicWrite";
 
 export type ImageGenerationProvider = "cliproxy" | "gemini";
 
@@ -285,11 +286,12 @@ export class ImageGenerationManager {
   }
 
   private async copyToWorkspace(sourcePath: string, workspaceRoot: string, destinationPath: string, overwrite: boolean) {
-    const destination = resolveWorkspacePath(workspaceRoot, destinationPath);
+    let destination = resolveWorkspacePath(workspaceRoot, destinationPath);
     if (fs.existsSync(destination.absolutePath) && !overwrite) {
       throw new Error(`Destination already exists: ${destination.relativePath}. Set overwrite=true to replace it.`);
     }
     await fsp.mkdir(path.dirname(destination.absolutePath), { recursive: true });
+    destination = revalidateResolvedWorkspacePath(destination);
     const bytes = await fsp.readFile(sourcePath);
     await atomicWriteBuffer(destination.absolutePath, bytes);
     return destination;
@@ -303,6 +305,9 @@ export class ImageGenerationManager {
     const root = path.resolve(this.root);
     const insideGeneratedRoot = source === root || source.startsWith(`${root}${path.sep}`);
     if (!insideGeneratedRoot) throw new Error("Only Privora-generated image files can be used here.");
+    if (input.sourcePath && !record && !this.readIndex().some((item) => path.resolve(item.path) === source)) {
+      throw new Error("Generated image sourcePath must match an indexed Privora-generated image record.");
+    }
     if (!fs.existsSync(source)) throw new Error(`Generated image does not exist: ${source}`);
     return { record, source };
   }
@@ -323,7 +328,7 @@ export class ImageGenerationManager {
     const next = Array.from(deduped.values())
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, 500);
-    fs.writeFileSync(this.indexPath, JSON.stringify(next, null, 2), "utf8");
+    atomicWriteFileSync(this.indexPath, JSON.stringify(next, null, 2), "utf8");
   }
 }
 
@@ -433,9 +438,7 @@ const slug = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "image";
 
 const atomicWriteBuffer = async (targetPath: string, buffer: Uint8Array) => {
-  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-  await fsp.writeFile(tempPath, buffer);
-  await fsp.rename(tempPath, targetPath);
+  await atomicWriteFile(targetPath, buffer);
 };
 
 const uniqueFilePath = (dir: string, filename: string) => {

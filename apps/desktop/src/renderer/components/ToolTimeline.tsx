@@ -416,7 +416,7 @@ function GeneratedImageLightbox({ image, onClose }: { image: GeneratedImagePrevi
   }, [onClose]);
 
   const title = image.workspacePath || image.path || image.id || "Generated image";
-  const imageInput = { id: image.id || undefined, sourcePath: image.path || undefined };
+  const imageInput = image.id ? { id: image.id } : { sourcePath: image.path || undefined };
   const revealImage = async () => {
     setBusy("reveal");
     try {

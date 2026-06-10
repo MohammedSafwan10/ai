@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { BrowserShieldsMode } from "../../../shared/types";
+import { atomicWriteFileSync } from "../../storage/atomicWrite";
 
 export interface ShieldsWorkspaceSettings {
   mode: BrowserShieldsMode;
@@ -57,7 +58,7 @@ export class ShieldsStore {
       const raw = fs.readFileSync(this.filePath(), "utf8");
       const parsed = JSON.parse(raw) as Partial<ShieldsStoreFile>;
       if (parsed.version === 1 && parsed.workspaces && typeof parsed.workspaces === "object") {
-        this.data = { version: 1, workspaces: parsed.workspaces as Record<string, ShieldsWorkspaceSettings> };
+        this.data = { version: 1, workspaces: sanitizeWorkspaces(parsed.workspaces) };
       }
     } catch {
       this.data = { version: 1, workspaces: {} };
@@ -66,10 +67,26 @@ export class ShieldsStore {
 
   private save() {
     fs.mkdirSync(path.dirname(this.filePath()), { recursive: true });
-    fs.writeFileSync(this.filePath(), JSON.stringify(this.data, null, 2));
+    atomicWriteFileSync(this.filePath(), JSON.stringify(this.data, null, 2), "utf8");
   }
 
   private filePath() {
     return path.join(this.userDataPath, "browser-shields", "settings.json");
   }
 }
+
+const sanitizeWorkspaces = (value: unknown): Record<string, ShieldsWorkspaceSettings> => {
+  const root = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const result: Record<string, ShieldsWorkspaceSettings> = {};
+  for (const [workspaceId, settings] of Object.entries(root)) {
+    const record = settings && typeof settings === "object" ? settings as Partial<ShieldsWorkspaceSettings> : {};
+    const overrides = record.siteOverrides && typeof record.siteOverrides === "object" ? record.siteOverrides : {};
+    result[workspaceId] = {
+      mode: record.mode === "off" ? "off" : "standard",
+      siteOverrides: Object.fromEntries(
+        Object.entries(overrides).filter((entry): entry is [string, BrowserShieldsMode] => entry[1] === "off" || entry[1] === "standard"),
+      ),
+    };
+  }
+  return result;
+};

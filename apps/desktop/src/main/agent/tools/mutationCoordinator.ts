@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
-import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../../security/pathSandbox";
+import { resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../../security/pathSandbox";
+import { atomicWriteFile } from "../../storage/atomicWrite";
 import {
   createRenameDiff,
   createStructuredDiff,
@@ -83,8 +84,9 @@ export class FileMutationCoordinator {
           }
         : undefined;
       await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
-      await fs.writeFile(target.absolutePath, buffer);
-      const afterSnapshot = await this.files.snapshot(context.workspaceRoot, target.relativePath);
+      const finalTarget = revalidateResolvedWorkspacePath(target);
+      await atomicWriteFile(finalTarget.absolutePath, buffer);
+      const afterSnapshot = await this.files.snapshot(context.workspaceRoot, finalTarget.relativePath);
       recordFileObservation(context.workspaceRoot, afterSnapshot);
       context.onCommandOutput(call.id, `${existed ? "Edited" : "Created"} ${target.relativePath} ${buffer.length}B\n`);
       return {
@@ -134,8 +136,9 @@ export class FileMutationCoordinator {
     });
     emitLiveDiff(context, call.id, structured.diff);
     await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
-    await fs.writeFile(target.absolutePath, content, "utf8");
-    const afterSnapshot = await this.files.snapshot(context.workspaceRoot, target.relativePath);
+    const finalTarget = revalidateResolvedWorkspacePath(target);
+    await atomicWriteFile(finalTarget.absolutePath, content, "utf8");
+    const afterSnapshot = await this.files.snapshot(context.workspaceRoot, finalTarget.relativePath);
     recordFileObservation(context.workspaceRoot, afterSnapshot);
     context.onCommandOutput(call.id, `${existed ? "Edited" : "Created"} ${target.relativePath} ${formatDeltaFromDiffFiles(structured.diffFiles)}\n`);
     const changed = [changeMetadata({
@@ -200,7 +203,8 @@ export class FileMutationCoordinator {
         diffFiles: structured.diffFiles,
       };
     }
-    await fs.writeFile(before.target.absolutePath, after, "utf8");
+    const finalTarget = revalidateResolvedWorkspacePath(before.target);
+    await atomicWriteFile(finalTarget.absolutePath, after, "utf8");
     const afterSnapshot = await this.files.snapshot(context.workspaceRoot, before.target.relativePath);
     recordFileObservation(context.workspaceRoot, afterSnapshot);
     context.onCommandOutput(call.id, `Edited ${before.target.relativePath} ${formatDeltaFromDiffFiles(structured.diffFiles)}\n`);
@@ -262,7 +266,8 @@ export class FileMutationCoordinator {
           metadata,
           apply: async () => {
             await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
-            await fs.writeFile(target.absolutePath, operation.content, "utf8");
+            const revalidatedTarget = revalidateResolvedWorkspacePath(target);
+            await atomicWriteFile(revalidatedTarget.absolutePath, operation.content, "utf8");
           },
         });
         changed.push(`Created ${target.relativePath}`);
@@ -363,7 +368,8 @@ export class FileMutationCoordinator {
         metadata,
         apply: async () => {
           await fs.mkdir(path.dirname(finalTarget.absolutePath), { recursive: true });
-          await fs.writeFile(finalTarget.absolutePath, next, "utf8");
+          const revalidatedTarget = revalidateResolvedWorkspacePath(finalTarget);
+          await atomicWriteFile(revalidatedTarget.absolutePath, next, "utf8");
           if (operation.moveTo && finalTarget.absolutePath !== before.target.absolutePath) {
             await fs.rm(before.target.absolutePath, { force: false });
           }
@@ -445,7 +451,8 @@ export class FileMutationCoordinator {
     const to = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.toPath || ""));
     context.onCommandOutput(call.id, `Renaming ${from.relativePath} -> ${to.relativePath}\n`);
     await fs.mkdir(path.dirname(to.absolutePath), { recursive: true });
-    await fs.rename(from.absolutePath, to.absolutePath);
+    const finalTo = revalidateResolvedWorkspacePath(to);
+    await fs.rename(from.absolutePath, finalTo.absolutePath);
     const structured = createRenameDiff(from.relativePath, to.relativePath);
     const undo: UndoOperation = { type: "rename_path", fromPath: to.relativePath, toPath: from.relativePath };
     return {

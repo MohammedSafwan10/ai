@@ -56,5 +56,21 @@ export const resolveWorkspacePath = (workspaceRoot: string, userPath: string): R
 export const resolveExistingWorkspacePath = (workspaceRoot: string, userPath: string): ResolvedWorkspacePath =>
   resolvePath(workspaceRoot, userPath, { allowMissingFinal: false });
 
+export const revalidateResolvedWorkspacePath = (target: ResolvedWorkspacePath): ResolvedWorkspacePath => {
+  const root = realpathOrResolve(target.workspaceRoot);
+  const parent = realpathOrResolve(path.dirname(target.absolutePath));
+  const finalPath = fs.existsSync(target.absolutePath)
+    ? fs.realpathSync.native(target.absolutePath)
+    : path.resolve(parent, path.basename(target.absolutePath));
+  const relativePath = path.relative(root, finalPath);
+  if (!isInsideWorkspace(root, finalPath)) {
+    throw Object.assign(new Error("Path is outside the selected workspace."), {
+      code: "OUTSIDE_WORKSPACE",
+      path: finalPath,
+    });
+  }
+  return { workspaceRoot: root, absolutePath: finalPath, relativePath };
+};
+
 export const describePath = (workspaceRoot: string, userPath: string) =>
   resolveWorkspacePath(workspaceRoot, userPath).relativePath || ".";
