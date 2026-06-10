@@ -46,6 +46,7 @@ export interface ProviderStreamOptions {
   onToolCall: (call: DesktopToolCall) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
   onAiCredits?: (event: { creditsUsed: number; estimatedCredits: number; summary?: AiCreditSummaryRecord }) => void;
+  onStreamProgress?: () => void;
   onTextReplace?: (text: string) => void;
   onWebSearch?: (event: ProviderWebSearchEvent) => void;
 }

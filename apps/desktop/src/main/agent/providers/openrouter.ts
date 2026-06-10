@@ -206,7 +206,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
       });
 
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
-    });
+    }, options.onStreamProgress);
 
     if (buffers.size > 0) flush();
   }

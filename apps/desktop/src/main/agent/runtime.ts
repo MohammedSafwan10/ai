@@ -110,12 +110,12 @@ import {
 export { resolveNoToolOutcome } from "./runtime/recovery";
 export { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDelta } from "./runtime/textParts";
 
-const MAX_CONTINUOUS_MODEL_ITERATIONS = 512;
-const MAX_TOOL_CALLS = 500;
+const MAX_CONTINUOUS_MODEL_ITERATIONS = 2048;
+const MAX_TOOL_CALLS = 2_000;
 const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
 const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
-const STREAM_STALL_TIMEOUT_MS = 45_000;
-const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 75_000;
+const STREAM_STALL_TIMEOUT_MS = 180_000;
+const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 300_000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
 const TOOL_OUTPUT_FLUSH_MS = 320;
 const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 80_000;
@@ -669,6 +669,7 @@ export class AgentRuntime {
 
     let successfulImageAwaitingFollowup = false;
     let providerProducedProgress = false;
+    let lastStreamProgressEmitAt = 0;
 
     try {
       let continuousIterations = 0;
@@ -827,6 +828,14 @@ export class AgentRuntime {
             openRouterApiKey: this.store.getSecret("openrouter_api_key"),
             geminiApiKey: this.store.getSecret("gemini_api_key"),
             maxOutputTokens: runtimeBudget.outputTokens,
+            onStreamProgress: () => {
+              providerProducedProgress = true;
+              markRunProgress(run);
+              if (Date.now() - lastStreamProgressEmitAt >= 1000) {
+                lastStreamProgressEmitAt = Date.now();
+                this.emitRun(run);
+              }
+            },
             onTextDelta: (delta) => {
               const titleFiltered = filterThreadTitleDelta(delta, titleFilter, (title) => {
                 const updated = this.store.updatePlaceholderThreadTitle(options.threadId, title, "agent");

@@ -33,6 +33,7 @@ const parseSseEvent = (raw: string) => {
 export const readSse = async (
   response: Response,
   onEvent: (event: string | undefined, data: string) => void,
+  onProgress?: () => void,
 ) => {
   if (!response.body) throw new Error("Provider did not return a stream.");
   const reader = response.body.getReader();
@@ -41,15 +42,20 @@ export const readSse = async (
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    onProgress?.();
     buffer += decoder.decode(value, { stream: true });
     const split = splitSseEvents(buffer);
     buffer = split.remaining;
     split.events.forEach((raw) => {
       const parsed = parseSseEvent(raw);
-      if (parsed) onEvent(parsed.event, parsed.data);
+      if (parsed) {
+        onProgress?.();
+        onEvent(parsed.event, parsed.data);
+      }
     });
   }
   if (buffer.trim()) {
+    onProgress?.();
     const parsed = parseSseEvent(buffer);
     if (parsed) onEvent(parsed.event, parsed.data);
   }

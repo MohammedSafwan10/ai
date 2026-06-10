@@ -301,6 +301,6 @@ export class CliproxyAdapter implements ProviderAdapter {
         // Ignore malformed or non-JSON SSE payloads. CLIProxy Responses streams use
         // typed events, and unknown payloads must not leak into visible assistant text.
       }
-    });
+    }, options.onStreamProgress);
   }
 }
