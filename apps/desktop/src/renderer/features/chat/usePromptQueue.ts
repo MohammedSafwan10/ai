@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput } from "../../../shared/types";
 
+type TurnSettings = Pick<StartTurnInput, "model" | "reasoningEffort" | "collaborationMode">;
+
 export interface ComposerDraft {
   id: number;
   text: string;
   attachments?: DesktopAttachmentRecord[];
   contextMentions?: ContextMentionRecord[];
+  turnSettings?: TurnSettings;
 }
 
 export interface QueuedPrompt {
@@ -13,6 +16,7 @@ export interface QueuedPrompt {
   prompt: string;
   attachments?: DesktopAttachmentRecord[];
   contextMentions?: ContextMentionRecord[];
+  turnSettings?: TurnSettings;
 }
 
 interface PromptQueueInput {
@@ -22,6 +26,7 @@ interface PromptQueueInput {
   onDraft: (draft: ComposerDraft | null) => void;
   startTurn: (input: StartTurnInput) => Promise<void>;
   stopTurn: (threadId: string) => Promise<void>;
+  turnSettings?: TurnSettings;
 }
 
 export const usePromptQueue = ({
@@ -31,6 +36,7 @@ export const usePromptQueue = ({
   onDraft,
   startTurn,
   stopTurn,
+  turnSettings = {},
 }: PromptQueueInput) => {
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [queuePaused, setQueuePaused] = useState(false);
@@ -81,9 +87,10 @@ export const usePromptQueue = ({
         prompt,
         attachments,
         contextMentions,
+        turnSettings,
       },
     ]);
-  }, []);
+  }, [turnSettings]);
 
   const startPrompt = useCallback(async (
     prompt: string,
@@ -96,7 +103,7 @@ export const usePromptQueue = ({
       return true;
     }
     directSubmitInFlightRef.current = true;
-    void startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions })
+    void startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions, ...turnSettings })
       .catch((error) => {
         console.error(error);
         onDraft({
@@ -110,7 +117,7 @@ export const usePromptQueue = ({
         directSubmitInFlightRef.current = false;
       });
     return true;
-  }, [activeThreadId, enqueuePrompt, onDraft, running, startTurn]);
+  }, [activeThreadId, enqueuePrompt, onDraft, running, startTurn, turnSettings]);
 
   useEffect(() => {
     if (running) queuedSubmitInFlightRef.current = false;
@@ -123,6 +130,7 @@ export const usePromptQueue = ({
       prompt: next.prompt,
       attachments: next.attachments,
       contextMentions: next.contextMentions,
+      ...next.turnSettings,
     }).catch(() => {
       queuedSubmitInFlightRef.current = false;
       setQueuedPrompts((current) => [next, ...current]);
@@ -139,6 +147,7 @@ export const usePromptQueue = ({
       prompt: item.prompt,
       attachments: item.attachments,
       contextMentions: item.contextMentions,
+      ...item.turnSettings,
     }).catch(() => {
       queuedSubmitInFlightRef.current = false;
       setQueuedPrompts((current) => [item, ...current]);

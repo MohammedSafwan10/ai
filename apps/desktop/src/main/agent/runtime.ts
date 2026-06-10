@@ -261,6 +261,7 @@ interface ApprovalBundle {
   run: AgentRunTracker;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  collaborationMode?: CollaborationMode;
 }
 
 interface PendingUserInput {
@@ -287,6 +288,7 @@ interface ContinueOptions {
   parentThreadId?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  collaborationMode?: CollaborationMode;
 }
 
 export class AgentRuntime {
@@ -392,7 +394,9 @@ export class AgentRuntime {
       const workspace = this.store.getWorkspace(thread.workspaceId);
       if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
       const settings = this.store.getSettings();
-      const effectiveModel = getModelOption(thread.model || settings.model).id;
+      const effectiveModel = getModelOption(input.model || thread.model || settings.model).id;
+      const effectiveReasoning = input.reasoningEffort || thread.reasoningEffort || settings.reasoningEffort;
+      const effectiveCollaborationMode = input.collaborationMode || thread.collaborationMode || settings.collaborationMode;
       const selectedModel = getModelOption(effectiveModel);
       const imageAttachmentCount = (input.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/")).length;
       if (imageAttachmentCount > 0 && !selectedModel.supportsImageInput) {
@@ -452,6 +456,9 @@ export class AgentRuntime {
         iteration: 0,
         toolCount: 0,
         recoveryAttempts: 0,
+        model: effectiveModel,
+        reasoningEffort: effectiveReasoning,
+        collaborationMode: effectiveCollaborationMode,
       });
     } finally {
       this.startingThreads.delete(input.threadId);
@@ -621,7 +628,7 @@ export class AgentRuntime {
     const thread = this.store.getThread(options.threadId);
     const effectiveModel = getModelOption(options.model || thread?.model || settings.model).id;
     const effectiveReasoning = options.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort;
-    const effectiveCollaborationMode = thread?.collaborationMode || settings.collaborationMode;
+    const effectiveCollaborationMode = options.collaborationMode || thread?.collaborationMode || settings.collaborationMode;
     const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
     let history = sanitizeProviderHistoryForModel(options.history, effectiveModel);
     let assistantText = options.assistantText;
@@ -637,6 +644,9 @@ export class AgentRuntime {
     let handoff = false;
     let controller = options.controller;
     let run = this.activeRuns.get(options.threadId) || this.createRun(options.threadId, options.assistantMessage.id, controller);
+    run.model = effectiveModel;
+    run.reasoningEffort = effectiveReasoning;
+    run.collaborationMode = effectiveCollaborationMode;
     this.activeRuns.set(options.threadId, run);
     let assistantFlushTimer: NodeJS.Timeout | null = null;
     let assistantFlushStatus: ChatMessageRecord["status"] = "running";
@@ -1260,6 +1270,7 @@ export class AgentRuntime {
       recoveryAttempts: bundle.recoveryAttempts,
       model: bundle.model,
       reasoningEffort: bundle.reasoningEffort,
+      collaborationMode: bundle.collaborationMode,
     });
   }
 
@@ -1291,6 +1302,7 @@ export class AgentRuntime {
       run: params.run,
       model: params.options.model,
       reasoningEffort: params.options.reasoningEffort,
+      collaborationMode: params.options.collaborationMode,
     };
     params.calls.forEach((call) => {
       this.pendingApprovalByCallId.set(call.id, bundle);
@@ -1606,7 +1618,7 @@ export class AgentRuntime {
   ): Promise<ToolResult> {
     switch (call.name) {
       case "spawn_agent":
-        return this.spawnSubagent(call, workspaceRoot, parentThreadId, parentMessageId);
+        return this.spawnSubagent(call, workspaceRoot, parentThreadId, parentMessageId, run);
       case "send_message":
         return this.messageSubagent(call, parentThreadId, false);
       case "assign_task":
@@ -1622,7 +1634,7 @@ export class AgentRuntime {
     }
   }
 
-  private spawnSubagent(call: DesktopToolCall, workspaceRoot: string, parentThreadId: string, parentMessageId: string): ToolResult {
+  private spawnSubagent(call: DesktopToolCall, workspaceRoot: string, parentThreadId: string, parentMessageId: string, parentRun?: AgentRunTracker): ToolResult {
     const settings = this.store.getSettings();
     const taskName = normalizeTaskName(String(call.arguments.taskName || call.arguments.task_name || ""));
     const message = String(call.arguments.message || "").trim();
@@ -1669,8 +1681,8 @@ export class AgentRuntime {
       agentRole: role?.name,
       agentNickname: nickname,
       prompt: message,
-      model: typeof call.arguments.model === "string" ? call.arguments.model : role?.model || thread?.model || settings.model,
-      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort,
+      model: typeof call.arguments.model === "string" ? call.arguments.model : role?.model || parentRun?.model || thread?.model || settings.model,
+      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || parentRun?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort,
     });
     this.startSubagentTurn(agent, workspaceRoot, message, role, forkTurns.value);
     this.emitSnapshot();
@@ -1795,7 +1807,7 @@ export class AgentRuntime {
   ): Promise<ToolResult> {
     const settings = this.store.getSettings();
     const thread = this.store.getThread(threadId);
-    if ((thread?.collaborationMode || settings.collaborationMode) !== "plan") {
+    if ((run.collaborationMode || thread?.collaborationMode || settings.collaborationMode) !== "plan") {
       return { success: false, error: "request_user_input is only available in Plan Mode." };
     }
     const normalized = normalizeRequestUserInputQuestions(call.arguments.questions);

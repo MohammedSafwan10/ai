@@ -1578,6 +1578,9 @@ export interface StartTurnInput {
   prompt: string;
   attachments?: DesktopAttachmentRecord[];
   contextMentions?: ContextMentionRecord[];
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  collaborationMode?: CollaborationMode;
 }
 
 export interface ApprovalDecisionInput {

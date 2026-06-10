@@ -965,6 +965,9 @@ const startTurnInputSchema = z.object({
   prompt: z.string().max(1_000_000),
   attachments: z.array(attachmentSchema).max(12).optional(),
   contextMentions: z.array(contextMentionSchema).max(24).optional(),
+  model: z.string().max(160).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
+  collaborationMode: z.enum(["default", "plan"]).optional(),
 });
 
 const approvalDecisionSchema = z.object({

@@ -237,6 +237,11 @@ export default function App() {
     onDraft: setComposerDraft,
     startTurn: window.privoraDesktop.startTurn,
     stopTurn: window.privoraDesktop.stopTurn,
+    turnSettings: {
+      model: activeThreadSettings.model,
+      reasoningEffort: activeThreadSettings.reasoningEffort,
+      collaborationMode: activeThreadSettings.collaborationMode,
+    },
   });
 
   const implementPlan = useCallback((plan: string) => {
