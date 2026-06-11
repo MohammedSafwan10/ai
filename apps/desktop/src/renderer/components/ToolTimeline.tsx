@@ -18,6 +18,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
+  const [autoExpandedImageIds, setAutoExpandedImageIds] = useState<Set<string>>(() => new Set());
   const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
   const [imagePreview, setImagePreview] = useState<GeneratedImagePreview | null>(null);
   const messageActive = isActiveMessageStatus(messageStatus);
@@ -36,6 +37,25 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
       setUserOpen(true);
     }
   }, [defaultOpen, hasBlockingAttention, messageStatus, userOpen]);
+  useEffect(() => {
+    const completedImageIds = normalizedTools
+      .filter((tool) => tool.status === "done" && isImageTool(tool) && generatedImagesFromTool(tool).length > 0)
+      .map((tool) => tool.id)
+      .filter((id) => !autoExpandedImageIds.has(id));
+    if (completedImageIds.length === 0) return;
+
+    setExpandedOutputIds((current) => {
+      const next = new Set(current);
+      completedImageIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setAutoExpandedImageIds((current) => {
+      const next = new Set(current);
+      completedImageIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setUserOpen((current) => current ?? true);
+  }, [autoExpandedImageIds, normalizedTools]);
   const displayTools = useMemo(
     () => liveGroupOpen ? normalizedTools : showAllSteps ? compactedTools : visibleTimelineTools(compactedTools),
     [compactedTools, liveGroupOpen, normalizedTools, showAllSteps],
