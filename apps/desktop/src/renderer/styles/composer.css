@@ -273,62 +273,6 @@
   line-height: 1.2;
 }
 
-.prompt-history-search {
-  display: grid;
-  gap: 7px;
-  margin: -2px 0 10px;
-  border: 1px solid color-mix(in srgb, var(--privora-border) 74%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--privora-surface) 96%, transparent);
-  padding: 7px;
-}
-
-.prompt-history-search label {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-  color: var(--privora-muted);
-}
-
-.prompt-history-search input {
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--privora-text);
-  font-size: 12px;
-}
-
-.prompt-history-results {
-  display: grid;
-  gap: 3px;
-  max-height: 180px;
-  overflow: auto;
-}
-
-.prompt-history-results button {
-  overflow: hidden;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--privora-text);
-  padding: 6px 8px;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.prompt-history-results button:hover {
-  background: color-mix(in srgb, var(--privora-user-bubble) 62%, transparent);
-}
-
-.prompt-history-results span {
-  color: var(--privora-muted);
-  padding: 6px 8px;
-  font-size: 12px;
-}
-
 .pasted-block-tray {
   display: flex;
   flex-wrap: wrap;

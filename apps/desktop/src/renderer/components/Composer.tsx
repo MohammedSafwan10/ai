@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, Search, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -56,9 +56,6 @@ export function Composer({
   const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  const [persistedPromptHistory, setPersistedPromptHistory] = useState<string[]>([]);
-  const [historySearchOpen, setHistorySearchOpen] = useState(false);
-  const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
   const [mentionToken, setMentionToken] = useState<{ query: string; start: number; end: number } | null>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<ContextMentionSuggestion[]>([]);
@@ -80,14 +77,7 @@ export function Composer({
     () => modelProviderGroups.flatMap((group) => group.models).find((model) => model.supportsImageInput),
     [modelProviderGroups],
   );
-  const combinedPromptHistory = useMemo(
-    () => mergePromptHistory(promptHistory, persistedPromptHistory),
-    [persistedPromptHistory, promptHistory],
-  );
-  const historySearchResults = useMemo(
-    () => filterPromptHistory(combinedPromptHistory, historySearchQuery),
-    [combinedPromptHistory, historySearchQuery],
-  );
+  const combinedPromptHistory = useMemo(() => mergePromptHistory(promptHistory), [promptHistory]);
   const lineCount = value ? value.split(/\r?\n/).length : 0;
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
@@ -97,7 +87,6 @@ export function Composer({
       setModelSubmenuOpen(next === "model");
       return next;
     });
-    setHistorySearchOpen(false);
     setMentionToken(null);
     setMentionSuggestions([]);
   };
@@ -105,7 +94,6 @@ export function Composer({
   const closeComposerPopovers = () => {
     setActiveMenu(null);
     setModelSubmenuOpen(false);
-    setHistorySearchOpen(false);
     setMentionToken(null);
     setMentionSuggestions([]);
   };
@@ -119,10 +107,6 @@ export function Composer({
     onSettings({ permissionMode: mode });
     setActiveMenu(null);
   };
-
-  useEffect(() => {
-    setPersistedPromptHistory(readPromptHistory());
-  }, []);
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -161,8 +145,6 @@ export function Composer({
   useEffect(() => {
     setHistoryCursor(null);
     lastHistoryTextRef.current = null;
-    setHistorySearchOpen(false);
-    setHistorySearchQuery("");
     setActiveMenu(null);
   }, [activeThreadId]);
 
@@ -229,8 +211,6 @@ export function Composer({
       setSubmitError("Privora could not start that turn. Your draft was kept.");
       return;
     }
-    const nextHistory = rememberPrompt(trimmed, persistedPromptHistory);
-    setPersistedPromptHistory(nextHistory);
     setValue("");
     setAttachments([]);
     setContextMentions([]);
@@ -241,8 +221,6 @@ export function Composer({
     setSubmitError(null);
     setExpanded(false);
     setHistoryCursor(null);
-    setHistorySearchOpen(false);
-    setHistorySearchQuery("");
     lastHistoryTextRef.current = null;
   };
 
@@ -261,7 +239,7 @@ export function Composer({
   };
 
   const shouldNavigatePromptHistory = () => {
-    if (combinedPromptHistory.length === 0 || mentionToken || historySearchOpen) return false;
+    if (combinedPromptHistory.length === 0 || mentionToken) return false;
     const textarea = textareaRef.current;
     if (!textarea || textarea.selectionStart !== textarea.selectionEnd) return false;
     if (!value) return true;
@@ -296,12 +274,6 @@ export function Composer({
     }
     applyHistoryValue(combinedPromptHistory[nextCursor] || "", nextCursor);
     return true;
-  };
-
-  const chooseHistoryResult = (text: string) => {
-    applyHistoryValue(text, null);
-    setHistorySearchOpen(false);
-    setHistorySearchQuery("");
   };
 
   const addLargePaste = (text: string, cursorStart: number, cursorEnd: number) => {
@@ -427,14 +399,6 @@ export function Composer({
           }
         }}
         onKeyDown={(event) => {
-          if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "h") {
-            event.preventDefault();
-            setHistorySearchOpen(true);
-            setHistorySearchQuery("");
-            setMentionToken(null);
-            setMentionSuggestions([]);
-            return;
-          }
           if (mentionToken && mentionSuggestions.length > 0 && (event.key === "Enter" || event.key === "Tab")) {
             event.preventDefault();
             selectMention(mentionSuggestions[0]);
@@ -456,37 +420,6 @@ export function Composer({
           }
         }}
       />
-      {historySearchOpen && (
-        <div className="prompt-history-search">
-          <label>
-            <Search size={14} />
-            <input
-              autoFocus
-              value={historySearchQuery}
-              placeholder="Search prompt history"
-              onChange={(event) => setHistorySearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setHistorySearchOpen(false);
-                }
-                if (event.key === "Enter" && historySearchResults[0]) {
-                  event.preventDefault();
-                  chooseHistoryResult(historySearchResults[0]);
-                }
-              }}
-            />
-          </label>
-          <div className="prompt-history-results">
-            {historySearchResults.slice(0, 6).map((item) => (
-              <button type="button" key={item} onClick={() => chooseHistoryResult(item)}>
-                {item}
-              </button>
-            ))}
-            {historySearchResults.length === 0 && <span>No matching prompts</span>}
-          </div>
-        </div>
-      )}
       {showLongPromptControls && (
         <div className="composer-long-prompt-bar">
           <span>{value.length.toLocaleString()} chars · {lineCount.toLocaleString()} lines</span>
@@ -884,13 +817,9 @@ const COMPOSER_LONG_PROMPT_CHARS = 1200;
 const COMPOSER_LONG_PROMPT_LINES = 12;
 const LARGE_PASTE_CHARS = 4000;
 const MAX_PROMPT_CHARS = 1_000_000;
-const PROMPT_HISTORY_STORAGE_KEY = "privora.promptHistory.v1";
-const MAX_PERSISTED_PROMPTS = 50;
-const MAX_PERSISTED_PROMPT_CHARS = 8_000;
-
-const mergePromptHistory = (currentThread: string[], persisted: string[]) => {
+const mergePromptHistory = (currentThread: string[]) => {
   const seen = new Set<string>();
-  return [...persisted.slice().reverse(), ...currentThread]
+  return currentThread
     .map((item) => item.trim())
     .reverse()
     .filter((item) => {
@@ -900,51 +829,6 @@ const mergePromptHistory = (currentThread: string[], persisted: string[]) => {
     })
     .reverse();
 };
-
-const filterPromptHistory = (history: string[], query: string) => {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return history.slice().reverse();
-  return history.filter((item) => item.toLowerCase().includes(normalized)).reverse();
-};
-
-const readPromptHistory = () => {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY) || "[]");
-    const history = Array.isArray(parsed)
-      ? parsed
-        .filter((item): item is string => typeof item === "string")
-        .map(sanitizePersistedPrompt)
-        .filter(Boolean)
-        .slice(0, MAX_PERSISTED_PROMPTS)
-      : [];
-    window.localStorage.setItem(PROMPT_HISTORY_STORAGE_KEY, JSON.stringify(history));
-    return history;
-  } catch {
-    return [];
-  }
-};
-
-const rememberPrompt = (prompt: string, current: string[]) => {
-  const trimmed = sanitizePersistedPrompt(prompt);
-  if (!trimmed) return current;
-  const next = [trimmed, ...current.filter((item) => item.trim() !== trimmed)].slice(0, MAX_PERSISTED_PROMPTS);
-  try {
-    window.localStorage.setItem(PROMPT_HISTORY_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // History is a convenience cache; failing to persist it must not block sending.
-  }
-  return next;
-};
-
-const sanitizePersistedPrompt = (value: string) =>
-  redactPromptSecrets(value.trim()).slice(0, MAX_PERSISTED_PROMPT_CHARS).trim();
-
-const redactPromptSecrets = (value: string) => [
-  /sk-[A-Za-z0-9_-]{20,}/g,
-  /AIza[0-9A-Za-z_-]{20,}/g,
-  /(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"'\s]+/gi,
-  /Bearer\s+[A-Za-z0-9._~+/=-]{12,}/g,
-].reduce((text, pattern) => text.replace(pattern, "[redacted]"), value);
 
 const nextPasteLabel = (charCount: number, existing: PastedBlock[]) => {
   const base = `[Pasted Content ${charCount.toLocaleString()} chars]`;

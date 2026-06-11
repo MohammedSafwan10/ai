@@ -477,8 +477,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                 <div className="settings-section settings-shortcuts">
                   <ShortcutRow keys="Enter" label="Send or queue follow-up" />
                   <ShortcutRow keys="Shift+Enter" label="New line" />
-                  <ShortcutRow keys="Up / Down" label="Prompt history" />
-                  <ShortcutRow keys="Ctrl+Alt+H" label="Search prompt history" />
+                  <ShortcutRow keys="Up / Down" label="Current chat prompts" />
                   <ShortcutRow keys="Ctrl+/" label="Open shortcuts" />
                   <ShortcutRow keys="Ctrl+R" label="Reload app" />
                 </div>
