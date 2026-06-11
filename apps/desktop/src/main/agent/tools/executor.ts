@@ -500,7 +500,7 @@ export class DesktopToolExecutor {
     return {
       success: true,
       output: sessions.length
-        ? sessions.map((session) => `${session.sessionId} ${session.status} ${session.command}`).join("\n")
+        ? sessions.map((session) => `${session.sessionId} ${terminalStatusLabel(session.status)} ${session.command}`).join("\n")
         : "No terminal sessions.",
       data: { sessions, updatedAt: Date.now() },
     };
@@ -583,7 +583,9 @@ const terminalToolResult = (
     omitted_bytes: result.omittedBytes,
     omittedBytes: result.omittedBytes,
     status: result.status,
-    stopped: result.status === "stopped",
+    statusLabel: terminalStatusLabel(result.status),
+    status_label: terminalStatusLabel(result.status),
+    stopped: result.status === "stopped" || result.status === "stop_requested",
     partial_chunk: result.partialChunk === true,
     partialChunk: result.partialChunk === true,
     stdout: result.stdout || "",
@@ -604,11 +606,19 @@ const terminalFallbackOutput = (
 ) => {
   const id = requestedSessionId || result.processId || "";
   if (result.status === "running") return `Session ${id} is still running.`.trim();
+  if (result.status === "stop_requested") return `Stopping session ${id}.`.trim();
   if (result.status === "stopped") return `Stopped session ${id}.`.trim();
   if (result.status === "not_found") return `Session ${id} is not running.`.trim();
   if (result.status === "timed_out") return "Command timed out.";
   if (result.status === "failed") return "Terminal session failed to start.";
   return `Session exited with code ${result.exitCode}`;
+};
+
+const terminalStatusLabel = (status: string) => {
+  if (status === "stop_requested") return "stopping...";
+  if (status === "timed_out") return "timed out";
+  if (status === "not_found") return "not found";
+  return status;
 };
 
 const formatNoteLine = (note: { id: string; title: string; scope: string; filePath?: string; dirty?: boolean; sizeBytes?: number }) =>
