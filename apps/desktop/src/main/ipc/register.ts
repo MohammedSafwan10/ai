@@ -995,14 +995,14 @@ const startTurnInputSchema = z.object({
 });
 
 const approvalDecisionSchema = z.object({
-  callId: idSchema,
+  callId: z.string().trim().min(1).max(1000),
   approved: z.boolean(),
   scope: z.enum(["once", "this_thread", "this_workspace", "command_prefix"]).optional(),
 });
 
 const approvalDecisionInputSchema = z.object({
   threadId: idSchema,
-  callId: idSchema.optional(),
+  callId: z.string().trim().min(1).max(1000).optional(),
   approved: z.boolean().optional(),
   scope: z.enum(["once", "this_thread", "this_workspace", "command_prefix"]).optional(),
   decisions: z.array(approvalDecisionSchema).max(100).optional(),

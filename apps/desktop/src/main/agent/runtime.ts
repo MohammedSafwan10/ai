@@ -664,9 +664,13 @@ export class AgentRuntime {
     const decisions = normalizeApprovalDecisions(input);
     if (decisions.length === 0) return;
     const bundles = new Set<ApprovalBundle>();
+    const unresolvedCallIds: string[] = [];
     decisions.forEach((decision) => {
-      const bundle = this.pendingApprovalByCallId.get(decision.callId);
-      if (!bundle) return;
+      const bundle = this.pendingApprovalByCallId.get(decision.callId) || this.restorePendingApprovalBundle(input.threadId, decision.callId);
+      if (!bundle || bundle.threadId !== input.threadId) {
+        unresolvedCallIds.push(decision.callId);
+        return;
+      }
       bundle.decisions.set(decision.callId, {
         approved: decision.approved,
         scope: decision.scope || input.scope || "once",
@@ -689,6 +693,14 @@ export class AgentRuntime {
         continue;
       }
       await this.resolveApprovalBundle(bundle);
+    }
+
+    if (bundles.size === 0 && unresolvedCallIds.length > 0) {
+      this.emit({
+        type: "toast",
+        tone: "error",
+        message: "That approval request is no longer active. Stop this run and retry the action.",
+      });
     }
   }
 
@@ -1416,6 +1428,66 @@ export class AgentRuntime {
       this.emit({ type: "tool_updated", tool: event });
     });
     this.saveCheckpoint(params.options, params.history, params.assistantText, params.assistantThought, params.iteration, params.toolCount, params.recoveryAttempts, params.run);
+    return bundle;
+  }
+
+  private restorePendingApprovalBundle(threadId: string, callId: string): ApprovalBundle | null {
+    const checkpoint = this.store.getRunCheckpoint(threadId);
+    if (!checkpoint) return null;
+    const target = this.store.findToolEventByCall(threadId, callId);
+    if (!target || target.status !== "awaiting_approval" || target.messageId !== checkpoint.assistantMessageId) return null;
+    const toolEvents = this.store
+      .listToolEventsForMessage(threadId, checkpoint.assistantMessageId)
+      .filter((event) =>
+        event.status === "awaiting_approval" &&
+        (target.approvalGroupId ? event.approvalGroupId === target.approvalGroupId : event.callId === callId)
+      );
+    const calls: DesktopToolCall[] = toolEvents.map((event) => ({
+      id: event.callId,
+      name: event.name as DesktopToolCall["name"],
+      arguments: event.args || {},
+    }));
+    if (calls.length === 0) return null;
+
+    const thread = this.store.getThread(threadId);
+    const settings = this.store.getSettings();
+    const controller = new AbortController();
+    const run = this.createRun(threadId, checkpoint.assistantMessageId, controller);
+    run.iteration = checkpoint.iteration;
+    run.toolCount = checkpoint.toolCount;
+    run.recoveryAttempts = checkpoint.recoveryAttempts;
+    run.model = thread?.model || settings.model;
+    run.reasoningEffort = thread?.reasoningEffort || settings.reasoningEffort;
+    run.collaborationMode = thread?.collaborationMode || settings.collaborationMode;
+    run.agentHarnessMode = thread?.agentHarnessMode || settings.agentHarnessMode;
+    transitionRun(run, "awaiting_approval", {
+      iteration: checkpoint.iteration,
+      toolCount: checkpoint.toolCount,
+      resumable: false,
+      reason: "Restored pending approval.",
+    });
+
+    const bundle: ApprovalBundle = {
+      id: target.approvalGroupId || crypto.randomUUID(),
+      threadId,
+      assistantMessageId: checkpoint.assistantMessageId,
+      workspaceRoot: checkpoint.workspaceRoot,
+      calls,
+      decisions: new Map(),
+      history: checkpoint.history as ProviderMessage[],
+      assistantText: checkpoint.assistantText,
+      assistantThought: checkpoint.assistantThought,
+      toolCount: checkpoint.toolCount,
+      iteration: checkpoint.iteration,
+      recoveryAttempts: checkpoint.recoveryAttempts,
+      run,
+      model: run.model,
+      reasoningEffort: run.reasoningEffort,
+      collaborationMode: run.collaborationMode,
+      agentHarnessMode: run.agentHarnessMode,
+    };
+    calls.forEach((call) => this.pendingApprovalByCallId.set(call.id, bundle));
+    this.emitRun(run);
     return bundle;
   }
 

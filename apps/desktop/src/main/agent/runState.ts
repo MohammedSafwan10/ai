@@ -1,4 +1,4 @@
-import type { CollaborationMode, ReasoningEffort } from "../../shared/models";
+import type { AgentHarnessMode, CollaborationMode, ReasoningEffort } from "../../shared/models";
 import type { ActiveRunState, TurnStatus } from "../../shared/types";
 
 export type AgentRunPhase =
@@ -38,6 +38,7 @@ export interface AgentRunTracker {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
   reason?: string;
   resumable?: boolean;
 }
