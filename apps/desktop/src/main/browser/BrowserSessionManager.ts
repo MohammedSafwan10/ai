@@ -118,6 +118,7 @@ interface BrowserWaitOptions {
 
 interface BrowserScreenshotOptions {
   mode: string;
+  tabId?: string;
   ref?: string;
   x?: number;
   y?: number;
@@ -135,12 +136,16 @@ interface BrowserEvidenceOptions {
 const DEFAULT_VIEWPORT = { width: 900, height: 680 };
 const EMPTY_BOUNDS: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
 const MAX_BROWSER_TABS = 6;
+const DOWNLOAD_APPROVAL_TTL_MS = 30_000;
+const MAX_PDF_BYTES = 32 * 1024 * 1024;
+const PDF_FETCH_TIMEOUT_MS = 20_000;
 
 export class BrowserSessionManager {
   private sessions = new Map<string, BrowserSessionRecord>();
   private workspaceTabs = new Map<string, BrowserSessionRecord[]>();
   private downloads = new Map<string, BrowserDownloadRecord[]>();
-  private allowNextDownload = new Set<string>();
+  private downloadApprovals = new Map<string, { tabId: string; expiresAt: number }>();
+  private activeDownloadItems = new Map<string, DownloadItem>();
   private downloadHandlers = new Set<string>();
   private workflows = new BrowserWorkflowManager(app.getPath("userData"));
   private shields = new ShieldsManager(app.getPath("userData"));
@@ -152,6 +157,7 @@ export class BrowserSessionManager {
     private emitState: (state: BrowserPanelStateRecord) => void,
     private loadPersistedWorkspace?: (workspaceId: string) => BrowserWorkspaceStateRecord | null,
     private savePersistedWorkspace?: (state: BrowserWorkspaceStateRecord) => void,
+    private listKnownWorkspaceIds?: () => string[],
   ) {}
 
   getState(workspaceId: string | null | undefined) {
@@ -399,7 +405,7 @@ export class BrowserSessionManager {
   }
 
   async screenshot(workspaceId: string, options: BrowserScreenshotOptions) {
-    const session = this.ensureSession(workspaceId);
+    const session = this.ensureSession(workspaceId, options.tabId);
     this.ensureOpenPage(session);
     const mode = normalizeScreenshotMode(options.mode);
     const rect = await this.screenshotRect(session, mode, options);
@@ -512,9 +518,10 @@ export class BrowserSessionManager {
   async downloadAction(workspaceId: string, input: BrowserDownloadInput) {
     this.ensureSession(workspaceId);
     if (input.action === "allow_next") {
-      this.allowNextDownload.add(workspaceId);
+      const tab = this.ensureSession(workspaceId);
+      this.downloadApprovals.set(workspaceId, { tabId: tab.id, expiresAt: Date.now() + DOWNLOAD_APPROVAL_TTL_MS });
       return {
-        output: "The next browser download in this workspace is allowed.",
+        output: "The next browser download from the active tab is allowed for 30 seconds.",
         data: { downloads: this.downloads.get(workspaceId) || [] },
       };
     }
@@ -522,6 +529,8 @@ export class BrowserSessionManager {
       const download = this.findDownload(workspaceId, input.downloadId);
       if (!download) throw new Error("Download not found.");
       if (download.state === "progressing" || download.state === "pending") {
+        this.activeDownloadItems.get(download.id)?.cancel();
+        this.activeDownloadItems.delete(download.id);
         download.state = "cancelled";
         download.updatedAt = Date.now();
         this.updateState(this.ensureSession(workspaceId), {});
@@ -580,10 +589,10 @@ export class BrowserSessionManager {
     const mode = normalizePdfMode(modeInput);
     const url = session.view.webContents.getURL();
     if (mode === "screenshot") {
-      const screenshot = await this.screenshot(workspaceId, { mode: "viewport" });
+      const screenshot = await this.screenshot(workspaceId, { mode: "viewport", tabId });
       return { output: `Saved PDF screenshot: ${screenshot.screenshotPath}`, data: screenshot as unknown as Record<string, unknown> };
     }
-    const text = await extractPdfTextFromUrl(url);
+    const text = await extractPdfTextFromUrl(url, session.view.webContents.session.fetch.bind(session.view.webContents.session));
     const artifactPath = await this.saveTextArtifact(session, text, "pdf-text");
     const summary = summarizeText(text, mode === "summary" ? 1400 : 6000);
     return {
@@ -909,11 +918,31 @@ export class BrowserSessionManager {
 
   async clearProfileData() {
     const partitions = new Set(Array.from(this.workspaceTabs.values()).flat().map((tab) => tab.partition));
+    this.listKnownWorkspaceIds?.().forEach((workspaceId) => partitions.add(partitionForWorkspace(workspaceId)));
     for (const partition of partitions) {
       const browserSession = electronSession.fromPartition(partition);
       await browserSession.clearCache().catch(() => undefined);
       await browserSession.clearStorageData().catch(() => undefined);
     }
+  }
+
+  async clearWorkspaceProfileData(workspaceId: string) {
+    const tabs = this.workspaceTabs.get(workspaceId) || [];
+    tabs.forEach((tab) => {
+      try {
+        tab.cdp.detach();
+        if (tab.attached) this.getMainWindow()?.contentView.removeChildView(tab.view);
+        tab.view.webContents.close({ waitForBeforeUnload: false });
+      } catch {
+        // best-effort cleanup
+      }
+    });
+    this.sessions.delete(workspaceId);
+    this.workspaceTabs.delete(workspaceId);
+    this.downloadApprovals.delete(workspaceId);
+    const browserSession = electronSession.fromPartition(partitionForWorkspace(workspaceId));
+    await browserSession.clearCache().catch(() => undefined);
+    await browserSession.clearStorageData().catch(() => undefined);
   }
 
   private ensureSession(workspaceId: string, tabId?: string) {
@@ -956,7 +985,7 @@ export class BrowserSessionManager {
     if (currentTabs.length >= MAX_BROWSER_TABS) {
       throw new Error(`Privora Browser supports up to ${MAX_BROWSER_TABS} tabs per workspace.`);
     }
-    const partition = `persist:privora-browser:${workspaceId.replace(/[^\w.-]/g, "_")}`;
+    const partition = partitionForWorkspace(workspaceId);
     const pipeline = new BrowserNetworkPipeline({
       workspaceId,
       shields: this.shields,
@@ -1068,19 +1097,20 @@ export class BrowserSessionManager {
       url: compactUrl(item.getURL()),
       filename,
       mimeType: item.getMimeType() || "",
-      state: this.allowNextDownload.has(workspaceId) ? "pending" : "blocked",
+      state: this.downloadApprovalAllows(workspaceId, tab.id) ? "pending" : "blocked",
       receivedBytes: 0,
       totalBytes: Math.max(0, item.getTotalBytes() || 0),
       createdAt: timestamp,
       updatedAt: timestamp,
     };
     this.pushDownload(workspaceId, record);
-    if (!this.allowNextDownload.has(workspaceId)) {
+    if (!this.downloadApprovalAllows(workspaceId, tab.id)) {
       event.preventDefault();
       this.updateState(tab, { lastFinding: `Blocked download: ${filename}` });
       return;
     }
-    this.allowNextDownload.delete(workspaceId);
+    this.downloadApprovals.delete(workspaceId);
+    this.activeDownloadItems.set(record.id, item);
     const dir = path.join(app.getPath("downloads"), "Privora");
     fsSync.mkdirSync(dir, { recursive: true });
     const savePath = uniqueDownloadPath(dir, filename);
@@ -1095,11 +1125,13 @@ export class BrowserSessionManager {
       this.updateState(tab, {});
     });
     item.once("done", (_event, state) => {
+      this.activeDownloadItems.delete(record.id);
       record.state = state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "failed";
       record.receivedBytes = Math.max(0, item.getReceivedBytes() || record.receivedBytes);
       record.totalBytes = Math.max(record.totalBytes, item.getTotalBytes() || 0);
       record.updatedAt = Date.now();
       if (record.state === "failed") record.error = state;
+      if (record.state === "cancelled" && record.path) fsSync.rmSync(record.path, { force: true });
       this.updateState(tab, { lastFinding: `${record.state}: ${record.filename}` });
     });
     this.updateState(tab, { lastFinding: `Downloading ${filename}` });
@@ -1108,6 +1140,16 @@ export class BrowserSessionManager {
   private pushDownload(workspaceId: string, record: BrowserDownloadRecord) {
     const current = this.downloads.get(workspaceId) || [];
     this.downloads.set(workspaceId, [record, ...current].slice(0, 40));
+  }
+
+  private downloadApprovalAllows(workspaceId: string, tabId: string) {
+    const approval = this.downloadApprovals.get(workspaceId);
+    if (!approval) return false;
+    if (approval.expiresAt <= Date.now()) {
+      this.downloadApprovals.delete(workspaceId);
+      return false;
+    }
+    return approval.tabId === tabId;
   }
 
   private findDownload(workspaceId: string, downloadId: string | undefined) {
@@ -2247,12 +2289,21 @@ const looksLikePdfUrl = (url: string) => {
   }
 };
 
-const extractPdfTextFromUrl = async (url: string) => {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Could not fetch PDF: ${response.status}`);
-  const contentType = response.headers.get("content-type") || "";
-  if (!/pdf/i.test(contentType) && !looksLikePdfUrl(url)) throw new Error("The current URL did not return PDF content.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
+const extractPdfTextFromUrl = async (url: string, fetcher: (url: string, init?: RequestInit) => Promise<Response> = fetch) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PDF_FETCH_TIMEOUT_MS);
+  let bytes: Uint8Array;
+  try {
+    const response = await fetcher(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Could not fetch PDF: ${response.status}`);
+    const contentType = response.headers.get("content-type") || "";
+    if (!/pdf/i.test(contentType) && !looksLikePdfUrl(url)) throw new Error("The current URL did not return PDF content.");
+    const declaredLength = Number(response.headers.get("content-length") || 0);
+    if (declaredLength > MAX_PDF_BYTES) throw new Error("PDF is too large to extract safely.");
+    bytes = await readBoundedResponseBytes(response, MAX_PDF_BYTES);
+  } finally {
+    clearTimeout(timer);
+  }
   ensurePdfJsDomPolyfills();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = resolvePdfWorkerSrc();
@@ -2272,6 +2323,37 @@ const extractPdfTextFromUrl = async (url: string) => {
   }
   return pages.join("\n\n");
 };
+
+const readBoundedResponseBytes = async (response: Response, maxBytes: number) => {
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) throw new Error("PDF is too large to extract safely.");
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel("PDF exceeded safe extraction limit.");
+      throw new Error("PDF is too large to extract safely.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  return bytes;
+};
+
+const partitionForWorkspace = (workspaceId: string) =>
+  `persist:privora-browser:${workspaceId.replace(/[^\w.-]/g, "_")}`;
 
 const resolvePdfWorkerSrc = () => {
   const anchors = [
@@ -2630,7 +2712,7 @@ const SNAPSHOT_SCRIPT = `
     const labelledBy = el.getAttribute('aria-labelledby');
     const fromLabelledBy = labelledBy && labelledBy.split(/\\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' ').trim();
     const fromLabel = el.labels && Array.from(el.labels).map((label) => label.innerText).join(' ').trim();
-    return (el.getAttribute('aria-label') || fromLabelledBy || fromLabel || el.getAttribute('placeholder') || el.innerText || el.value || el.getAttribute('href') || '').replace(/\\s+/g, ' ').trim().slice(0, 140);
+    return (el.getAttribute('aria-label') || fromLabelledBy || fromLabel || el.getAttribute('placeholder') || el.innerText || el.getAttribute('href') || '').replace(/\\s+/g, ' ').trim().slice(0, 140);
   };
   const hrefFor = (el) => {
     if (el.tagName.toLowerCase() !== 'a') return '';

@@ -68,9 +68,7 @@ export const executePrivoraGateway = async <T>(
       async: false,
       body: JSON.stringify(payload),
       method: "POST",
-      headers: {
-        "x-privora-user-jwt": jwt,
-      },
+      headers: {},
     }),
     signal,
   });

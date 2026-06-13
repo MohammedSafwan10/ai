@@ -63,6 +63,7 @@ type StoredMessage = Omit<ChatMessageRecord, "attachments"> & {
 };
 
 const now = () => Date.now();
+const sqlString = (value: string) => `'${value.replace(/'/g, "''")}'`;
 const SCHEMA_VERSION = 2;
 const INITIAL_HISTORY_LIMIT = 60;
 const TOOL_PAGE_LIMIT = 2_000;
@@ -101,13 +102,15 @@ const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "gem
 
 export class DesktopStore {
   private readonly db: DatabaseSync;
+  private readonly dbPath: string;
   private readonly artifacts: ArtifactStore;
   private readonly statements = new Map<string, StatementSync>();
   private aiCreditSummary: AiCreditSummaryRecord | undefined;
 
   constructor(userDataPath = app.getPath("userData")) {
     fs.mkdirSync(userDataPath, { recursive: true });
-    this.db = new DatabaseSync(path.join(userDataPath, "privora-desktop.sqlite"), {
+    this.dbPath = path.join(userDataPath, "privora-desktop.sqlite");
+    this.db = new DatabaseSync(this.dbPath, {
       enableForeignKeyConstraints: true,
       defensive: true,
       timeout: 5_000,
@@ -115,7 +118,7 @@ export class DesktopStore {
     });
     this.artifacts = new ArtifactStore(userDataPath);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
-    this.resetIncompatibleSchema();
+    this.migrateSchema();
     this.createSchema();
     this.ensureDefaultSettings();
   }
@@ -153,6 +156,10 @@ export class DesktopStore {
     return {
       ...defaultSettings(),
       ...stored,
+      cliproxyBaseUrl: safeCliproxyBaseUrl(stored.cliproxyBaseUrl),
+      appwriteEndpoint: defaultSettings().appwriteEndpoint,
+      appwriteProjectId: defaultSettings().appwriteProjectId,
+      privoraGatewayFunctionId: defaultSettings().privoraGatewayFunctionId,
       model: normalizeModelId(stored.model),
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
@@ -174,10 +181,10 @@ export class DesktopStore {
       computerUseEnabled: input.computerUseEnabled ?? current.computerUseEnabled,
       keepRunningInTray: input.keepRunningInTray ?? current.keepRunningInTray,
       theme: input.theme ?? current.theme,
-      cliproxyBaseUrl: input.cliproxyBaseUrl ?? current.cliproxyBaseUrl,
-      appwriteEndpoint: input.appwriteEndpoint ?? current.appwriteEndpoint,
-      appwriteProjectId: input.appwriteProjectId ?? current.appwriteProjectId,
-      privoraGatewayFunctionId: input.privoraGatewayFunctionId ?? current.privoraGatewayFunctionId,
+      cliproxyBaseUrl: input.cliproxyBaseUrl === undefined ? current.cliproxyBaseUrl : normalizeCliproxyBaseUrl(input.cliproxyBaseUrl),
+      appwriteEndpoint: defaultSettings().appwriteEndpoint,
+      appwriteProjectId: defaultSettings().appwriteProjectId,
+      privoraGatewayFunctionId: defaultSettings().privoraGatewayFunctionId,
     };
     this.putKv("settings", "default", next);
     if (input.openRouterApiKey !== undefined) this.setSecret("openrouter_api_key", input.openRouterApiKey);
@@ -254,6 +261,7 @@ export class DesktopStore {
       this.all<ThreadRecord>("SELECT payload FROM threads WHERE workspace_id = ?", workspaceId).forEach((thread) => this.removeThreadRecords(thread.id));
       this.run("DELETE FROM approval_scopes WHERE workspace_id = ?", workspaceId);
       this.run("DELETE FROM approval_history WHERE workspace_id = ?", workspaceId);
+      this.run("DELETE FROM browser_workspaces WHERE workspace_id = ?", workspaceId);
       this.run("DELETE FROM workspaces WHERE id = ?", workspaceId);
     });
     this.pruneArtifacts();
@@ -470,6 +478,7 @@ export class DesktopStore {
     return this.all<CompactionCheckpointRecord>("SELECT payload FROM compaction_checkpoints WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?", threadId, Math.max(1, Math.min(100, limit)));
   }
   getBrowserWorkspaceState(workspaceId: string) { return this.one<BrowserWorkspaceStateRecord>("SELECT payload FROM browser_workspaces WHERE workspace_id = ?", workspaceId); }
+  listBrowserWorkspaceIds() { return this.all<{ workspaceId: string }>("SELECT json_object('workspaceId', workspace_id) payload FROM browser_workspaces").map((item) => item.workspaceId); }
   saveBrowserWorkspaceState(state: BrowserWorkspaceStateRecord) {
     const timestamp = now(); const compact = { workspaceId: state.workspaceId, activeTabId: state.activeTabId, updatedAt: timestamp, tabs: state.tabs.slice(0, 6).map((tab) => ({ ...tab, loading: false, canGoBack: false, canGoForward: false, createdAt: tab.createdAt || timestamp, updatedAt: tab.updatedAt || timestamp })) };
     this.putRecord("browser_workspaces", state.workspaceId, compact, { workspaceId: state.workspaceId, updatedAt: timestamp }); return compact;
@@ -481,6 +490,8 @@ export class DesktopStore {
     this.transaction(() => {
       this.run(`DELETE FROM checkpoints WHERE thread_id = ? AND json_extract(payload, '$.assistantMessageId') IN (${placeholders(ids.length)})`, threadId, ...ids);
       this.run(`DELETE FROM compaction_checkpoints WHERE thread_id = ? AND (assistant_message_id IN (${placeholders(ids.length)}) OR json_extract(payload, '$.compactedThroughMessageId') IN (${placeholders(ids.length)}))`, threadId, ...ids, ...ids);
+      this.run(`DELETE FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
+      this.run(`DELETE FROM turn_undos WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
       this.run(`DELETE FROM messages WHERE id IN (${placeholders(ids.length)})`, ...ids);
       this.touchThread(threadId);
     });
@@ -509,18 +520,38 @@ export class DesktopStore {
       PRAGMA user_version = ${SCHEMA_VERSION};
     `);
   }
-  private resetIncompatibleSchema() {
+  private migrateSchema() {
     const existingTables = this.count(`SELECT COUNT(*) count FROM sqlite_schema WHERE type = 'table' AND name IN (${placeholders(APP_TABLES.length)})`, ...APP_TABLES);
     if (existingTables === 0) return;
     const version = Number((this.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined)?.user_version || 0);
-    const compatible = version === SCHEMA_VERSION && this.hasColumn("tool_events", "call_id");
-    if (compatible) return;
-    console.warn(`[desktop-store] Resetting incompatible SQLite schema version ${version}; development data migration is intentionally unsupported.`);
-    this.statements.clear();
-    this.db.exec("PRAGMA foreign_keys = OFF;");
-    for (const table of [...APP_TABLES].reverse()) this.db.exec(`DROP TABLE IF EXISTS ${table};`);
-    this.db.exec(`PRAGMA foreign_keys = ON; PRAGMA user_version = ${SCHEMA_VERSION};`);
-    this.artifacts.deleteUnreferenced(new Set());
+    if (version > SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(`This Privora build cannot open newer SQLite schema version ${version}. Update Privora before continuing.`);
+    }
+    if (version === SCHEMA_VERSION && this.hasColumn("tool_events", "call_id")) return;
+    const backupPath = `${this.dbPath}.backup-v${version}-${Date.now()}`;
+    this.db.exec(`VACUUM INTO ${sqlString(backupPath)}`);
+    console.warn(`[desktop-store] Migrating SQLite schema version ${version}; backup created at ${backupPath}.`);
+    const toolEventsExists = this.count("SELECT COUNT(*) count FROM sqlite_schema WHERE type = 'table' AND name = 'tool_events'") > 0;
+    if (!toolEventsExists) return;
+    const requiredToolColumns = [
+      ["call_id", "TEXT NOT NULL DEFAULT ''"],
+      ["name", "TEXT NOT NULL DEFAULT ''"],
+      ["status", "TEXT NOT NULL DEFAULT ''"],
+      ["created_at", "INTEGER NOT NULL DEFAULT 0"],
+      ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
+    ] as const;
+    requiredToolColumns.forEach(([column, definition]) => {
+      if (!this.hasColumn("tool_events", column)) this.db.exec(`ALTER TABLE tool_events ADD COLUMN ${column} ${definition};`);
+    });
+    this.db.exec(`
+      UPDATE tool_events SET
+        call_id = COALESCE(NULLIF(call_id, ''), NULLIF(json_extract(payload, '$.callId'), ''), id),
+        name = COALESCE(NULLIF(name, ''), NULLIF(json_extract(payload, '$.name'), ''), 'unknown'),
+        status = COALESCE(NULLIF(status, ''), NULLIF(json_extract(payload, '$.status'), ''), 'done'),
+        created_at = CASE WHEN created_at = 0 THEN COALESCE(json_extract(payload, '$.createdAt'), 0) ELSE created_at END,
+        updated_at = CASE WHEN updated_at = 0 THEN COALESCE(json_extract(payload, '$.updatedAt'), created_at, 0) ELSE updated_at END;
+    `);
   }
   private ensureDefaultSettings() { if (!this.getKv("settings", "default")) this.putKv("settings", "default", defaultSettings()); }
   private removeThreadRecords(threadId: string) {
@@ -638,6 +669,24 @@ const attachmentUrl = (artifactId: string, mimeType: string) =>
   `privora-attachment://artifact/${encodeURIComponent(artifactId)}?mime=${encodeURIComponent(mimeType)}`;
 
 export const normalizeThreadTitle = (title: string) => (title.replace(/\r/g, "\n").split("\n")[0] || "").replace(/\s+/g, " ").trim().slice(0, 48);
+
+const normalizeCliproxyBaseUrl = (value: string) => {
+  const parsed = new URL(value);
+  if (!["http:", "https:"].includes(parsed.protocol) || !["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname) || parsed.username || parsed.password) {
+    throw new Error("CLI proxy URL must use http or https on localhost without embedded credentials.");
+  }
+  parsed.hash = "";
+  parsed.search = "";
+  return parsed.toString().replace(/\/$/, "");
+};
+
+const safeCliproxyBaseUrl = (value: string | undefined) => {
+  try {
+    return normalizeCliproxyBaseUrl(value || defaultSettings().cliproxyBaseUrl);
+  } catch {
+    return defaultSettings().cliproxyBaseUrl;
+  }
+};
 export const isPlaceholderThreadTitle = (thread: Pick<ThreadRecord, "title" | "titleSource">) => thread.titleSource === "placeholder" || (!thread.titleSource && LEGACY_PLACEHOLDER_THREAD_TITLES.has(thread.title.trim()));
 const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
   const title = thread.title?.trim() || PLACEHOLDER_THREAD_TITLE; const titleSource = thread.titleSource || (LEGACY_PLACEHOLDER_THREAD_TITLES.has(title) ? "placeholder" : "user");

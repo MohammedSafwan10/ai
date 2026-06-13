@@ -506,6 +506,10 @@ if (!singleInstanceLock) {
       },
       (workspaceId) => store?.getBrowserWorkspaceState(workspaceId) || null,
       (browserState) => store?.saveBrowserWorkspaceState(browserState),
+      () => Array.from(new Set([
+        ...(store?.listWorkspaces().map((workspace) => workspace.id) || []),
+        ...(store?.listBrowserWorkspaceIds() || []),
+      ])),
     );
     const workspaces = store.listWorkspaces();
     state.activeWorkspaceId = workspaces[0]?.id ?? null;

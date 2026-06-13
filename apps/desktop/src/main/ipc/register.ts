@@ -217,13 +217,14 @@ export const registerIpc = (
     return workspace;
   });
 
-  handle(channels.removeWorkspace, z.tuple([idSchema]), (_event, workspaceId: string) => {
+  handle(channels.removeWorkspace, z.tuple([idSchema]), async (_event, workspaceId: string) => {
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) throw new Error("Workspace not found.");
     const workspaceThreadIds = new Set(threadsForWorkspace(workspaceId).map((thread) => thread.id));
     const hasActiveRun = runtime.listActiveRuns().some((run) => workspaceThreadIds.has(run.threadId));
     if (hasActiveRun) throw new Error("Stop running chats in this project before removing it.");
 
+    await browserManager.clearWorkspaceProfileData(workspaceId);
     const removed = store.removeWorkspace(workspaceId);
     if (state.activeWorkspaceId === workspaceId || (state.activeThreadId && workspaceThreadIds.has(state.activeThreadId))) {
       const nextWorkspace = store.listWorkspaces()[0] || null;
@@ -296,7 +297,7 @@ export const registerIpc = (
   });
 
   handle(channels.openNoteFile, z.tuple([notesOpenFileInputSchema]), async (_event, input: NotesOpenFileInput) => {
-    const filePath = input.filePath || (await dialog.showOpenDialog({
+    const filePath = (await dialog.showOpenDialog({
       properties: ["openFile"],
       filters: [
         { name: "Text notes", extensions: ["txt", "md", "markdown", "json", "log", "csv", "yaml", "yml", "toml"] },
@@ -312,12 +313,11 @@ export const registerIpc = (
   });
 
   handle(channels.saveNote, z.tuple([notesSaveInputSchema]), (_event, input: NotesSaveInput) => {
-    return notesStore.save({ ...input, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
+    return notesStore.save({ noteId: input.noteId, workspaceId: input.workspaceId || state.activeWorkspaceId || undefined });
   });
 
   handle(channels.saveNoteAs, z.tuple([notesSaveInputSchema]), async (_event, input: NotesSaveInput) => {
     const result = await dialog.showSaveDialog({
-      defaultPath: input.filePath,
       filters: [
         { name: "Markdown", extensions: ["md"] },
         { name: "Text", extensions: ["txt"] },
@@ -337,6 +337,17 @@ export const registerIpc = (
     if (input.deleteFile) {
       const result = notesStore.open({ noteId: input.noteId, workspaceId });
       if (!result.note.filePath) throw new Error("Only file-backed notes can be moved to the Recycle Bin.");
+      const confirmation = await dialog.showMessageBox({
+        type: "warning",
+        buttons: [input.permanent ? "Delete Permanently" : "Move to Recycle Bin", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        title: "Confirm external file deletion",
+        message: input.permanent ? "Permanently delete this external note file?" : "Move this external note file to the Recycle Bin?",
+        detail: result.note.filePath,
+      });
+      if (confirmation.response !== 0) return notesStore.list(workspaceId);
       if (input.permanent) notesStore.deleteExternalFile(input.noteId);
       else await shell.trashItem(result.note.filePath);
     }
@@ -493,7 +504,7 @@ export const registerIpc = (
   });
 
   handle(channels.browserFormFill, z.tuple([browserFormFillInputSchema]), async (_event, input: BrowserFormFillInput) => {
-    return browserManager.formFill(input.workspaceId, input, { agentApproved: true });
+    return browserManager.formFill(input.workspaceId, input);
   });
 
   handle(channels.browserFormValidate, z.tuple([browserFormValidateInputSchema]), async (_event, input: BrowserFormValidateInput) => {
@@ -501,11 +512,11 @@ export const registerIpc = (
   });
 
   handle(channels.browserFormSubmit, z.tuple([browserFormSubmitInputSchema]), async (_event, input: BrowserFormSubmitInput) => {
-    return browserManager.formSubmit(input.workspaceId, input, { agentApproved: true });
+    return browserManager.formSubmit(input.workspaceId, input);
   });
 
   handle(channels.browserWorkflow, z.tuple([browserWorkflowInputSchema]), async (_event, input: BrowserWorkflowInput) => {
-    return browserManager.workflow(input.workspaceId, input, { agentApproved: true });
+    return browserManager.workflow(input.workspaceId, input);
   });
 
   handle(channels.browserAssert, z.tuple([browserWorkflowAssertInputSchema]), async (_event, input: BrowserWorkflowAssertInput) => {
@@ -651,7 +662,19 @@ export const registerIpc = (
     return shell.openPath(target.absolutePath);
   });
 
-  handle(channels.openExternalUrl, z.tuple([externalUrlSchema]), (_event, url: string) => {
+  handle(channels.openExternalUrl, z.tuple([externalUrlSchema]), async (_event, url: string) => {
+    const parsed = new URL(url);
+    const confirmation = await dialog.showMessageBox({
+      type: "question",
+      buttons: ["Open in default browser", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: "Open external website?",
+      message: `Open ${parsed.origin} in your default browser?`,
+      detail: url,
+    });
+    if (confirmation.response !== 0) return;
     return shell.openExternal(url);
   });
 
@@ -750,7 +773,7 @@ const notesOpenInputSchema = z.object({
 });
 const notesOpenFileInputSchema = z.object({
   workspaceId: idSchema.optional(),
-  filePath: z.string().trim().max(4000).optional(),
+  filePath: z.never().optional(),
 });
 const notesUpdateInputSchema = z.object({
   workspaceId: idSchema.optional(),
@@ -763,7 +786,7 @@ const notesUpdateInputSchema = z.object({
 const notesSaveInputSchema = z.object({
   workspaceId: idSchema.optional(),
   noteId: idSchema,
-  filePath: z.string().trim().max(4000).optional(),
+  filePath: z.never().optional(),
 });
 const notesRenameInputSchema = z.object({
   workspaceId: idSchema.optional(),
@@ -1004,9 +1027,6 @@ const saveSettingsInputSchema = z.object({
   keepRunningInTray: z.boolean().optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   cliproxyBaseUrl: z.string().max(500).optional(),
-  appwriteEndpoint: z.string().max(500).optional(),
-  appwriteProjectId: z.string().max(120).optional(),
-  privoraGatewayFunctionId: z.string().max(120).optional(),
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
 });

@@ -183,7 +183,6 @@ export interface NotesOpenInput {
 
 export interface NotesOpenFileInput {
   workspaceId?: string;
-  filePath?: string;
 }
 
 export interface NotesUpdateInput {
@@ -198,7 +197,6 @@ export interface NotesUpdateInput {
 export interface NotesSaveInput {
   workspaceId?: string;
   noteId: string;
-  filePath?: string;
 }
 
 export interface NotesRenameInput {
@@ -1600,9 +1598,6 @@ export interface SaveSettingsInput {
   keepRunningInTray?: boolean;
   theme?: "light" | "dark" | "system";
   cliproxyBaseUrl?: string;
-  appwriteEndpoint?: string;
-  appwriteProjectId?: string;
-  privoraGatewayFunctionId?: string;
   openRouterApiKey?: string;
   geminiApiKey?: string;
 }

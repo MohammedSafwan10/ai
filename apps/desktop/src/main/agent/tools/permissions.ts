@@ -51,29 +51,20 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
   }
 
   if (call.name === "exec_command" || call.name === "desktop_run_diagnostics") {
-    const command = normalizedTerminalCommand(call) || String(call.arguments.cmd || call.arguments.command || (call.name === "desktop_run_diagnostics" ? call.arguments.kind || "" : ""));
-    const risky =
-      riskyArgv(call.arguments.argv) ||
-      destructiveCommandPattern.test(command) ||
-      networkCommandPattern.test(command) ||
-      shellControlPattern.test(command);
     return {
-      risk: risky ? "risky" : "safe",
-      requiresApproval: risky && mode !== "yolo",
-      reason: undefined,
+      risk: "risky",
+      requiresApproval: mode !== "yolo",
+      reason: "Terminal commands can execute arbitrary code and access data outside the workspace.",
     };
   }
 
   if (call.name === "write_stdin") {
     const input = String(call.arguments.chars || call.arguments.input || "");
-    const risky =
-      destructiveCommandPattern.test(input) ||
-      networkCommandPattern.test(input) ||
-      shellControlPattern.test(input);
+    const risky = input.length > 0;
     return {
       risk: risky ? "risky" : "safe",
       requiresApproval: risky && mode !== "yolo",
-      reason: undefined,
+      reason: risky ? "Terminal input can control an interactive shell or interpreter." : undefined,
     };
   }
 
@@ -237,6 +228,7 @@ export const findMatchingApprovalScope = (
   nowMs = Date.now(),
 ) =>
   scopes.find((scope) => {
+    if (["exec_command", "write_stdin", "desktop_run_diagnostics"].includes(call.name)) return false;
     if (scope.expiresAt && scope.expiresAt <= nowMs) return false;
     if (scope.maxUses && scope.useCount >= scope.maxUses) return false;
     if (scope.kind === "tool_thread" || scope.kind === "tool_workspace") {
@@ -251,9 +243,7 @@ export const findMatchingApprovalScope = (
   }) || null;
 
 export const approvalCommandPrefix = (call: DesktopToolCall) => {
-  const argv = normalizedArgv(call.arguments.argv);
-  if (argv.length > 0) return argv.slice(0, 2).join(" ");
-  return normalizedTerminalCommand(call).split(/\s+/).filter(Boolean).slice(0, 2).join(" ");
+  return normalizedTerminalCommand(call);
 };
 
 const normalizedTerminalCommand = (call: DesktopToolCall) => {

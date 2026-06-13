@@ -197,10 +197,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
               {tool.status === "awaiting_approval" && (
                 <div className="approval-actions">
                   <button onClick={() => onApprove(tool.callId, true, "once")}>Approve once</button>
-                  <button onClick={() => onApprove(tool.callId, true, "this_workspace")}>Trust tool</button>
-                  {isTerminalApproval(tool) && (
-                    <button onClick={() => onApprove(tool.callId, true, "command_prefix")}>Trust command</button>
-                  )}
+                  {!isTerminalApproval(tool) && <button onClick={() => onApprove(tool.callId, true, "this_workspace")}>Trust tool</button>}
                   <button onClick={() => onApprove(tool.callId, false)}>Cancel</button>
                 </div>
               )}

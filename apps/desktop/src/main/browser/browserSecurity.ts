@@ -1,4 +1,4 @@
-import { session, shell, type WebContents } from "electron";
+import { session, type WebContents } from "electron";
 
 export type BrowserControlScope = "user" | "agent";
 
@@ -99,20 +99,11 @@ export const installBrowserSessionSecurity = (
   browserSession.webRequest.onBeforeRequest((details, callback) => {
     callback(beforeRequest ? beforeRequest(details) : { cancel: isHardBlockedUrl(details.url) });
   });
-  browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    callback({ requestHeaders: redactHeaders(details.requestHeaders) });
-  });
-  browserSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({ responseHeaders: redactResponseHeaders(details.responseHeaders) });
-  });
   return browserSession;
 };
 
 export const installBrowserWebContentsSecurity = (contents: WebContents) => {
-  contents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://") || url.startsWith("https://")) void shell.openExternal(url);
-    return { action: "deny" };
-  });
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.on("will-navigate", (event, url) => {
     try {
       normalizeBrowserUrl(url);
@@ -126,15 +117,6 @@ export const redactHeaders = <T extends Record<string, string | string[] | undef
   const next = { ...headers };
   Object.keys(next).forEach((name) => {
     if (SENSITIVE_HEADER_NAMES.has(name.toLowerCase())) next[name as keyof T] = "[redacted]" as T[keyof T];
-  });
-  return next;
-};
-
-const redactResponseHeaders = <T extends Record<string, string[] | undefined>>(headers: T | undefined): T | undefined => {
-  if (!headers) return headers;
-  const next = { ...headers };
-  Object.keys(next).forEach((name) => {
-    if (SENSITIVE_HEADER_NAMES.has(name.toLowerCase())) next[name as keyof T] = ["[redacted]"] as T[keyof T];
   });
   return next;
 };

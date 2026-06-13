@@ -61,6 +61,7 @@ export class ComputerUseManager {
   }
 
   async listWindows(input: { backend?: ComputerUseBackendId } = {}, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     const backend = this.resolveBackend(input.backend);
     const windows = await backend.listWindows(signal);
     const activeWindow = windows.find((item) => item.focused) || windows[0];
@@ -73,6 +74,7 @@ export class ComputerUseManager {
   }
 
   async findApps(input: { backend?: ComputerUseBackendId; query?: string; limit?: number } = {}, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     const backend = this.resolveBackend(input.backend);
     const apps = await backend.findApps({ query: input.query, limit: input.limit }, signal);
     return {
@@ -87,6 +89,7 @@ export class ComputerUseManager {
   }
 
   async focusWindow(input: { backend?: ComputerUseBackendId; windowId?: string }, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     if (!input.windowId) return failure("Window id is required.", "stale_target");
     const backend = this.resolveBackend(input.backend);
     const result = await backend.focusWindow(String(input.windowId), signal);
@@ -98,6 +101,7 @@ export class ComputerUseManager {
   }
 
   async snapshot(input: { backend?: ComputerUseBackendId; windowId?: string; depth?: number; includeBoxes?: boolean } = {}, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     const snapshot = await this.resolveBackend(input.backend).snapshot(input, signal);
     this.updateState({ activeWindow: snapshot.window, lastFinding: snapshot.diagnosis?.message || `Captured ${snapshot.nodes.length} root node(s).` });
     return {
@@ -110,8 +114,9 @@ export class ComputerUseManager {
 
   async inspect(input: { backend?: ComputerUseBackendId; kind?: string; windowId?: string }, signal?: AbortSignal): Promise<ToolResult> {
     const kind = String(input.kind || "active_window").toLowerCase();
-    if (kind === "windows") return this.listWindows(input, signal);
     if (kind === "capabilities") return this.capabilities(input, signal);
+    if (!this.state.enabled) return computerUseDisabled();
+    if (kind === "windows") return this.listWindows(input, signal);
     if (kind === "screenshot") return this.screenshot({ ...input, mode: "window" }, signal);
     return this.snapshot({ ...input, depth: kind === "uia" ? 4 : 2 }, signal);
   }
@@ -122,7 +127,11 @@ export class ComputerUseManager {
     if (requiresTargetWindow(lockedInput) && !lockedInput.windowId) {
       return failure("Computer Use needs a target window before using foreground input. Focus, wait for, or snapshot the intended app first.", "stale_target");
     }
-    const hardBlock = computerActionHardBlockReason(lockedInput);
+    const target = await this.resolveActionTarget(lockedInput, signal);
+    if (requiresTrustedTarget(lockedInput) && !target) {
+      return failure("Computer Use requires a currently resolved UI element reference for this action.", "stale_target");
+    }
+    const hardBlock = computerActionHardBlockReason(lockedInput, target);
     if (hardBlock) {
       const result: ComputerUseActionResultRecord = {
         backend: lockedInput.backend || this.state.backend,
@@ -190,6 +199,7 @@ export class ComputerUseManager {
   }
 
   async wait(input: { backend?: ComputerUseBackendId; for?: string; value?: string; windowId?: string; timeoutMs?: number }, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     const kind = String(input.for || "text").toLowerCase();
     const expected = String(input.value || "");
     const timeoutMs = Math.max(250, Math.min(30_000, Number(input.timeoutMs) || 5_000));
@@ -222,6 +232,7 @@ export class ComputerUseManager {
   }
 
   async verify(input: { backend?: ComputerUseBackendId; text?: string; windowTitle?: string; windowId?: string }, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     if (input.windowTitle) return this.wait({ backend: input.backend, for: "window_title", value: input.windowTitle, windowId: input.windowId, timeoutMs: 1_000 }, signal);
     if (input.text) return this.wait({ backend: input.backend, for: "text", value: input.text, windowId: input.windowId, timeoutMs: 1_000 }, signal);
     const snapshot = await this.resolveBackend(input.backend).snapshot({ windowId: input.windowId, depth: 2 }, signal);
@@ -233,6 +244,7 @@ export class ComputerUseManager {
   }
 
   async screenshot(input: { backend?: ComputerUseBackendId; mode?: string; windowId?: string; x?: number; y?: number; width?: number; height?: number }, signal?: AbortSignal): Promise<ToolResult> {
+    if (!this.state.enabled) return computerUseDisabled();
     return this.captureScreenshotArtifact(undefined, input.backend, input.windowId, signal, input);
   }
 
@@ -294,6 +306,13 @@ export class ComputerUseManager {
     return { ...input, windowId: this.state.activeWindow?.id };
   }
 
+  private async resolveActionTarget(input: ComputerUseActionInput, signal?: AbortSignal) {
+    const ref = String(input.ref || input.targetRef || "");
+    if (!ref) return undefined;
+    const snapshot = await this.resolveBackend(input.backend).snapshot({ windowId: input.windowId, depth: 5 }, signal);
+    return findSnapshotNode(snapshot.nodes, ref);
+  }
+
   private async captureScreenshotArtifact(
     workspaceId: string | undefined,
     backendId: ComputerUseBackendId | undefined,
@@ -351,6 +370,18 @@ const failure = (message: string, kind: string): ToolResult => ({
   data: { diagnosis: { kind, message } },
 });
 
+const computerUseDisabled = () =>
+  failure("Computer Use mode is off. Turn it on in the composer tools menu before inspecting or controlling desktop apps.", "blocked_by_policy");
+
+const findSnapshotNode = (nodes: ComputerSnapshotRecord["nodes"], ref: string): ComputerSnapshotRecord["nodes"][number] | undefined => {
+  for (const node of nodes) {
+    if (node.ref === ref) return node;
+    const child = findSnapshotNode(node.children || [], ref);
+    if (child) return child;
+  }
+  return undefined;
+};
+
 const requiresTargetWindow = (input: ComputerUseActionInput) =>
   [
     "click",
@@ -362,6 +393,19 @@ const requiresTargetWindow = (input: ComputerUseActionInput) =>
     "type",
     "press",
     "scroll",
+    "drag",
+  ].includes(String(input.action || "").toLowerCase());
+
+const requiresTrustedTarget = (input: ComputerUseActionInput) =>
+  [
+    "click",
+    "double_click",
+    "focus",
+    "invoke",
+    "select",
+    "set_value",
+    "type",
+    "press",
     "drag",
   ].includes(String(input.action || "").toLowerCase());
 

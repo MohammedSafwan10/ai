@@ -72,5 +72,35 @@ export const revalidateResolvedWorkspacePath = (target: ResolvedWorkspacePath): 
   return { workspaceRoot: root, absolutePath: finalPath, relativePath };
 };
 
+export const ensureWorkspaceParentDirectory = (target: ResolvedWorkspacePath) => {
+  const root = fs.realpathSync.native(target.workspaceRoot);
+  const parentRelative = path.dirname(target.relativePath);
+  if (parentRelative === ".") return root;
+  let current = root;
+  for (const segment of parentRelative.split(path.sep).filter(Boolean)) {
+    const next = path.join(current, segment);
+    if (fs.existsSync(next)) {
+      const stat = fs.lstatSync(next);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw Object.assign(new Error("Workspace destination parent must be a real directory."), {
+          code: "UNSAFE_WORKSPACE_PARENT",
+          path: next,
+        });
+      }
+    } else {
+      fs.mkdirSync(next);
+    }
+    const resolved = fs.realpathSync.native(next);
+    if (!isInsideWorkspace(root, resolved)) {
+      throw Object.assign(new Error("Path is outside the selected workspace."), {
+        code: "OUTSIDE_WORKSPACE",
+        path: resolved,
+      });
+    }
+    current = resolved;
+  }
+  return current;
+};
+
 export const describePath = (workspaceRoot: string, userPath: string) =>
   resolveWorkspacePath(workspaceRoot, userPath).relativePath || ".";

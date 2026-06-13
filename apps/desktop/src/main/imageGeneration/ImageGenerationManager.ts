@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { ArtifactStore } from "../db/artifactStore";
-import { resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../security/pathSandbox";
+import { ensureWorkspaceParentDirectory, resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../security/pathSandbox";
 import { atomicWriteFile, atomicWriteFileSync } from "../storage/atomicWrite";
 
 export type ImageGenerationProvider = "cliproxy" | "gemini";
@@ -290,7 +290,7 @@ export class ImageGenerationManager {
     if (fs.existsSync(destination.absolutePath) && !overwrite) {
       throw new Error(`Destination already exists: ${destination.relativePath}. Set overwrite=true to replace it.`);
     }
-    await fsp.mkdir(path.dirname(destination.absolutePath), { recursive: true });
+    ensureWorkspaceParentDirectory(destination);
     destination = revalidateResolvedWorkspacePath(destination);
     const bytes = await fsp.readFile(sourcePath);
     await atomicWriteBuffer(destination.absolutePath, bytes);
