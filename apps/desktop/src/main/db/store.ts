@@ -429,7 +429,10 @@ export class DesktopStore {
 
   createSubagent(input: { parentThreadId: string; parentMessageId: string; workspaceId: string | null; taskName: string; agentPath: string; agentRole?: string; agentNickname?: string; prompt: string; model?: string; reasoningEffort?: SubagentRecord["reasoningEffort"] }) {
     const timestamp = now(); const hiddenThread = this.createThread(input.workspaceId, { hidden: true, title: input.agentNickname || input.taskName });
-    const record: SubagentRecord = { id: crypto.randomUUID(), parentThreadId: input.parentThreadId, parentMessageId: input.parentMessageId, threadId: hiddenThread.id, workspaceId: input.workspaceId, taskName: input.taskName, agentPath: input.agentPath, agentRole: input.agentRole, agentNickname: input.agentNickname, prompt: input.prompt, model: input.model, reasoningEffort: input.reasoningEffort, status: "pending", createdAt: timestamp, updatedAt: timestamp };
+    const model = input.model ? normalizeModelId(input.model) : hiddenThread.model;
+    const reasoningEffort = input.reasoningEffort || hiddenThread.reasoningEffort;
+    this.updateThreadSettings(hiddenThread.id, { model, reasoningEffort, collaborationMode: hiddenThread.collaborationMode });
+    const record: SubagentRecord = { id: crypto.randomUUID(), parentThreadId: input.parentThreadId, parentMessageId: input.parentMessageId, threadId: hiddenThread.id, workspaceId: input.workspaceId, taskName: input.taskName, agentPath: input.agentPath, agentRole: input.agentRole, agentNickname: input.agentNickname, prompt: input.prompt, model, reasoningEffort, status: "pending", createdAt: timestamp, updatedAt: timestamp };
     this.putSubagent(record); return record;
   }
   listSubagents(parentThreadId?: string): SubagentRecord[] {

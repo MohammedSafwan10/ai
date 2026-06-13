@@ -23,6 +23,112 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("persists the inherited model on both the subagent and its hidden thread", () => {
+    const store = createStore();
+    store.saveSettings({ model: "gemini-3.5-flash" });
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+
+    const agent = store.createSubagent({
+      parentThreadId: rootThread.id,
+      parentMessageId: "parent-message",
+      workspaceId: workspace.id,
+      taskName: "reviewer",
+      agentPath: "/root/reviewer",
+      prompt: "Review the workspace",
+      model: "gpt-5.5",
+    });
+
+    expect(agent.model).toBe("gpt-5.5");
+    expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.5");
+  });
+
+  it("always inherits the active parent model when spawning", () => {
+    const store = createStore();
+    store.saveSettings({ model: "gemini-3.5-flash" });
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: rootThread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    (runtime as unknown as { startSubagentTurn: () => void }).startSubagentTurn = () => undefined;
+
+    const result = (runtime as unknown as {
+      spawnSubagent: (
+        call: { arguments: Record<string, unknown> },
+        workspaceRoot: string,
+        parentThreadId: string,
+        parentMessageId: string,
+        parentRun: { model: string; reasoningEffort: string },
+      ) => { success: boolean };
+    }).spawnSubagent(
+      {
+        arguments: {
+          taskName: "reviewer",
+          message: "Review the workspace",
+          model: "gemini-3.5-flash",
+        },
+      },
+      workspace.path,
+      rootThread.id,
+      "parent-message",
+      { model: "gpt-5.5", reasoningEffort: "high" },
+    );
+
+    const [agent] = store.listDirectSubagents(rootThread.id);
+    expect(result.success).toBe(true);
+    expect(agent.model).toBe("gpt-5.5");
+    expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.5");
+  });
+
+  it("uses the current parent model for legacy children saved with a different provider", () => {
+    const store = createStore();
+    store.saveSettings({ model: "gemini-3.5-flash" });
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+    store.updateThreadSettings(rootThread.id, {
+      model: "gpt-5.5",
+      reasoningEffort: rootThread.reasoningEffort,
+      collaborationMode: rootThread.collaborationMode,
+    });
+    const agent = store.createSubagent({
+      parentThreadId: rootThread.id,
+      parentMessageId: "parent-message",
+      workspaceId: workspace.id,
+      taskName: "legacy",
+      agentPath: "/root/legacy",
+      prompt: "Legacy task",
+      model: "gemini-3.5-flash",
+    });
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: rootThread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    let selectedModel = "";
+    (runtime as unknown as { continueLoop: (options: { model?: string }) => Promise<void> }).continueLoop = async (options) => {
+      selectedModel = options.model || "";
+    };
+
+    (runtime as unknown as {
+      runSubagentLoop: (
+        agent: SubagentRecord,
+        workspaceRoot: string,
+        assistantMessage: ChatMessageRecord,
+      ) => void;
+    }).runSubagentLoop(agent, workspace.path, {
+      id: "assistant",
+      threadId: agent.threadId,
+      role: "assistant",
+      content: "",
+      status: "running",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    expect(selectedModel).toBe("gpt-5.5");
+  });
+
   it("separates direct children from descendants and does not include the parent as its own child", () => {
     const store = createStore();
     const workspace = store.upsertWorkspace(tempDir);

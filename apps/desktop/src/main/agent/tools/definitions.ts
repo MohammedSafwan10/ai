@@ -98,7 +98,7 @@ export const desktopToolDefinitions = [
       agent_type: textProperty("Alias for agentType."),
       forkTurns: textProperty("Context fork mode: all, none, or a positive integer string. Default all."),
       fork_turns: textProperty("Alias for forkTurns."),
-      model: textProperty("Optional model override. Omit to inherit current model."),
+      model: textProperty("Deprecated. Child agents always inherit the current parent model."),
       reasoningEffort: textProperty("Optional reasoning effort override. Omit to inherit current setting."),
     }, ["taskName", "message"]),
   },

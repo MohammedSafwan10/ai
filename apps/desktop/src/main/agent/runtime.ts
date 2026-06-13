@@ -1672,6 +1672,7 @@ export class AgentRuntime {
     const usedNicknames = new Set(this.store.listDirectSubagents(parentThreadId).map((agent) => (agent.agentNickname || "").toLowerCase()).filter(Boolean));
     const nickname = pickSubagentNickname(role, usedNicknames, taskName);
     const thread = this.store.getThread(parentThreadId);
+    const inheritedModel = getModelOption(parentRun?.model || parentAgent?.model || thread?.model || settings.model).id;
     const agent = this.store.createSubagent({
       parentThreadId,
       parentMessageId,
@@ -1681,7 +1682,7 @@ export class AgentRuntime {
       agentRole: role?.name,
       agentNickname: nickname,
       prompt: message,
-      model: typeof call.arguments.model === "string" ? call.arguments.model : role?.model || parentRun?.model || thread?.model || settings.model,
+      model: inheritedModel,
       reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || parentRun?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort,
     });
     this.startSubagentTurn(agent, workspaceRoot, message, role, forkTurns.value);
@@ -1998,7 +1999,10 @@ export class AgentRuntime {
     const run = this.createRun(agent.threadId, assistantMessage.id, controller);
     this.activeRuns.set(agent.threadId, run);
     this.emitRun(run);
-    const subagentBudget = resolveModelRuntimeBudget(agent.model || this.store.getSettings().model, "normal");
+    const parentAgent = this.store.getSubagentByThread(agent.parentThreadId);
+    const parentThread = this.store.getThread(agent.parentThreadId);
+    const inheritedModel = getModelOption(parentAgent?.model || parentThread?.model || agent.model || this.store.getSettings().model).id;
+    const subagentBudget = resolveModelRuntimeBudget(inheritedModel, "normal");
     const history = [
       subagentInstructionMessage(agent, role, forkTurns),
       ...buildForkedParentHistory(this.store, agent, forkTurns),
@@ -2016,7 +2020,7 @@ export class AgentRuntime {
       toolCount: 0,
       recoveryAttempts: 0,
       parentThreadId: agent.parentThreadId,
-      model: agent.model,
+      model: inheritedModel,
       reasoningEffort: agent.reasoningEffort,
     }).catch((error) => {
       this.store.updateSubagent(agent.threadId, {
