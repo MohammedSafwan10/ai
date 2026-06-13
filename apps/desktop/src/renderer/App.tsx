@@ -12,6 +12,7 @@ import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue } from "./features/chat/usePromptQueue";
+import { splitComposerSettingsForPersistence } from "./features/chat/settingsPersistence";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
 import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
 
@@ -194,17 +195,7 @@ export default function App() {
   };
 
   const saveComposerSettings = async (settings: SaveSettingsInput) => {
-    const threadSettings = {
-      model: settings.model,
-      reasoningEffort: settings.reasoningEffort,
-      collaborationMode: settings.collaborationMode,
-      agentHarnessMode: settings.agentHarnessMode,
-    };
-    const globalSettings: SaveSettingsInput = { ...settings };
-    delete globalSettings.model;
-    delete globalSettings.reasoningEffort;
-    delete globalSettings.collaborationMode;
-    delete globalSettings.agentHarnessMode;
+    const { globalSettings, threadSettings } = splitComposerSettingsForPersistence(settings);
     try {
       if (Object.keys(globalSettings).length > 0) await window.privoraDesktop.saveSettings(globalSettings);
       if (activeThread && (threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
