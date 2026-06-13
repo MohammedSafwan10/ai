@@ -54,10 +54,8 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     return {
       risk: "risky",
       requiresApproval: mode !== "yolo",
-      reason: "Terminal commands can execute arbitrary code and access data outside the workspace.",
     };
   }
-
   if (call.name === "write_stdin") {
     const input = String(call.arguments.chars || call.arguments.input || "");
     const risky = input.length > 0;
