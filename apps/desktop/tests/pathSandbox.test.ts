@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../src/main/security/pathSandbox";
+import { ensureWorkspaceParentDirectory, resolveExistingWorkspacePath, resolveWorkspacePath } from "../src/main/security/pathSandbox";
 
 let tempDir = "";
 
@@ -41,6 +41,19 @@ describe("workspace path sandbox", () => {
     try {
       if (!trySymlink(outsideDir, path.join(tempDir, "linked-dir"), "dir")) return;
       expect(() => resolveWorkspacePath(tempDir, path.join("linked-dir", "new.txt"))).toThrow(/outside/i);
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects nested missing destinations before creating through a symlink", () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-desktop-"));
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-outside-"));
+    try {
+      if (!trySymlink(outsideDir, path.join(tempDir, "linked-dir"), "dir")) return;
+      const destination = resolveWorkspacePath(tempDir, path.join("linked-dir", "missing", "new.txt"));
+      expect(() => ensureWorkspaceParentDirectory(destination)).toThrow(/real directory|outside/i);
+      expect(fs.existsSync(path.join(outsideDir, "missing"))).toBe(false);
     } finally {
       fs.rmSync(outsideDir, { recursive: true, force: true });
     }

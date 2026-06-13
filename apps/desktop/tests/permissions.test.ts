@@ -37,6 +37,30 @@ describe("desktop permission classifier", () => {
     });
   });
 
+  it("requires approval for interpreter and ordinary terminal commands", () => {
+    for (const args of [
+      { argv: ["node", "-e", "require('fs').writeFileSync('x','y')"] },
+      { argv: ["python", "-c", "print('ok')"] },
+      { cmd: "git status --short" },
+    ]) {
+      expect(classifyToolCall(call("exec_command", args), "ask_risky")).toMatchObject({
+        risk: "risky",
+        requiresApproval: true,
+      });
+    }
+  });
+
+  it("requires approval for all non-empty terminal stdin", () => {
+    expect(classifyToolCall(call("write_stdin", { session_id: 7, chars: "print('hello')\n" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("write_stdin", { session_id: 7, chars: "" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+  });
+
   it("requires approval for risky terminal stdin", () => {
     expect(classifyToolCall(call("write_stdin", { session_id: 7, chars: "rm -rf dist\n" }), "ask_risky")).toMatchObject({
       risk: "risky",
@@ -274,27 +298,27 @@ describe("desktop permission classifier", () => {
     expect(findMatchingApprovalScope(call("desktop_delete_path", { path: "old.txt" }), [scope])).toBeNull();
   });
 
-  it("matches terminal command prefixes on command boundaries", () => {
+  it("never reuses approval scopes for terminal commands", () => {
     const terminalCall = call("exec_command", { cmd: "npm install lodash", workdir: "apps/desktop" });
     const scope = approvalScope({
       kind: "terminal_prefix",
       commandPrefix: approvalCommandPrefix(terminalCall),
       cwd: "apps/desktop",
     });
-    expect(findMatchingApprovalScope(terminalCall, [scope])).toBe(scope);
+    expect(findMatchingApprovalScope(terminalCall, [scope])).toBeNull();
     expect(findMatchingApprovalScope(call("exec_command", { cmd: "npm installer", workdir: "apps/desktop" }), [scope])).toBeNull();
     expect(findMatchingApprovalScope(call("exec_command", { cmd: "npm install lodash", workdir: "other" }), [scope])).toBeNull();
   });
 
-  it("matches terminal argv prefixes on argv boundaries", () => {
+  it("stores exact terminal command text but never reuses it", () => {
     const terminalCall = call("exec_command", { argv: ["npm", "install", "lodash"], workdir: "apps/desktop" });
     const scope = approvalScope({
       kind: "terminal_prefix",
       commandPrefix: approvalCommandPrefix(terminalCall),
       cwd: "apps/desktop",
     });
-    expect(scope.commandPrefix).toBe("npm install");
-    expect(findMatchingApprovalScope(terminalCall, [scope])).toBe(scope);
+    expect(scope.commandPrefix).toBe("npm install lodash");
+    expect(findMatchingApprovalScope(terminalCall, [scope])).toBeNull();
     expect(findMatchingApprovalScope(call("exec_command", { argv: ["npm", "installer"], workdir: "apps/desktop" }), [scope])).toBeNull();
     expect(findMatchingApprovalScope(call("exec_command", { argv: ["npm", "install", "lodash"], workdir: "other" }), [scope])).toBeNull();
   });

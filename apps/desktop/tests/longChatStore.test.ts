@@ -169,6 +169,13 @@ describe("long chat SQLite repository", () => {
     expect(store.getMessage("persisted")?.content).toBe("persisted");
   });
 
+  it("keeps hosted endpoints trusted and rejects remote CLI proxy settings", () => {
+    const db = createStore();
+    const settings = db.saveSettings({ appwriteEndpoint: "https://attacker.example/v1" } as never);
+    expect(settings.appwriteEndpoint).toBe("https://sgp.cloud.appwrite.io/v1");
+    expect(() => db.saveSettings({ cliproxyBaseUrl: "https://attacker.example" })).toThrow(/localhost/i);
+  });
+
   it("persists compaction checkpoints without deleting visible chat history", () => {
     const db = createStore();
     const thread = db.createThread(null);
@@ -237,6 +244,33 @@ describe("long chat SQLite repository", () => {
     expect(buildProviderHistoryWithCompaction(db, thread.id, "next-assistant").some((item) => item.content === "Stale summary")).toBe(false);
   });
 
+  it("deletes tool events and undo records when their messages are pruned", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const user = message("user", thread.id, 0);
+    const assistant = message("assistant", thread.id, 1);
+    db.upsertMessage(user);
+    db.upsertMessage(assistant);
+    db.upsertToolEvent(tool("tool", thread.id, assistant.id, "private output"));
+    db.upsertTurnUndo({
+      id: "undo",
+      threadId: thread.id,
+      messageId: assistant.id,
+      workspaceId: null,
+      status: "available",
+      operations: [],
+      summary: { files: 0, additions: 0, deletions: 0, paths: [] },
+      conflicts: [],
+      createdAt: 2,
+      updatedAt: 2,
+    });
+
+    db.pruneThreadAfterMessage(thread.id, user.id);
+
+    expect(db.getToolEvent("tool")).toBeNull();
+    expect(db.getTurnUndo(assistant.id)).toBeNull();
+  });
+
   it("ignores malformed compaction replacement history", () => {
     const db = createStore();
     const thread = db.createThread(null);
@@ -262,7 +296,7 @@ describe("long chat SQLite repository", () => {
     expect(providerHistory.some((item) => item.content === "visible")).toBe(true);
   });
 
-  it("resets incompatible development SQLite schemas instead of crashing", () => {
+  it("migrates incompatible SQLite schemas without deleting existing records", () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-long-chat-"));
     const raw = new DatabaseSync(path.join(tempDir, "privora-desktop.sqlite"));
     raw.exec(`
@@ -272,6 +306,8 @@ describe("long chat SQLite repository", () => {
         message_id TEXT NOT NULL,
         payload TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE kv (scope TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(scope,key)) STRICT;
+      INSERT INTO kv(scope, key, payload) VALUES ('test', 'preserved', '{"value":"kept"}');
       PRAGMA user_version = 0;
     `);
     raw.close();
@@ -283,6 +319,50 @@ describe("long chat SQLite repository", () => {
     store.upsertToolEvent(tool("tool", thread.id, assistant.id, "ok"));
 
     expect(store.getToolEvent("tool")?.callId).toBe("tool-call");
+    store.close();
+    store = null;
+    const rawAfter = new DatabaseSync(path.join(tempDir, "privora-desktop.sqlite"));
+    expect((rawAfter.prepare("SELECT payload FROM kv WHERE scope = 'test' AND key = 'preserved'").get() as { payload: string }).payload).toContain("kept");
+    rawAfter.close();
+    expect(fs.readdirSync(tempDir).some((name) => name.includes(".backup-v0-"))).toBe(true);
+  });
+
+  it("refuses a newer SQLite schema without modifying its data", () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-long-chat-"));
+    const dbPath = path.join(tempDir, "privora-desktop.sqlite");
+    const raw = new DatabaseSync(dbPath);
+    raw.exec(`
+      CREATE TABLE kv (scope TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(scope,key)) STRICT;
+      INSERT INTO kv(scope, key, payload) VALUES ('test', 'future', '{"value":"kept"}');
+      PRAGMA user_version = 999;
+    `);
+    raw.close();
+
+    expect(() => new DesktopStore(tempDir)).toThrow(/newer SQLite schema/i);
+    const rawAfter = new DatabaseSync(dbPath);
+    expect((rawAfter.prepare("SELECT payload FROM kv WHERE scope = 'test' AND key = 'future'").get() as { payload: string }).payload).toContain("kept");
+    expect((rawAfter.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(999);
+    rawAfter.close();
+  });
+
+  it("fills in missing application tables without dropping partial legacy data", () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-long-chat-"));
+    const raw = new DatabaseSync(path.join(tempDir, "privora-desktop.sqlite"));
+    raw.exec(`
+      CREATE TABLE kv (scope TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(scope,key)) STRICT;
+      INSERT INTO kv(scope, key, payload) VALUES ('test', 'partial', '{"value":"kept"}');
+      PRAGMA user_version = 0;
+    `);
+    raw.close();
+
+    store = new DesktopStore(tempDir);
+    expect(store.createThread(null).id).toBeTruthy();
+    store.close();
+    store = null;
+
+    const rawAfter = new DatabaseSync(path.join(tempDir, "privora-desktop.sqlite"));
+    expect((rawAfter.prepare("SELECT payload FROM kv WHERE scope = 'test' AND key = 'partial'").get() as { payload: string }).payload).toContain("kept");
+    rawAfter.close();
   });
 });
 
