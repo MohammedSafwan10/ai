@@ -205,7 +205,7 @@ export const reviewerReadOnlyBlockReason = (call: DesktopToolCall, enabled?: boo
     ? "Reviewer Swarm agents are read-only and cannot run mutating or side-effecting tools."
     : "";
 
-const formatReviewerSwarmSummary = (reviewers: SubagentRecord[]) => {
+const formatReviewerSwarmFeedback = (reviewers: SubagentRecord[]) => {
   if (reviewers.length === 0) return "";
   const reports = reviewers.map((agent, index) => {
     const label = agent.agentNickname || `Reviewer ${index + 1}`;
@@ -213,16 +213,12 @@ const formatReviewerSwarmSummary = (reviewers: SubagentRecord[]) => {
     const status = agent.status === "completed" ? "" : ` (${agent.status})`;
     return `- ${label}${status}: ${compactPreview(body, 900)}`;
   });
-  const noBlockingIssues = reviewers.every((agent) =>
-    agent.status === "completed" &&
-    /\b(no|none|did not find|no blocking|no issues|no findings)\b/i.test(agent.finalMessage || agent.lastPreview || ""));
   return [
+    "Reviewer Swarm reports are ready.",
+    "Read the reports naturally and write the final answer accordingly.",
+    "If reviewers found issues, mention them clearly and do not claim the work is complete unless those issues are fixed.",
+    "If the reports are clean, you may say the work passed Reviewer Swarm.",
     "",
-    "",
-    "Reviewer Swarm:",
-    noBlockingIssues
-      ? `Passed. ${reviewers.length} reviewers reported no blocking issues.`
-      : "Review feedback:",
     ...reports,
   ].join("\n");
 };
@@ -1104,17 +1100,30 @@ export class AgentRuntime {
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
-          const swarmSummary = await this.maybeRunReviewerSwarm({
+          const swarmFeedback = await this.maybeRunReviewerSwarm({
             options,
             run,
             assistantText,
             toolCount,
             agentHarnessMode: effectiveAgentHarnessMode,
           });
-          if (swarmSummary) {
-            const startOffset = assistantText.length;
-            assistantText += swarmSummary;
-            recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
+          if (swarmFeedback) {
+            const draftText = assistantText.slice(textStart);
+            assistantText = assistantText.slice(0, textStart);
+            options.assistantMessage.textParts = (options.assistantMessage.textParts || []).filter((part) => part.endOffset <= textStart);
+            flushAssistant("running", true);
+            history = [
+              ...history,
+              ...(draftText.trim() ? [{
+                role: "assistant" as const,
+                content: draftText,
+                parts: [{ type: "text" as const, text: draftText }],
+              }] : []),
+              textProviderMessage(swarmFeedback),
+            ];
+            options.reviewerSwarmCompleted = true;
+            this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+            continue;
           }
           transitionRun(run, "draining", { iteration, toolCount });
           transitionRun(run, "completed", { iteration, toolCount });
@@ -1584,7 +1593,7 @@ export class AgentRuntime {
     if (input.options.parentThreadId) return "";
     if (input.options.reviewerSwarmCompleted) return "";
     if (input.agentHarnessMode !== "review_swarm") return "";
-    if (!this.shouldRunReviewerSwarm(input.options.threadId, input.toolCount)) return "";
+    if (!this.shouldRunReviewerSwarm(input.toolCount)) return "";
 
     transitionRun(input.run, "waiting_tool", {
       iteration: input.options.iteration,
@@ -1598,13 +1607,11 @@ export class AgentRuntime {
     const reports = await this.waitForReviewerSwarm(reviewers);
     transitionRun(input.run, "draining", { iteration: input.options.iteration, toolCount: input.toolCount, reason: undefined });
     this.emitRun(input.run);
-    return formatReviewerSwarmSummary(reports);
+    return formatReviewerSwarmFeedback(reports);
   }
 
-  private shouldRunReviewerSwarm(threadId: string, toolCount: number) {
-    if (toolCount > 0) return true;
-    const latestUser = this.store.findLatestMessage(threadId, "user");
-    return /\b(review|audit|check|inspect|bug|security|risk)\b/i.test(latestUser?.content || "");
+  private shouldRunReviewerSwarm(toolCount: number) {
+    return toolCount > 0;
   }
 
   private startReviewerSwarm(options: ContinueOptions, assistantText: string) {

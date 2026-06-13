@@ -322,7 +322,7 @@ describe("reviewer swarm harness", () => {
     };
 
     const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
-    const summary = await (runtime as unknown as {
+    const feedback = await (runtime as unknown as {
       maybeRunReviewerSwarm: (input: {
         options: Record<string, unknown>;
         run: AgentRunTracker;
@@ -355,8 +355,8 @@ describe("reviewer swarm harness", () => {
     const reviewers = store.listDirectSubagents(rootThread.id);
     expect(reviewers).toHaveLength(2);
     expect(readOnlyFlags).toEqual([true, true]);
-    expect(summary).toContain("Reviewer Swarm:");
-    expect(summary).toContain("Passed. 2 reviewers reported no blocking issues.");
+    expect(feedback).toContain("Reviewer Swarm reports are ready.");
+    expect(feedback).toContain("No blocking issues found.");
     expect(reviewers.map((agent) => agent.model)).toEqual(["gpt-5.5", "gpt-5.5"]);
     expect(reviewers.map((agent) => agent.reasoningEffort)).toEqual(["high", "high"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.agentHarnessMode)).toEqual(["standard", "standard"]);
@@ -418,7 +418,7 @@ describe("reviewer swarm harness", () => {
     };
     const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
 
-    const summary = await (runtime as unknown as {
+    const feedback = await (runtime as unknown as {
       maybeRunReviewerSwarm: (input: {
         options: Record<string, unknown>;
         run: AgentRunTracker;
@@ -446,9 +446,9 @@ describe("reviewer swarm harness", () => {
     });
 
     expect(store.listDirectSubagents(rootThread.id)).toHaveLength(2);
-    expect(summary).toContain("Review feedback:");
-    expect(summary).toContain("Reviewer 1 (failed)");
-    expect(summary).toContain("reviewer model unavailable");
+    expect(feedback).toContain("Reviewer Swarm reports are ready.");
+    expect(feedback).toContain("Reviewer 1 (failed)");
+    expect(feedback).toContain("reviewer model unavailable");
   });
 
   it("blocks mutating tools for reviewer swarm agents while allowing read-only inspection", () => {
