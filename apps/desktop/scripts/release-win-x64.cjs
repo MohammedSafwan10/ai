@@ -31,6 +31,7 @@ function main() {
     return;
   }
 
+  assertSigningConfig();
   assertCommand("git", ["--version"]);
   assertCommand("npm", ["--version"]);
   assertCommand("appwrite", ["--version"]);
@@ -70,6 +71,8 @@ function main() {
       throw new Error(`Missing release artifact: ${artifact.path}`);
     }
   });
+  assertValidAuthenticodeSignature(path.join(desktopRoot, "out", "Privora-win32-x64", "Privora.exe"));
+  assertValidAuthenticodeSignature(artifacts.installer.path);
 
   uploadFileIfNeeded(artifacts.releases);
   uploadFileIfNeeded(artifacts.package);
@@ -175,6 +178,24 @@ function assertCommand(command, commandArgs) {
   } catch {
     throw new Error(`Required command is not available: ${command}`);
   }
+}
+
+function assertSigningConfig() {
+  const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
+  const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+  if (!certificateFile || !certificatePassword) {
+    throw new Error("Windows releases require WINDOWS_CERTIFICATE_FILE and WINDOWS_CERTIFICATE_PASSWORD.");
+  }
+  if (!fs.existsSync(certificateFile)) throw new Error(`Windows signing certificate was not found: ${certificateFile}`);
+}
+
+function assertValidAuthenticodeSignature(filePath) {
+  const status = runPowerShell([
+    "-NoProfile",
+    "-Command",
+    `(Get-AuthenticodeSignature -LiteralPath ${quotePs(filePath)}).Status.ToString()`,
+  ]).trim();
+  if (status !== "Valid") throw new Error(`Authenticode verification failed for ${filePath}: ${status || "unknown status"}`);
 }
 
 function configureAppwriteClient() {

@@ -11,6 +11,8 @@ const targetArch = process.env.npm_config_arch || process.arch;
 const optionalResource = (...segments: string[]) => path.join(...segments);
 const existingOptionalResources = (...resources: string[]) => resources.filter((resource) => fs.existsSync(resource));
 const ripgrepResourcePackage = `node_modules/@vscode/ripgrep-${targetPlatform}-${targetArch}`;
+const windowsCertificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
+const windowsCertificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -27,6 +29,12 @@ const config: ForgeConfig = {
     executableName: "Privora",
     icon: "assets/icon",
     name: "Privora",
+    ...(windowsCertificateFile ? {
+      windowsSign: {
+        certificateFile: windowsCertificateFile,
+        certificatePassword: windowsCertificatePassword,
+      },
+    } : {}),
   },
   rebuildConfig: {
     ignoreModules: process.env.PRIVORA_SKIP_PTY_REBUILD === "1" ? ["node-pty"] : [],
@@ -36,6 +44,10 @@ const config: ForgeConfig = {
       name: "Privora",
       setupIcon: "assets/icon.ico",
       setupExe: "PrivoraSetup.exe",
+      ...(windowsCertificateFile ? {
+        certificateFile: windowsCertificateFile,
+        certificatePassword: windowsCertificatePassword,
+      } : {}),
     }),
     new MakerZIP({}, ["win32", "darwin"]),
     new MakerDMG({
