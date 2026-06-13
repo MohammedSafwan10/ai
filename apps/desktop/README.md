@@ -5,7 +5,7 @@ SQLite-backed paginated chat architecture and long-session performance rules.
 
 Privora Desktop is a local-first Electron coding-agent app for working inside real project folders. It gives an AI agent controlled access to workspace files, search, git, terminal processes, diagnostics, approvals, and reviewable file changes from a desktop UI.
 
-The app is inspired by Codex-style local agent workflows, but is built as a desktop application with persistent workspaces, project chats, visual tool timelines, approvals, undo metadata, Plan Mode, and provider settings.
+The app is inspired by Codex-style local agent workflows, but is built as a desktop application with persistent workspaces, project chats, visual tool timelines, approvals, undo metadata, Plan Mode, Reviewer Swarm, and provider settings.
 
 ## What It Does
 
@@ -15,6 +15,7 @@ The app is inspired by Codex-style local agent workflows, but is built as a desk
 - Supports approval gates for risky actions and reusable approval scopes.
 - Keeps file diffs, hashes, warnings, and undo metadata for review.
 - Provides Plan Mode for research/planning without mutating the workspace.
+- Provides Reviewer Swarm mode for automatic read-only review by two model-inheriting subagents before the final answer.
 - Stores settings, threads, workspaces, secrets, and recovery metadata locally.
 
 ## Agent Tools
@@ -51,12 +52,20 @@ In Plan Mode, the agent can:
 
 In Plan Mode, mutating tools and risky terminal actions are blocked. When a proposed plan is ready, the UI can switch back to default mode and start implementation.
 
+## Reviewer Swarm
+
+Reviewer Swarm is an optional composer mode for higher-confidence turns.
+
+When enabled, the main agent works normally. After qualifying tool work completes, Privora launches exactly two read-only reviewer subagents. They inherit the parent thread's model/provider and reasoning effort, run with nested swarms disabled, and inspect the turn for request satisfaction, bugs/regressions, missing tests, security risks, and data-loss risks.
+
+Reviewer reports are fed back to the parent model before the final response. The parent writes the user-facing final answer naturally from those reports instead of relying on local keyword or regex pass/fail parsing. Reviewer startup failures or timeouts are surfaced as verification risk rather than deadlocking the parent turn.
+
 ## Desktop UI
 
 The renderer includes:
 
 - Workspace sidebar with project-scoped chats.
-- Composer with prompt history, large-paste handling, image attachments, model/provider controls, permission mode, and Plan mode.
+- Composer with prompt history, large-paste handling, image attachments, model/provider controls, permission mode, Plan Mode, Computer Use, and Reviewer Swarm.
 - Tool timeline with live shimmer, compact activity grouping, expandable terminal output, file-change summaries, and answered-question details.
 - Review/undo surfaces for file changes.
 - Built-in Browser panel with real tabs, native page rendering, compact browser tools menu, current-page evidence, workflow replay, download tracking, PDF evidence, and form analysis.
@@ -64,6 +73,7 @@ The renderer includes:
 - Native image-generation timeline rows with inline generated previews and saved asset paths.
 - Expandable terminal activity rows in chat with compact streamed output and session controls.
 - Optional Computer Use mode for guarded native Windows app control with semantic snapshots, action traces, and hard safety blocks.
+- Reviewer Swarm mode with an active pill and multi-agent icon.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
 - Clear recovery/error notices if local SQLite storage cannot be opened safely.
@@ -101,6 +111,8 @@ Secrets are stored through the local desktop store and are not exposed directly 
 BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are charged by the server-side credit engine.
 
 CLIProxy model aliases are owned by Privora Desktop in the first implementation, so users do not need to edit CLIProxy's `oauth-model-alias` config for supported models. Desktop also sends a thread-scoped `prompt_cache_key` to CLIProxy Responses requests so Codex-backed sessions can reuse stable prompt context and keep session routing consistent.
+
+Composer model and reasoning selections are saved as global defaults for future new chats and as overrides on the active thread. Thread-scoped modes such as Plan Mode and Reviewer Swarm remain per-thread.
 
 ## Browser Sign-In
 
@@ -200,7 +212,7 @@ From `package.json`:
 - Electron Forge `^7.11.2`
 - React `^19.2.6`
 - TypeScript `^6.0.3`
-- Vite `^8.0.14`
+- Vite `^8.0.16`
 - Vitest `^4.1.7`
 - node-pty `^1.1.0`
 - `@vscode/ripgrep` for workspace search
@@ -214,7 +226,7 @@ Run:
 npm test
 ```
 
-The tests cover SQLite storage, storage cleanup, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, Computer Use safety/tool contracts, and runtime behavior.
+The tests cover SQLite storage, storage cleanup, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, Computer Use safety/tool contracts, composer settings persistence, Reviewer Swarm behavior, and runtime behavior.
 
 For a quick compile check:
 
