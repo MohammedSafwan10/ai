@@ -46,6 +46,8 @@ Then publish:
 npm run desktop:release:win:x64
 ```
 
+Windows signing is optional. When `WINDOWS_CERTIFICATE_FILE` and `WINDOWS_CERTIFICATE_PASSWORD` are both configured, the release command signs and verifies the executable and installer. When both are unset, it publishes unsigned artifacts and prints a warning. Unsigned installers may trigger Windows security warnings.
+
 The script configures the Appwrite CLI to use `https://sgp.cloud.appwrite.io/v1` and project `69af9f0700103b7f3482` before upload. Do not use interactive account login for this release flow; Appwrite Cloud account login is global, while this project's storage/database API calls use the Singapore regional endpoint.
 
 The release command uses Appwrite CLI for Storage uploads and direct Appwrite REST calls for release metadata. This avoids Windows PowerShell quoting problems with Appwrite CLI JSON document payloads.

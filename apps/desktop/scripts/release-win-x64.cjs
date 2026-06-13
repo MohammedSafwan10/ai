@@ -31,7 +31,7 @@ function main() {
     return;
   }
 
-  assertSigningConfig();
+  const signingEnabled = validateSigningConfig();
   assertCommand("git", ["--version"]);
   assertCommand("npm", ["--version"]);
   assertCommand("appwrite", ["--version"]);
@@ -71,8 +71,10 @@ function main() {
       throw new Error(`Missing release artifact: ${artifact.path}`);
     }
   });
-  assertValidAuthenticodeSignature(path.join(desktopRoot, "out", "Privora-win32-x64", "Privora.exe"));
-  assertValidAuthenticodeSignature(artifacts.installer.path);
+  if (signingEnabled) {
+    assertValidAuthenticodeSignature(path.join(desktopRoot, "out", "Privora-win32-x64", "Privora.exe"));
+    assertValidAuthenticodeSignature(artifacts.installer.path);
+  }
 
   uploadFileIfNeeded(artifacts.releases);
   uploadFileIfNeeded(artifacts.package);
@@ -180,13 +182,18 @@ function assertCommand(command, commandArgs) {
   }
 }
 
-function assertSigningConfig() {
+function validateSigningConfig() {
   const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
   const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+  if (!certificateFile && !certificatePassword) {
+    log("WARNING: Publishing unsigned Windows artifacts because no signing certificate is configured.");
+    return false;
+  }
   if (!certificateFile || !certificatePassword) {
-    throw new Error("Windows releases require WINDOWS_CERTIFICATE_FILE and WINDOWS_CERTIFICATE_PASSWORD.");
+    throw new Error("Set both WINDOWS_CERTIFICATE_FILE and WINDOWS_CERTIFICATE_PASSWORD, or leave both unset to publish unsigned artifacts.");
   }
   if (!fs.existsSync(certificateFile)) throw new Error(`Windows signing certificate was not found: ${certificateFile}`);
+  return true;
 }
 
 function assertValidAuthenticodeSignature(filePath) {
