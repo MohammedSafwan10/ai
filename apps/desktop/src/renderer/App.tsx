@@ -11,7 +11,7 @@ import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
 import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
-import { usePromptQueue } from "./features/chat/usePromptQueue";
+import { usePromptQueue, type QueuedPrompt } from "./features/chat/usePromptQueue";
 import { splitComposerSettingsForPersistence } from "./features/chat/settingsPersistence";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
 import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
@@ -492,7 +492,7 @@ export default function App() {
               {queuedHead && (
                 <div className="queued-prompt">
                   <span className="queued-prompt-index">1</span>
-                  <p>{queuedHead.prompt}</p>
+                  <QueuedPromptPreview item={queuedHead} />
                   {queuedRest.length > 0 && (
                     <button
                       type="button"
@@ -541,7 +541,7 @@ export default function App() {
                   {queuedRest.map((item, index) => (
                     <div className="queued-prompt queued-prompt-secondary" key={item.id}>
                       <span className="queued-prompt-index">{index + 2}</span>
-                      <p>{item.prompt}</p>
+                      <QueuedPromptPreview item={item} />
                       {queuePaused && !running && (
                         <button
                           type="button"
@@ -661,6 +661,32 @@ export default function App() {
         </button>
       )}
       </div>
+    </div>
+  );
+}
+
+function QueuedPromptPreview({ item }: { item: QueuedPrompt }) {
+  const prompt = item.prompt.trim() || "Untitled queued prompt";
+  const attachmentCount = item.attachments?.length || 0;
+  const imageCount = item.attachments?.filter((attachment) => attachment.mimeType.startsWith("image/")).length || 0;
+  const contextCount = item.contextMentions?.length || 0;
+  const titleParts = [prompt];
+  if (attachmentCount) titleParts.push(`${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`);
+  if (contextCount) titleParts.push(`${contextCount} context item${contextCount === 1 ? "" : "s"}`);
+
+  return (
+    <div className="queued-prompt-preview" title={titleParts.join(" · ")}>
+      <span className="queued-prompt-text">{prompt}</span>
+      {(attachmentCount > 0 || contextCount > 0) && (
+        <span className="queued-prompt-meta" aria-label="Queued prompt context">
+          {attachmentCount > 0 && (
+            <span>{imageCount === attachmentCount ? `${attachmentCount} image${attachmentCount === 1 ? "" : "s"}` : `${attachmentCount} file${attachmentCount === 1 ? "" : "s"}`}</span>
+          )}
+          {contextCount > 0 && (
+            <span>{contextCount} ctx</span>
+          )}
+        </span>
+      )}
     </div>
   );
 }

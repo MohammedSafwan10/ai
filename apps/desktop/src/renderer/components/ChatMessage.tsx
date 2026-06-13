@@ -101,7 +101,7 @@ function ChatMessageComponent({
   };
   const showMessageActions = (message.content || hasAttachments) && (isUser || !runActive);
   return (
-    <article className={clsx("chat-message", isUser && "user")}>
+    <article className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
       <div className="message-stack">
         <div className={clsx("message-bubble", isUser && "markdown-body")}>
           {isUser ? (

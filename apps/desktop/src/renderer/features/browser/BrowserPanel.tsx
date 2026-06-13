@@ -55,11 +55,19 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
   const lastBoundsRef = useRef<{ workspaceId: string; x: number; y: number; width: number; height: number } | null>(null);
   const toolsMenuActionRef = useRef<(action: BrowserToolsMenuAction) => void>(() => undefined);
   const [state, setState] = useState<BrowserPanelStateRecord | null>(null);
+  const [zoomFactor, setZoomFactor] = useState(() => currentWindowZoomFactor());
   const [urlInput, setUrlInput] = useState("");
   const activeWorkspaceId = workspace?.id || null;
   const visible = Boolean(active && !hidden && activeWorkspaceId);
   const browserState = state || (activeWorkspaceId ? EMPTY_STATE(activeWorkspaceId) : null);
   browserStateRef.current = browserState;
+
+  useEffect(() => {
+    const unsubscribe = window.privoraDesktop.onZoomChanged((percent) => {
+      setZoomFactor(normalizeZoomFactor(percent / 100));
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (!activeWorkspaceId) return;
@@ -110,7 +118,7 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
   const sendBounds = () => {
     if (!activeWorkspaceId || !visible || !viewportRef.current || !browserState) return;
     const rect = viewportRef.current.getBoundingClientRect();
-    const bounds = computeBrowserBounds(rect, browserState.viewportPreset);
+    const bounds = computeBrowserBounds(rect, browserState.viewportPreset, zoomFactor);
     const last = lastBoundsRef.current;
     if (
       last &&
@@ -154,7 +162,7 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     };
-  }, [visible, activeWorkspaceId, browserState?.viewportPreset]);
+  }, [visible, activeWorkspaceId, browserState?.viewportPreset, zoomFactor]);
 
   const openUrl = async (event: FormEvent) => {
     event.preventDefault();
@@ -511,34 +519,40 @@ function PresetButton({
   );
 }
 
-const computeBrowserBounds = (rect: DOMRect, preset: BrowserViewportPreset) => {
+const computeBrowserBounds = (rect: DOMRect, preset: BrowserViewportPreset, zoomFactor = 1) => {
+  const scale = normalizeZoomFactor(zoomFactor);
+  const toDip = (value: number) => Math.round(value * scale);
   if (preset === "mobile") {
     const width = Math.min(390, Math.max(0, rect.width - 24));
     const height = Math.min(844, Math.max(0, rect.height - 24));
     return {
-      x: rect.x + Math.max(0, (rect.width - width) / 2),
-      y: rect.y + Math.max(0, (rect.height - height) / 2),
-      width,
-      height,
+      x: toDip(rect.x + Math.max(0, (rect.width - width) / 2)),
+      y: toDip(rect.y + Math.max(0, (rect.height - height) / 2)),
+      width: toDip(width),
+      height: toDip(height),
     };
   }
   if (preset === "tablet") {
     const width = Math.min(820, Math.max(0, rect.width - 24));
     const height = Math.min(1180, Math.max(0, rect.height - 24));
     return {
-      x: rect.x + Math.max(0, (rect.width - width) / 2),
-      y: rect.y + Math.max(0, (rect.height - height) / 2),
-      width,
-      height,
+      x: toDip(rect.x + Math.max(0, (rect.width - width) / 2)),
+      y: toDip(rect.y + Math.max(0, (rect.height - height) / 2)),
+      width: toDip(width),
+      height: toDip(height),
     };
   }
   return {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
+    x: toDip(rect.x),
+    y: toDip(rect.y),
+    width: toDip(rect.width),
+    height: toDip(rect.height),
   };
 };
+
+const normalizeZoomFactor = (value: number) => Number.isFinite(value) && value > 0 ? value : 1;
+
+const currentWindowZoomFactor = () => normalizeZoomFactor(window.visualViewport?.scale || 1);
 
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";

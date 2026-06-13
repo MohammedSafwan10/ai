@@ -28,67 +28,78 @@ export const useMessageAutoScroll = ({
   const manualScrollHoldUntilRef = useRef(0);
   const userScrollLockRef = useRef(false);
   const programmaticScrollRef = useRef(false);
+  const programmaticClearTimerRef = useRef<number | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
   const loadOlderRequestedRef = useRef(false);
   const messageVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollerRef.current,
     estimateSize: () => 190,
-    overscan: 6,
+    overscan: 8,
     getItemKey: (index) => messages[index]?.id ?? index,
     anchorTo: "end",
-    followOnAppend: true,
+    followOnAppend: false,
     scrollEndThreshold: 96,
   });
 
-  const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
-    followBottomRef.current = true;
-    userScrollLockRef.current = false;
-    manualScrollHoldUntilRef.current = 0;
-    window.requestAnimationFrame(() => {
-      programmaticScrollRef.current = true;
+  const getBottomDistance = () => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return 0;
+    return Math.max(0, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight);
+  };
+
+  const markProgrammaticScroll = () => {
+    programmaticScrollRef.current = true;
+    if (programmaticClearTimerRef.current) {
+      window.clearTimeout(programmaticClearTimerRef.current);
+    }
+    programmaticClearTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      programmaticClearTimerRef.current = null;
+    }, 120);
+  };
+
+  const scheduleScrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      markProgrammaticScroll();
       if (messages.length > 0) {
         messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
       } else {
         scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior });
       }
-      window.setTimeout(() => {
-        if (messages.length > 0) {
-          messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-        } else {
-          scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior });
-        }
-        programmaticScrollRef.current = false;
-      }, 90);
       setShowJumpButton(false);
     });
   };
 
+  const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
+    followBottomRef.current = true;
+    userScrollLockRef.current = false;
+    manualScrollHoldUntilRef.current = 0;
+    scheduleScrollToLatest(behavior);
+  };
+
   useEffect(() => {
-    if (settingsOpen) return;
-    if (userScrollLockRef.current) {
-      setShowJumpButton((value) => value ? value : true);
+    return () => {
+      if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current);
+      if (programmaticClearTimerRef.current) window.clearTimeout(programmaticClearTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (settingsOpen || !scrollerRef.current) return;
+    const distance = getBottomDistance();
+    const now = Date.now();
+    if (userScrollLockRef.current || now < manualScrollHoldUntilRef.current) {
+      setShowJumpButton((value) => value || distance > 96);
       return;
     }
-    if (Date.now() < manualScrollHoldUntilRef.current) {
-      setShowJumpButton((value) => value ? value : true);
+    if (!followBottomRef.current) {
+      setShowJumpButton((value) => value || distance > 220);
       return;
     }
-    if (!followBottomRef.current || !scrollerRef.current) {
-      setShowJumpButton((value) => value ? value : true);
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      programmaticScrollRef.current = true;
-      if (messages.length > 0) {
-        messageVirtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-      } else {
-        scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-      }
-      window.setTimeout(() => {
-        programmaticScrollRef.current = false;
-      }, 90);
-      setShowJumpButton((value) => value && false);
-    });
+    scheduleScrollToLatest();
   }, [latestActivityKey, messageVirtualizer, messages.length, settingsOpen]);
 
   useEffect(() => {
@@ -98,7 +109,8 @@ export const useMessageAutoScroll = ({
   }, [activeThreadId, settingsOpen]);
 
   const handleMessageWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (event.deltaY < 0) {
+    const distance = getBottomDistance();
+    if (event.deltaY < 0 || distance > 24) {
       userScrollLockRef.current = true;
       manualScrollHoldUntilRef.current = Date.now() + 1200;
       followBottomRef.current = false;

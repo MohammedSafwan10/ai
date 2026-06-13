@@ -53,7 +53,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
   const treeScrollerRef = useRef<HTMLDivElement | null>(null);
   const activeFileTab = activeTab.type === "file" ? tabs.find((tab) => tab.path === activeTab.path) || null : null;
   const activeReviewFile = reviewSession?.files.find((file) => file.path === selectedReviewPath) || reviewSession?.files[0] || null;
-  const reviewActive = activeTab.type === "review" && Boolean(reviewSession);
+  const reviewActive = panelMode === "review" && Boolean(reviewSession);
   const orderedTabs = useMemo(
     () => tabs.map((tab, index) => ({ tab, index }))
       .sort((a, b) => Number(pinnedPaths.has(b.tab.path)) - Number(pinnedPaths.has(a.tab.path)) || a.index - b.index)
@@ -231,76 +231,50 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
             <span>Notes</span>
           </button>
         </div>
-        {fileMode || reviewMode ? (
-        <div className="workspace-ide-tabs" role="tablist" aria-label="Open files" onWheel={scrollTabsHorizontally}>
-          {reviewSession && (
-            <button
-              type="button"
-              className={clsx("workspace-tab", reviewActive && "active")}
-              onClick={() => setActiveTab({ type: "review" })}
-              title="Review changes"
-            >
-              <GitCompareArrows size={16} />
-              <span>Review</span>
-              <span
-                role="button"
-                tabIndex={0}
-                className="workspace-tab-close"
-                title="Close review"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onReviewClosed();
+        {fileMode ? (
+          <div className="workspace-ide-tabs" role="tablist" aria-label="Open files" onWheel={scrollTabsHorizontally}>
+            {tabs.length === 0 ? (
+              <button type="button" className="workspace-open-file" onClick={() => filterRef.current?.focus()}>
+                <File size={16} />
+                <span>Open file</span>
+              </button>
+            ) : orderedTabs.map((tab) => (
+              <button
+                type="button"
+                key={tab.path}
+                className={clsx("workspace-tab", activeTab.type === "file" && activeTab.path === tab.path && "active")}
+                onClick={() => setActiveTab({ type: "file", path: tab.path })}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setTabMenu(fileTabMenuPosition(tab.path, event.clientX, event.clientY));
                 }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") onReviewClosed();
-                }}
+                title={tab.path}
               >
-                <X size={13} />
-              </span>
+                <FileIcon name={tab.name} />
+                <span>{tab.name}</span>
+                {pinnedPaths.has(tab.path) && <Pin size={11} className="workspace-tab-pin" />}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="workspace-tab-close"
+                  title="Close file"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeTab(tab.path);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") closeTab(tab.path);
+                  }}
+                >
+                  <X size={13} />
+                </span>
+              </button>
+            ))}
+            <button type="button" className="workspace-icon-button" title="Open another file" onClick={() => filterRef.current?.focus()}>
+              <span>+</span>
             </button>
-          )}
-          {tabs.length === 0 && !reviewSession ? (
-            <button type="button" className="workspace-open-file" onClick={() => filterRef.current?.focus()}>
-              <File size={16} />
-              <span>Open file</span>
-            </button>
-          ) : orderedTabs.map((tab) => (
-            <button
-              type="button"
-              key={tab.path}
-              className={clsx("workspace-tab", activeTab.type === "file" && activeTab.path === tab.path && "active")}
-              onClick={() => setActiveTab({ type: "file", path: tab.path })}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setTabMenu(fileTabMenuPosition(tab.path, event.clientX, event.clientY));
-              }}
-              title={tab.path}
-            >
-              <FileIcon name={tab.name} />
-              <span>{tab.name}</span>
-              {pinnedPaths.has(tab.path) && <Pin size={11} className="workspace-tab-pin" />}
-              <span
-                role="button"
-                tabIndex={0}
-                className="workspace-tab-close"
-                title="Close file"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeTab(tab.path);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") closeTab(tab.path);
-                }}
-              >
-                <X size={13} />
-              </span>
-            </button>
-          ))}
-          <button type="button" className="workspace-icon-button" title="Open another file" onClick={() => filterRef.current?.focus()}>
-            <span>+</span>
-          </button>
-        </div>
-        ) : <div />}
+          </div>
+        ) : <div className="workspace-ide-mode-spacer" />}
         <div className="workspace-ide-actions">
           {reviewMode && (
             <>
@@ -338,7 +312,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
       ) : notesMode ? (
         <NotesPanel workspace={workspace} active={notesMode} />
       ) : (
-      <div className={clsx("workspace-ide-main", fileTreeCollapsed && "tree-collapsed")}>
+      <div className={clsx("workspace-ide-main", reviewMode && "review-main", fileTreeCollapsed && "tree-collapsed")}>
         <section className="workspace-editor-panel" aria-label="Read-only file viewer">
           <div className="workspace-breadcrumb">
             {reviewActive && reviewSession ? (
