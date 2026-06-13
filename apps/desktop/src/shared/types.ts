@@ -1,4 +1,4 @@
-import type { CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
+import type { AgentHarnessMode, CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
 
 export type MessageRole = "user" | "assistant";
 
@@ -834,6 +834,7 @@ export interface SettingsRecord {
   reasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   collaborationMode: CollaborationMode;
+  agentHarnessMode: AgentHarnessMode;
   computerUseEnabled: boolean;
   keepRunningInTray: boolean;
   theme: "light" | "dark" | "system";
@@ -857,6 +858,7 @@ export interface ThreadRecord {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
   hidden?: boolean;
   starred?: boolean;
   createdAt: number;
@@ -1579,6 +1581,7 @@ export interface StartTurnInput {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
 }
 
 export interface ApprovalDecisionInput {
@@ -1594,6 +1597,7 @@ export interface SaveSettingsInput {
   reasoningEffort?: ReasoningEffort;
   permissionMode?: PermissionMode;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
   computerUseEnabled?: boolean;
   keepRunningInTray?: boolean;
   theme?: "light" | "dark" | "system";
@@ -1607,6 +1611,7 @@ export interface SaveThreadSettingsInput {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
 }
 
 export interface PrivoraAuthInput {

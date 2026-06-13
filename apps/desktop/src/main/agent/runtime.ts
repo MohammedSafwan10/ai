@@ -1,7 +1,7 @@
 import type { BrowserWindow } from "electron";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
-import { getModelOption, getProviderForModel, resolveModelRuntimeBudget, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
+import { getModelOption, getProviderForModel, resolveModelRuntimeBudget, type AgentHarnessMode, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
@@ -114,6 +114,8 @@ const MAX_CONTINUOUS_MODEL_ITERATIONS = 2048;
 const MAX_TOOL_CALLS = 2_000;
 const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
 const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
+const REVIEWER_SWARM_COUNT = 2;
+const REVIEWER_SWARM_TIMEOUT_MS = 180_000;
 const STREAM_STALL_TIMEOUT_MS = 180_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 300_000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
@@ -159,6 +161,70 @@ export const userRequestedPostImageWork = (history: ProviderMessage[]) => {
     /\b(workspace|public\/|assets?\/|src\/|file|path|id|report|verify|check|exists|size)\b/,
   ];
   return postImagePatterns.some((pattern) => pattern.test(text));
+};
+
+const REVIEWER_SWARM_READ_ONLY_TOOLS = new Set([
+  "desktop_read_file",
+  "desktop_list_dir",
+  "desktop_search",
+  "desktop_git_status",
+  "desktop_git_diff",
+  "terminal_list",
+  "terminal_read",
+  "list_agents",
+  "wait_agent",
+  "notes_list",
+  "notes_read",
+  "list_generated_images",
+  "computer_capabilities",
+  "computer_list_windows",
+  "computer_find_apps",
+  "computer_snapshot",
+  "computer_inspect",
+  "computer_verify",
+  "computer_screenshot",
+  "browser_snapshot",
+  "browser_inspect",
+  "browser_extract",
+  "browser_screenshot",
+  "browser_evidence",
+  "browser_search",
+  "browser_pdf",
+  "browser_form_analyze",
+  "browser_form_validate",
+  "browser_capabilities",
+  "browser_assert",
+  "browser_evidence_vault",
+  "browser_diagnose",
+  "browser_verify",
+  "web_search",
+]);
+
+export const reviewerReadOnlyBlockReason = (call: DesktopToolCall, enabled?: boolean) =>
+  enabled && !REVIEWER_SWARM_READ_ONLY_TOOLS.has(call.name)
+    ? "Reviewer Swarm agents are read-only and cannot run mutating or side-effecting tools."
+    : "";
+
+const formatReviewerSwarmSummary = (reviewers: SubagentRecord[]) => {
+  if (reviewers.length === 0) return "";
+  const reports = reviewers.map((agent, index) => {
+    const label = agent.agentNickname || `Reviewer ${index + 1}`;
+    const body = agent.finalMessage || agent.lastPreview || `${label} did not return a report.`;
+    const status = agent.status === "completed" ? "" : ` (${agent.status})`;
+    return `- ${label}${status}: ${compactPreview(body, 900)}`;
+  });
+  const noBlockingIssues = reviewers.every((agent) =>
+    agent.status === "completed" &&
+    /\b(no|none|did not find|no blocking|no issues|no findings)\b/i.test(agent.finalMessage || agent.lastPreview || ""));
+  return [
+    "",
+    "",
+    "Reviewer Swarm:",
+    noBlockingIssues
+      ? `Passed. ${reviewers.length} reviewers reported no blocking issues.`
+      : "Review feedback:",
+    ...reports,
+  ].join("\n");
 };
 
 const stringArg = (value: unknown, fallback = "") =>
@@ -262,6 +328,7 @@ interface ApprovalBundle {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
 }
 
 interface PendingUserInput {
@@ -289,6 +356,9 @@ interface ContinueOptions {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
+  reviewerSwarmCompleted?: boolean;
+  readOnlyTools?: boolean;
 }
 
 export class AgentRuntime {
@@ -397,6 +467,7 @@ export class AgentRuntime {
       const effectiveModel = getModelOption(input.model || thread.model || settings.model).id;
       const effectiveReasoning = input.reasoningEffort || thread.reasoningEffort || settings.reasoningEffort;
       const effectiveCollaborationMode = input.collaborationMode || thread.collaborationMode || settings.collaborationMode;
+      const effectiveAgentHarnessMode = input.agentHarnessMode || thread.agentHarnessMode || settings.agentHarnessMode;
       const selectedModel = getModelOption(effectiveModel);
       const imageAttachmentCount = (input.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/")).length;
       if (imageAttachmentCount > 0 && !selectedModel.supportsImageInput) {
@@ -459,6 +530,7 @@ export class AgentRuntime {
         model: effectiveModel,
         reasoningEffort: effectiveReasoning,
         collaborationMode: effectiveCollaborationMode,
+        agentHarnessMode: effectiveAgentHarnessMode,
       });
     } finally {
       this.startingThreads.delete(input.threadId);
@@ -490,6 +562,7 @@ export class AgentRuntime {
       iteration: checkpoint.iteration,
       toolCount: checkpoint.toolCount,
       recoveryAttempts: checkpoint.recoveryAttempts,
+      agentHarnessMode: this.store.getThread(threadId)?.agentHarnessMode || this.store.getSettings().agentHarnessMode,
     });
   }
 
@@ -629,6 +702,7 @@ export class AgentRuntime {
     const effectiveModel = getModelOption(options.model || thread?.model || settings.model).id;
     const effectiveReasoning = options.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort;
     const effectiveCollaborationMode = options.collaborationMode || thread?.collaborationMode || settings.collaborationMode;
+    const effectiveAgentHarnessMode = options.agentHarnessMode || thread?.agentHarnessMode || settings.agentHarnessMode;
     const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
     let history = sanitizeProviderHistoryForModel(options.history, effectiveModel);
     let assistantText = options.assistantText;
@@ -897,7 +971,8 @@ export class AgentRuntime {
               markRunProgress(run);
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode, thread?.workspaceId);
-              const planBlock = planModeBlockReason(call, effectiveCollaborationMode, decision);
+              const readOnlyBlock = reviewerReadOnlyBlockReason(call, options.readOnlyTools);
+              const planBlock = readOnlyBlock || planModeBlockReason(call, effectiveCollaborationMode, decision);
               const scope = decision.requiresApproval
                 ? this.findReusableApprovalScope(options.threadId, call)
                 : null;
@@ -1028,6 +1103,18 @@ export class AgentRuntime {
             history = [...history, textProviderMessage(noToolOutcome.message)];
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
+          }
+          const swarmSummary = await this.maybeRunReviewerSwarm({
+            options,
+            run,
+            assistantText,
+            toolCount,
+            agentHarnessMode: effectiveAgentHarnessMode,
+          });
+          if (swarmSummary) {
+            const startOffset = assistantText.length;
+            assistantText += swarmSummary;
+            recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
           }
           transitionRun(run, "draining", { iteration, toolCount });
           transitionRun(run, "completed", { iteration, toolCount });
@@ -1271,6 +1358,7 @@ export class AgentRuntime {
       model: bundle.model,
       reasoningEffort: bundle.reasoningEffort,
       collaborationMode: bundle.collaborationMode,
+      agentHarnessMode: bundle.agentHarnessMode,
     });
   }
 
@@ -1303,6 +1391,7 @@ export class AgentRuntime {
       model: params.options.model,
       reasoningEffort: params.options.reasoningEffort,
       collaborationMode: params.options.collaborationMode,
+      agentHarnessMode: params.options.agentHarnessMode,
     };
     params.calls.forEach((call) => {
       this.pendingApprovalByCallId.set(call.id, bundle);
@@ -1483,6 +1572,108 @@ export class AgentRuntime {
       }
     }
     this.emitSnapshot();
+  }
+
+  private async maybeRunReviewerSwarm(input: {
+    options: ContinueOptions;
+    run: AgentRunTracker;
+    assistantText: string;
+    toolCount: number;
+    agentHarnessMode: AgentHarnessMode;
+  }) {
+    if (input.options.parentThreadId) return "";
+    if (input.options.reviewerSwarmCompleted) return "";
+    if (input.agentHarnessMode !== "review_swarm") return "";
+    if (!this.shouldRunReviewerSwarm(input.options.threadId, input.toolCount)) return "";
+
+    transitionRun(input.run, "waiting_tool", {
+      iteration: input.options.iteration,
+      toolCount: input.toolCount,
+      reason: "Reviewer Swarm is checking the completed turn.",
+      resumable: false,
+    });
+    this.emitRun(input.run);
+
+    const reviewers = this.startReviewerSwarm(input.options, input.assistantText);
+    const reports = await this.waitForReviewerSwarm(reviewers);
+    transitionRun(input.run, "draining", { iteration: input.options.iteration, toolCount: input.toolCount, reason: undefined });
+    this.emitRun(input.run);
+    return formatReviewerSwarmSummary(reports);
+  }
+
+  private shouldRunReviewerSwarm(threadId: string, toolCount: number) {
+    if (toolCount > 0) return true;
+    const latestUser = this.store.findLatestMessage(threadId, "user");
+    return /\b(review|audit|check|inspect|bug|security|risk)\b/i.test(latestUser?.content || "");
+  }
+
+  private startReviewerSwarm(options: ContinueOptions, assistantText: string) {
+    const thread = this.store.getThread(options.threadId);
+    const timestamp = now();
+    const prompt = [
+      "Reviewer Swarm check. You are a read-only reviewer for the parent agent's just-completed turn.",
+      "",
+      "Do not edit files, run mutating commands, approve risky actions, or spawn child agents.",
+      "Use read-only inspection plus git diff/status when useful.",
+      "",
+      "Review for: request satisfaction, bugs/regressions, missing tests, security risks, and data-loss risks.",
+      "Return concise findings. If there are no blocking issues, say so explicitly.",
+      "",
+      "Parent final draft:",
+      assistantText.trim() || "(no draft text)",
+    ].join("\n");
+    return Array.from({ length: REVIEWER_SWARM_COUNT }, (_, index) => {
+      const agent = this.store.createSubagent({
+        parentThreadId: options.threadId,
+        parentMessageId: options.assistantMessage.id,
+        workspaceId: thread?.workspaceId ?? null,
+        taskName: `review_swarm_${timestamp}_${index + 1}`,
+        agentPath: `/root/review_swarm_${timestamp}_${index + 1}`,
+        agentRole: "reviewer",
+        agentNickname: `Reviewer ${index + 1}`,
+        prompt,
+        model: options.model || thread?.model || this.store.getSettings().model,
+        reasoningEffort: options.reasoningEffort || thread?.reasoningEffort || this.store.getSettings().reasoningEffort,
+      });
+      this.store.updateThreadSettings(agent.threadId, {
+        model: agent.model,
+        reasoningEffort: agent.reasoningEffort,
+        collaborationMode: "plan",
+        agentHarnessMode: "standard",
+      });
+      try {
+        this.startSubagentTurn(agent, options.workspaceRoot, prompt, loadSubagentRoles(options.workspaceRoot).get("reviewer"), "all");
+      } catch (error) {
+        this.store.updateSubagent(agent.threadId, {
+          status: "failed",
+          finalMessage: `Reviewer failed to start: ${errorMessage(error)}`,
+          lastPreview: "Reviewer failed to start.",
+        });
+      }
+      return agent;
+    });
+  }
+
+  private async waitForReviewerSwarm(reviewers: SubagentRecord[]) {
+    const deadline = Date.now() + REVIEWER_SWARM_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const current = reviewers.map((agent) => this.store.getSubagentByThread(agent.threadId) || agent);
+      if (current.every((agent) => !isLiveSubagent(agent))) return current;
+      await delay(750);
+    }
+    reviewers.forEach((agent) => {
+      const current = this.store.getSubagentByThread(agent.threadId) || agent;
+      if (!isLiveSubagent(current)) return;
+      this.activeRuns.get(agent.threadId)?.controller.abort();
+      this.stopThreadProcesses(agent.threadId);
+      this.store.updateSubagent(agent.threadId, {
+        status: "stopped",
+        finalMessage: `Reviewer Swarm timed out after ${Math.round(REVIEWER_SWARM_TIMEOUT_MS / 1000)} seconds.`,
+        lastPreview: "Reviewer Swarm timed out.",
+      });
+    });
+    this.emitSnapshot();
+    return reviewers.map((agent) => this.store.getSubagentByThread(agent.threadId) || agent);
   }
 
   private findReusableApprovalScope(threadId: string, call: DesktopToolCall) {
@@ -2022,6 +2213,7 @@ export class AgentRuntime {
       parentThreadId: agent.parentThreadId,
       model: inheritedModel,
       reasoningEffort: agent.reasoningEffort,
+      readOnlyTools: agent.taskName.startsWith("review_swarm_"),
     }).catch((error) => {
       this.store.updateSubagent(agent.threadId, {
         status: "failed",

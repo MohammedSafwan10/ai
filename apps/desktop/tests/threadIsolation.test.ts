@@ -9,6 +9,7 @@ const baseSnapshot = () => ({
     reasoningEffort: "medium" as const,
     permissionMode: "ask_risky" as const,
     collaborationMode: "default" as const,
+    agentHarnessMode: "standard" as const,
     computerUseEnabled: false,
     keepRunningInTray: false,
     theme: "system" as const,

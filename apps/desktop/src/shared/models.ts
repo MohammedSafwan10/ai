@@ -6,6 +6,8 @@ export type PermissionMode = "ask_risky" | "yolo";
 
 export type CollaborationMode = "default" | "plan";
 
+export type AgentHarnessMode = "standard" | "review_swarm";
+
 export interface ModelOption {
   id: string;
   label: string;

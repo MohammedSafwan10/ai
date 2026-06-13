@@ -91,6 +91,7 @@ const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "gem
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
   collaborationMode: "default",
+  agentHarnessMode: "standard",
   computerUseEnabled: false,
   keepRunningInTray: defaultKeepRunningInTray(),
   theme: "system",
@@ -178,6 +179,7 @@ export class DesktopStore {
       reasoningEffort: input.reasoningEffort ?? current.reasoningEffort,
       permissionMode: input.permissionMode ?? current.permissionMode,
       collaborationMode: input.collaborationMode ?? current.collaborationMode,
+      agentHarnessMode: input.agentHarnessMode ?? current.agentHarnessMode,
       computerUseEnabled: input.computerUseEnabled ?? current.computerUseEnabled,
       keepRunningInTray: input.keepRunningInTray ?? current.keepRunningInTray,
       theme: input.theme ?? current.theme,
@@ -274,7 +276,7 @@ export class DesktopStore {
     const thread: ThreadRecord = {
       id: crypto.randomUUID(), title: options.title?.trim() || PLACEHOLDER_THREAD_TITLE,
       titleSource: options.title?.trim() ? "agent" : "placeholder", titleUpdatedAt: timestamp, workspaceId,
-      model: normalizeModelId(settings.model), reasoningEffort: settings.reasoningEffort, collaborationMode: settings.collaborationMode,
+      model: normalizeModelId(settings.model), reasoningEffort: settings.reasoningEffort, collaborationMode: settings.collaborationMode, agentHarnessMode: settings.agentHarnessMode,
       hidden: options.hidden === true, createdAt: timestamp, updatedAt: timestamp,
     };
     this.putThread(thread);
@@ -286,9 +288,9 @@ export class DesktopStore {
     const timestamp = now(); this.putThread({ ...thread, title: trimmed, titleSource: source, titleUpdatedAt: timestamp, updatedAt: timestamp });
     return this.getThread(threadId);
   }
-  updateThreadSettings(threadId: string, input: Pick<ThreadRecord, "model" | "reasoningEffort" | "collaborationMode">) {
+  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
     const thread = this.getThread(threadId); if (!thread) return null;
-    this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, updatedAt: now() });
+    this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, agentHarnessMode: input.agentHarnessMode ?? thread.agentHarnessMode, updatedAt: now() });
     return this.getThread(threadId);
   }
   updatePlaceholderThreadTitle(threadId: string, title: string, source: Extract<ThreadTitleSource, "agent" | "fallback">) {
@@ -431,7 +433,7 @@ export class DesktopStore {
     const timestamp = now(); const hiddenThread = this.createThread(input.workspaceId, { hidden: true, title: input.agentNickname || input.taskName });
     const model = input.model ? normalizeModelId(input.model) : hiddenThread.model;
     const reasoningEffort = input.reasoningEffort || hiddenThread.reasoningEffort;
-    this.updateThreadSettings(hiddenThread.id, { model, reasoningEffort, collaborationMode: hiddenThread.collaborationMode });
+    this.updateThreadSettings(hiddenThread.id, { model, reasoningEffort, collaborationMode: hiddenThread.collaborationMode, agentHarnessMode: "standard" });
     const record: SubagentRecord = { id: crypto.randomUUID(), parentThreadId: input.parentThreadId, parentMessageId: input.parentMessageId, threadId: hiddenThread.id, workspaceId: input.workspaceId, taskName: input.taskName, agentPath: input.agentPath, agentRole: input.agentRole, agentNickname: input.agentNickname, prompt: input.prompt, model, reasoningEffort, status: "pending", createdAt: timestamp, updatedAt: timestamp };
     this.putSubagent(record); return record;
   }
@@ -693,7 +695,7 @@ const safeCliproxyBaseUrl = (value: string | undefined) => {
 export const isPlaceholderThreadTitle = (thread: Pick<ThreadRecord, "title" | "titleSource">) => thread.titleSource === "placeholder" || (!thread.titleSource && LEGACY_PLACEHOLDER_THREAD_TITLES.has(thread.title.trim()));
 const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
   const title = thread.title?.trim() || PLACEHOLDER_THREAD_TITLE; const titleSource = thread.titleSource || (LEGACY_PLACEHOLDER_THREAD_TITLES.has(title) ? "placeholder" : "user");
-  return { ...thread, title: titleSource === "placeholder" ? PLACEHOLDER_THREAD_TITLE : normalizeThreadTitle(title) || PLACEHOLDER_THREAD_TITLE, titleSource, titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(), hidden: thread.hidden === true, model: thread.model ? normalizeModelId(thread.model) : undefined };
+  return { ...thread, title: titleSource === "placeholder" ? PLACEHOLDER_THREAD_TITLE : normalizeThreadTitle(title) || PLACEHOLDER_THREAD_TITLE, titleSource, titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(), hidden: thread.hidden === true, model: thread.model ? normalizeModelId(thread.model) : undefined, agentHarnessMode: thread.agentHarnessMode === "review_swarm" ? "review_swarm" : "standard" };
 };
 const normalizeStoredSubagent = (agent: SubagentRecord): SubagentRecord => {
   const timestamp = agent.updatedAt || agent.createdAt || now(); const status: SubagentStatus = ["pending", "running", "waiting", "completed", "failed", "stopped", "closed"].includes(agent.status) ? agent.status : "stopped";

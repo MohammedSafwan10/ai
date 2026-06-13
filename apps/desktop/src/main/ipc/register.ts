@@ -991,6 +991,7 @@ const startTurnInputSchema = z.object({
   model: z.string().max(160).optional(),
   reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
+  agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
 });
 
 const approvalDecisionSchema = z.object({
@@ -1023,6 +1024,7 @@ const saveSettingsInputSchema = z.object({
   reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
+  agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
   computerUseEnabled: z.boolean().optional(),
   keepRunningInTray: z.boolean().optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
@@ -1036,6 +1038,7 @@ const saveThreadSettingsInputSchema = z.object({
   model: z.string().max(160).optional(),
   reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
+  agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
 });
 
 const privoraAuthInputSchema = z.object({

@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, SearchCheck, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -628,6 +628,16 @@ export function Composer({
                 <button
                   type="button"
                   className="composer-menu-row"
+                  onClick={() => {
+                    onSettings({ agentHarnessMode: settings.agentHarnessMode === "review_swarm" ? "standard" : "review_swarm" });
+                  }}
+                >
+                  <span><SearchCheck size={18} /> Reviewer Swarm</span>
+                  <ToggleSwitch checked={settings.agentHarnessMode === "review_swarm"} />
+                </button>
+                <button
+                  type="button"
+                  className="composer-menu-row"
                   onClick={() => setPursueGoal((current) => !current)}
                 >
                   <span><Crosshair size={18} /> Pursue goal</span>
@@ -691,6 +701,19 @@ export function Composer({
             >
               <MousePointer2 size={15} />
               <span>Computer Use</span>
+              <X className="composer-mode-dismiss" size={13} />
+            </button>
+          )}
+          {settings.agentHarnessMode === "review_swarm" && (
+            <button
+              type="button"
+              className="composer-mode-status"
+              title="Turn off Reviewer Swarm"
+              aria-label="Turn off Reviewer Swarm"
+              onClick={() => onSettings({ agentHarnessMode: "standard" })}
+            >
+              <SearchCheck size={15} />
+              <span>Reviewer Swarm</span>
               <X className="composer-mode-dismiss" size={13} />
             </button>
           )}

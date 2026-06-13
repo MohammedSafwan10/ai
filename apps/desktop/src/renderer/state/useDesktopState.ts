@@ -21,6 +21,7 @@ const emptySettings: SettingsRecord = {
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
   collaborationMode: "default",
+  agentHarnessMode: "standard",
   computerUseEnabled: false,
   keepRunningInTray: false,
   theme: "system",

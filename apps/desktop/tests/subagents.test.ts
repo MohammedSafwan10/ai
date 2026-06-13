@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentRuntime } from "../src/main/agent/runtime";
+import { AgentRuntime, reviewerReadOnlyBlockReason } from "../src/main/agent/runtime";
 import { DesktopStore } from "../src/main/db/store";
+import type { AgentRunTracker } from "../src/main/agent/runState";
 import type { ChatMessageRecord, SubagentRecord } from "../src/shared/types";
 
 let tempDir = "";
@@ -23,6 +24,29 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("persists reviewer swarm mode on normal threads but disables it for hidden child threads", () => {
+    const store = createStore();
+    store.saveSettings({ agentHarnessMode: "review_swarm" });
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+
+    expect(rootThread.agentHarnessMode).toBe("review_swarm");
+
+    store.updateThreadSettings(rootThread.id, { agentHarnessMode: "standard" });
+    expect(store.getThread(rootThread.id)?.agentHarnessMode).toBe("standard");
+
+    const agent = store.createSubagent({
+      parentThreadId: rootThread.id,
+      parentMessageId: "parent-message",
+      workspaceId: workspace.id,
+      taskName: "reviewer",
+      agentPath: "/root/reviewer",
+      prompt: "Review the workspace",
+    });
+
+    expect(store.getThread(agent.threadId)?.agentHarnessMode).toBe("standard");
+  });
+
   it("persists the inherited model on both the subagent and its hidden thread", () => {
     const store = createStore();
     store.saveSettings({ model: "gemini-3.5-flash" });
@@ -269,6 +293,183 @@ describe("subagent waiting", () => {
   });
 });
 
+describe("reviewer swarm harness", () => {
+  it("starts exactly two read-only reviewers that inherit the parent model and reasoning effort", async () => {
+    const store = createStore();
+    store.saveSettings({ model: "gemini-3.5-flash", agentHarnessMode: "review_swarm" });
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+    store.updateThreadSettings(rootThread.id, {
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      collaborationMode: "default",
+      agentHarnessMode: "review_swarm",
+    });
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: rootThread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    const readOnlyFlags: boolean[] = [];
+    (runtime as unknown as {
+      continueLoop: (options: { threadId: string; readOnlyTools?: boolean }) => Promise<void>;
+    }).continueLoop = async (options) => {
+      readOnlyFlags.push(options.readOnlyTools === true);
+      store.updateSubagent(options.threadId, {
+        status: "completed",
+        finalMessage: "No blocking issues found.",
+        lastPreview: "No blocking issues found.",
+      });
+    };
+
+    const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
+    const summary = await (runtime as unknown as {
+      maybeRunReviewerSwarm: (input: {
+        options: Record<string, unknown>;
+        run: AgentRunTracker;
+        assistantText: string;
+        toolCount: number;
+        agentHarnessMode: "review_swarm";
+      }) => Promise<string>;
+    }).maybeRunReviewerSwarm({
+      options: {
+        threadId: rootThread.id,
+        assistantMessage,
+        workspaceRoot: workspace.path,
+        history: [],
+        assistantText: "Done",
+        assistantThought: "",
+        controller: new AbortController(),
+        iteration: 0,
+        toolCount: 1,
+        recoveryAttempts: 0,
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+        collaborationMode: "default",
+      },
+      run: runTracker(rootThread.id, assistantMessage.id),
+      assistantText: "Done",
+      toolCount: 1,
+      agentHarnessMode: "review_swarm",
+    });
+
+    const reviewers = store.listDirectSubagents(rootThread.id);
+    expect(reviewers).toHaveLength(2);
+    expect(readOnlyFlags).toEqual([true, true]);
+    expect(summary).toContain("Reviewer Swarm:");
+    expect(summary).toContain("Passed. 2 reviewers reported no blocking issues.");
+    expect(reviewers.map((agent) => agent.model)).toEqual(["gpt-5.5", "gpt-5.5"]);
+    expect(reviewers.map((agent) => agent.reasoningEffort)).toEqual(["high", "high"]);
+    expect(reviewers.map((agent) => store.getThread(agent.threadId)?.agentHarnessMode)).toEqual(["standard", "standard"]);
+    expect(reviewers.map((agent) => store.getThread(agent.threadId)?.collaborationMode)).toEqual(["plan", "plan"]);
+  });
+
+  it("does not recursively start reviewer swarms inside child agents", async () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: rootThread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
+
+    const summary = await (runtime as unknown as {
+      maybeRunReviewerSwarm: (input: {
+        options: Record<string, unknown>;
+        run: AgentRunTracker;
+        assistantText: string;
+        toolCount: number;
+        agentHarnessMode: "review_swarm";
+      }) => Promise<string>;
+    }).maybeRunReviewerSwarm({
+      options: {
+        threadId: rootThread.id,
+        parentThreadId: "parent-thread",
+        assistantMessage,
+        workspaceRoot: workspace.path,
+        history: [],
+        assistantText: "Done",
+        assistantThought: "",
+        controller: new AbortController(),
+        iteration: 0,
+        toolCount: 1,
+        recoveryAttempts: 0,
+      },
+      run: runTracker(rootThread.id, assistantMessage.id),
+      assistantText: "Done",
+      toolCount: 1,
+      agentHarnessMode: "review_swarm",
+    });
+
+    expect(summary).toBe("");
+    expect(store.listDirectSubagents(rootThread.id)).toEqual([]);
+  });
+
+  it("reports reviewer startup failures without deadlocking the parent run", async () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const rootThread = store.createThread(workspace.id);
+    const runtime = new AgentRuntime(store, () => null, () => ({
+      activeThreadId: rootThread.id,
+      activeWorkspaceId: workspace.id,
+    }));
+    (runtime as unknown as { startSubagentTurn: () => void }).startSubagentTurn = () => {
+      throw new Error("reviewer model unavailable");
+    };
+    const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
+
+    const summary = await (runtime as unknown as {
+      maybeRunReviewerSwarm: (input: {
+        options: Record<string, unknown>;
+        run: AgentRunTracker;
+        assistantText: string;
+        toolCount: number;
+        agentHarnessMode: "review_swarm";
+      }) => Promise<string>;
+    }).maybeRunReviewerSwarm({
+      options: {
+        threadId: rootThread.id,
+        assistantMessage,
+        workspaceRoot: workspace.path,
+        history: [],
+        assistantText: "Done",
+        assistantThought: "",
+        controller: new AbortController(),
+        iteration: 0,
+        toolCount: 1,
+        recoveryAttempts: 0,
+      },
+      run: runTracker(rootThread.id, assistantMessage.id),
+      assistantText: "Done",
+      toolCount: 1,
+      agentHarnessMode: "review_swarm",
+    });
+
+    expect(store.listDirectSubagents(rootThread.id)).toHaveLength(2);
+    expect(summary).toContain("Review feedback:");
+    expect(summary).toContain("Reviewer 1 (failed)");
+    expect(summary).toContain("reviewer model unavailable");
+  });
+
+  it("blocks mutating tools for reviewer swarm agents while allowing read-only inspection", () => {
+    expect(reviewerReadOnlyBlockReason({
+      id: "read",
+      name: "desktop_read_file",
+      arguments: {},
+    }, true)).toBe("");
+    expect(reviewerReadOnlyBlockReason({
+      id: "write",
+      name: "desktop_write_file",
+      arguments: {},
+    }, true)).toContain("read-only");
+    expect(reviewerReadOnlyBlockReason({
+      id: "write",
+      name: "desktop_write_file",
+      arguments: {},
+    }, false)).toBe("");
+  });
+});
+
 const createSubagent = (store: DesktopStore, parentThreadId: string, taskName: string, agentPath: string) => {
   const agent = store.createSubagent({
     parentThreadId,
@@ -297,3 +498,34 @@ const upsertMessage = (
   createdAt: timestamp,
   updatedAt: timestamp,
 });
+
+const chatMessage = (
+  id: string,
+  threadId: string,
+  role: ChatMessageRecord["role"],
+  content: string,
+): ChatMessageRecord => ({
+  id,
+  threadId,
+  role,
+  content,
+  status: "completed",
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+
+const runTracker = (threadId: string, assistantMessageId: string): AgentRunTracker => {
+  const timestamp = Date.now();
+  return {
+    threadId,
+    assistantMessageId,
+    controller: new AbortController(),
+    phase: "sampling",
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    iteration: 0,
+    toolCount: 0,
+    lastProgressAt: timestamp,
+    recoveryAttempts: 0,
+  };
+};

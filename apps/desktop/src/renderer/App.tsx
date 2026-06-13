@@ -61,7 +61,8 @@ export default function App() {
     model: activeThread?.model || snapshot.settings.model,
     reasoningEffort: activeThread?.reasoningEffort || snapshot.settings.reasoningEffort,
     collaborationMode: activeThread?.collaborationMode || snapshot.settings.collaborationMode,
-  }), [activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
+    agentHarnessMode: activeThread?.agentHarnessMode || snapshot.settings.agentHarnessMode,
+  }), [activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
   const lastToolUpdatedAt = useMemo(
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
@@ -197,14 +198,16 @@ export default function App() {
       model: settings.model,
       reasoningEffort: settings.reasoningEffort,
       collaborationMode: settings.collaborationMode,
+      agentHarnessMode: settings.agentHarnessMode,
     };
     const globalSettings: SaveSettingsInput = { ...settings };
     delete globalSettings.model;
     delete globalSettings.reasoningEffort;
     delete globalSettings.collaborationMode;
+    delete globalSettings.agentHarnessMode;
     try {
       if (Object.keys(globalSettings).length > 0) await window.privoraDesktop.saveSettings(globalSettings);
-      if (activeThread && (threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode)) {
+      if (activeThread && (threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
         await window.privoraDesktop.saveThreadSettings({
           threadId: activeThread.id,
           ...threadSettings,
@@ -241,6 +244,7 @@ export default function App() {
       model: activeThreadSettings.model,
       reasoningEffort: activeThreadSettings.reasoningEffort,
       collaborationMode: activeThreadSettings.collaborationMode,
+      agentHarnessMode: activeThreadSettings.agentHarnessMode,
     },
   });
 

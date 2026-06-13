@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput } from "../../../shared/types";
 
-type TurnSettings = Pick<StartTurnInput, "model" | "reasoningEffort" | "collaborationMode">;
+type TurnSettings = Pick<StartTurnInput, "model" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">;
 
 export interface ComposerDraft {
   id: number;
