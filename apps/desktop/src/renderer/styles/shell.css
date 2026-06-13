@@ -946,6 +946,7 @@
   position: relative;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   padding: 6px 24px 28px;
   scroll-behavior: auto;
   scroll-padding-bottom: 92px;
@@ -989,6 +990,7 @@
   left: 0;
   width: 100%;
   contain: layout style;
+  overflow-anchor: none;
 }
 
 .empty-state {

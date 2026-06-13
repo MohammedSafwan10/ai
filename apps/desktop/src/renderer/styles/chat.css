@@ -7,6 +7,10 @@
   contain-intrinsic-size: 1px 180px;
 }
 
+.chat-message.is-streaming {
+  content-visibility: visible;
+}
+
 .virtual-message-row:last-child .chat-message {
   margin-bottom: 10px;
 }

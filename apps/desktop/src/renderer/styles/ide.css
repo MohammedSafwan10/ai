@@ -153,6 +153,10 @@
   background: color-mix(in srgb, var(--privora-muted) 36%, transparent);
 }
 
+.workspace-ide-mode-spacer {
+  min-width: 0;
+}
+
 .workspace-open-file,
 .workspace-tab {
   display: inline-flex;
@@ -272,6 +276,10 @@
   background: color-mix(in srgb, var(--privora-border) 65%, transparent);
 }
 
+.workspace-ide-main.review-main {
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 28%);
+}
+
 .workspace-ide-main.tree-collapsed {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -342,6 +350,11 @@
   min-height: 0;
   background: #1e1e1e;
   overflow: hidden;
+}
+
+.workspace-monaco-wrap .monaco-editor,
+.workspace-monaco-wrap .monaco-diff-editor {
+  max-width: 100%;
 }
 
 .workspace-file-notice {
