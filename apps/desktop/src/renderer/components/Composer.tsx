@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, SearchCheck, ShieldAlert, Square, TerminalSquare, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -632,7 +632,7 @@ export function Composer({
                     onSettings({ agentHarnessMode: settings.agentHarnessMode === "review_swarm" ? "standard" : "review_swarm" });
                   }}
                 >
-                  <span><SearchCheck size={18} /> Reviewer Swarm</span>
+                  <span><UsersRound size={18} /> Reviewer Swarm</span>
                   <ToggleSwitch checked={settings.agentHarnessMode === "review_swarm"} />
                 </button>
                 <button
@@ -712,7 +712,7 @@ export function Composer({
               aria-label="Turn off Reviewer Swarm"
               onClick={() => onSettings({ agentHarnessMode: "standard" })}
             >
-              <SearchCheck size={15} />
+              <UsersRound size={15} />
               <span>Reviewer Swarm</span>
               <X className="composer-mode-dismiss" size={13} />
             </button>
