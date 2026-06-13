@@ -151,6 +151,7 @@ export class GeminiAdapter implements ProviderAdapter {
 
     for await (const chunk of responseStream) {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      options.onStreamProgress?.();
       const usage = normalizeProviderUsage((chunk as any).usageMetadata || (chunk as any).usage);
       if (usage) options.onUsage?.(usage);
       const candidateGroundingMetadata = chunk.candidates?.[0]?.groundingMetadata;

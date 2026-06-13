@@ -919,18 +919,18 @@ export class AgentRuntime {
               }
             },
             onTextDelta: (delta) => {
+              providerProducedProgress = true;
+              markRunProgress(run);
               const titleFiltered = filterThreadTitleDelta(delta, titleFilter, (title) => {
                 const updated = this.store.updatePlaceholderThreadTitle(options.threadId, title, "agent");
                 if (updated) this.emitSnapshot();
               });
               const filtered = filterVisibleDelta(assistantText, titleFiltered, visibleFingerprints);
               if (!filtered) return;
-              providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               const startOffset = assistantText.length;
               assistantText += filtered;
               recordAssistantTextPart(options.assistantMessage, streamTextPhase, startOffset, assistantText.length);
-              markRunProgress(run);
               flushAssistant("running");
               this.emitRun(run);
             },
