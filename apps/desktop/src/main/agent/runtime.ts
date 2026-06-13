@@ -849,6 +849,7 @@ export class AgentRuntime {
         };
         const textStart = assistantText.length;
         const thoughtStart = assistantThought.length;
+        const streamTextPhase = options.reviewerSwarmCompleted ? "final_answer" : "commentary";
         let activeThoughtPart: AssistantThoughtPartRecord | null = null;
         const ensureThoughtPart = () => {
           if (activeThoughtPart) return activeThoughtPart;
@@ -927,7 +928,7 @@ export class AgentRuntime {
               successfulImageAwaitingFollowup = false;
               const startOffset = assistantText.length;
               assistantText += filtered;
-              recordAssistantTextPart(options.assistantMessage, "commentary", startOffset, assistantText.length);
+              recordAssistantTextPart(options.assistantMessage, streamTextPhase, startOffset, assistantText.length);
               markRunProgress(run);
               flushAssistant("running");
               this.emitRun(run);
@@ -1043,7 +1044,7 @@ export class AgentRuntime {
               const previousParts = options.assistantMessage.textParts || [];
               assistantText = `${assistantText.slice(0, textStart)}${text}`;
               options.assistantMessage.textParts = previousParts.filter((part) => part.endOffset <= textStart);
-              recordAssistantTextPart(options.assistantMessage, "commentary", textStart, assistantText.length);
+              recordAssistantTextPart(options.assistantMessage, streamTextPhase, textStart, assistantText.length);
               markRunProgress(run);
               flushAssistant("running", true);
               this.emitRun(run);
@@ -1143,6 +1144,9 @@ export class AgentRuntime {
           return;
         }
 
+        if (streamTextPhase === "final_answer") {
+          markAssistantTextRangePhase(options.assistantMessage, textStart, assistantText.length, "commentary");
+        }
         history = appendAssistantToolCalls(history, assistantText.slice(textStart), calls);
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
 
