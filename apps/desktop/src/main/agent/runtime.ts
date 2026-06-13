@@ -216,6 +216,7 @@ const formatReviewerSwarmFeedback = (reviewers: SubagentRecord[]) => {
   return [
     "Reviewer Swarm reports are ready.",
     "Read the reports naturally and write the final answer accordingly.",
+    "Write only the user-facing final response. Do not include scratch notes, private checklists, planning fragments, or narration of what you are about to do.",
     "If reviewers found issues, mention them clearly and do not claim the work is complete unless those issues are fixed.",
     "If the reports are clean, you may say the work passed Reviewer Swarm.",
     "",

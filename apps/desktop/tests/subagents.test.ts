@@ -356,6 +356,7 @@ describe("reviewer swarm harness", () => {
     expect(reviewers).toHaveLength(2);
     expect(readOnlyFlags).toEqual([true, true]);
     expect(feedback).toContain("Reviewer Swarm reports are ready.");
+    expect(feedback).toContain("Write only the user-facing final response.");
     expect(feedback).toContain("No blocking issues found.");
     expect(reviewers.map((agent) => agent.model)).toEqual(["gpt-5.5", "gpt-5.5"]);
     expect(reviewers.map((agent) => agent.reasoningEffort)).toEqual(["high", "high"]);
