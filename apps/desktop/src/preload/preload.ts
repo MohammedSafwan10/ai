@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ApprovalDecisionInput,
-  DesktopEvent,
+  PrivoraEventEnvelope,
   PrivoraDesktopApi,
   SaveSettingsInput,
   SaveThreadSettingsInput,
@@ -44,6 +44,7 @@ import type {
   TerminalResizeInput,
   TerminalStopInput,
 } from "../shared/types";
+import { isPrivoraEventEnvelope } from "../shared/privoraProtocol";
 import { channels } from "../main/ipc/channels";
 
 const api: PrivoraDesktopApi = {
@@ -135,8 +136,10 @@ const api: PrivoraDesktopApi = {
     ipcRenderer.on(channels.zoomChanged, listener);
     return () => ipcRenderer.off(channels.zoomChanged, listener);
   },
-  onEvent: (callback: (event: DesktopEvent) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: DesktopEvent) => callback(payload);
+  onPrivoraEvent: (callback: (event: PrivoraEventEnvelope) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      if (isPrivoraEventEnvelope(payload)) callback(payload);
+    };
     ipcRenderer.on(channels.event, listener);
     return () => ipcRenderer.off(channels.event, listener);
   },

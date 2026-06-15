@@ -1,9 +1,9 @@
-import { normalizeThreadTitle } from "../../db/store";
+import { normalizeThreadTitle } from "../../../db/store";
 import type {
   AssistantTextPartRecord,
   AssistantTextPhase,
   ChatMessageRecord,
-} from "../../../shared/types";
+} from "../../../../shared/types";
 
 const REPEAT_FINGERPRINT_MIN_CHARS = 72;
 const RECENT_VISIBLE_TEXT_CHARS = 5000;

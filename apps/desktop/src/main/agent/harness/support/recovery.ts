@@ -1,4 +1,4 @@
-import type { ProviderMessage } from "../providers/types";
+import type { ProviderMessage } from "../../providers/types";
 
 const MAX_RECOVERY_NUDGES = 2;
 

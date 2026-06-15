@@ -8,6 +8,7 @@ export type TurnStatus =
   | "running"
   | "executing_tool"
   | "waiting_tool"
+  | "waiting_verification"
   | "awaiting_approval"
   | "draining"
   | "completing"
@@ -1232,6 +1233,7 @@ export interface GeneratedImageEventRecord {
 }
 
 export interface AgentRunCheckpointRecord {
+  version?: 1;
   threadId: string;
   assistantMessageId: string;
   workspaceRoot: string;
@@ -1241,6 +1243,15 @@ export interface AgentRunCheckpointRecord {
   iteration: number;
   toolCount: number;
   recoveryAttempts: number;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  collaborationMode?: CollaborationMode;
+  agentHarnessMode?: AgentHarnessMode;
+  pendingUserInput?: {
+    call: DesktopToolCall;
+    questions: RequestUserInputQuestionRecord[];
+    resolvedResult?: ToolResult;
+  };
   lastProgressAt: number;
   updatedAt: number;
 }
@@ -1536,34 +1547,45 @@ export interface GeneratedImageDownloadResult {
   sizeBytes: number;
 }
 
-export interface DesktopEventMeta {
-  sequence?: number;
-  emittedAt?: number;
-}
+export const PRIVORA_EVENT_PROTOCOL_VERSION = 1 as const;
 
-export type DesktopEvent = DesktopEventMeta & (
-  | { type: "snapshot"; snapshot: AppSnapshot }
-  | { type: "message_updated"; message: ChatMessageRecord }
-  | { type: "tool_updated"; tool: ToolEventRecord }
-  | { type: "turn_undo_updated"; undo: TurnUndoRecord }
-  | { type: "context_usage_updated"; usage: ContextUsageRecord }
-  | { type: "ai_credit_summary_updated"; summary: AiCreditSummaryRecord }
-  | { type: "browser_state_updated"; state: BrowserPanelStateRecord }
-  | { type: "computer_state_updated"; state: ComputerUseStateRecord }
-  | { type: "browser_tools_menu_action"; workspaceId: string; action: BrowserToolsMenuAction }
-  | { type: "image_generation_started"; image: GeneratedImageEventRecord }
-  | { type: "image_generation_completed"; image: GeneratedImageEventRecord }
-  | { type: "image_generation_failed"; image: GeneratedImageEventRecord }
-  | { type: "request_user_input"; request: RequestUserInputRequestRecord }
-  | { type: "request_user_input_resolved"; threadId: string; callId: string }
-  | { type: "command_output_delta"; callId: string; delta: string }
-  | { type: "terminal_session_started"; session: TerminalSessionRecord }
-  | { type: "terminal_output_delta"; sessionId: number; stream: "stdout" | "stderr"; delta: string; chunkId: string; updatedAt: number }
-  | { type: "terminal_session_updated"; session: TerminalSessionRecord }
-  | { type: "terminal_session_ended"; session: TerminalSessionRecord }
-  | { type: "run_state"; threadId: string; run: ActiveRunState | null }
-  | { type: "toast"; tone: "info" | "error" | "success"; message: string }
-);
+export type PrivoraEventPayload =
+  | { type: "snapshot.updated"; snapshot: AppSnapshot }
+  | { type: "message.upserted"; message: ChatMessageRecord }
+  | { type: "tool.upserted"; tool: ToolEventRecord }
+  | { type: "turn_undo.updated"; undo: TurnUndoRecord }
+  | { type: "context.usage_updated"; usage: ContextUsageRecord }
+  | { type: "ai_credit.summary_updated"; summary: AiCreditSummaryRecord }
+  | { type: "browser.state_updated"; state: BrowserPanelStateRecord }
+  | { type: "computer.state_updated"; state: ComputerUseStateRecord }
+  | { type: "browser.tools_menu_action"; workspaceId: string; action: BrowserToolsMenuAction }
+  | { type: "image.started"; image: GeneratedImageEventRecord }
+  | { type: "image.completed"; image: GeneratedImageEventRecord }
+  | { type: "image.failed"; image: GeneratedImageEventRecord }
+  | { type: "user_input.requested"; request: RequestUserInputRequestRecord }
+  | { type: "user_input.resolved"; threadId: string; callId: string }
+  | { type: "tool.output_delta"; callId: string; delta: string }
+  | { type: "terminal.output_delta"; sessionId: number; stream: "stdout" | "stderr"; delta: string; chunkId: string; updatedAt: number }
+  | { type: "terminal.session_updated"; session: TerminalSessionRecord }
+  | { type: "turn.started"; threadId: string; turnId: string }
+  | { type: "turn.completed" | "turn.failed" | "turn.stopped"; threadId: string; turnId: string; message?: ChatMessageRecord }
+  | { type: "approval.requested" | "approval.resolved"; threadId: string; turnId: string; callIds: string[] }
+  | { type: "verification.started" | "verification.completed"; threadId: string; turnId: string }
+  | { type: "context.compacted"; threadId: string; turnId: string; checkpoint: CompactionCheckpointRecord }
+  | { type: "turn.status_changed"; threadId: string; run: ActiveRunState | null }
+  | { type: "notification.created"; tone: "info" | "error" | "success"; message: string }
+;
+
+export interface PrivoraEventEnvelope<T extends PrivoraEventPayload = PrivoraEventPayload> {
+  protocolVersion: typeof PRIVORA_EVENT_PROTOCOL_VERSION;
+  eventId: string;
+  sequence: number;
+  emittedAt: number;
+  threadId?: string;
+  turnId?: string;
+  itemId?: string;
+  payload: T;
+}
 
 export interface PrepareTurnUndoInput {
   messageId: string;
@@ -1706,7 +1728,7 @@ export interface PrivoraDesktopApi {
   installUpdate(): Promise<UpdateStatus>;
   onUpdateStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   onZoomChanged(callback: (percent: number) => void): () => void;
-  onEvent(callback: (event: DesktopEvent) => void): () => void;
+  onPrivoraEvent(callback: (event: PrivoraEventEnvelope) => void): () => void;
 }
 
 export type UpdateState =

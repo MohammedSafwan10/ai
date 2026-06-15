@@ -83,7 +83,7 @@ export interface TerminalSessionListRecord {
 
 export type TerminalManagerEvent =
   | { type: "terminal_session_started"; session: TerminalSessionListRecord }
-  | { type: "terminal_output_delta"; sessionId: number; processId: number | null; stream: "stdout" | "stderr"; delta: string; chunkId: string; updatedAt: number }
+  | { type: "terminal.output_delta"; sessionId: number; processId: number | null; stream: "stdout" | "stderr"; delta: string; chunkId: string; updatedAt: number }
   | { type: "terminal_session_updated"; session: TerminalSessionListRecord }
   | { type: "terminal_session_ended"; session: TerminalSessionListRecord };
 
@@ -369,7 +369,7 @@ export class TerminalSessionManager {
     session.updatedAt = Date.now();
     session.chunkSequence += 1;
     this.emit({
-      type: "terminal_output_delta",
+      type: "terminal.output_delta",
       sessionId: session.id,
       processId: session.backend.pid ?? session.id,
       stream,
@@ -604,7 +604,7 @@ export class TerminalSessionManager {
     session.updatedAt = Date.now();
     session.chunkSequence += 1;
     this.emit({
-      type: "terminal_output_delta",
+      type: "terminal.output_delta",
       sessionId: session.id,
       processId: session.backend.pid ?? session.id,
       stream,

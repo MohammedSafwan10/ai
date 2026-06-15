@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { coalesceDesktopEvents, prependHistoryPage, reduceDesktopEvents } from "../src/renderer/state/useDesktopState";
-import type { ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
+import { coalescePrivoraEvents, prependHistoryPage, reducePrivoraEvents } from "../src/renderer/state/useDesktopState";
+import { PRIVORA_EVENT_PROTOCOL_VERSION } from "../src/shared/types";
+import type { ChatMessageRecord, PrivoraEventEnvelope, PrivoraEventPayload, ToolEventRecord } from "../src/shared/types";
 
 const baseSnapshot = () => ({
   settings: {
@@ -43,9 +44,9 @@ const baseSnapshot = () => ({
 
 describe("renderer thread isolation", () => {
   it("ignores live message and tool events from inactive threads", () => {
-    const snapshot = reduceDesktopEvents(baseSnapshot(), [
-      { type: "message_updated", message: message("new-message", "new-thread", "new prompt should not show here") },
-      { type: "tool_updated", tool: tool("new-tool", "new-thread", "new-message") },
+    const snapshot = reducePayloadEvents(baseSnapshot(), [
+      { type: "message.upserted", message: message("new-message", "new-thread", "new prompt should not show here") },
+      { type: "tool.upserted", tool: tool("new-tool", "new-thread", "new-message") },
     ]);
 
     expect(snapshot.messages.map((item) => item.id)).toEqual(["old-message"]);
@@ -65,9 +66,9 @@ describe("renderer thread isolation", () => {
       },
     };
 
-    const afterOtherRun = reduceDesktopEvents(current, [
+    const afterOtherRun = reducePayloadEvents(current, [
       {
-        type: "run_state",
+        type: "turn.status_changed",
         threadId: "new-thread",
         run: {
           threadId: "new-thread",
@@ -77,7 +78,7 @@ describe("renderer thread isolation", () => {
           updatedAt: 20,
         },
       },
-      { type: "run_state", threadId: "new-thread", run: null },
+      { type: "turn.status_changed", threadId: "new-thread", run: null },
     ]);
 
     expect(afterOtherRun.activeRun?.threadId).toBe("old-thread");
@@ -85,11 +86,11 @@ describe("renderer thread isolation", () => {
   });
 
   it("accepts events from the active thread", () => {
-    const next = reduceDesktopEvents(baseSnapshot(), [
-      { type: "message_updated", message: message("old-assistant", "old-thread", "assistant text") },
-      { type: "tool_updated", tool: tool("old-tool", "old-thread", "old-assistant") },
+    const next = reducePayloadEvents(baseSnapshot(), [
+      { type: "message.upserted", message: message("old-assistant", "old-thread", "assistant text") },
+      { type: "tool.upserted", tool: tool("old-tool", "old-thread", "old-assistant") },
       {
-        type: "run_state",
+        type: "turn.status_changed",
         threadId: "old-thread",
         run: {
           threadId: "old-thread",
@@ -108,9 +109,9 @@ describe("renderer thread isolation", () => {
 
   it("keeps subagents scoped to the active parent thread snapshot", () => {
     const current = baseSnapshot();
-    const next = reduceDesktopEvents(current, [
+    const next = reducePayloadEvents(current, [
       {
-        type: "snapshot",
+        type: "snapshot.updated",
         snapshot: {
           ...current,
           subagents: [{
@@ -137,9 +138,9 @@ describe("renderer thread isolation", () => {
   });
 
   it("surfaces child tool events in the active parent timeline", () => {
-    const current = reduceDesktopEvents(baseSnapshot(), [
+    const current = reducePayloadEvents(baseSnapshot(), [
       {
-        type: "snapshot",
+        type: "snapshot.updated",
         snapshot: {
           ...baseSnapshot(),
           subagents: [{
@@ -159,8 +160,8 @@ describe("renderer thread isolation", () => {
       },
     ]);
 
-    const next = reduceDesktopEvents(current, [
-      { type: "tool_updated", tool: tool("child-tool", "agent-thread", "child-assistant") },
+    const next = reducePayloadEvents(current, [
+      { type: "tool.upserted", tool: tool("child-tool", "agent-thread", "child-assistant") },
     ]);
 
     expect(next.toolEvents.map((item) => item.id)).toContain("child-tool");
@@ -168,9 +169,9 @@ describe("renderer thread isolation", () => {
   });
 
   it("coalesces run states independently per thread", () => {
-    const events = coalesceDesktopEvents([
+    const events = coalescePayloadEvents([
       {
-        type: "run_state",
+        type: "turn.status_changed",
         threadId: "old-thread",
         run: {
           threadId: "old-thread",
@@ -181,7 +182,7 @@ describe("renderer thread isolation", () => {
         },
       },
       {
-        type: "run_state",
+        type: "turn.status_changed",
         threadId: "new-thread",
         run: {
           threadId: "new-thread",
@@ -193,7 +194,7 @@ describe("renderer thread isolation", () => {
       },
     ]);
 
-    expect(events.filter((event) => event.type === "run_state")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "turn.status_changed")).toHaveLength(2);
   });
 
   it("prepends history pages without duplicating existing messages", () => {
@@ -240,3 +241,21 @@ const tool = (id: string, threadId: string, messageId: string): ToolEventRecord 
   createdAt: 3,
   updatedAt: 3,
 });
+
+let sequence = 0;
+
+const envelope = <T extends PrivoraEventPayload>(payload: T): PrivoraEventEnvelope<T> => ({
+  protocolVersion: PRIVORA_EVENT_PROTOCOL_VERSION,
+  eventId: `test-${++sequence}`,
+  sequence,
+  emittedAt: sequence,
+  payload,
+});
+
+const reducePayloadEvents = (
+  snapshot: Parameters<typeof reducePrivoraEvents>[0],
+  payloads: PrivoraEventPayload[],
+) => reducePrivoraEvents(snapshot, payloads.map(envelope));
+
+const coalescePayloadEvents = (payloads: PrivoraEventPayload[]) =>
+  coalescePrivoraEvents(payloads.map(envelope)).map((event) => event.payload);

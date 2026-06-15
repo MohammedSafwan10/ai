@@ -2,7 +2,7 @@ import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
   ApprovalScopeRecord,
-} from "../../../shared/types";
+} from "../../../../shared/types";
 
 export interface ApprovalDecision {
   approved: boolean;

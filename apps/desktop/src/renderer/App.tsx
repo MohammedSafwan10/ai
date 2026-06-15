@@ -45,6 +45,7 @@ export default function App() {
     runStatus === "running" ||
     runStatus === "executing_tool" ||
     runStatus === "waiting_tool" ||
+    runStatus === "waiting_verification" ||
     runStatus === "awaiting_approval" ||
     runStatus === "draining" ||
     runStatus === "completing";

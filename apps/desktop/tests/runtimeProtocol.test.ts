@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDelta, resolveNoToolOutcome } from "../src/main/agent/runtime";
+import { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDelta, resolveNoToolOutcome } from "../src/main/agent/turnCoordinator";
 import { isPlaceholderThreadTitle, normalizeThreadTitle } from "../src/main/db/store";
 
 describe("desktop runtime protocol recovery", () => {

@@ -4,7 +4,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DesktopStore } from "./db/store";
 import { NotesStore } from "./notes/NotesStore";
-import { AgentRuntime } from "./agent/runtime";
+import { TurnCoordinator } from "./agent/turnCoordinator";
+import { AgentHarness } from "./agent/harness/agentHarness";
+import { envelopePrivoraEvent } from "./agent/harness/eventBus";
 import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
 import { channels } from "./ipc/channels";
@@ -23,7 +25,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let mainWindow: BrowserWindow | null = null;
 let store: DesktopStore | null = null;
 let notesStore: NotesStore | null = null;
-let runtime: AgentService | null = null;
+let harnessService: AgentService | null = null;
 let browserManager: BrowserSessionManager | null = null;
 let computerUseManager: ComputerUseManager | null = null;
 let tray: Tray | null = null;
@@ -80,13 +82,20 @@ const showMainWindow = async () => {
   focusMainWindow();
 };
 
+const emitPrivoraEvent = (payload: Parameters<typeof envelopePrivoraEvent>[0]) => {
+  const event = envelopePrivoraEvent(payload);
+  BrowserWindow.getAllWindows().forEach((window) => {
+    if (!window.isDestroyed()) window.webContents.send(channels.event, event);
+  });
+};
+
 const emitSnapshot = () => {
-  if (!store || !runtime) return;
+  if (!store || !harnessService) return;
   const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
-  snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
-  snapshot.activeRuns = runtime.listActiveRuns();
-  snapshot.terminal = runtime.getTerminalState();
-  mainWindow?.webContents.send(channels.event, { type: "snapshot", snapshot });
+  snapshot.activeRun = state.activeThreadId ? harnessService.getActiveRun(state.activeThreadId) : null;
+  snapshot.activeRuns = harnessService.listActiveRuns();
+  snapshot.terminal = harnessService.getTerminalState();
+  emitPrivoraEvent({ type: "snapshot.updated", snapshot });
 };
 
 const completePrivoraProtocolAuth = async (code: string) => {
@@ -115,8 +124,8 @@ const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
     const parsed = new URL(rawUrl);
     if (parsed.protocol === `${PRIVORA_PROTOCOL}:` && parsed.hostname === "settings" && parsed.pathname === "/billing") {
       focusMainWindow();
-      mainWindow?.webContents.send(channels.event, {
-        type: "toast",
+      emitPrivoraEvent({
+        type: "notification.created",
         tone: "info",
         message: "Return to Billing and start Privora sign-in again if it is still not connected.",
       });
@@ -130,8 +139,8 @@ const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
   if (!result) return;
   focusMainWindow();
   if (!result.ok || !result.code) {
-    mainWindow?.webContents.send(channels.event, {
-      type: "toast",
+    emitPrivoraEvent({
+      type: "notification.created",
       tone: "error",
       message: result.message,
     });
@@ -139,15 +148,15 @@ const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
   }
   void completePrivoraProtocolAuth(result.code)
     .then(() => {
-      mainWindow?.webContents.send(channels.event, {
-        type: "toast",
+      emitPrivoraEvent({
+        type: "notification.created",
         tone: "success",
         message: "Privora Desktop is connected.",
       });
     })
     .catch((error) => {
-      mainWindow?.webContents.send(channels.event, {
-        type: "toast",
+      emitPrivoraEvent({
+        type: "notification.created",
         tone: "error",
         message: error instanceof Error ? error.message : "Privora sign-in failed.",
       });
@@ -172,17 +181,17 @@ const shouldKeepRunningInTray = () =>
   process.platform !== "darwin" && Boolean(store?.getSettings().keepRunningInTray);
 
 const runningTaskCount = () => {
-  const activeRuns = runtime?.listActiveRuns().length || 0;
-  const runningTerminals = runtime?.getTerminalState().sessions.filter((session) => session.running).length || 0;
+  const activeRuns = harnessService?.listActiveRuns().length || 0;
+  const runningTerminals = harnessService?.getTerminalState().sessions.filter((session) => session.running).length || 0;
   return activeRuns + runningTerminals;
 };
 
 const stopActiveWork = () => {
-  for (const run of runtime?.listActiveRuns() || []) {
-    runtime?.stopTurn(run.threadId);
+  for (const run of harnessService?.listActiveRuns() || []) {
+    harnessService?.stopTurn(run.threadId);
   }
-  for (const session of runtime?.getTerminalState().sessions || []) {
-    if (session.running) runtime?.stopTerminalSession(session.sessionId);
+  for (const session of harnessService?.getTerminalState().sessions || []) {
+    if (session.running) harnessService?.stopTerminalSession(session.sessionId);
   }
   computerUseManager?.stop();
 };
@@ -491,18 +500,18 @@ if (!singleInstanceLock) {
     });
     notesStore = new NotesStore(app.getPath("userData"));
     computerUseManager = new ComputerUseManager(app.getPath("userData"), (computerState) => {
-      BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, {
-        type: "computer_state_updated",
+      emitPrivoraEvent({
+        type: "computer.state_updated",
         state: computerState,
-      }));
+      });
     });
     browserManager = new BrowserSessionManager(
       () => mainWindow,
       (browserState) => {
-        BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, {
-          type: "browser_state_updated",
+        emitPrivoraEvent({
+          type: "browser.state_updated",
           state: browserState,
-        }));
+        });
       },
       (workspaceId) => store?.getBrowserWorkspaceState(workspaceId) || null,
       (browserState) => store?.saveBrowserWorkspaceState(browserState),
@@ -515,8 +524,10 @@ if (!singleInstanceLock) {
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
     computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
-    runtime = new InProcessAgentService(new AgentRuntime(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager));
-    registerIpc(store, runtime, state, browserManager, notesStore, computerUseManager, {
+    harnessService = new InProcessAgentService(new AgentHarness(
+      new TurnCoordinator(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager),
+    ));
+    registerIpc(store, harnessService, state, browserManager, notesStore, computerUseManager, {
       onSettingsChanged: () => rebuildTrayMenu(),
     });
     installUpdateService({

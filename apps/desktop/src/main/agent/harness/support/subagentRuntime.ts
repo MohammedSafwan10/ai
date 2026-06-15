@@ -1,8 +1,8 @@
-import type { DesktopStore } from "../../db/store";
-import type { ReasoningEffort } from "../../../shared/models";
-import type { SubagentRecord } from "../../../shared/types";
-import { roleNamesForPrompt, type SubagentRoleConfig } from "../subagents";
-import type { ProviderMessage } from "../providers/types";
+import type { DesktopStore } from "../../../db/store";
+import type { ReasoningEffort } from "../../../../shared/models";
+import type { SubagentRecord } from "../../../../shared/types";
+import { roleNamesForPrompt, type SubagentRoleConfig } from "../../subagents";
+import type { ProviderMessage } from "../../providers/types";
 
 export const MAX_SUBAGENT_DEPTH = 2;
 const MAX_FORKED_PARENT_CONTEXT_CHARS = 18_000;

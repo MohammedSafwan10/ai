@@ -2,7 +2,7 @@ import type {
   DesktopToolCall,
   RequestUserInputQuestionRecord,
   RequestUserInputResponseInput,
-} from "../../../shared/types";
+} from "../../../../shared/types";
 
 export const planModeBlockReason = (
   call: DesktopToolCall,

@@ -39,7 +39,7 @@ import type {
   BrowserViewportInput,
   BrowserWorkflowAssertInput,
   BrowserWorkflowInput,
-  DesktopEvent,
+  PrivoraEventPayload,
   GeneratedImageFileInput,
   NotesCloseTabInput,
   NotesCreateInput,
@@ -61,6 +61,7 @@ import type {
   WorkspaceOpenTarget,
   PrivoraAuthInput,
 } from "../../shared/types";
+import { envelopePrivoraEvent } from "../agent/harness/eventBus";
 
 export interface IpcState {
   activeThreadId: string | null;
@@ -88,8 +89,9 @@ export const registerIpc = (
     const run = runtime.getActiveRun(threadId);
     return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
   });
-  const emit = (event: DesktopEvent) => {
-    BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, event));
+  const emit = (event: PrivoraEventPayload) => {
+    const envelope = envelopePrivoraEvent(event);
+    BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channels.event, envelope));
   };
 
   const threadsForWorkspace = (workspaceId: string | null) =>
@@ -114,7 +116,7 @@ export const registerIpc = (
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     snapshot.activeRuns = runtime.listActiveRuns();
     snapshot.terminal = runtime.getTerminalState();
-    emit({ type: "snapshot", snapshot });
+    emit({ type: "snapshot.updated", snapshot });
   };
 
   const handle = (
@@ -256,15 +258,15 @@ export const registerIpc = (
 
   handle(channels.prepareTurnUndo, z.tuple([messageIdInputSchema]), (_event, input: { messageId: string }) => {
     const undo = undoCoordinator.prepare(input.messageId);
-    if (undo) emit({ type: "turn_undo_updated", undo });
+    if (undo) emit({ type: "turn_undo.updated", undo });
     return undo;
   });
 
   handle(channels.undoTurnChanges, z.tuple([messageIdInputSchema]), async (_event, input: { messageId: string }) => {
     const undoing = undoCoordinator.prepare(input.messageId);
-    if (undoing) emit({ type: "turn_undo_updated", undo: { ...undoing, status: "undoing", updatedAt: Date.now() } });
+    if (undoing) emit({ type: "turn_undo.updated", undo: { ...undoing, status: "undoing", updatedAt: Date.now() } });
     const undo = await undoCoordinator.undo(input.messageId);
-    if (undo) emit({ type: "turn_undo_updated", undo });
+    if (undo) emit({ type: "turn_undo.updated", undo });
     return undo;
   });
 
@@ -389,14 +391,14 @@ export const registerIpc = (
         } catch (error) {
           const summary = emptyAiCreditSummary(error instanceof Error ? error.message : String(error));
           store.setAiCreditSummary(summary);
-          emit({ type: "ai_credit_summary_updated", summary });
+          emit({ type: "ai_credit.summary_updated", summary });
         }
         emitSnapshot();
-        emit({ type: "toast", tone: "success", message: "Privora Desktop is connected." });
+        emit({ type: "notification.created", tone: "success", message: "Privora Desktop is connected." });
       },
     });
     await shell.openExternal(auth.url);
-    emit({ type: "toast", tone: "info", message: "Opened Privora sign-in in your browser." });
+    emit({ type: "notification.created", tone: "info", message: "Opened Privora sign-in in your browser." });
     return auth;
   });
 
@@ -406,7 +408,7 @@ export const registerIpc = (
     const userJwt = store.getPrivoraUserJwt();
     const summary = await refreshAiCreditSummary(settings, sessionCookie, userJwt);
     store.setAiCreditSummary(summary);
-    emit({ type: "ai_credit_summary_updated", summary });
+    emit({ type: "ai_credit.summary_updated", summary });
     return summary;
   };
 
@@ -432,7 +434,7 @@ export const registerIpc = (
     store.clearPrivoraSession();
     const summary = emptyAiCreditSummary();
     store.setAiCreditSummary(summary);
-    emit({ type: "ai_credit_summary_updated", summary });
+    emit({ type: "ai_credit.summary_updated", summary });
     emitSnapshot();
     return summary;
   });
@@ -444,12 +446,12 @@ export const registerIpc = (
     try {
       const summary = await refreshAiCreditSummary(settings, sessionCookie, userJwt);
       store.setAiCreditSummary(summary);
-      emit({ type: "ai_credit_summary_updated", summary });
+      emit({ type: "ai_credit.summary_updated", summary });
       return summary;
     } catch (error) {
       const summary = emptyAiCreditSummary(error instanceof Error ? error.message : String(error));
       store.setAiCreditSummary(summary);
-      emit({ type: "ai_credit_summary_updated", summary });
+      emit({ type: "ai_credit.summary_updated", summary });
       return summary;
     }
   });
@@ -543,11 +545,11 @@ export const registerIpc = (
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return;
     const sendAction = (action: BrowserToolsMenuAction) => {
-      event.sender.send(channels.event, {
-        type: "browser_tools_menu_action",
+      event.sender.send(channels.event, envelopePrivoraEvent({
+        type: "browser.tools_menu_action",
         workspaceId: input.workspaceId,
         action,
-      });
+      }));
     };
     const downloadsResult = await browserManager.downloadAction(input.workspaceId, { workspaceId: input.workspaceId, action: "list" });
     const downloads = Array.isArray(downloadsResult.data?.downloads) ? downloadsResult.data.downloads : [];
@@ -556,7 +558,7 @@ export const registerIpc = (
         label: "Allow next download",
         click: async () => {
           await browserManager.downloadAction(input.workspaceId, { workspaceId: input.workspaceId, action: "allow_next" });
-          event.sender.send(channels.event, { type: "toast", tone: "info", message: "The next browser download is allowed." });
+          event.sender.send(channels.event, envelopePrivoraEvent({ type: "notification.created", tone: "info", message: "The next browser download is allowed." }));
         },
       },
       { type: "separator" },
@@ -737,11 +739,11 @@ export const registerIpc = (
       sourcePath: input.sourcePath,
       downloadsRoot: app.getPath("downloads"),
     });
-    event.sender.send(channels.event, {
-      type: "toast",
+    event.sender.send(channels.event, envelopePrivoraEvent({
+      type: "notification.created",
       tone: "success",
       message: `Downloaded ${result.filename} to Downloads\\Privora.`,
-    } satisfies DesktopEvent);
+    }));
     return result;
   });
 

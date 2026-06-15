@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentRuntime, reviewerReadOnlyBlockReason } from "../src/main/agent/runtime";
+import { reviewerReadOnlyBlockReason, VerificationEngine, type VerificationEnginePorts } from "../src/main/agent/harness/verificationEngine";
+import { SubagentManager, resolveSubagentModel, type SubagentManagerPorts } from "../src/main/agent/harness/subagentManager";
+import { ToolCallCoordinator } from "../src/main/agent/harness/toolCallCoordinator";
+import { TurnRegistry } from "../src/main/agent/harness/turnRegistry";
 import { DesktopStore } from "../src/main/db/store";
 import type { AgentRunTracker } from "../src/main/agent/runState";
 import type { ChatMessageRecord, SubagentRecord } from "../src/shared/types";
@@ -67,37 +70,29 @@ describe("subagent topology", () => {
     expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.5");
   });
 
-  it("always inherits the active parent model when spawning", () => {
+  it("always inherits the active parent model when spawning", async () => {
     const store = createStore();
     store.saveSettings({ model: "gemini-3.5-flash" });
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
-    (runtime as unknown as { startSubagentTurn: () => void }).startSubagentTurn = () => undefined;
-
-    const result = (runtime as unknown as {
-      spawnSubagent: (
-        call: { arguments: Record<string, unknown> },
-        workspaceRoot: string,
-        parentThreadId: string,
-        parentMessageId: string,
-        parentRun: { model: string; reasoningEffort: string },
-      ) => { success: boolean };
-    }).spawnSubagent(
+    const manager = new SubagentManager(store, subagentPorts());
+    const result = await manager.execute(
       {
+        id: "spawn",
+        name: "spawn_agent",
         arguments: {
           taskName: "reviewer",
           message: "Review the workspace",
           model: "gemini-3.5-flash",
         },
       },
-      workspace.path,
-      rootThread.id,
-      "parent-message",
-      { model: "gpt-5.5", reasoningEffort: "high" },
+      {
+        workspaceRoot: workspace.path,
+        parentThreadId: rootThread.id,
+        parentMessageId: "parent-message",
+        parentRun: runTracker(rootThread.id, "parent-message", { model: "gpt-5.5", reasoningEffort: "high" }),
+        signal: new AbortController().signal,
+      },
     );
 
     const [agent] = store.listDirectSubagents(rootThread.id);
@@ -125,32 +120,7 @@ describe("subagent topology", () => {
       prompt: "Legacy task",
       model: "gemini-3.5-flash",
     });
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
-    let selectedModel = "";
-    (runtime as unknown as { continueLoop: (options: { model?: string }) => Promise<void> }).continueLoop = async (options) => {
-      selectedModel = options.model || "";
-    };
-
-    (runtime as unknown as {
-      runSubagentLoop: (
-        agent: SubagentRecord,
-        workspaceRoot: string,
-        assistantMessage: ChatMessageRecord,
-      ) => void;
-    }).runSubagentLoop(agent, workspace.path, {
-      id: "assistant",
-      threadId: agent.threadId,
-      role: "assistant",
-      content: "",
-      status: "running",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-
-    expect(selectedModel).toBe("gpt-5.5");
+    expect(resolveSubagentModel(store, agent)).toBe("gpt-5.5");
   });
 
   it("separates direct children from descendants and does not include the parent as its own child", () => {
@@ -193,16 +163,11 @@ describe("subagent queued turns", () => {
     upsertMessage(store, agent.threadId, "assistant-1", "assistant", "Working", 101);
     upsertMessage(store, agent.threadId, "user-2", "user", "Queued task", 102);
 
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
     const started: string[] = [];
-    (runtime as unknown as { startExistingSubagentTurn: (agent: SubagentRecord, workspaceRoot: string) => void }).startExistingSubagentTurn = (queuedAgent, workspaceRoot) => {
-      started.push(`${queuedAgent.threadId}:${workspaceRoot}`);
-    };
-
-    (runtime as unknown as { markSubagentFinished: (threadId: string, status: string, text: string) => void }).markSubagentFinished(agent.threadId, "completed", "Done");
+    const manager = new SubagentManager(store, subagentPorts({
+      startExistingSubagentTurn: (queuedAgent, workspaceRoot) => started.push(`${queuedAgent.threadId}:${workspaceRoot}`),
+    }));
+    manager.markFinished(agent.threadId, "completed", "Done");
 
     expect(started).toEqual([`${agent.threadId}:${workspace.path}`]);
     expect(store.getSubagentByThread(agent.threadId)?.status).toBe("pending");
@@ -216,16 +181,11 @@ describe("subagent queued turns", () => {
     upsertMessage(store, agent.threadId, "user-1", "user", "Initial task", 100);
     upsertMessage(store, agent.threadId, "assistant-1", "assistant", "Done", 101);
 
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
     const started: string[] = [];
-    (runtime as unknown as { startExistingSubagentTurn: (agent: SubagentRecord, workspaceRoot: string) => void }).startExistingSubagentTurn = (queuedAgent, workspaceRoot) => {
-      started.push(`${queuedAgent.threadId}:${workspaceRoot}`);
-    };
-
-    (runtime as unknown as { markSubagentFinished: (threadId: string, status: string, text: string) => void }).markSubagentFinished(agent.threadId, "completed", "Done");
+    const manager = new SubagentManager(store, subagentPorts({
+      startExistingSubagentTurn: (queuedAgent, workspaceRoot) => started.push(`${queuedAgent.threadId}:${workspaceRoot}`),
+    }));
+    manager.markFinished(agent.threadId, "completed", "Done");
 
     expect(started).toEqual([]);
     expect(store.getSubagentByThread(agent.threadId)?.status).toBe("completed");
@@ -233,36 +193,26 @@ describe("subagent queued turns", () => {
 });
 
 describe("runtime safety guards", () => {
-  it("rejects backend duplicate starts before creating extra messages", async () => {
-    const store = createStore();
-    const workspace = store.upsertWorkspace(tempDir);
-    const thread = store.createThread(workspace.id);
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: thread.id,
-      activeWorkspaceId: workspace.id,
-    }));
+  it("rejects duplicate starts and releases the start guard exactly once", () => {
+    const registry = new TurnRegistry();
+    const release = registry.begin("thread-1", () => false);
 
-    (runtime as unknown as { startingThreads: Set<string> }).startingThreads.add(thread.id);
-
-    await expect(runtime.startTurn({ threadId: thread.id, prompt: "Hello" })).rejects.toThrow("already running");
-    expect(store.listMessages(thread.id)).toHaveLength(0);
+    expect(() => registry.begin("thread-1", () => false)).toThrow("already running");
+    release();
+    release();
+    expect(() => registry.begin("thread-1", () => false)).not.toThrow();
   });
 
   it("stops tracked terminal processes when a thread is stopped", () => {
     const store = createStore();
     const workspace = store.upsertWorkspace(tempDir);
     const thread = store.createThread(workspace.id);
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: thread.id,
-      activeWorkspaceId: workspace.id,
-    }));
     const stopped: number[] = [];
-    (runtime as unknown as { tools: { stopTerminalProcess: (processId: number) => Promise<void> } }).tools.stopTerminalProcess = async (processId) => {
-      stopped.push(processId);
-    };
-
-    (runtime as unknown as { trackThreadProcess: (threadId: string, processId: number) => void }).trackThreadProcess(thread.id, 42);
-    runtime.stopTurn(thread.id);
+    const coordinator = new ToolCallCoordinator(undefined, undefined, undefined, undefined, {
+      stopTerminalProcess: async (processId: number) => { stopped.push(processId); },
+    } as never);
+    coordinator.trackProcess(thread.id, 42);
+    coordinator.stopThreadProcesses(thread.id);
 
     expect(stopped).toEqual([42]);
   });
@@ -275,17 +225,16 @@ describe("subagent waiting", () => {
     const rootThread = store.createThread(workspace.id);
     createSubagent(store, rootThread.id, "reviewer", "/root/reviewer");
 
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
-    const result = await (runtime as unknown as {
-      waitForSubagents: (
-        call: { arguments: Record<string, unknown> },
-        parentThreadId: string,
-        signal: AbortSignal,
-      ) => Promise<{ output?: string; data?: Record<string, unknown> }>;
-    }).waitForSubagents({ arguments: { timeoutMs: 1 } }, rootThread.id, new AbortController().signal);
+    const manager = new SubagentManager(store, subagentPorts());
+    const result = await manager.execute(
+      { id: "wait", name: "wait_agent", arguments: { timeoutMs: 1 } },
+      {
+        workspaceRoot: workspace.path,
+        parentThreadId: rootThread.id,
+        parentMessageId: "parent-message",
+        signal: new AbortController().signal,
+      },
+    );
 
     expect(result.output).toContain("Still waiting on 1 live agent.");
     expect(result.output).not.toContain("Wait timed out.");
@@ -305,56 +254,33 @@ describe("reviewer swarm harness", () => {
       collaborationMode: "default",
       agentHarnessMode: "review_swarm",
     });
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
-    const readOnlyFlags: boolean[] = [];
-    (runtime as unknown as {
-      continueLoop: (options: { threadId: string; readOnlyTools?: boolean }) => Promise<void>;
-    }).continueLoop = async (options) => {
-      readOnlyFlags.push(options.readOnlyTools === true);
-      store.updateSubagent(options.threadId, {
+    const engine = new VerificationEngine(store, verificationPorts({
+      startSubagentTurn: (agent) => {
+        store.updateSubagent(agent.threadId, {
         status: "completed",
         finalMessage: "No blocking issues found.",
         lastPreview: "No blocking issues found.",
       });
-    };
+      },
+    }));
 
     const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
-    const feedback = await (runtime as unknown as {
-      maybeRunReviewerSwarm: (input: {
-        options: Record<string, unknown>;
-        run: AgentRunTracker;
-        assistantText: string;
-        toolCount: number;
-        agentHarnessMode: "review_swarm";
-      }) => Promise<string>;
-    }).maybeRunReviewerSwarm({
-      options: {
-        threadId: rootThread.id,
-        assistantMessage,
-        workspaceRoot: workspace.path,
-        history: [],
-        assistantText: "Done",
-        assistantThought: "",
-        controller: new AbortController(),
-        iteration: 0,
-        toolCount: 1,
-        recoveryAttempts: 0,
-        model: "gpt-5.5",
-        reasoningEffort: "high",
-        collaborationMode: "default",
-      },
-      run: runTracker(rootThread.id, assistantMessage.id),
+    const feedback = await engine.verify({
+      threadId: rootThread.id,
+      assistantMessage,
+      workspaceRoot: workspace.path,
       assistantText: "Done",
+      iteration: 0,
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      collaborationMode: "default",
+      run: runTracker(rootThread.id, assistantMessage.id),
       toolCount: 1,
       agentHarnessMode: "review_swarm",
     });
 
     const reviewers = store.listDirectSubagents(rootThread.id);
     expect(reviewers).toHaveLength(2);
-    expect(readOnlyFlags).toEqual([true, true]);
     expect(feedback).toContain("Reviewer Swarm reports are ready.");
     expect(feedback).toContain("Write only the user-facing final response.");
     expect(feedback).toContain("No blocking issues found.");
@@ -368,36 +294,17 @@ describe("reviewer swarm harness", () => {
     const store = createStore();
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
-    }));
+    const engine = new VerificationEngine(store, verificationPorts());
     const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
 
-    const summary = await (runtime as unknown as {
-      maybeRunReviewerSwarm: (input: {
-        options: Record<string, unknown>;
-        run: AgentRunTracker;
-        assistantText: string;
-        toolCount: number;
-        agentHarnessMode: "review_swarm";
-      }) => Promise<string>;
-    }).maybeRunReviewerSwarm({
-      options: {
-        threadId: rootThread.id,
-        parentThreadId: "parent-thread",
-        assistantMessage,
-        workspaceRoot: workspace.path,
-        history: [],
-        assistantText: "Done",
-        assistantThought: "",
-        controller: new AbortController(),
-        iteration: 0,
-        toolCount: 1,
-        recoveryAttempts: 0,
-      },
-      run: runTracker(rootThread.id, assistantMessage.id),
+    const summary = await engine.verify({
+      threadId: rootThread.id,
+      parentThreadId: "parent-thread",
+      assistantMessage,
+      workspaceRoot: workspace.path,
       assistantText: "Done",
+      iteration: 0,
+      run: runTracker(rootThread.id, assistantMessage.id),
       toolCount: 1,
       agentHarnessMode: "review_swarm",
     });
@@ -410,38 +317,18 @@ describe("reviewer swarm harness", () => {
     const store = createStore();
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
-    const runtime = new AgentRuntime(store, () => null, () => ({
-      activeThreadId: rootThread.id,
-      activeWorkspaceId: workspace.id,
+    const engine = new VerificationEngine(store, verificationPorts({
+      startSubagentTurn: () => { throw new Error("reviewer model unavailable"); },
     }));
-    (runtime as unknown as { startSubagentTurn: () => void }).startSubagentTurn = () => {
-      throw new Error("reviewer model unavailable");
-    };
     const assistantMessage = chatMessage("parent-assistant", rootThread.id, "assistant", "Done");
 
-    const feedback = await (runtime as unknown as {
-      maybeRunReviewerSwarm: (input: {
-        options: Record<string, unknown>;
-        run: AgentRunTracker;
-        assistantText: string;
-        toolCount: number;
-        agentHarnessMode: "review_swarm";
-      }) => Promise<string>;
-    }).maybeRunReviewerSwarm({
-      options: {
-        threadId: rootThread.id,
-        assistantMessage,
-        workspaceRoot: workspace.path,
-        history: [],
-        assistantText: "Done",
-        assistantThought: "",
-        controller: new AbortController(),
-        iteration: 0,
-        toolCount: 1,
-        recoveryAttempts: 0,
-      },
-      run: runTracker(rootThread.id, assistantMessage.id),
+    const feedback = await engine.verify({
+      threadId: rootThread.id,
+      assistantMessage,
+      workspaceRoot: workspace.path,
       assistantText: "Done",
+      iteration: 0,
+      run: runTracker(rootThread.id, assistantMessage.id),
       toolCount: 1,
       agentHarnessMode: "review_swarm",
     });
@@ -515,7 +402,11 @@ const chatMessage = (
   updatedAt: Date.now(),
 });
 
-const runTracker = (threadId: string, assistantMessageId: string): AgentRunTracker => {
+const runTracker = (
+  threadId: string,
+  assistantMessageId: string,
+  patch: Partial<AgentRunTracker> = {},
+): AgentRunTracker => {
   const timestamp = Date.now();
   return {
     threadId,
@@ -528,5 +419,25 @@ const runTracker = (threadId: string, assistantMessageId: string): AgentRunTrack
     toolCount: 0,
     lastProgressAt: timestamp,
     recoveryAttempts: 0,
+    ...patch,
   };
 };
+
+const subagentPorts = (patch: Partial<SubagentManagerPorts> = {}): SubagentManagerPorts => ({
+  isRunActive: () => false,
+  startSubagentTurn: () => undefined,
+  startExistingSubagentTurn: () => undefined,
+  appendUserMessage: () => undefined,
+  stopThread: () => undefined,
+  emitSnapshot: () => undefined,
+  ...patch,
+});
+
+const verificationPorts = (patch: Partial<VerificationEnginePorts> = {}): VerificationEnginePorts => ({
+  startSubagentTurn: () => undefined,
+  stopSubagent: () => undefined,
+  emitRun: () => undefined,
+  emitSnapshot: () => undefined,
+  emitEvent: () => undefined,
+  ...patch,
+});

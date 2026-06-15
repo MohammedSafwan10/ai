@@ -391,6 +391,20 @@ export class DesktopStore {
     this.putRecord("tool_events", event.id, stored, { threadId: event.threadId, messageId: event.messageId, callId: event.callId, name: event.name, status: event.status, createdAt: event.createdAt, updatedAt: event.updatedAt });
     this.touchThread(event.threadId); return event;
   }
+  commitToolEventAndCheckpoint(event: ToolEventRecord, checkpoint: AgentRunCheckpointRecord) {
+    return this.transaction(() => {
+      this.upsertToolEvent(event);
+      this.saveRunCheckpoint(checkpoint);
+      return event;
+    });
+  }
+  commitRecoveryState(toolEvents: ToolEventRecord[], checkpoint: AgentRunCheckpointRecord, message: ChatMessageRecord) {
+    return this.transaction(() => {
+      toolEvents.forEach((event) => this.upsertToolEvent(event));
+      this.saveRunCheckpoint(checkpoint);
+      this.upsertMessage(message);
+    });
+  }
   listToolEvents(threadId: string) { return this.allStoredTools("SELECT payload FROM tool_events WHERE thread_id = ? ORDER BY created_at, id", threadId); }
   listRecentToolEvents(threadId: string, limit: number) {
     return this.allStoredTools("SELECT payload FROM tool_events WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?", threadId, Math.max(1, Math.min(500, limit))).reverse();
@@ -463,6 +477,7 @@ export class DesktopStore {
   recordApprovalHistory(record: ApprovalHistoryRecord) { this.putRecord("approval_history", record.id, record, { workspaceId: record.workspaceId, threadId: record.threadId, createdAt: record.createdAt }); this.run("DELETE FROM approval_history WHERE id IN (SELECT id FROM approval_history ORDER BY created_at DESC LIMIT -1 OFFSET 1000)"); return record; }
   listApprovalHistory(threadId: string) { return this.all<ApprovalHistoryRecord>("SELECT payload FROM approval_history WHERE thread_id = ? ORDER BY created_at, id", threadId); }
   getRunCheckpoint(threadId: string) { return this.one<AgentRunCheckpointRecord>("SELECT payload FROM checkpoints WHERE thread_id = ?", threadId); }
+  listRunCheckpoints() { return this.all<AgentRunCheckpointRecord>("SELECT payload FROM checkpoints ORDER BY updated_at"); }
   saveRunCheckpoint(checkpoint: AgentRunCheckpointRecord) { const next = { ...checkpoint, updatedAt: now() }; this.putRecord("checkpoints", checkpoint.threadId, next, { threadId: checkpoint.threadId, updatedAt: next.updatedAt }); return next; }
   clearRunCheckpoint(threadId: string) { this.run("DELETE FROM checkpoints WHERE thread_id = ?", threadId); }
   saveCompactionCheckpoint(record: CompactionCheckpointRecord) {

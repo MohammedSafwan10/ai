@@ -3,7 +3,7 @@ import type {
   AppSnapshot,
   ActiveRunState,
   ChatMessageRecord,
-  DesktopEvent,
+  PrivoraEventEnvelope,
   SettingsRecord,
   ThreadRecord,
   ToolEventRecord,
@@ -14,6 +14,7 @@ import type {
   ThreadHistoryPage,
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID } from "../../shared/models";
+import { isNewPrivoraEventSequence } from "../../shared/privoraProtocol";
 
 const emptySettings: SettingsRecord = {
   id: "default",
@@ -71,10 +72,11 @@ export const useDesktopState = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const queuedEventsRef = useRef<DesktopEvent[]>([]);
+  const queuedEventsRef = useRef<PrivoraEventEnvelope[]>([]);
   const frameRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const eventStatsRef = useRef({ startedAt: performance.now(), events: 0, bytes: 0, flushes: 0 });
+  const lastEventSequenceRef = useRef(0);
 
   const refresh = useCallback(async () => {
     const next = await window.privoraDesktop.getSnapshot();
@@ -102,17 +104,19 @@ export const useDesktopState = () => {
   const flushEvents = useCallback(() => {
     frameRef.current = null;
     const started = performance.now();
-    const events = coalesceDesktopEvents(queuedEventsRef.current);
+    const events = coalescePrivoraEvents(queuedEventsRef.current);
     queuedEventsRef.current = [];
     if (events.length === 0) return;
-    setSnapshot((current) => reduceDesktopEvents(current, events));
+    setSnapshot((current) => reducePrivoraEvents(current, events));
     recordEventFlush(eventStatsRef.current, events, performance.now() - started);
   }, []);
 
-  const enqueueEvent = useCallback((event: DesktopEvent) => {
-    if (event.type === "toast") {
+  const enqueueEvent = useCallback((event: PrivoraEventEnvelope) => {
+    if (!isNewPrivoraEventSequence(lastEventSequenceRef.current, event)) return;
+    lastEventSequenceRef.current = event.sequence;
+    if (event.payload.type === "notification.created") {
       if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-      setToast(event.message);
+      setToast(event.payload.message);
       toastTimerRef.current = window.setTimeout(() => {
         setToast(null);
         toastTimerRef.current = null;
@@ -126,7 +130,7 @@ export const useDesktopState = () => {
 
   useEffect(() => {
     void refresh();
-    const unsubscribe = window.privoraDesktop.onEvent(enqueueEvent);
+    const unsubscribe = window.privoraDesktop.onPrivoraEvent(enqueueEvent);
     return () => {
       unsubscribe();
       if (frameRef.current !== null) {
@@ -163,39 +167,40 @@ export const useDesktopState = () => {
   };
 };
 
-export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: DesktopEvent[]): DesktopUiSnapshot => {
+export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: PrivoraEventEnvelope[]): DesktopUiSnapshot => {
   let next = snapshot;
-  for (const event of events) {
-    if (event.type === "snapshot") {
+  for (const envelope of events) {
+    const event = envelope.payload;
+    if (event.type === "snapshot.updated") {
       next = applySnapshot(next, event.snapshot);
       continue;
     }
-    if (event.type === "message_updated") {
+    if (event.type === "message.upserted") {
       if (event.message.threadId === next.activeThreadId) next = { ...next, messages: upsertById(next.messages, event.message) };
       continue;
     }
-    if (event.type === "tool_updated") {
+    if (event.type === "tool.upserted") {
       const parent = next.subagents.find((agent) => agent.threadId === event.tool.threadId);
       if (event.tool.threadId === next.activeThreadId || parent?.parentThreadId === next.activeThreadId) {
         next = { ...next, toolEvents: upsertById(next.toolEvents, parent ? { ...event.tool, messageId: parent.parentMessageId } : event.tool) };
       }
       continue;
     }
-    if (event.type === "turn_undo_updated") {
+    if (event.type === "turn_undo.updated") {
       if (event.undo.threadId === next.activeThreadId) next = { ...next, turnUndos: upsertById(next.turnUndos, event.undo) };
       continue;
     }
-    if (event.type === "context_usage_updated") {
+    if (event.type === "context.usage_updated") {
       if (event.usage.threadId === next.activeThreadId) {
         next = { ...next, contextUsage: event.usage };
       }
       continue;
     }
-    if (event.type === "ai_credit_summary_updated") {
+    if (event.type === "ai_credit.summary_updated") {
       next = { ...next, aiCredits: event.summary };
       continue;
     }
-    if (event.type === "run_state") {
+    if (event.type === "turn.status_changed") {
       const activeRunsByThread = { ...next.activeRunsByThread };
       if (next.activeRun) activeRunsByThread[next.activeRun.threadId] = next.activeRun;
       if (event.run) activeRunsByThread[event.threadId] = event.run;
@@ -205,7 +210,7 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       next = { ...next, activeRunsByThread, activeRuns, activeRun };
       continue;
     }
-    if (event.type === "request_user_input") {
+    if (event.type === "user_input.requested") {
       const pendingUserInputsByThread = {
         ...next.pendingUserInputsByThread,
         [event.request.threadId]: event.request,
@@ -217,7 +222,7 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       };
       continue;
     }
-    if (event.type === "request_user_input_resolved") {
+    if (event.type === "user_input.resolved") {
       const pendingUserInputsByThread = { ...next.pendingUserInputsByThread };
       if (pendingUserInputsByThread[event.threadId]?.callId === event.callId) {
         delete pendingUserInputsByThread[event.threadId];
@@ -229,7 +234,7 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       };
       continue;
     }
-    if (event.type === "command_output_delta") {
+    if (event.type === "tool.output_delta") {
       const timestamp = Date.now();
       let changed = false;
       const toolEvents = next.toolEvents.map((tool) => {
@@ -240,7 +245,7 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       if (changed) next = { ...next, toolEvents };
       continue;
     }
-    if (event.type === "terminal_session_started" || event.type === "terminal_session_updated" || event.type === "terminal_session_ended") {
+    if (event.type === "terminal.session_updated") {
       next = {
         ...next,
         terminal: {
@@ -250,7 +255,7 @@ export const reduceDesktopEvents = (snapshot: DesktopUiSnapshot, events: Desktop
       };
       continue;
     }
-    if (event.type === "terminal_output_delta") continue;
+    if (event.type === "terminal.output_delta") continue;
   }
   return next;
 };
@@ -310,22 +315,25 @@ const mergeUnique = <T extends { id: string; createdAt?: number; updatedAt?: num
   return [...byId.values()].sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0) || a.id.localeCompare(b.id));
 };
 
-export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] => {
-  const coalesced: DesktopEvent[] = [];
-  let messages = new Map<string, ChatMessageRecord>();
-  let tools = new Map<string, ToolEventRecord>();
-  let undos = new Map<string, TurnUndoRecord>();
-  let contextUsage: Extract<DesktopEvent, { type: "context_usage_updated" }> | null = null;
-  let runStates = new Map<string, Extract<DesktopEvent, { type: "run_state" }>>();
-  const commandDeltas = new Map<string, string>();
+export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEventEnvelope[] => {
+  const coalesced: PrivoraEventEnvelope[] = [];
+  let messages = new Map<string, PrivoraEventEnvelope>();
+  let tools = new Map<string, PrivoraEventEnvelope>();
+  let undos = new Map<string, PrivoraEventEnvelope>();
+  let contextUsage: PrivoraEventEnvelope | null = null;
+  let runStates = new Map<string, PrivoraEventEnvelope>();
+  const commandDeltas = new Map<string, PrivoraEventEnvelope>();
 
   const flush = () => {
-    messages.forEach((message) => coalesced.push({ type: "message_updated", message }));
-    tools.forEach((tool) => coalesced.push({ type: "tool_updated", tool }));
-    undos.forEach((undo) => coalesced.push({ type: "turn_undo_updated", undo }));
-    if (contextUsage) coalesced.push(contextUsage);
-    commandDeltas.forEach((delta, callId) => coalesced.push({ type: "command_output_delta", callId, delta }));
-    runStates.forEach((event) => coalesced.push(event));
+    const batch: PrivoraEventEnvelope[] = [];
+    messages.forEach((event) => batch.push(event));
+    tools.forEach((event) => batch.push(event));
+    undos.forEach((event) => batch.push(event));
+    if (contextUsage) batch.push(contextUsage);
+    commandDeltas.forEach((event) => batch.push(event));
+    runStates.forEach((event) => batch.push(event));
+    batch.sort((a, b) => a.sequence - b.sequence);
+    coalesced.push(...batch);
     messages = new Map();
     tools = new Map();
     undos = new Map();
@@ -334,38 +342,44 @@ export const coalesceDesktopEvents = (events: DesktopEvent[]): DesktopEvent[] =>
     commandDeltas.clear();
   };
 
-  for (const event of events) {
-    if (event.type === "snapshot") {
+  for (const envelope of events) {
+    const event = envelope.payload;
+    if (event.type === "snapshot.updated") {
       flush();
-      coalesced.push(event);
+      coalesced.push(envelope);
       continue;
     }
-    if (event.type === "message_updated") {
-      messages.set(event.message.id, event.message);
+    if (event.type === "message.upserted") {
+      messages.set(event.message.id, envelope);
       continue;
     }
-    if (event.type === "tool_updated") {
-      tools.set(event.tool.id, event.tool);
+    if (event.type === "tool.upserted") {
+      tools.set(event.tool.id, envelope);
       continue;
     }
-    if (event.type === "turn_undo_updated") {
-      undos.set(event.undo.id, event.undo);
+    if (event.type === "turn_undo.updated") {
+      undos.set(event.undo.id, envelope);
       continue;
     }
-    if (event.type === "context_usage_updated") {
-      contextUsage = event;
+    if (event.type === "context.usage_updated") {
+      contextUsage = envelope;
       continue;
     }
-    if (event.type === "run_state") {
-      runStates.set(event.threadId, event);
+    if (event.type === "turn.status_changed") {
+      runStates.set(event.threadId, envelope);
       continue;
     }
-    if (event.type === "command_output_delta") {
-      commandDeltas.set(event.callId, `${commandDeltas.get(event.callId) || ""}${event.delta}`);
+    if (event.type === "tool.output_delta") {
+      const previous = commandDeltas.get(event.callId);
+      const previousDelta = previous?.payload.type === "tool.output_delta" ? previous.payload.delta : "";
+      commandDeltas.set(event.callId, {
+        ...envelope,
+        payload: { ...event, delta: `${previousDelta}${event.delta}` },
+      });
       continue;
     }
     flush();
-    coalesced.push(event);
+    coalesced.push(envelope);
   }
   flush();
   return coalesced;
@@ -402,7 +416,7 @@ const compactLiveOutput = (value: string, maxChars = 40_000) => {
 
 const recordEventFlush = (
   stats: { startedAt: number; events: number; bytes: number; flushes: number },
-  events: DesktopEvent[],
+  events: PrivoraEventEnvelope[],
   durationMs: number,
 ) => {
   if (!window.privoraDesktop.debugEnabled) return;
@@ -423,7 +437,7 @@ const recordEventFlush = (
   stats.flushes = 0;
 };
 
-const approximatePayloadBytes = (event: DesktopEvent) => {
+const approximatePayloadBytes = (event: PrivoraEventEnvelope) => {
   try {
     return JSON.stringify(event).length;
   } catch {

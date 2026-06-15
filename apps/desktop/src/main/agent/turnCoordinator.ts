@@ -11,10 +11,9 @@ import type {
   CompactionCheckpointRecord,
   ContextCompactionReason,
   ContextCompactionTrigger,
-  DesktopEvent,
+  PrivoraEventPayload,
   DesktopToolCall,
   GeneratedImageEventRecord,
-  RequestUserInputQuestionRecord,
   RequestUserInputResponseInput,
   StartTurnInput,
   SubagentRecord,
@@ -25,8 +24,6 @@ import type {
 } from "../../shared/types";
 import { buildDesktopSystemPrompt } from "./systemPrompt";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
-import { streamProviderResponse } from "./providers";
-import { DesktopToolOrchestrator } from "./tools/orchestrator";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
@@ -54,12 +51,12 @@ import {
 } from "./runState";
 import { approvalCommandPrefix, approvalCwd, findMatchingApprovalScope } from "./tools/permissions";
 import { diffStatsFromFiles, parseUnifiedDiffFiles } from "./tools/diffFormatter";
-import { normalizeApprovalDecisions, approvalScopeBounds, scopeLabel, type ApprovalDecision } from "./runtime/approvals";
-import { runtimeBudgetModeForHistory, runtimeBudgetModeForTurn } from "./runtime/budget";
-import { addTokenUsage, autoCompactTargetTokens, calculateContextUsage, shouldAutoCompactHistory } from "./runtime/contextUsage";
-import { StreamStalledError, delay, errorMessage, windowlessInterval } from "./runtime/errors";
-import { historyHasRecentToolResults, resolveNoToolOutcome } from "./runtime/recovery";
-import { ToolExecutionScheduler } from "./runtime/scheduler";
+import { normalizeApprovalDecisions, approvalScopeBounds, scopeLabel, type ApprovalDecision } from "./harness/support/approvals";
+import { runtimeBudgetModeForHistory, runtimeBudgetModeForTurn } from "./harness/support/budget";
+import { addTokenUsage, autoCompactTargetTokens, calculateContextUsage, shouldAutoCompactHistory } from "./harness/support/contextUsage";
+import { StreamStalledError, delay, errorMessage, windowlessInterval } from "./harness/support/errors";
+import { historyHasRecentToolResults, resolveNoToolOutcome } from "./harness/support/recovery";
+import { ToolExecutionScheduler } from "./harness/support/scheduler";
 import {
   MAX_SUBAGENT_DEPTH,
   buildForkedParentHistory,
@@ -77,7 +74,7 @@ import {
   subagentStatusSummary,
   subagentToolData,
   textProviderMessage,
-} from "./runtime/subagentRuntime";
+} from "./harness/support/subagentRuntime";
 import {
   activityItemsForTool,
   categoryForTool,
@@ -91,7 +88,7 @@ import {
   summarizeArgs,
   terminalMeta,
   titleForTool,
-} from "./runtime/toolActivity";
+} from "./harness/support/toolActivity";
 import {
   buildVisibleFingerprints,
   createThreadTitleFilterState,
@@ -100,22 +97,30 @@ import {
   filterVisibleDelta,
   markAssistantTextRangePhase,
   recordAssistantTextPart,
-} from "./runtime/textParts";
-import {
-  normalizeRequestUserInputQuestions,
-  planModeBlockReason,
-  summarizeUserInputAnswers,
-} from "./runtime/userInput";
+} from "./harness/support/textParts";
+import { planModeBlockReason } from "./harness/support/userInput";
+import { ContextManager } from "./harness/contextManager";
+import { HarnessProjectionService } from "./harness/projectionService";
+import { RunRecoveryService } from "./harness/runRecoveryService";
+import type { AgentHarnessApi } from "./harness/contracts";
+import { VerificationEngine, reviewerReadOnlyBlockReason } from "./harness/verificationEngine";
+import { ApprovalCoordinator, type ApprovalBundle } from "./harness/approvalCoordinator";
+import { ToolCallCoordinator } from "./harness/toolCallCoordinator";
+import { ModelLoop } from "./harness/modelLoop";
+import { SubagentManager, resolveSubagentModel } from "./harness/subagentManager";
+import { HarnessEventBus } from "./harness/eventBus";
+import { TurnRegistry } from "./harness/turnRegistry";
+import { UserInputCoordinator } from "./harness/userInputCoordinator";
 
-export { resolveNoToolOutcome } from "./runtime/recovery";
-export { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDelta } from "./runtime/textParts";
+export { reviewerReadOnlyBlockReason } from "./harness/verificationEngine";
+
+export { resolveNoToolOutcome } from "./harness/support/recovery";
+export { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDelta } from "./harness/support/textParts";
 
 const MAX_CONTINUOUS_MODEL_ITERATIONS = 2048;
 const MAX_TOOL_CALLS = 2_000;
 const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
 const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
-const REVIEWER_SWARM_COUNT = 2;
-const REVIEWER_SWARM_TIMEOUT_MS = 180_000;
 const STREAM_STALL_TIMEOUT_MS = 180_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 300_000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
@@ -126,7 +131,7 @@ const now = () => Date.now();
 
 const isAutoApprovedRiskyBrowserTool = (
   call: DesktopToolCall,
-  decision: ReturnType<DesktopToolOrchestrator["assess"]>,
+  decision: ReturnType<ToolCallCoordinator["assess"]>,
 ) =>
   call.name.startsWith("browser_") &&
   decision.risk === "risky" &&
@@ -161,67 +166,6 @@ export const userRequestedPostImageWork = (history: ProviderMessage[]) => {
     /\b(workspace|public\/|assets?\/|src\/|file|path|id|report|verify|check|exists|size)\b/,
   ];
   return postImagePatterns.some((pattern) => pattern.test(text));
-};
-
-const REVIEWER_SWARM_READ_ONLY_TOOLS = new Set([
-  "desktop_read_file",
-  "desktop_list_dir",
-  "desktop_search",
-  "desktop_git_status",
-  "desktop_git_diff",
-  "terminal_list",
-  "terminal_read",
-  "list_agents",
-  "wait_agent",
-  "notes_list",
-  "notes_read",
-  "list_generated_images",
-  "computer_capabilities",
-  "computer_list_windows",
-  "computer_find_apps",
-  "computer_snapshot",
-  "computer_inspect",
-  "computer_verify",
-  "computer_screenshot",
-  "browser_snapshot",
-  "browser_inspect",
-  "browser_extract",
-  "browser_screenshot",
-  "browser_evidence",
-  "browser_search",
-  "browser_pdf",
-  "browser_form_analyze",
-  "browser_form_validate",
-  "browser_capabilities",
-  "browser_assert",
-  "browser_evidence_vault",
-  "browser_diagnose",
-  "browser_verify",
-  "web_search",
-]);
-
-export const reviewerReadOnlyBlockReason = (call: DesktopToolCall, enabled?: boolean) =>
-  enabled && !REVIEWER_SWARM_READ_ONLY_TOOLS.has(call.name)
-    ? "Reviewer Swarm agents are read-only and cannot run mutating or side-effecting tools."
-    : "";
-
-const formatReviewerSwarmFeedback = (reviewers: SubagentRecord[]) => {
-  if (reviewers.length === 0) return "";
-  const reports = reviewers.map((agent, index) => {
-    const label = agent.agentNickname || `Reviewer ${index + 1}`;
-    const body = agent.finalMessage || agent.lastPreview || `${label} did not return a report.`;
-    const status = agent.status === "completed" ? "" : ` (${agent.status})`;
-    return `- ${label}${status}: ${compactPreview(body, 900)}`;
-  });
-  return [
-    "Reviewer Swarm reports are ready.",
-    "Read the reports naturally and write the final answer accordingly.",
-    "Write only the user-facing final response. Do not include scratch notes, private checklists, planning fragments, or narration of what you are about to do.",
-    "If reviewers found issues, mention them clearly and do not claim the work is complete unless those issues are fixed.",
-    "If the reports are clean, you may say the work passed Reviewer Swarm.",
-    "",
-    ...reports,
-  ].join("\n");
 };
 
 const stringArg = (value: unknown, fallback = "") =>
@@ -308,36 +252,6 @@ const imageFailedEvent = (
   };
 };
 
-interface ApprovalBundle {
-  id: string;
-  threadId: string;
-  assistantMessageId: string;
-  workspaceRoot: string;
-  calls: DesktopToolCall[];
-  decisions: Map<string, ApprovalDecision>;
-  history: ProviderMessage[];
-  assistantText: string;
-  assistantThought: string;
-  toolCount: number;
-  iteration: number;
-  recoveryAttempts: number;
-  run: AgentRunTracker;
-  model?: string;
-  reasoningEffort?: ReasoningEffort;
-  collaborationMode?: CollaborationMode;
-  agentHarnessMode?: AgentHarnessMode;
-}
-
-interface PendingUserInput {
-  threadId: string;
-  assistantMessageId: string;
-  call: DesktopToolCall;
-  questions: RequestUserInputQuestionRecord[];
-  run: AgentRunTracker;
-  cleanup?: () => void;
-  resolve: (result: ToolResult) => void;
-}
-
 interface ContinueOptions {
   threadId: string;
   assistantMessage: ChatMessageRecord;
@@ -358,14 +272,19 @@ interface ContinueOptions {
   readOnlyTools?: boolean;
 }
 
-export class AgentRuntime {
-  private tools: DesktopToolOrchestrator;
+export class TurnCoordinator implements AgentHarnessApi {
+  private tools: ToolCallCoordinator;
+  private contextManager: ContextManager;
+  private recovery: RunRecoveryService;
+  private projection: HarnessProjectionService;
+  private verification: VerificationEngine;
+  private modelLoop = new ModelLoop();
+  private subagents: SubagentManager;
   private activeRuns = new Map<string, AgentRunTracker>();
-  private pendingApprovalByCallId = new Map<string, ApprovalBundle>();
-  private pendingUserInputByCallId = new Map<string, PendingUserInput>();
-  private startingThreads = new Set<string>();
-  private processIdsByThread = new Map<string, Set<number>>();
-  private eventSequence = 0;
+  private approvals: ApprovalCoordinator;
+  private userInput: UserInputCoordinator;
+  private turnRegistry = new TurnRegistry();
+  private events: HarnessEventBus;
   private pendingToolOutput = new Map<string, {
     threadId: string;
     messageId: string;
@@ -383,8 +302,64 @@ export class AgentRuntime {
     notesStore?: NotesStore,
     computerUseManager?: ComputerUseManager,
   ) {
-    this.tools = new DesktopToolOrchestrator(browserManager, notesStore, computerUseManager, (event) => {
-      if (event.type === "terminal_output_delta") {
+    this.contextManager = new ContextManager(store);
+    this.recovery = new RunRecoveryService(store);
+    this.recovery.recoverInterruptedUserInputs();
+    this.approvals = new ApprovalCoordinator(store);
+    this.projection = new HarnessProjectionService(store, this, getActiveIds);
+    this.verification = new VerificationEngine(store, {
+      startSubagentTurn: (...args) => this.startSubagentTurn(...args),
+      stopSubagent: (agent) => {
+        this.activeRuns.get(agent.threadId)?.controller.abort();
+        this.stopThreadProcesses(agent.threadId);
+      },
+      emitRun: (run) => this.emitRun(run),
+      emitSnapshot: () => this.emitSnapshot(),
+      emitEvent: (event) => this.emit(event),
+    });
+    this.subagents = new SubagentManager(store, {
+      isRunActive: (threadId) => this.activeRuns.has(threadId),
+      startSubagentTurn: (...args) => this.startSubagentTurn(...args),
+      startExistingSubagentTurn: (agent, workspaceRoot) => this.startExistingSubagentTurn(agent, workspaceRoot),
+      appendUserMessage: (threadId, message) => this.appendSubagentUserMessage(threadId, message),
+      stopThread: (threadId, reason) => {
+        this.activeRuns.get(threadId)?.controller.abort();
+        this.stopThreadProcesses(threadId);
+        this.cancelPendingApprovalsForThread(threadId, reason);
+      },
+      emitSnapshot: () => this.emitSnapshot(),
+    });
+    this.events = new HarnessEventBus(() => {
+      const window = this.getMainWindow();
+      return window ? [window] : [];
+    });
+    this.userInput = new UserInputCoordinator({
+      emitRun: (run) => this.emitRun(run),
+      emitEvent: (event) => this.emit(event),
+      persistPending: (threadId, call, questions) => {
+        const checkpoint = this.recovery.checkpoint(threadId);
+        if (checkpoint) this.recovery.save({ ...checkpoint, pendingUserInput: { call, questions } });
+      },
+      persistResolved: (threadId, call, result) => {
+        const checkpoint = this.recovery.checkpoint(threadId);
+        if (checkpoint?.pendingUserInput?.call.id === call.id) {
+          this.recovery.save({
+            ...checkpoint,
+            history: appendToolResults(checkpoint.history as ProviderMessage[], [{
+              id: call.id,
+              name: call.name,
+              response: result,
+            }]),
+            pendingUserInput: {
+              ...checkpoint.pendingUserInput,
+              resolvedResult: result,
+            },
+          });
+        }
+      },
+    });
+    this.tools = new ToolCallCoordinator(browserManager, notesStore, computerUseManager, (event) => {
+      if (event.type === "terminal.output_delta") {
         // Chat receives terminal output through command_output_delta batching.
         // Do not mirror every terminal byte into the right-panel state; that
         // doubles renderer work during high-volume commands.
@@ -393,7 +368,7 @@ export class AgentRuntime {
       if (event.type === "terminal_session_ended") {
         this.untrackTerminalSession(event.session.sessionId);
       }
-      this.emit(event);
+      this.emit({ type: "terminal.session_updated", session: event.session });
     });
   }
 
@@ -406,7 +381,7 @@ export class AgentRuntime {
   }
 
   stopTerminalSession(sessionId: number) {
-    return this.tools.stopTerminalProcess(sessionId);
+    return this.tools.stopTerminalSession(sessionId);
   }
 
   resizeTerminalSession(sessionId: number, rows: number, cols: number) {
@@ -417,44 +392,26 @@ export class AgentRuntime {
     const run = this.activeRuns.get(threadId);
     if (run) return toActiveRunState(run);
 
-    const pending = Array.from(this.pendingApprovalByCallId.values()).find((item) => item.threadId === threadId);
+    const pending = this.approvals.bundlesForThread(threadId)[0];
     if (pending) return toActiveRunState(pending.run);
-    const pendingInput = Array.from(this.pendingUserInputByCallId.values()).find((item) => item.threadId === threadId);
-    const pendingInputRun = pendingInput ? this.activeRuns.get(threadId) : null;
+    const pendingInputRun = this.userInput.pendingRun(threadId);
     if (pendingInputRun) return toActiveRunState(pendingInputRun);
 
-    const checkpoint = this.store.getRunCheckpoint(threadId);
-    if (!checkpoint) return null;
-    const message = this.store.getMessage(checkpoint.assistantMessageId);
-    if (!message || (message.status !== "stalled" && message.status !== "stopped")) return null;
-    return {
-      threadId,
-      assistantMessageId: checkpoint.assistantMessageId,
-      phase: message.status,
-      status: message.status,
-      updatedAt: checkpoint.updatedAt,
-      iteration: checkpoint.iteration,
-      toolCount: checkpoint.toolCount,
-      reason: message.status === "stalled" ? "The model connection stalled." : "Stopped. Completed tool changes were kept.",
-      resumable: true,
-    };
+    return this.recovery.activeRun(threadId);
   }
 
   listActiveRuns() {
     const runs = new Map<string, ReturnType<typeof toActiveRunState>>();
     this.activeRuns.forEach((run, threadId) => runs.set(threadId, toActiveRunState(run)));
-    this.pendingApprovalByCallId.forEach((bundle) => {
+    this.approvals.allBundles().forEach((bundle) => {
       if (!runs.has(bundle.threadId)) runs.set(bundle.threadId, toActiveRunState(bundle.run));
     });
     return Array.from(runs.values());
   }
 
   async startTurn(input: StartTurnInput) {
+    const releaseStart = this.turnRegistry.begin(input.threadId, () => this.isThreadBusy(input.threadId));
     this.discardResumableRun(input.threadId);
-    if (this.startingThreads.has(input.threadId) || this.isThreadBusy(input.threadId)) {
-      throw new Error("This chat is already running. Stop it before starting another turn.");
-    }
-    this.startingThreads.add(input.threadId);
     const thread = this.store.getThread(input.threadId);
     try {
       if (!thread) throw new Error("Thread not found.");
@@ -473,7 +430,7 @@ export class AgentRuntime {
       const budgetMode = runtimeBudgetModeForTurn(input);
       const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, budgetMode);
 
-      this.store.clearRunCheckpoint(input.threadId);
+      this.recovery.clear(input.threadId);
       const timestamp = now();
       const userMessage: ChatMessageRecord = {
         id: crypto.randomUUID(),
@@ -502,7 +459,7 @@ export class AgentRuntime {
       this.store.upsertMessage(assistantMessage);
       this.emitSnapshot();
 
-      const priorMessages = buildProviderHistoryWithCompaction(this.store, input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
+      const priorMessages = this.contextManager.buildHistoryWithCompaction(input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
       const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
       const history = mentionContext
         ? [...priorMessages, textProviderMessage(mentionContext)]
@@ -512,6 +469,7 @@ export class AgentRuntime {
       const run = this.createRun(input.threadId, assistantMessage.id, controller);
       this.activeRuns.set(input.threadId, run);
       this.emitRun(run);
+      this.emit({ type: "turn.started", threadId: input.threadId, turnId: assistantMessage.id });
 
       await this.continueLoop({
         threadId: input.threadId,
@@ -530,13 +488,13 @@ export class AgentRuntime {
         agentHarnessMode: effectiveAgentHarnessMode,
       });
     } finally {
-      this.startingThreads.delete(input.threadId);
+      releaseStart();
     }
   }
 
   async continueRun(threadId: string) {
     if (this.isThreadBusy(threadId)) return;
-    const checkpoint = this.store.getRunCheckpoint(threadId);
+    const checkpoint = this.recovery.checkpoint(threadId);
     if (!checkpoint) return;
     const assistantMessage = this.store.getMessage(checkpoint.assistantMessageId);
     if (!assistantMessage) return;
@@ -559,15 +517,19 @@ export class AgentRuntime {
       iteration: checkpoint.iteration,
       toolCount: checkpoint.toolCount,
       recoveryAttempts: checkpoint.recoveryAttempts,
-      agentHarnessMode: this.store.getThread(threadId)?.agentHarnessMode || this.store.getSettings().agentHarnessMode,
+      model: checkpoint.model,
+      reasoningEffort: checkpoint.reasoningEffort,
+      collaborationMode: checkpoint.collaborationMode,
+      agentHarnessMode: checkpoint.agentHarnessMode || this.store.getThread(threadId)?.agentHarnessMode || this.store.getSettings().agentHarnessMode,
     });
   }
 
   private isThreadBusy(threadId: string) {
     if (this.activeRuns.has(threadId)) return true;
-    if (this.startingThreads.has(threadId)) return true;
-    if (Array.from(this.pendingApprovalByCallId.values()).some((item) => item.threadId === threadId)) return true;
-    if (Array.from(this.pendingUserInputByCallId.values()).some((item) => item.threadId === threadId)) return true;
+    if (this.turnRegistry.isStarting(threadId)) return true;
+    if (this.approvals.hasThread(threadId)) return true;
+    if (this.userInput.hasThread(threadId)) return true;
+    if (this.recovery.activeRun(threadId)?.status === "awaiting_approval") return true;
     return false;
   }
 
@@ -575,16 +537,13 @@ export class AgentRuntime {
     const run = this.activeRuns.get(threadId);
     if (run && run.resumable && (run.phase === "stopped" || run.phase === "stalled" || run.phase === "failed")) {
       this.activeRuns.delete(threadId);
-      this.store.clearRunCheckpoint(threadId);
-      this.emit({ type: "run_state", threadId, run: null });
+      this.recovery.clear(threadId);
+      this.emit({ type: "turn.status_changed", threadId, run: null });
       return;
     }
-    const checkpoint = this.store.getRunCheckpoint(threadId);
-    if (!checkpoint) return;
-    const message = this.store.getMessage(checkpoint.assistantMessageId);
-    if (!message || (message.status !== "stopped" && message.status !== "stalled")) return;
-    this.store.clearRunCheckpoint(threadId);
-    this.emit({ type: "run_state", threadId, run: null });
+    if (!this.recovery.discardResumable(threadId, run)) return;
+    if (run) this.activeRuns.delete(threadId);
+    this.emit({ type: "turn.status_changed", threadId, run: null });
   }
 
   stopTurn(threadId: string) {
@@ -613,51 +572,18 @@ export class AgentRuntime {
         this.updateAssistant(message, assistantText, message.thought || "", "stopped");
       }
       this.activeRuns.delete(threadId);
-      this.emit({ type: "run_state", threadId, run: this.getActiveRun(threadId) });
+      this.emit({ type: "turn.stopped", threadId, turnId: run.assistantMessageId, message: this.store.getMessage(run.assistantMessageId) || undefined });
+      this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
     }
     this.flushThreadToolOutputs(threadId);
-    const approvals = Array.from(new Set(Array.from(this.pendingApprovalByCallId.values()).filter((item) => item.threadId === threadId)));
-    approvals.forEach((bundle) => {
-      bundle.run.controller.abort();
-      bundle.calls.forEach((call) => {
-        this.pendingApprovalByCallId.delete(call.id);
-        const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
-          status: "stopped",
-          result: { success: false, error: "Stopped before approval." },
-          endedAt: now(),
-        });
-        this.emit({ type: "tool_updated", tool: event });
-      });
-      const message = this.store.getMessage(bundle.assistantMessageId);
-      if (message) {
-        const assistantText = bundle.assistantText || "Stopped. Completed tool changes were kept.";
-        if (!bundle.assistantText) recordAssistantTextPart(message, "final_answer", 0, assistantText.length);
-        this.updateAssistant(message, assistantText, bundle.assistantThought, "stopped");
-      }
-    });
     this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
-    Array.from(this.pendingUserInputByCallId.values())
-      .filter((item) => item.threadId === threadId)
-      .forEach((item) => this.resolvePendingUserInput(item.call.id, {
-        success: false,
-        error: "Stopped before user input was answered.",
-        data: { answers: {}, interrupted: true },
-      }));
-    if (!run) this.emit({ type: "run_state", threadId, run: this.getActiveRun(threadId) });
+    if (this.recovery.cancelPendingApproval(threadId, "Stopped before approval.")) this.emitSnapshot();
+    this.userInput.cancelThread(threadId);
+    if (!run) this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
   }
 
   async answerRequestUserInput(input: RequestUserInputResponseInput) {
-    const pending = this.pendingUserInputByCallId.get(input.callId);
-    if (!pending || pending.threadId !== input.threadId) return;
-    markRunProgress(pending.run);
-    this.resolvePendingUserInput(input.callId, {
-      success: true,
-      output: JSON.stringify({ answers: input.answers }, null, 2),
-      data: {
-        answers: input.answers,
-        summary: summarizeUserInputAnswers(input.answers),
-      },
-    });
+    this.userInput.answer(input);
   }
 
   async decideApproval(input: ApprovalDecisionInput) {
@@ -666,7 +592,10 @@ export class AgentRuntime {
     const bundles = new Set<ApprovalBundle>();
     const unresolvedCallIds: string[] = [];
     decisions.forEach((decision) => {
-      const bundle = this.pendingApprovalByCallId.get(decision.callId) || this.restorePendingApprovalBundle(input.threadId, decision.callId);
+      const bundle = this.approvals.get(decision.callId)
+        || this.approvals.restorePendingBundle(input.threadId, decision.callId, (threadId, assistantMessageId, controller) =>
+          this.createRun(threadId, assistantMessageId, controller));
+      if (bundle?.run.reason === "Restored pending approval.") this.emitRun(bundle.run);
       if (!bundle || bundle.threadId !== input.threadId) {
         unresolvedCallIds.push(decision.callId);
         return;
@@ -683,7 +612,7 @@ export class AgentRuntime {
           result: { success: false, error: "User cancelled this action." },
           endedAt: now(),
         });
-        this.emit({ type: "tool_updated", tool: event });
+        this.emit({ type: "tool.upserted", tool: event });
       }
     });
 
@@ -697,7 +626,7 @@ export class AgentRuntime {
 
     if (bundles.size === 0 && unresolvedCallIds.length > 0) {
       this.emit({
-        type: "toast",
+        type: "notification.created",
         tone: "error",
         message: "That approval request is no longer active. Stop this run and retry the action.",
       });
@@ -705,6 +634,10 @@ export class AgentRuntime {
   }
 
   private async continueLoop(options: ContinueOptions) {
+    if (options.controller.signal.aborted) {
+      this.finalizeStoppedRun(options);
+      return;
+    }
     const settings = this.store.getSettings();
     this.tools.setComputerUseEnabled(settings.computerUseEnabled);
     const thread = this.store.getThread(options.threadId);
@@ -713,7 +646,7 @@ export class AgentRuntime {
     const effectiveCollaborationMode = options.collaborationMode || thread?.collaborationMode || settings.collaborationMode;
     const effectiveAgentHarnessMode = options.agentHarnessMode || thread?.agentHarnessMode || settings.agentHarnessMode;
     const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
-    let history = sanitizeProviderHistoryForModel(options.history, effectiveModel);
+    let history = this.contextManager.sanitize(options.history, effectiveModel);
     let assistantText = options.assistantText;
     let assistantThought = options.assistantThought;
     const titleFilter = createThreadTitleFilterState(Boolean(thread && isPlaceholderThreadTitle(thread)));
@@ -771,7 +704,7 @@ export class AgentRuntime {
         continuousIterations += 1;
         iteration += 1;
         providerProducedProgress = false;
-        const estimatedHistoryTokens = estimateProviderHistoryTokens(history);
+        const estimatedHistoryTokens = this.contextManager.estimateTokens(history);
         if (
           shouldAutoCompactHistory(history, runtimeBudget) &&
           estimatedHistoryTokens > lastCompactionAttemptTokens + 2_000
@@ -789,7 +722,7 @@ export class AgentRuntime {
             reason: "context_limit",
             textOffset: assistantText.length,
           });
-          history = sanitizeProviderHistoryForModel(compacted.history, effectiveModel);
+          history = this.contextManager.sanitize(compacted.history, effectiveModel);
           lastCompactionAttemptTokens = compacted.afterTokens;
         }
         this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
@@ -835,8 +768,8 @@ export class AgentRuntime {
                 diffFiles: controller.signal.aborted ? undefined : (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
                 endedAt: now(),
               });
-              this.emit({ type: "tool_updated", tool: event });
-              return { call: scheduledCall, result: finalResult, response: compactToolResultForModel(finalResult, runtimeBudget) };
+              this.emit({ type: "tool.upserted", tool: event });
+              return { call: scheduledCall, result: finalResult, response: this.contextManager.compactToolResult(finalResult, runtimeBudget) };
             } catch (error) {
               const result: ToolResult = {
                 success: false,
@@ -848,8 +781,8 @@ export class AgentRuntime {
                 output: result.error,
                 endedAt: now(),
               });
-              this.emit({ type: "tool_updated", tool: event });
-              return { call: scheduledCall, result, response: compactToolResultForModel(result, runtimeBudget) };
+              this.emit({ type: "tool.upserted", tool: event });
+              return { call: scheduledCall, result, response: this.contextManager.compactToolResult(result, runtimeBudget) };
             }
           });
         };
@@ -896,7 +829,7 @@ export class AgentRuntime {
 
         try {
           const subagent = this.store.getSubagentByThread(options.threadId);
-          await streamProviderResponse({
+          await this.modelLoop.stream({
             provider: getProviderForModel(effectiveModel),
             model: effectiveModel,
             systemInstruction: buildDesktopSystemPrompt(
@@ -972,7 +905,7 @@ export class AgentRuntime {
                 textOffset: assistantText.length,
                 startedAt: now(),
               });
-              this.emit({ type: "tool_updated", tool: event });
+              this.emit({ type: "tool.upserted", tool: event });
             },
             onToolCall: (call) => {
               providerProducedProgress = true;
@@ -984,11 +917,11 @@ export class AgentRuntime {
               const readOnlyBlock = reviewerReadOnlyBlockReason(call, options.readOnlyTools);
               const planBlock = readOnlyBlock || planModeBlockReason(call, effectiveCollaborationMode, decision);
               const scope = decision.requiresApproval
-                ? this.findReusableApprovalScope(options.threadId, call)
+                ? this.approvals.reusableScope(options.threadId, call)
                 : null;
               if (scope) {
                 this.store.markApprovalScopeUsed(scope.id);
-                this.recordApprovalHistory({
+                this.approvals.recordHistory({
                   threadId: options.threadId,
                   messageId: options.assistantMessage.id,
                   call,
@@ -1008,7 +941,7 @@ export class AgentRuntime {
                 textOffset: assistantText.length,
                 startedAt: now(),
               });
-              this.emit({ type: "tool_updated", tool: event });
+              this.emit({ type: "tool.upserted", tool: event });
               if (planBlock) {
                 scheduleBlockedTool(call, planBlock);
               } else if (requiresApproval) {
@@ -1025,7 +958,7 @@ export class AgentRuntime {
             onAiCredits: (creditEvent) => {
               if (creditEvent.summary) {
                 this.store.setAiCreditSummary(creditEvent.summary);
-                this.emit({ type: "ai_credit_summary_updated", summary: creditEvent.summary });
+                this.emit({ type: "ai_credit.summary_updated", summary: creditEvent.summary });
               }
               const creditTool: DesktopToolCall = {
                 id: `ai_credits_${options.assistantMessage.id}_${iteration}`,
@@ -1046,7 +979,7 @@ export class AgentRuntime {
                 startedAt: now(),
                 endedAt: now(),
               });
-              this.emit({ type: "tool_updated", tool: event });
+              this.emit({ type: "tool.upserted", tool: event });
             },
             onTextReplace: (text) => {
               endThoughtPart();
@@ -1088,7 +1021,7 @@ export class AgentRuntime {
                 startedAt: now(),
                 endedAt: search.status === "running" ? undefined : now(),
               });
-              this.emit({ type: "tool_updated", tool: event });
+              this.emit({ type: "tool.upserted", tool: event });
               this.emitRun(run);
             },
           });
@@ -1150,10 +1083,11 @@ export class AgentRuntime {
           }
           this.ensureFallbackThreadTitle(options.threadId);
           flushAssistant("completed", true);
-          this.store.clearRunCheckpoint(options.threadId);
+          this.recovery.clear(options.threadId);
           this.activeRuns.delete(options.threadId);
           this.markSubagentFinished(options.threadId, "completed", assistantText);
-          this.emit({ type: "run_state", threadId: options.threadId, run: null });
+          this.emit({ type: "turn.completed", threadId: options.threadId, turnId: options.assistantMessage.id, message: options.assistantMessage });
+          this.emit({ type: "turn.status_changed", threadId: options.threadId, run: null });
           return;
         }
 
@@ -1237,10 +1171,11 @@ export class AgentRuntime {
           transitionRun(run, "completed", { iteration, toolCount });
           this.ensureFallbackThreadTitle(options.threadId);
           flushAssistant("completed", true);
-          this.store.clearRunCheckpoint(options.threadId);
+          this.recovery.clear(options.threadId);
           this.activeRuns.delete(options.threadId);
           this.markSubagentFinished(options.threadId, "completed", assistantText || "Generated image.");
-          this.emit({ type: "run_state", threadId: options.threadId, run: null });
+          this.emit({ type: "turn.completed", threadId: options.threadId, turnId: options.assistantMessage.id, message: options.assistantMessage });
+          this.emit({ type: "turn.status_changed", threadId: options.threadId, run: null });
           return;
         }
         if (recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
@@ -1300,8 +1235,14 @@ export class AgentRuntime {
       }
       flushAssistant(aborted ? "stopped" : "failed", true);
       this.markSubagentFinished(options.threadId, aborted ? "stopped" : "failed", assistantText || errorMessage(error));
+      this.emit({
+        type: aborted ? "turn.stopped" : "turn.failed",
+        threadId: options.threadId,
+        turnId: options.assistantMessage.id,
+        message: options.assistantMessage,
+      });
       this.emitRun(run);
-      if (!aborted) this.emit({ type: "toast", tone: "error", message: errorMessage(error) });
+      if (!aborted) this.emit({ type: "notification.created", tone: "error", message: errorMessage(error) });
     } finally {
       if (assistantFlushTimer) {
         clearTimeout(assistantFlushTimer);
@@ -1309,72 +1250,116 @@ export class AgentRuntime {
       }
       if (!handoff && this.activeRuns.get(options.threadId)?.assistantMessageId === options.assistantMessage.id) {
         this.activeRuns.delete(options.threadId);
-        this.emit({ type: "run_state", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
+        this.emit({ type: "turn.status_changed", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
       }
     }
   }
 
   private async resolveApprovalBundle(bundle: ApprovalBundle) {
-    bundle.calls.forEach((call) => this.pendingApprovalByCallId.delete(call.id));
-    const runtimeBudget = resolveModelRuntimeBudget(bundle.model || this.store.getSettings().model, runtimeBudgetModeForHistory(bundle.history));
+    if (!this.approvals.claim(bundle)) return;
     const assistantMessage = this.store.getMessage(bundle.assistantMessageId);
-    if (!assistantMessage) return;
+    if (!assistantMessage) {
+      this.approvals.release(bundle);
+      return;
+    }
+    this.emit({ type: "approval.resolved", threadId: bundle.threadId, turnId: bundle.assistantMessageId, callIds: bundle.calls.map((call) => call.id) });
+    const runtimeBudget = resolveModelRuntimeBudget(bundle.model || this.store.getSettings().model, runtimeBudgetModeForHistory(bundle.history));
     this.activeRuns.set(bundle.threadId, bundle.run);
     transitionRun(bundle.run, "sampling", { iteration: bundle.iteration, toolCount: bundle.toolCount });
     this.updateAssistant(assistantMessage, bundle.assistantText, bundle.assistantThought, "running");
     this.emitRun(bundle.run);
 
     const results: Array<{ id: string; name: string; response: ToolResult }> = [];
+    let history = bundle.history;
     let toolCount = bundle.toolCount;
-    for (const call of bundle.calls) {
-      const decision = bundle.decisions.get(call.id) || { approved: false, scope: "once" as const };
-      const approved = decision.approved;
-      let result: ToolResult;
-      let scope: ApprovalScopeRecord | undefined;
-      if (approved) {
-        scope = this.createApprovalScope(bundle, call, decision.scope);
-        this.recordApprovalHistory({
-          threadId: bundle.threadId,
-          messageId: bundle.assistantMessageId,
-          call,
-          approved: true,
-          scope,
-          reason: this.tools.assess(call, this.store.getSettings().permissionMode, this.store.getThread(bundle.threadId)?.workspaceId).reason,
-        });
-        const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
-          status: "running",
-          startedAt: now(),
-        });
-        this.emit({ type: "tool_updated", tool: event });
-        result = await this.executeTool(call, bundle.workspaceRoot, bundle.run.controller, bundle.run, bundle.threadId, bundle.assistantMessageId, true);
-        toolCount += 1;
-      } else {
-        this.recordApprovalHistory({
-          threadId: bundle.threadId,
-          messageId: bundle.assistantMessageId,
-          call,
-          approved: false,
-          reason: "User cancelled this action.",
-        });
-        result = { success: false, error: "User cancelled this action." };
+    try {
+      for (const call of bundle.calls) {
+        if (bundle.run.controller.signal.aborted) break;
+        const decision = bundle.decisions.get(call.id) || { approved: false, scope: "once" as const };
+        const approved = decision.approved;
+        let result: ToolResult;
+        let scope: ApprovalScopeRecord | undefined;
+        if (approved) {
+          scope = this.approvals.createScope(bundle, call, decision.scope);
+          this.approvals.recordHistory({
+            threadId: bundle.threadId,
+            messageId: bundle.assistantMessageId,
+            call,
+            approved: true,
+            scope,
+            reason: this.tools.assess(call, this.store.getSettings().permissionMode, this.store.getThread(bundle.threadId)?.workspaceId).reason,
+          });
+          const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
+            status: "running",
+            startedAt: now(),
+          });
+          this.emit({ type: "tool.upserted", tool: event });
+          try {
+            result = await this.executeTool(call, bundle.workspaceRoot, bundle.run.controller, bundle.run, bundle.threadId, bundle.assistantMessageId, true);
+          } catch (error) {
+            result = { success: false, error: errorMessage(error) };
+          }
+          toolCount += 1;
+        } else {
+          this.approvals.recordHistory({
+            threadId: bundle.threadId,
+            messageId: bundle.assistantMessageId,
+            call,
+            approved: false,
+            reason: "User cancelled this action.",
+          });
+          result = { success: false, error: "User cancelled this action." };
+        }
+        if (bundle.run.controller.signal.aborted) break;
+        const finalToolEvent = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
+          status: result.success ? "done" : approved ? "failed" : "cancelled",
+          result,
+          output: result.output || result.error,
+          diff: (result as ToolResult & { diff?: string }).diff,
+          diffFiles: (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
+          endedAt: now(),
+        }, false);
+        results.push({ id: call.id, name: call.name, response: this.contextManager.compactToolResult(result, runtimeBudget) });
+        history = appendToolResults(history, [results.at(-1)!]);
+        const checkpoint = {
+          ...(this.recovery.checkpoint(bundle.threadId) || {
+            version: 1,
+            threadId: bundle.threadId,
+            assistantMessageId: bundle.assistantMessageId,
+            workspaceRoot: bundle.workspaceRoot,
+            assistantText: bundle.assistantText,
+            assistantThought: bundle.assistantThought,
+            iteration: bundle.iteration,
+            recoveryAttempts: bundle.recoveryAttempts,
+            lastProgressAt: bundle.run.lastProgressAt,
+            updatedAt: now(),
+          }),
+          history,
+          toolCount,
+          model: bundle.model,
+          reasoningEffort: bundle.reasoningEffort,
+          collaborationMode: bundle.collaborationMode,
+          agentHarnessMode: bundle.agentHarnessMode,
+        };
+        this.store.commitToolEventAndCheckpoint(finalToolEvent, checkpoint);
+        this.emit({ type: "tool.upserted", tool: finalToolEvent });
+        this.approvals.removeCall(call.id);
       }
-      const finalToolEvent = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
-        status: result.success ? "done" : approved ? "failed" : "cancelled",
-        result,
-        output: result.output || result.error,
-        diff: (result as ToolResult & { diff?: string }).diff,
-        diffFiles: (result as ToolResult & { diffFiles?: ToolDiffFileRecord[] }).diffFiles,
-        endedAt: now(),
-      });
-      this.emit({ type: "tool_updated", tool: finalToolEvent });
-      results.push({ id: call.id, name: call.name, response: compactToolResultForModel(result, runtimeBudget) });
-    }
 
+    if (bundle.run.controller.signal.aborted) {
+      this.finalizeStoppedRun({
+        threadId: bundle.threadId,
+        assistantMessage,
+        assistantText: bundle.assistantText,
+        assistantThought: bundle.assistantThought,
+      });
+      return;
+    }
     await this.continueLoop({
       threadId: bundle.threadId,
       assistantMessage,
       workspaceRoot: bundle.workspaceRoot,
-      history: appendToolResults(bundle.history, results),
+      history,
       assistantText: bundle.assistantText,
       assistantThought: bundle.assistantThought,
       controller: bundle.run.controller,
@@ -1386,6 +1371,10 @@ export class AgentRuntime {
       collaborationMode: bundle.collaborationMode,
       agentHarnessMode: bundle.agentHarnessMode,
     });
+    } finally {
+      this.approvals.removeBundle(bundle);
+      this.approvals.release(bundle);
+    }
   }
 
   private createApprovalBundle(params: {
@@ -1420,74 +1409,15 @@ export class AgentRuntime {
       agentHarnessMode: params.options.agentHarnessMode,
     };
     params.calls.forEach((call) => {
-      this.pendingApprovalByCallId.set(call.id, bundle);
+      this.approvals.register(bundle);
       const event = this.updateToolEvent(params.options.threadId, params.options.assistantMessage.id, call, {
         status: "awaiting_approval",
         approvalGroupId: id,
       });
-      this.emit({ type: "tool_updated", tool: event });
+      this.emit({ type: "tool.upserted", tool: event });
     });
+    this.emit({ type: "approval.requested", threadId: bundle.threadId, turnId: bundle.assistantMessageId, callIds: bundle.calls.map((call) => call.id) });
     this.saveCheckpoint(params.options, params.history, params.assistantText, params.assistantThought, params.iteration, params.toolCount, params.recoveryAttempts, params.run);
-    return bundle;
-  }
-
-  private restorePendingApprovalBundle(threadId: string, callId: string): ApprovalBundle | null {
-    const checkpoint = this.store.getRunCheckpoint(threadId);
-    if (!checkpoint) return null;
-    const target = this.store.findToolEventByCall(threadId, callId);
-    if (!target || target.status !== "awaiting_approval" || target.messageId !== checkpoint.assistantMessageId) return null;
-    const toolEvents = this.store
-      .listToolEventsForMessage(threadId, checkpoint.assistantMessageId)
-      .filter((event) =>
-        event.status === "awaiting_approval" &&
-        (target.approvalGroupId ? event.approvalGroupId === target.approvalGroupId : event.callId === callId)
-      );
-    const calls: DesktopToolCall[] = toolEvents.map((event) => ({
-      id: event.callId,
-      name: event.name as DesktopToolCall["name"],
-      arguments: event.args || {},
-    }));
-    if (calls.length === 0) return null;
-
-    const thread = this.store.getThread(threadId);
-    const settings = this.store.getSettings();
-    const controller = new AbortController();
-    const run = this.createRun(threadId, checkpoint.assistantMessageId, controller);
-    run.iteration = checkpoint.iteration;
-    run.toolCount = checkpoint.toolCount;
-    run.recoveryAttempts = checkpoint.recoveryAttempts;
-    run.model = thread?.model || settings.model;
-    run.reasoningEffort = thread?.reasoningEffort || settings.reasoningEffort;
-    run.collaborationMode = thread?.collaborationMode || settings.collaborationMode;
-    run.agentHarnessMode = thread?.agentHarnessMode || settings.agentHarnessMode;
-    transitionRun(run, "awaiting_approval", {
-      iteration: checkpoint.iteration,
-      toolCount: checkpoint.toolCount,
-      resumable: false,
-      reason: "Restored pending approval.",
-    });
-
-    const bundle: ApprovalBundle = {
-      id: target.approvalGroupId || crypto.randomUUID(),
-      threadId,
-      assistantMessageId: checkpoint.assistantMessageId,
-      workspaceRoot: checkpoint.workspaceRoot,
-      calls,
-      decisions: new Map(),
-      history: checkpoint.history as ProviderMessage[],
-      assistantText: checkpoint.assistantText,
-      assistantThought: checkpoint.assistantThought,
-      toolCount: checkpoint.toolCount,
-      iteration: checkpoint.iteration,
-      recoveryAttempts: checkpoint.recoveryAttempts,
-      run,
-      model: run.model,
-      reasoningEffort: run.reasoningEffort,
-      collaborationMode: run.collaborationMode,
-      agentHarnessMode: run.agentHarnessMode,
-    };
-    calls.forEach((call) => this.pendingApprovalByCallId.set(call.id, bundle));
-    this.emitRun(run);
     return bundle;
   }
 
@@ -1524,7 +1454,7 @@ export class AgentRuntime {
       textOffset: input.textOffset,
       startedAt,
     });
-    this.emit({ type: "tool_updated", tool: started });
+    this.emit({ type: "tool.upserted", tool: started });
 
     let summary = "";
     let replacementHistory: ProviderMessage[] = [];
@@ -1562,6 +1492,7 @@ export class AgentRuntime {
       createdAt: now(),
     };
     this.store.saveCompactionCheckpoint(checkpoint);
+    this.emit({ type: "context.compacted", threadId: input.threadId, turnId: input.assistantMessageId, checkpoint });
 
     const output = error
       ? `Model compaction failed; used deterministic fallback.\n${error}\n\n${summary}`
@@ -1587,7 +1518,7 @@ export class AgentRuntime {
       preview: `${beforeTokens.toLocaleString()} -> ${afterTokens.toLocaleString()} tokens`,
       endedAt: now(),
     });
-    this.emit({ type: "tool_updated", tool: completed });
+    this.emit({ type: "tool.upserted", tool: completed });
 
     return { history: replacementHistory, beforeTokens, afterTokens, checkpoint };
   }
@@ -1603,7 +1534,7 @@ export class AgentRuntime {
     const settings = this.store.getSettings();
     let summary = "";
     let thought = "";
-    await streamProviderResponse({
+    await this.modelLoop.stream({
       provider: getProviderForModel(input.model),
       model: input.model,
       systemInstruction: COMPACTION_SYSTEM_INSTRUCTION,
@@ -1637,27 +1568,7 @@ export class AgentRuntime {
   }
 
   private markSubagentFinished(threadId: string, status: SubagentRecord["status"], text: string) {
-    const agent = this.store.getSubagentByThread(threadId);
-    if (!agent) return;
-    if (agent.status === "closed") {
-      this.emitSnapshot();
-      return;
-    }
-    const updated = this.store.updateSubagent(threadId, {
-      status,
-      finalMessage: text,
-      lastPreview: compactPreview(text, 240),
-    });
-    if (status === "completed" && updated) {
-      const latestUser = this.store.findLatestMessage(threadId, "user");
-      const latestAssistant = this.store.findLatestMessage(threadId, "assistant");
-      const workspace = updated.workspaceId ? this.store.getWorkspace(updated.workspaceId)?.path : undefined;
-      if (latestUser && latestAssistant && latestUser.createdAt > latestAssistant.createdAt && workspace && !this.activeRuns.has(threadId)) {
-        this.store.updateSubagent(threadId, { status: "pending" });
-        this.startExistingSubagentTurn(updated, workspace);
-      }
-    }
-    this.emitSnapshot();
+    this.subagents.markFinished(threadId, status, text);
   }
 
   private async maybeRunReviewerSwarm(input: {
@@ -1667,165 +1578,20 @@ export class AgentRuntime {
     toolCount: number;
     agentHarnessMode: AgentHarnessMode;
   }) {
-    if (input.options.parentThreadId) return "";
-    if (input.options.reviewerSwarmCompleted) return "";
-    if (input.agentHarnessMode !== "review_swarm") return "";
-    if (!this.shouldRunReviewerSwarm(input.toolCount)) return "";
-
-    transitionRun(input.run, "waiting_tool", {
-      iteration: input.options.iteration,
+    return this.verification.verify({
+      threadId: input.options.threadId,
+      parentThreadId: input.options.parentThreadId,
+      assistantMessage: input.options.assistantMessage,
+      workspaceRoot: input.options.workspaceRoot,
+      assistantText: input.assistantText,
       toolCount: input.toolCount,
-      reason: "Reviewer Swarm is checking the completed turn.",
-      resumable: false,
-    });
-    this.emitRun(input.run);
-
-    const reviewers = this.startReviewerSwarm(input.options, input.assistantText);
-    const reports = await this.waitForReviewerSwarm(reviewers);
-    transitionRun(input.run, "draining", { iteration: input.options.iteration, toolCount: input.toolCount, reason: undefined });
-    this.emitRun(input.run);
-    return formatReviewerSwarmFeedback(reports);
-  }
-
-  private shouldRunReviewerSwarm(toolCount: number) {
-    return toolCount > 0;
-  }
-
-  private startReviewerSwarm(options: ContinueOptions, assistantText: string) {
-    const thread = this.store.getThread(options.threadId);
-    const timestamp = now();
-    const prompt = [
-      "Reviewer Swarm check. You are a read-only reviewer for the parent agent's just-completed turn.",
-      "",
-      "Do not edit files, run mutating commands, approve risky actions, or spawn child agents.",
-      "Use read-only inspection plus git diff/status when useful.",
-      "",
-      "Review for: request satisfaction, bugs/regressions, missing tests, security risks, and data-loss risks.",
-      "Return concise findings. If there are no blocking issues, say so explicitly.",
-      "",
-      "Parent final draft:",
-      assistantText.trim() || "(no draft text)",
-    ].join("\n");
-    return Array.from({ length: REVIEWER_SWARM_COUNT }, (_, index) => {
-      const agent = this.store.createSubagent({
-        parentThreadId: options.threadId,
-        parentMessageId: options.assistantMessage.id,
-        workspaceId: thread?.workspaceId ?? null,
-        taskName: `review_swarm_${timestamp}_${index + 1}`,
-        agentPath: `/root/review_swarm_${timestamp}_${index + 1}`,
-        agentRole: "reviewer",
-        agentNickname: `Reviewer ${index + 1}`,
-        prompt,
-        model: options.model || thread?.model || this.store.getSettings().model,
-        reasoningEffort: options.reasoningEffort || thread?.reasoningEffort || this.store.getSettings().reasoningEffort,
-      });
-      this.store.updateThreadSettings(agent.threadId, {
-        model: agent.model,
-        reasoningEffort: agent.reasoningEffort,
-        collaborationMode: "plan",
-        agentHarnessMode: "standard",
-      });
-      try {
-        this.startSubagentTurn(agent, options.workspaceRoot, prompt, loadSubagentRoles(options.workspaceRoot).get("reviewer"), "all");
-      } catch (error) {
-        this.store.updateSubagent(agent.threadId, {
-          status: "failed",
-          finalMessage: `Reviewer failed to start: ${errorMessage(error)}`,
-          lastPreview: "Reviewer failed to start.",
-        });
-      }
-      return agent;
-    });
-  }
-
-  private async waitForReviewerSwarm(reviewers: SubagentRecord[]) {
-    const deadline = Date.now() + REVIEWER_SWARM_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const current = reviewers.map((agent) => this.store.getSubagentByThread(agent.threadId) || agent);
-      if (current.every((agent) => !isLiveSubagent(agent))) return current;
-      await delay(750);
-    }
-    reviewers.forEach((agent) => {
-      const current = this.store.getSubagentByThread(agent.threadId) || agent;
-      if (!isLiveSubagent(current)) return;
-      this.activeRuns.get(agent.threadId)?.controller.abort();
-      this.stopThreadProcesses(agent.threadId);
-      this.store.updateSubagent(agent.threadId, {
-        status: "stopped",
-        finalMessage: `Reviewer Swarm timed out after ${Math.round(REVIEWER_SWARM_TIMEOUT_MS / 1000)} seconds.`,
-        lastPreview: "Reviewer Swarm timed out.",
-      });
-    });
-    this.emitSnapshot();
-    return reviewers.map((agent) => this.store.getSubagentByThread(agent.threadId) || agent);
-  }
-
-  private findReusableApprovalScope(threadId: string, call: DesktopToolCall) {
-    const thread = this.store.getThread(threadId);
-    const scopes = this.store.listApprovalScopes(thread?.workspaceId ?? null, threadId);
-    return findMatchingApprovalScope(call, scopes);
-  }
-
-  private createApprovalScope(
-    bundle: ApprovalBundle,
-    call: DesktopToolCall,
-    decisionScope: ApprovalDecisionScope,
-  ): ApprovalScopeRecord | undefined {
-    if (decisionScope === "once") return undefined;
-    const thread = this.store.getThread(bundle.threadId);
-    const timestamp = now();
-    const boundedScope = approvalScopeBounds(decisionScope, timestamp);
-    const base = {
-      id: crypto.randomUUID(),
-      workspaceId: thread?.workspaceId ?? null,
-      expiresAt: boundedScope.expiresAt,
-      maxUses: boundedScope.maxUses,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      useCount: 0,
-    };
-
-    if (decisionScope === "command_prefix") {
-      const commandPrefix = approvalCommandPrefix(call);
-      if (!commandPrefix) return undefined;
-      return this.store.upsertApprovalScope({
-        ...base,
-        kind: "terminal_prefix",
-        commandPrefix,
-        cwd: approvalCwd(call),
-      });
-    }
-
-    return this.store.upsertApprovalScope({
-      ...base,
-      kind: decisionScope === "this_thread" ? "tool_thread" : "tool_workspace",
-      threadId: decisionScope === "this_thread" ? bundle.threadId : undefined,
-      toolName: call.name,
-    });
-  }
-
-  private recordApprovalHistory(input: {
-    threadId: string;
-    messageId: string;
-    call: DesktopToolCall;
-    approved: boolean;
-    scope?: ApprovalScopeRecord;
-    reason?: string;
-  }) {
-    const thread = this.store.getThread(input.threadId);
-    this.store.recordApprovalHistory({
-      id: crypto.randomUUID(),
-      threadId: input.threadId,
-      messageId: input.messageId,
-      workspaceId: thread?.workspaceId ?? null,
-      callId: input.call.id,
-      toolName: input.call.name,
-      approved: input.approved,
-      scopeId: input.scope?.id,
-      scopeKind: input.scope?.kind,
-      reason: input.reason,
-      argsSummary: summarizeArgs(input.call.arguments),
-      createdAt: now(),
+      iteration: input.options.iteration,
+      model: input.options.model,
+      reasoningEffort: input.options.reasoningEffort,
+      collaborationMode: input.options.collaborationMode,
+      agentHarnessMode: input.agentHarnessMode,
+      alreadyCompleted: input.options.reviewerSwarmCompleted,
+      run: input.run,
     });
   }
 
@@ -1848,7 +1614,7 @@ export class AgentRuntime {
     }
     const isImageTool = isImageGenerationToolName(call.name);
     if (isImageTool) {
-      this.emit({ type: "image_generation_started", image: imageStartEvent(call, threadId, messageId) });
+      this.emit({ type: "image.started", image: imageStartEvent(call, threadId, messageId) });
     }
     const result = await this.tools.execute(call, {
       workspaceId: this.store.getThread(threadId)?.workspaceId || "",
@@ -1871,9 +1637,9 @@ export class AgentRuntime {
         ? imageCompletedEventsFromResult(call, result, threadId, messageId)
         : [];
       if (completedImages.length > 0) {
-        completedImages.forEach((image) => this.emit({ type: "image_generation_completed", image }));
+        completedImages.forEach((image) => this.emit({ type: "image.completed", image }));
       } else {
-        this.emit({ type: "image_generation_failed", image: imageFailedEvent(call, {
+        this.emit({ type: "image.failed", image: imageFailedEvent(call, {
           error: result.error || (result.success ? "Image generation did not return a saved image." : undefined),
         }, threadId, messageId) });
       }
@@ -1891,187 +1657,13 @@ export class AgentRuntime {
     parentThreadId: string,
     parentMessageId: string,
   ): Promise<ToolResult> {
-    switch (call.name) {
-      case "spawn_agent":
-        return this.spawnSubagent(call, workspaceRoot, parentThreadId, parentMessageId, run);
-      case "send_message":
-        return this.messageSubagent(call, parentThreadId, false);
-      case "assign_task":
-        return this.messageSubagent(call, parentThreadId, true, workspaceRoot);
-      case "wait_agent":
-        return this.waitForSubagents(call, parentThreadId, controller.signal);
-      case "list_agents":
-        return this.listSubagents(call, parentThreadId);
-      case "close_agent":
-        return this.closeSubagent(call, parentThreadId);
-      default:
-        return { success: false, error: `Unknown subagent tool ${call.name}` };
-    }
-  }
-
-  private spawnSubagent(call: DesktopToolCall, workspaceRoot: string, parentThreadId: string, parentMessageId: string, parentRun?: AgentRunTracker): ToolResult {
-    const settings = this.store.getSettings();
-    const taskName = normalizeTaskName(String(call.arguments.taskName || call.arguments.task_name || ""));
-    const message = String(call.arguments.message || "").trim();
-    if (!taskName) return { success: false, error: "taskName must use lowercase letters, digits, and underscores." };
-    if (!message) return { success: false, error: "message is required." };
-    const parentAgent = this.store.getSubagentByThread(parentThreadId);
-    const rootThreadId = parentAgent?.parentThreadId || parentThreadId;
-    const liveChildren = this.store.listDirectSubagents(parentThreadId).filter(isLiveSubagent);
-    if (liveChildren.length >= MAX_LIVE_SUBAGENTS_PER_PARENT) {
-      return { success: false, error: `Subagent limit reached: at most ${MAX_LIVE_SUBAGENTS_PER_PARENT} live child agents per parent.` };
-    }
-    const liveTreeAgents = this.store.listSubagents(rootThreadId).filter(isLiveSubagent);
-    if (liveTreeAgents.length >= MAX_LIVE_SUBAGENTS_PER_TREE) {
-      return { success: false, error: `Subagent limit reached: at most ${MAX_LIVE_SUBAGENTS_PER_TREE} live child agents per chat tree.` };
-    }
-    if (parentAgent && subagentDepth(parentAgent.agentPath) >= MAX_SUBAGENT_DEPTH) {
-      return { success: false, error: `Subagent depth limit reached: max depth is ${MAX_SUBAGENT_DEPTH}.` };
-    }
-    if (this.store.findSubagent(parentThreadId, taskName)) return { success: false, error: `A subagent named ${taskName} already exists.` };
-
-    const roles = loadSubagentRoles(workspaceRoot);
-    const requestedRole = normalizeRoleName(String(call.arguments.agentType || call.arguments.agent_type || ""));
-    const role = requestedRole ? roles.get(requestedRole) : undefined;
-    if (requestedRole && !role) {
-      return {
-        success: false,
-        error: `Unknown agentType ${requestedRole}.`,
-        data: { availableRoles: Array.from(roles.keys()) },
-      };
-    }
-    const forkTurns = normalizeForkTurns(call.arguments.forkTurns || call.arguments.fork_turns);
-    if (!forkTurns.valid) {
-      return { success: false, error: "forkTurns must be none, all, or a positive integer string." };
-    }
-    const usedNicknames = new Set(this.store.listDirectSubagents(parentThreadId).map((agent) => (agent.agentNickname || "").toLowerCase()).filter(Boolean));
-    const nickname = pickSubagentNickname(role, usedNicknames, taskName);
-    const thread = this.store.getThread(parentThreadId);
-    const inheritedModel = getModelOption(parentRun?.model || parentAgent?.model || thread?.model || settings.model).id;
-    const agent = this.store.createSubagent({
+    return this.subagents.execute(call, {
+      workspaceRoot,
       parentThreadId,
       parentMessageId,
-      workspaceId: thread?.workspaceId ?? null,
-      taskName,
-      agentPath: `${parentAgent?.agentPath || "/root"}/${taskName}`,
-      agentRole: role?.name,
-      agentNickname: nickname,
-      prompt: message,
-      model: inheritedModel,
-      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort) || role?.reasoningEffort || parentRun?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort,
+      parentRun: run,
+      signal: controller.signal,
     });
-    this.startSubagentTurn(agent, workspaceRoot, message, role, forkTurns.value);
-    this.emitSnapshot();
-    return {
-      success: true,
-      output: `Spawned ${formatSubagentLabel(agent)}.`,
-      data: subagentToolData(agent),
-    };
-  }
-
-  private messageSubagent(call: DesktopToolCall, parentThreadId: string, triggerTurn: boolean, workspaceRoot?: string): ToolResult {
-    const target = String(call.arguments.target || "").trim();
-    const message = String(call.arguments.message || "").trim();
-    if (!message) return { success: false, error: "message is required." };
-    const agent = this.store.findSubagent(parentThreadId, target);
-    if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
-    if (agent.status === "closed") return { success: false, error: `${formatSubagentLabel(agent)} is closed.` };
-    this.appendSubagentUserMessage(agent.threadId, message);
-    const alreadyRunning = this.activeRuns.has(agent.threadId);
-    this.store.updateSubagent(agent.threadId, {
-      status: triggerTurn && !alreadyRunning ? "pending" : agent.status,
-      lastPreview: compactPreview(message, 180),
-    });
-    if (triggerTurn) {
-      const workspace = workspaceRoot || this.store.getWorkspace(agent.workspaceId)?.path;
-      if (!workspace) return { success: false, error: "Workspace not found for subagent." };
-      if (!alreadyRunning) this.startExistingSubagentTurn(agent, workspace);
-    }
-    this.emitSnapshot();
-    return {
-      success: true,
-      output: alreadyRunning && triggerTurn
-        ? `Queued task for ${formatSubagentLabel(agent)}. It will run after the current child turn finishes.`
-        : `${triggerTurn ? "Assigned task to" : "Sent message to"} ${formatSubagentLabel(agent)}.`,
-      data: subagentToolData(agent),
-    };
-  }
-
-  private async waitForSubagents(call: DesktopToolCall, parentThreadId: string, signal: AbortSignal): Promise<ToolResult> {
-    const startedAt = Date.now();
-    const timeoutMs = Math.max(0, Math.min(120_000, Number(call.arguments.timeoutMs || call.arguments.timeout_ms) || 30_000));
-    const initialAgents = this.store.listSubagents(parentThreadId);
-    const initialLiveAgents = initialAgents.filter(isLiveSubagent);
-    if (initialLiveAgents.length === 0 && initialAgents.some((agent) => ["completed", "failed", "stopped", "closed"].includes(agent.status))) {
-      return {
-        success: true,
-        output: subagentStatusSummary(initialAgents),
-        data: { timed_out: false, timedOut: false, agents: initialAgents.map(subagentToolData) },
-      };
-    }
-    while (!signal.aborted && Date.now() - startedAt < timeoutMs) {
-      const agents = this.store.listSubagents(parentThreadId);
-      if (agents.some((agent) => agent.updatedAt > startedAt && !["pending", "running", "waiting"].includes(agent.status))) {
-        return {
-          success: true,
-          output: subagentStatusSummary(agents),
-          data: { timed_out: false, timedOut: false, agents: agents.map(subagentToolData) },
-        };
-      }
-      await delay(500);
-    }
-    const agents = this.store.listSubagents(parentThreadId);
-    const liveAgents = agents.filter(isLiveSubagent);
-    return {
-      success: true,
-      output: timeoutMs === 0
-        ? subagentStatusSummary(agents)
-        : liveAgents.length > 0
-          ? `Still waiting on ${liveAgents.length} live ${liveAgents.length === 1 ? "agent" : "agents"}.\n${subagentStatusSummary(agents)}`
-          : `No child status change before timeout.\n${subagentStatusSummary(agents)}`,
-      data: { timed_out: timeoutMs > 0, timedOut: timeoutMs > 0, agents: agents.map(subagentToolData) },
-    };
-  }
-
-  private listSubagents(call: DesktopToolCall, parentThreadId: string): ToolResult {
-    const prefix = String(call.arguments.pathPrefix || call.arguments.path_prefix || "").trim();
-    const agents = this.store.listSubagents(parentThreadId)
-      .filter((agent) => !prefix || agent.agentPath.startsWith(prefix));
-    return {
-      success: true,
-      output: subagentStatusSummary(agents),
-      data: { agents: agents.map(subagentToolData) },
-    };
-  }
-
-  private closeSubagent(call: DesktopToolCall, parentThreadId: string): ToolResult {
-    const target = String(call.arguments.target || "").trim();
-    const agent = this.store.findSubagent(parentThreadId, target);
-    if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
-    const descendants = this.store.listSubagents()
-      .filter((candidate) => candidate.agentPath === agent.agentPath || candidate.agentPath.startsWith(`${agent.agentPath}/`));
-    descendants.forEach((candidate) => {
-      const childRun = this.activeRuns.get(candidate.threadId);
-      childRun?.controller.abort();
-      this.stopThreadProcesses(candidate.threadId);
-      this.cancelPendingApprovalsForThread(candidate.threadId, "Closed before approval.");
-      this.store.updateSubagent(candidate.threadId, {
-        status: "closed",
-        closedAt: now(),
-        lastPreview: candidate.finalMessage || candidate.lastPreview || "Closed.",
-      });
-    });
-    const updated = this.store.updateSubagent(agent.threadId, {
-      status: "closed",
-      closedAt: now(),
-      lastPreview: agent.finalMessage || agent.lastPreview || "Closed.",
-    }) || agent;
-    this.emitSnapshot();
-    return {
-      success: true,
-      output: `Closed ${formatSubagentLabel(updated)}.`,
-      data: { ...subagentToolData(updated), previous_status: agent.status },
-    };
   }
 
   private async requestUserInput(
@@ -2083,111 +1675,73 @@ export class AgentRuntime {
   ): Promise<ToolResult> {
     const settings = this.store.getSettings();
     const thread = this.store.getThread(threadId);
-    if ((run.collaborationMode || thread?.collaborationMode || settings.collaborationMode) !== "plan") {
-      return { success: false, error: "request_user_input is only available in Plan Mode." };
-    }
-    const normalized = normalizeRequestUserInputQuestions(call.arguments.questions);
-    if (!normalized.success) return { success: false, error: normalized.error };
-
-    transitionRun(run, "waiting_tool", {
-      iteration: run.iteration,
-      toolCount: run.toolCount,
-      reason: "Waiting for your answer.",
-      resumable: false,
+    return this.userInput.request({
+      call,
+      controller,
+      run,
+      threadId,
+      messageId,
+      isPlanMode: (run.collaborationMode || thread?.collaborationMode || settings.collaborationMode) === "plan",
     });
-    this.emitRun(run);
-
-    const result = await new Promise<ToolResult>((resolve) => {
-      const pending: PendingUserInput = {
-        threadId,
-        assistantMessageId: messageId,
-        call,
-        questions: normalized.questions,
-        run,
-        resolve,
-      };
-      this.pendingUserInputByCallId.set(call.id, pending);
-      const abort = () => {
-        this.resolvePendingUserInput(call.id, {
-          success: false,
-          error: "Stopped before user input was answered.",
-          data: { answers: {}, interrupted: true },
-        });
-      };
-      controller.signal.addEventListener("abort", abort, { once: true });
-      pending.cleanup = () => controller.signal.removeEventListener("abort", abort);
-      this.emit({
-        type: "request_user_input",
-        request: {
-          threadId,
-          assistantMessageId: messageId,
-          callId: call.id,
-          questions: normalized.questions,
-          createdAt: now(),
-        },
-      });
-    });
-    this.emitRun(run);
-    return result;
-  }
-
-  private resolvePendingUserInput(callId: string, result: ToolResult) {
-    const pending = this.pendingUserInputByCallId.get(callId);
-    if (!pending) return;
-    this.pendingUserInputByCallId.delete(callId);
-    pending.cleanup?.();
-    this.emit({ type: "request_user_input_resolved", threadId: pending.threadId, callId });
-    pending.resolve(result);
   }
 
   private trackThreadProcess(threadId: string, processId: number) {
-    const processes = this.processIdsByThread.get(threadId) || new Set<number>();
-    processes.add(processId);
-    this.processIdsByThread.set(threadId, processes);
+    this.tools.trackProcess(threadId, processId);
   }
 
   private untrackThreadProcess(threadId: string, processId: number) {
-    const processes = this.processIdsByThread.get(threadId);
-    if (!processes) return;
-    processes.delete(processId);
-    if (processes.size === 0) this.processIdsByThread.delete(threadId);
+    this.tools.untrackProcess(threadId, processId);
   }
 
   private untrackTerminalSession(sessionId: number) {
-    for (const [threadId, sessions] of this.processIdsByThread.entries()) {
-      sessions.delete(sessionId);
-      if (sessions.size === 0) this.processIdsByThread.delete(threadId);
-    }
+    this.tools.untrackTerminalSession(sessionId);
   }
 
   private stopThreadProcesses(threadId: string) {
-    const processes = this.processIdsByThread.get(threadId);
-    if (!processes) return;
-    this.processIdsByThread.delete(threadId);
-    for (const processId of processes) {
-      void this.tools.stopTerminalProcess(processId).catch(() => undefined);
-    }
+    this.tools.stopThreadProcesses(threadId);
   }
 
   private cancelPendingApprovalsForThread(threadId: string, reason: string) {
     const bundles = Array.from(new Set(
-      Array.from(this.pendingApprovalByCallId.values()).filter((bundle) => bundle.threadId === threadId),
+      this.approvals.bundlesForThread(threadId),
     ));
     for (const bundle of bundles) {
       bundle.run.controller.abort();
-      bundle.calls.forEach((call) => {
-        this.pendingApprovalByCallId.delete(call.id);
+      const checkpoint = this.recovery.checkpoint(threadId);
+      let history = checkpoint?.history as ProviderMessage[] || bundle.history;
+      const stoppedEvents: ToolEventRecord[] = [];
+      bundle.calls.filter((call) => this.approvals.get(call.id) === bundle).forEach((call) => {
+        this.approvals.removeCall(call.id);
         const event = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
           status: "stopped",
           result: { success: false, error: reason },
           output: reason,
           endedAt: now(),
-        });
-        this.emit({ type: "tool_updated", tool: event });
+        }, false);
+        stoppedEvents.push(event);
+        history = appendToolResults(history, [{
+          id: call.id,
+          name: call.name,
+          response: { success: false, error: reason, data: { interrupted: true } },
+        }]);
       });
       const message = this.store.getMessage(bundle.assistantMessageId);
-      if (message && message.status === "awaiting_approval") {
-        this.updateAssistant(message, bundle.assistantText || reason, bundle.assistantThought, "stopped");
+      if (message && message.status !== "completed" && message.status !== "failed" && message.status !== "stopped") {
+        const stoppedMessage = {
+          ...message,
+          content: bundle.assistantText || reason,
+          thought: bundle.assistantThought,
+          status: "stopped" as const,
+          updatedAt: now(),
+        };
+        if (checkpoint) {
+          this.store.commitRecoveryState(stoppedEvents, { ...checkpoint, history }, stoppedMessage);
+        } else {
+          stoppedEvents.forEach((event) => this.store.upsertToolEvent(event));
+          this.store.upsertMessage(stoppedMessage);
+        }
+        stoppedEvents.forEach((event) => this.emit({ type: "tool.upserted", tool: event }));
+        this.emit({ type: "message.upserted", message: stoppedMessage });
       }
     }
   }
@@ -2274,9 +1828,7 @@ export class AgentRuntime {
     const run = this.createRun(agent.threadId, assistantMessage.id, controller);
     this.activeRuns.set(agent.threadId, run);
     this.emitRun(run);
-    const parentAgent = this.store.getSubagentByThread(agent.parentThreadId);
-    const parentThread = this.store.getThread(agent.parentThreadId);
-    const inheritedModel = getModelOption(parentAgent?.model || parentThread?.model || agent.model || this.store.getSettings().model).id;
+    const inheritedModel = resolveSubagentModel(this.store, agent);
     const subagentBudget = resolveModelRuntimeBudget(inheritedModel, "normal");
     const history = [
       subagentInstructionMessage(agent, role, forkTurns),
@@ -2331,7 +1883,8 @@ export class AgentRuntime {
     recoveryAttempts: number,
     run: AgentRunTracker,
   ) {
-    this.store.saveRunCheckpoint({
+    this.recovery.save({
+      version: 1,
       threadId: options.threadId,
       assistantMessageId: options.assistantMessage.id,
       workspaceRoot: options.workspaceRoot,
@@ -2341,6 +1894,10 @@ export class AgentRuntime {
       iteration,
       toolCount,
       recoveryAttempts,
+      model: options.model,
+      reasoningEffort: options.reasoningEffort,
+      collaborationMode: options.collaborationMode,
+      agentHarnessMode: options.agentHarnessMode,
       lastProgressAt: run.lastProgressAt,
       updatedAt: now(),
     });
@@ -2352,7 +1909,7 @@ export class AgentRuntime {
     message.status = status;
     message.updatedAt = now();
     this.store.upsertMessage(message);
-    this.emit({ type: "message_updated", message });
+    this.emit({ type: "message.upserted", message });
   }
 
   private ensureFallbackThreadTitle(threadId: string) {
@@ -2370,6 +1927,7 @@ export class AgentRuntime {
     messageId: string,
     call: DesktopToolCall,
     patch: Partial<ToolEventRecord>,
+    persist = true,
   ) {
     const existing = this.findExistingToolEvent(threadId, call, patch.status);
     const timestamp = now();
@@ -2410,7 +1968,7 @@ export class AgentRuntime {
       createdAt: existing?.createdAt || timestamp,
       updatedAt: timestamp,
     };
-    return this.store.upsertToolEvent(event);
+    return persist ? this.store.upsertToolEvent(event) : event;
   }
 
   private closeDanglingDraftTools(threadId: string, messageId: string, activeCallIds: Set<string>) {
@@ -2428,7 +1986,7 @@ export class AgentRuntime {
           result: event.result || { success: true },
           endedAt: now(),
         });
-        this.emit({ type: "tool_updated", tool: closed });
+        this.emit({ type: "tool.upserted", tool: closed });
       });
   }
 
@@ -2480,7 +2038,7 @@ export class AgentRuntime {
     this.pendingToolOutput.delete(callId);
     if (!delta) return;
     const event = this.appendToolOutput(pending.threadId, pending.messageId, pending.call, callId, delta);
-    if (event) this.emit({ type: "tool_updated", tool: event });
+    if (event) this.emit({ type: "tool.upserted", tool: event });
   }
 
   private flushThreadToolOutputs(threadId: string) {
@@ -2537,7 +2095,7 @@ export class AgentRuntime {
   }
 
   private emitRun(run: AgentRunTracker) {
-    this.emit({ type: "run_state", threadId: run.threadId, run: toActiveRunState(run) });
+    this.emit({ type: "turn.status_changed", threadId: run.threadId, run: toActiveRunState(run) });
   }
 
   private emitContextUsage(
@@ -2549,7 +2107,7 @@ export class AgentRuntime {
     totalUsage: TokenUsageRecord | null,
   ) {
     this.emit({
-      type: "context_usage_updated",
+      type: "context.usage_updated",
       usage: calculateContextUsage({
         threadId,
         modelId,
@@ -2561,24 +2119,21 @@ export class AgentRuntime {
     });
   }
 
-  private emit(event: DesktopEvent) {
-    const window = this.getMainWindow();
-    if (!window || window.isDestroyed()) return;
-    const sequencedEvent: DesktopEvent = {
-      ...event,
-      sequence: ++this.eventSequence,
-      emittedAt: now(),
-    };
-    window.webContents.send("desktop:event", sequencedEvent);
+  private emit(event: PrivoraEventPayload) {
+    this.events.emit(event);
+  }
+
+  private finalizeStoppedRun(options: Pick<ContinueOptions, "threadId" | "assistantMessage" | "assistantText" | "assistantThought">) {
+    const text = options.assistantText || options.assistantMessage.content || "Stopped. Completed tool changes were kept.";
+    this.updateAssistant(options.assistantMessage, text, options.assistantThought, "stopped");
+    this.activeRuns.delete(options.threadId);
+    this.emit({ type: "turn.stopped", threadId: options.threadId, turnId: options.assistantMessage.id, message: options.assistantMessage });
+    this.emit({ type: "turn.status_changed", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
   }
 
   private emitSnapshot() {
-    const { activeThreadId, activeWorkspaceId } = this.getActiveIds();
-    const snapshot = this.store.snapshot(activeThreadId, activeWorkspaceId);
-    snapshot.activeRun = activeThreadId ? this.getActiveRun(activeThreadId) : null;
-    snapshot.activeRuns = this.listActiveRuns();
-    snapshot.terminal = this.getTerminalState();
-    this.emit({ type: "snapshot", snapshot });
+    const snapshot = this.projection.snapshot();
+    this.emit({ type: "snapshot.updated", snapshot });
   }
 }
 

@@ -5,7 +5,7 @@ import {
   autoCompactThresholdTokens,
   calculateContextUsage,
   shouldAutoCompactHistory,
-} from "../src/main/agent/runtime/contextUsage";
+} from "../src/main/agent/harness/support/contextUsage";
 import type { ProviderMessage } from "../src/main/agent/providers/types";
 import type { TokenUsageRecord } from "../src/shared/types";
 import { resolveModelRuntimeBudget } from "../src/shared/models";

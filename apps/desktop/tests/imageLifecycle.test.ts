@@ -5,7 +5,7 @@ import {
   isImageGenerationToolName,
   shouldCompleteAfterSuccessfulImageStall,
   userRequestedPostImageWork,
-} from "../src/main/agent/runtime";
+} from "../src/main/agent/turnCoordinator";
 import type { DesktopToolCall, ToolEventRecord } from "../src/shared/types";
 
 const imageCall = (name: "generate_image" | "edit_image", id = "call-image"): DesktopToolCall => ({

@@ -2,12 +2,12 @@ import type {
   DesktopToolCall,
   ToolDiffFileRecord,
   ToolEventRecord,
-} from "../../../shared/types";
+} from "../../../../shared/types";
 import {
   activityItemsFromDiffFiles,
   diffStatsFromFiles,
   parseUnifiedDiffFiles,
-} from "../tools/diffFormatter";
+} from "../../tools/diffFormatter";
 
 const LIVE_OUTPUT_MAX_CHARS = 40_000;
 

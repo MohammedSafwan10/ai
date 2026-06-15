@@ -96,8 +96,8 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
         setUrlInput(next.url || "");
       }
     };
-    const unsubscribe = window.privoraDesktop.onEvent((event) => {
-      if (event.type !== "browser_state_updated") return;
+    const unsubscribe = window.privoraDesktop.onPrivoraEvent(({ payload: event }) => {
+      if (event.type !== "browser.state_updated") return;
       if (activeWorkspaceId && event.state.workspaceId !== activeWorkspaceId) return;
       pendingStateRef.current = event.state;
       if (stateFrameRef.current === null) stateFrameRef.current = requestAnimationFrame(flushState);
@@ -368,8 +368,8 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
 
   useEffect(() => {
     if (!activeWorkspaceId) return;
-    const unsubscribe = window.privoraDesktop.onEvent((event) => {
-      if (event.type !== "browser_tools_menu_action" || event.workspaceId !== activeWorkspaceId) return;
+    const unsubscribe = window.privoraDesktop.onPrivoraEvent(({ payload: event }) => {
+      if (event.type !== "browser.tools_menu_action" || event.workspaceId !== activeWorkspaceId) return;
       toolsMenuActionRef.current(event.action);
     });
     return unsubscribe;

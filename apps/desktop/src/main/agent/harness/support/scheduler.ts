@@ -1,4 +1,4 @@
-import type { DesktopToolCall, ToolResult } from "../../../shared/types";
+import type { DesktopToolCall, ToolResult } from "../../../../shared/types";
 
 interface ScheduledToolExecution {
   call: DesktopToolCall;
