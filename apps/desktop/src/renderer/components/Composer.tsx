@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Crosshair, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -65,7 +65,6 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
-  const [pursueGoal, setPursueGoal] = useState(false);
   const [confirmFullAccessOpen, setConfirmFullAccessOpen] = useState(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -634,14 +633,6 @@ export function Composer({
                 >
                   <span><UsersRound size={18} /> Reviewer Swarm</span>
                   <ToggleSwitch checked={settings.agentHarnessMode === "review_swarm"} />
-                </button>
-                <button
-                  type="button"
-                  className="composer-menu-row"
-                  onClick={() => setPursueGoal((current) => !current)}
-                >
-                  <span><Crosshair size={18} /> Pursue goal</span>
-                  <ToggleSwitch checked={pursueGoal} />
                 </button>
                 <div className="composer-menu-divider" />
                 <button type="button" className="composer-menu-row" disabled title="Plugins are coming soon">

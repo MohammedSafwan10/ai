@@ -245,6 +245,17 @@ export const filterVisibleDelta = (current: string, delta: string, fingerprints:
   return accepted.join("");
 };
 
+export const looksLikeProcessNarration = (text: string) => {
+  const normalized = text
+    .replace(/[`*_#[\](){}<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return false;
+  return /^(let'?s|now let'?s|now we need to|we need to|i need to|i'?ll|i will|wait|ah|awesome\b|okay|first let'?s|next let'?s)\b/.test(normalized) ||
+    /\b(let'?s (check|write|create|run|edit|inspect|make|define|add|remove|fix)|we can use desktop|we will use desktop|i'?ll use desktop)/.test(normalized);
+};
+
 const splitVisibleUnits = (text: string) =>
   text.match(/[^.!?\n]+[.!?\n]+|\n+|[^.!?\n]+$/g) || [text];
 

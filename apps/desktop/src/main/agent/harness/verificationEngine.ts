@@ -21,7 +21,7 @@ const REVIEWER_READ_ONLY_TOOLS = new Set([
 
 export const reviewerReadOnlyBlockReason = (call: DesktopToolCall, enabled?: boolean) =>
   enabled && !REVIEWER_READ_ONLY_TOOLS.has(call.name)
-    ? "Reviewer Swarm agents are read-only and cannot run mutating or side-effecting tools."
+    ? "read-only reviewer and supervisor agents cannot run mutating or side-effecting tools."
     : "";
 
 export interface VerificationRequest {

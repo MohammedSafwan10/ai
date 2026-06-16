@@ -157,7 +157,6 @@
   min-width: 0;
 }
 
-.workspace-open-file,
 .workspace-tab {
   display: inline-flex;
   align-items: center;
@@ -169,11 +168,6 @@
   background: transparent;
   color: var(--privora-muted);
   padding: 0 10px;
-}
-
-.workspace-open-file {
-  color: var(--privora-text);
-  font-weight: 500;
 }
 
 .workspace-tab {
@@ -188,7 +182,6 @@
   color: var(--privora-text);
 }
 
-.workspace-open-file:hover,
 .workspace-tab:hover {
   background: color-mix(in srgb, var(--privora-surface) 22%, transparent);
   color: var(--privora-text);
@@ -382,7 +375,7 @@
 
 .workspace-filter {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   height: 42px;
@@ -405,6 +398,27 @@
 
 .workspace-filter input::placeholder {
   color: var(--privora-muted);
+}
+
+.workspace-filter button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--privora-muted);
+}
+
+.workspace-filter button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--privora-surface) 32%, transparent);
+  color: var(--privora-text);
+}
+
+.workspace-filter button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .workspace-tree {

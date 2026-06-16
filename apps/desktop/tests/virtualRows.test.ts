@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSidebarRows } from "../src/renderer/sidebarRows";
-import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows } from "../src/renderer/workspaceTreeRows";
+import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows, pruneWorkspaceListings } from "../src/renderer/workspaceTreeRows";
 import type { ThreadRecord, WorkspaceDirectoryEntry, WorkspaceDirectoryListing, WorkspaceRecord } from "../src/shared/types";
 
 describe("sidebar virtual rows", () => {
@@ -81,6 +81,16 @@ describe("workspace tree virtual rows", () => {
     expect(buildFilteredWorkspaceRows([])).toEqual([
       { type: "empty", key: "empty:filtered", message: "No loaded files match." },
     ]);
+  });
+
+  it("prunes stale child listings when a parent folder disappears", () => {
+    const listings = {
+      ".": listing(".", [file("README.md")]),
+      src: listing("src", [file("src/App.tsx")]),
+      test: listing("test", [file("test/App.test.ts")]),
+    };
+
+    expect(Object.keys(pruneWorkspaceListings(listings))).toEqual(["."]);
   });
 });
 

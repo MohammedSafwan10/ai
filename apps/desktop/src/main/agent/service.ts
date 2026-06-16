@@ -1,4 +1,8 @@
-import type { ApprovalDecisionInput, RequestUserInputResponseInput, StartTurnInput } from "../../shared/types";
+import type {
+  ApprovalDecisionInput,
+  RequestUserInputResponseInput,
+  StartTurnInput,
+} from "../../shared/types";
 import type { AgentHarnessApi } from "./harness/contracts";
 
 export interface AgentService {

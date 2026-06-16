@@ -64,6 +64,7 @@ describe("Privora event protocol", () => {
 
     expect(events.map((event) => event.sequence)).toEqual([20, 21, 22]);
   });
+
 });
 
 const envelope = <T extends PrivoraEventPayload>(sequence: number, payload: T): PrivoraEventEnvelope<T> => ({

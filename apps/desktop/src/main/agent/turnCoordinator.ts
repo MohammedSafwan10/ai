@@ -95,6 +95,7 @@ import {
   fallbackThreadTitle,
   filterThreadTitleDelta,
   filterVisibleDelta,
+  looksLikeProcessNarration,
   markAssistantTextRangePhase,
   recordAssistantTextPart,
 } from "./harness/support/textParts";
@@ -128,6 +129,8 @@ const TOOL_OUTPUT_FLUSH_MS = 320;
 const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 80_000;
 
 const now = () => Date.now();
+const isReadOnlySubagentTask = (taskName: string) =>
+  taskName.startsWith("review_swarm_");
 
 const isAutoApprovedRiskyBrowserTool = (
   call: DesktopToolCall,
@@ -663,6 +666,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     run.model = effectiveModel;
     run.reasoningEffort = effectiveReasoning;
     run.collaborationMode = effectiveCollaborationMode;
+    run.agentHarnessMode = effectiveAgentHarnessMode;
     this.activeRuns.set(options.threadId, run);
     let assistantFlushTimer: NodeJS.Timeout | null = null;
     let assistantFlushStatus: ChatMessageRecord["status"] = "running";
@@ -673,6 +677,13 @@ export class TurnCoordinator implements AgentHarnessApi {
         assistantFlushTimer = null;
         lastAssistantFlushAt = Date.now();
         this.updateAssistant(options.assistantMessage, assistantText, assistantThought, assistantFlushStatus);
+        if (options.parentThreadId) {
+          const previewSource = assistantText.trim() || assistantThought.trim();
+          if (previewSource) {
+            this.store.updateSubagent(options.threadId, { lastPreview: compactPreview(previewSource, 240) });
+            this.emitSnapshot();
+          }
+        }
       };
       if (force) {
         if (assistantFlushTimer) {
@@ -796,6 +807,8 @@ export class TurnCoordinator implements AgentHarnessApi {
         const textStart = assistantText.length;
         const thoughtStart = assistantThought.length;
         const streamTextPhase = options.reviewerSwarmCompleted ? "final_answer" : "commentary";
+        const routeProcessNarrationToThought = getProviderForModel(effectiveModel) === "cliproxy" && /gemini/i.test(effectiveModel);
+        let processNarrationActive = false;
         let activeThoughtPart: AssistantThoughtPartRecord | null = null;
         const ensureThoughtPart = () => {
           if (activeThoughtPart) return activeThoughtPart;
@@ -870,6 +883,22 @@ export class TurnCoordinator implements AgentHarnessApi {
                 const updated = this.store.updatePlaceholderThreadTitle(options.threadId, title, "agent");
                 if (updated) this.emitSnapshot();
               });
+              if (
+                routeProcessNarrationToThought &&
+                streamTextPhase === "commentary" &&
+                !assistantText.trim() &&
+                (processNarrationActive || looksLikeProcessNarration(titleFiltered))
+              ) {
+                processNarrationActive = true;
+                if (titleFiltered) {
+                  const thoughtPart = ensureThoughtPart();
+                  assistantThought += titleFiltered;
+                  thoughtPart.updatedAt = now();
+                  flushAssistant("running");
+                  this.emitRun(run);
+                }
+                return;
+              }
               const filtered = filterVisibleDelta(assistantText, titleFiltered, visibleFingerprints);
               if (!filtered) return;
               successfulImageAwaitingFollowup = false;
@@ -893,6 +922,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               endThoughtPart();
+              processNarrationActive = false;
               markRunProgress(run);
               const call: DesktopToolCall = {
                 id: draft.id || `draft_${options.assistantMessage.id}_${draft.name}_${this.stableArgsKey(draft.arguments)}`,
@@ -911,6 +941,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               endThoughtPart();
+              processNarrationActive = false;
               markRunProgress(run);
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode, thread?.workspaceId);
@@ -1849,7 +1880,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       parentThreadId: agent.parentThreadId,
       model: inheritedModel,
       reasoningEffort: agent.reasoningEffort,
-      readOnlyTools: agent.taskName.startsWith("review_swarm_"),
+      readOnlyTools: isReadOnlySubagentTask(agent.taskName),
     }).catch((error) => {
       this.store.updateSubagent(agent.threadId, {
         status: "failed",

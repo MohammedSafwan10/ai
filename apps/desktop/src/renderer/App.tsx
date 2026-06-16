@@ -638,6 +638,7 @@ export default function App() {
         hidden={ideCollapsed || settingsOpen}
         requestedPanelMode={workspacePanelRequest?.mode}
         requestedPanelModeKey={workspacePanelRequest?.key}
+        fileRefreshKey={lastToolUpdatedAt}
         onReviewClosed={() => setReviewSession(null)}
         onToggleCollapsed={() => {
           setIdeCollapsed((value) => {

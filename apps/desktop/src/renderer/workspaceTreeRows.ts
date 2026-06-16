@@ -27,6 +27,23 @@ export const buildFilteredWorkspaceRows = (entries: WorkspaceDirectoryEntry[]): 
   return entries.map((entry) => ({ type: "filtered-entry", key: `filtered:${entry.path}`, entry }));
 };
 
+export const pruneWorkspaceListings = (
+  listings: Record<string, WorkspaceDirectoryListing>,
+  rootPath = ".",
+): Record<string, WorkspaceDirectoryListing> => {
+  const next: Record<string, WorkspaceDirectoryListing> = {};
+  const visit = (path: string) => {
+    const listing = listings[path];
+    if (!listing || next[path]) return;
+    next[path] = listing;
+    listing.entries.forEach((entry) => {
+      if (entry.kind === "directory") visit(entry.path);
+    });
+  };
+  visit(rootPath);
+  return next;
+};
+
 const appendDirectoryRows = (
   rows: WorkspaceTreeVirtualRow[],
   path: string,

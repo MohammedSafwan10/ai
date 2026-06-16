@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type RefObject, type WheelEvent } from "react";
 import Editor, { DiffEditor, loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, Globe2, NotebookTabs, PanelRightClose, PanelRightOpen, Pin, PinOff, Search, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink, File, FileCode2, Folder, FolderOpen, GitCompareArrows, Globe2, NotebookTabs, PanelRightClose, PanelRightOpen, Pin, PinOff, RefreshCw, Search, X } from "lucide-react";
 import clsx from "clsx";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { WorkspaceDirectoryEntry, WorkspaceDirectoryListing, WorkspaceFileReadResult, WorkspaceRecord } from "../../shared/types";
 import type { ReviewFileModel, ReviewSession } from "../reviewModels";
 import { languageForPath } from "../reviewModels";
-import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows, type WorkspaceTreeVirtualRow } from "../workspaceTreeRows";
+import { buildFilteredWorkspaceRows, buildWorkspaceTreeRows, pruneWorkspaceListings, type WorkspaceTreeVirtualRow } from "../workspaceTreeRows";
 import { BrowserPanel } from "../features/browser/BrowserPanel";
 import { NotesPanel } from "../features/notes/NotesPanel";
 
@@ -19,6 +19,7 @@ interface WorkspaceIdeShellProps {
   hidden: boolean;
   requestedPanelMode?: WorkspacePanelMode | null;
   requestedPanelModeKey?: number;
+  fileRefreshKey?: string | number;
   onReviewClosed: () => void;
   onToggleCollapsed: () => void;
 }
@@ -31,10 +32,23 @@ interface OpenTab {
   error: string | null;
 }
 
+type DirectoryRefreshResult =
+  | { ok: true; path: string; listing: WorkspaceDirectoryListing }
+  | { ok: false; path: string; error: unknown };
+
 type ActiveIdeTab = { type: "file"; path: string | null } | { type: "review" };
 type WorkspacePanelMode = "files" | "review" | "browser" | "notes";
 
-export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedPanelMode, requestedPanelModeKey, onReviewClosed, onToggleCollapsed }: WorkspaceIdeShellProps) {
+export function WorkspaceIdeShell({
+  workspace,
+  reviewSession,
+  hidden,
+  requestedPanelMode,
+  requestedPanelModeKey,
+  fileRefreshKey,
+  onReviewClosed,
+  onToggleCollapsed,
+}: WorkspaceIdeShellProps) {
   const [listings, setListings] = useState<Record<string, WorkspaceDirectoryListing>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["."]));
   const [loadingFolders, setLoadingFolders] = useState<Set<string>>(() => new Set());
@@ -51,6 +65,9 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const treeScrollerRef = useRef<HTMLDivElement | null>(null);
+  const listingsRef = useRef(listings);
+  const refreshSequenceRef = useRef(0);
+  const lastFileRefreshKeyRef = useRef<string | number | undefined>(fileRefreshKey);
   const activeFileTab = activeTab.type === "file" ? tabs.find((tab) => tab.path === activeTab.path) || null : null;
   const activeReviewFile = reviewSession?.files.find((file) => file.path === selectedReviewPath) || reviewSession?.files[0] || null;
   const reviewActive = panelMode === "review" && Boolean(reviewSession);
@@ -62,6 +79,12 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
   );
 
   useEffect(() => {
+    listingsRef.current = listings;
+  }, [listings]);
+
+  useEffect(() => {
+    refreshSequenceRef.current += 1;
+    lastFileRefreshKeyRef.current = fileRefreshKey;
     setListings({});
     setExpanded(new Set(["."]));
     setLoadingFolders(new Set());
@@ -72,8 +95,14 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
     setActiveTab({ type: "file", path: null });
     setPanelMode("files");
     setSelectedReviewPath(null);
-    if (workspace) void loadDirectory(".");
+    if (workspace) void refreshLoadedDirectories(["."]);
   }, [workspace?.id]);
+
+  useEffect(() => {
+    if (!workspace || lastFileRefreshKeyRef.current === fileRefreshKey) return;
+    lastFileRefreshKeyRef.current = fileRefreshKey;
+    void refreshLoadedDirectories();
+  }, [fileRefreshKey, workspace?.id]);
 
   useEffect(() => {
     if (!tabMenu) return;
@@ -125,7 +154,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
     setLoadingFolders((current) => new Set(current).add(path));
     try {
       const listing = await window.privoraDesktop.listWorkspaceDirectory({ path });
-      setListings((current) => ({ ...current, [path]: listing }));
+      setListings((current) => pruneWorkspaceListings({ ...current, [path]: listing }));
     } catch (error) {
       setTreeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -135,6 +164,43 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
         return next;
       });
     }
+  }
+
+  async function refreshLoadedDirectories(paths = Object.keys(listingsRef.current).length ? Object.keys(listingsRef.current) : ["."]) {
+    if (!workspace) return;
+    const refreshId = ++refreshSequenceRef.current;
+    const uniquePaths = Array.from(new Set([".", ...paths]));
+    setTreeError(null);
+    setLoadingFolders((current) => {
+      const next = new Set(current);
+      uniquePaths.forEach((path) => next.add(path));
+      return next;
+    });
+    const results = await Promise.all(uniquePaths.map(async (path): Promise<DirectoryRefreshResult> => {
+      try {
+        return { ok: true, path, listing: await window.privoraDesktop.listWorkspaceDirectory({ path }) };
+      } catch (error) {
+        return { ok: false, path, error };
+      }
+    }));
+    if (refreshId !== refreshSequenceRef.current) return;
+    setListings((current) => {
+      const next = { ...current };
+      results.forEach((result) => {
+        if (result.ok) next[result.path] = result.listing;
+        else delete next[result.path];
+      });
+      return pruneWorkspaceListings(next);
+    });
+    const rootFailure = results.find((result) => result.path === "." && !result.ok);
+    if (rootFailure && !rootFailure.ok) {
+      setTreeError(rootFailure.error instanceof Error ? rootFailure.error.message : String(rootFailure.error));
+    }
+    setLoadingFolders((current) => {
+      const next = new Set(current);
+      uniquePaths.forEach((path) => next.delete(path));
+      return next;
+    });
   }
 
   const toggleDirectory = (path: string) => {
@@ -233,12 +299,7 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
         </div>
         {fileMode ? (
           <div className="workspace-ide-tabs" role="tablist" aria-label="Open files" onWheel={scrollTabsHorizontally}>
-            {tabs.length === 0 ? (
-              <button type="button" className="workspace-open-file" onClick={() => filterRef.current?.focus()}>
-                <File size={16} />
-                <span>Open file</span>
-              </button>
-            ) : orderedTabs.map((tab) => (
+            {orderedTabs.map((tab) => (
               <button
                 type="button"
                 key={tab.path}
@@ -270,9 +331,6 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
                 </span>
               </button>
             ))}
-            <button type="button" className="workspace-icon-button" title="Open another file" onClick={() => filterRef.current?.focus()}>
-              <span>+</span>
-            </button>
           </div>
         ) : <div className="workspace-ide-mode-spacer" />}
         <div className="workspace-ide-actions">
@@ -357,6 +415,9 @@ export function WorkspaceIdeShell({ workspace, reviewSession, hidden, requestedP
               <div className="workspace-filter">
                 <Search size={16} />
                 <input ref={filterRef} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter files..." />
+                <button type="button" title="Refresh files" disabled={!workspace} onClick={() => void refreshLoadedDirectories()}>
+                  <RefreshCw size={15} />
+                </button>
               </div>
               {treeError && <div className="workspace-tree-error">{treeError}</div>}
               <div className="workspace-tree" ref={treeScrollerRef}>

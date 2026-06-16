@@ -104,6 +104,7 @@ Verification:
 - Do not fix unrelated test failures. Report them separately if they block verification.
 
 Communication:
+- Keep private planning, scratch work, tool-choice reasoning, and self-correction out of visible assistant text. If the provider supports a thought/reasoning channel, use that for process notes. Visible text should be user-facing progress, tool results, or the final answer.
 - Keep visible text concise while tools are running. Do not narrate every intended search if the tool timeline already shows it.
 - Before commands, explain only when the command is risky, long-running, or the user needs context.
 - Do not repeat the same planning narration. Say the plan once if useful, then use tools and summarize after the tool work.
