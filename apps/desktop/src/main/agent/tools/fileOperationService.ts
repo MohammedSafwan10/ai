@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import { TextDecoder } from "node:util";
 import { resolveExistingWorkspacePath, resolveWorkspacePath, type ResolvedWorkspacePath } from "../../security/pathSandbox";
 
 const DEFAULT_MAX_BYTES = 120_000;
@@ -60,7 +61,7 @@ export class FileOperationService {
       throw new Error(`${target.relativePath} is not a file.`);
     }
     const sample = await readSample(target.absolutePath);
-    const binary = isLikelyBinary(sample);
+    const binary = isLikelyBinary(sample, target.relativePath);
     if (binary) {
       return {
         target,
@@ -207,8 +208,21 @@ export const changeMetadata = (input: {
 export const hashMatches = (expected: unknown, actual: string | null) =>
   typeof expected === "string" && expected.length > 0 && actual !== expected;
 
-export const staleHashWarning = (path: string) =>
-  `${path} changed since the model last read it; continuing because strict hash enforcement is not enabled.`;
+export class StaleFileError extends Error {
+  readonly code = "STALE_FILE";
+
+  constructor(
+    readonly path: string,
+    readonly reason: string,
+    readonly expectedHash: string | null,
+    readonly actualHash: string | null,
+  ) {
+    super(`${path} is stale: ${reason}. Read the file again and retry with the current contents.`);
+  }
+}
+
+export const isStaleFileError = (error: unknown): error is StaleFileError =>
+  error instanceof StaleFileError;
 
 interface ObservedFileState {
   sizeBytes: number;
@@ -238,16 +252,47 @@ export const recordFileObservationData = (
   });
 };
 
-export const freshnessWarnings = (workspaceRoot: string, snapshot: FileSnapshot | null) => {
-  if (!snapshot) return [];
-  const observed = observedFiles.get(observationKey(workspaceRoot, snapshot.target.relativePath));
-  if (!observed) return [];
+export const assertFreshFileState = (
+  workspaceRoot: string,
+  relativePath: string,
+  snapshot: FileSnapshot | null,
+  expectedHash?: unknown,
+  expectedLabel = "expectedPreviousHash",
+) => {
+  const normalizedPath = normalizePath(relativePath);
+  if (hashMatches(expectedHash, snapshot?.sha256 ?? null)) {
+    throw new StaleFileError(
+      normalizedPath,
+      `${expectedLabel} does not match the current sha256`,
+      String(expectedHash),
+      snapshot?.sha256 ?? null,
+    );
+  }
+
+  const observed = observedFiles.get(observationKey(workspaceRoot, snapshot?.target.relativePath || normalizedPath));
+  if (!snapshot) {
+    if (observed) {
+      throw new StaleFileError(
+        normalizedPath,
+        "file was removed after Privora observed it",
+        observed.sha256,
+        null,
+      );
+    }
+    return;
+  }
+  if (!observed) return;
   const changed = observed.sizeBytes !== snapshot.sizeBytes ||
     observed.modifiedAtMs !== snapshot.modifiedAtMs ||
     (observed.sha256 !== null && snapshot.sha256 !== null && observed.sha256 !== snapshot.sha256);
-  return changed
-    ? [`${snapshot.target.relativePath} changed since Privora last observed it; continuing because freshness warnings are non-blocking.`]
-    : [];
+  if (changed) {
+    throw new StaleFileError(
+      snapshot.target.relativePath,
+      "file changed since Privora last observed it",
+      observed.sha256,
+      snapshot.sha256,
+    );
+  }
 };
 
 const snapshotData = (
@@ -295,8 +340,36 @@ const readSample = async (filePath: string) => {
   }
 };
 
-const isLikelyBinary = (buffer: Buffer) =>
-  buffer.includes(0);
+const binaryExtensions = new Set([
+  ".7z", ".avi", ".bin", ".bmp", ".class", ".dat", ".db", ".dll", ".dmg", ".doc",
+  ".docx", ".exe", ".gif", ".gz", ".ico", ".jar", ".jpeg", ".jpg", ".mov", ".mp3",
+  ".mp4", ".otf", ".pdf", ".png", ".sqlite", ".tar", ".ttf", ".wasm", ".webm",
+  ".webp", ".woff", ".woff2", ".xls", ".xlsx", ".zip",
+]);
+
+const isLikelyBinary = (buffer: Buffer, filePath: string) => {
+  if (buffer.length === 0) return false;
+  const extension = filePath.toLowerCase().match(/\.[^.\\/]+$/)?.[0];
+  if (extension && binaryExtensions.has(extension)) return true;
+  if (buffer.includes(0)) return true;
+  if (
+    (buffer[0] === 0xff && buffer[1] === 0xfe) ||
+    (buffer[0] === 0xfe && buffer[1] === 0xff)
+  ) {
+    return true;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return true;
+  }
+  let suspiciousControls = 0;
+  for (const byte of buffer) {
+    const allowed = byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x1b;
+    if (byte < 0x20 && !allowed) suspiciousControls += 1;
+  }
+  return suspiciousControls / buffer.length > 0.08;
+};
 
 const countLines = (content: string) => {
   if (!content) return 0;

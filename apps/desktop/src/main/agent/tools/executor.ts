@@ -7,7 +7,7 @@ import { redactSecrets } from "../../security/redact";
 import { resolveRipgrepExecutablePath } from "../../resources";
 import { TerminalSessionManager, type TerminalManagerEventListener } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
-import { FileOperationService, hashBuffer, recordFileObservation, recordFileObservationData } from "./fileOperationService";
+import { FileOperationService, hashBuffer, isStaleFileError, recordFileObservation, recordFileObservationData } from "./fileOperationService";
 import { FileMutationCoordinator } from "./mutationCoordinator";
 import { BrowserToolExecutor } from "../../browser/browserTools";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
@@ -201,6 +201,20 @@ export class DesktopToolExecutor {
           return { success: false, error: `Unknown tool ${(call as DesktopToolCall).name}` };
       }
     } catch (error) {
+      if (isStaleFileError(error)) {
+        return {
+          success: false,
+          error: `${error.code}: ${error.message}`,
+          data: {
+            code: error.code,
+            path: error.path,
+            reason: error.reason,
+            expectedHash: error.expectedHash,
+            actualHash: error.actualHash,
+            requiresReread: true,
+          },
+        };
+      }
       return {
         success: false,
         error: error instanceof Error ? error.message : "Tool execution failed.",
@@ -407,32 +421,81 @@ export class DesktopToolExecutor {
 
   private async search(call: DesktopToolCall, context: ToolExecutionContext) {
     const query = String(call.arguments.query || "");
-    const args = ["--line-number", "--hidden", "--glob", "!node_modules", "--glob", "!.git", "--glob", "!dist"];
+    if (!query) return { success: false, error: "desktop_search requires a non-empty query." };
+    const mode = String(call.arguments.mode || "regex").toLowerCase() === "literal" ? "literal" : "regex";
+    const args = ["--json", "--line-number", "--column", "--with-filename"];
+    if (mode === "literal") args.push("--fixed-strings");
+    if (call.arguments.includeHidden !== false && call.arguments.include_hidden !== false) args.push("--hidden");
     const caseSensitive = call.arguments.caseSensitive === true || call.arguments.case_sensitive === true;
     if (!caseSensitive) args.push("--ignore-case");
+    const beforeContext = boundedInteger(call.arguments.beforeContext ?? call.arguments.before_context, 0, 20, 0);
+    const afterContext = boundedInteger(call.arguments.afterContext ?? call.arguments.after_context, 0, 20, 0);
+    if (beforeContext > 0) args.push("--before-context", String(beforeContext));
+    if (afterContext > 0) args.push("--after-context", String(afterContext));
+    if (call.arguments.includeGenerated !== true && call.arguments.include_generated !== true) {
+      for (const glob of ["!node_modules", "!**/node_modules/**", "!.git", "!**/.git/**", "!dist", "!**/dist/**", "!build", "!**/build/**", "!coverage", "!**/coverage/**", "!.next", "!**/.next/**"]) {
+        args.push("--glob", glob);
+      }
+    }
     if (call.arguments.glob) args.push("--glob", String(call.arguments.glob));
-    args.push(query, ".");
+    for (const glob of readStringArray(call.arguments.excludeGlobs || call.arguments.exclude_globs)) {
+      args.push("--glob", glob.startsWith("!") ? glob : `!${glob}`);
+    }
+    args.push("--", query, ".");
     const result = await runProcess(resolveRipgrepExecutablePath(), args, context.workspaceRoot, context.signal);
-    const maxResults = Number(call.arguments.maxResults) || 80;
-    const allLines = result.output.split(/\r?\n/).filter(Boolean);
-    const lines = allLines.slice(0, maxResults);
-    await Promise.all(lines.map(async (line) => {
-      const match = line.match(/^(.+?):\d+:/);
-      if (!match?.[1]) return;
-      const target = resolveExistingWorkspacePath(context.workspaceRoot, match[1]);
+    const parsed = parseRipgrepJson(result.output, beforeContext, afterContext);
+    const maxResults = boundedInteger(call.arguments.maxResults ?? call.arguments.max_results, 1, 500, 80);
+    const maxBytes = boundedInteger(call.arguments.maxBytes ?? call.arguments.max_bytes, 1_000, 1_000_000, 120_000);
+    const searchSignature = createSearchSignature({
+      query,
+      mode,
+      glob: call.arguments.glob || null,
+      caseSensitive,
+      beforeContext,
+      afterContext,
+      includeHidden: call.arguments.includeHidden !== false && call.arguments.include_hidden !== false,
+      includeGenerated: call.arguments.includeGenerated === true || call.arguments.include_generated === true,
+      excludeGlobs: readStringArray(call.arguments.excludeGlobs || call.arguments.exclude_globs),
+    });
+    const cursor = decodeSearchCursor(call.arguments.cursor, searchSignature);
+    const offset = cursor.offset;
+    const budgeted = takeSearchMatches(parsed.matches, offset, maxResults, maxBytes);
+    await Promise.all([...new Set(budgeted.matches.map((match) => match.path))].map(async (filePath) => {
+      const target = resolveExistingWorkspacePath(context.workspaceRoot, filePath);
       const stat = await fs.stat(target.absolutePath).catch(() => null);
       if (!stat?.isFile()) return;
       recordFileObservationData(context.workspaceRoot, target.relativePath, { sizeBytes: stat.size, modifiedAtMs: stat.mtimeMs });
     }));
+    const groupedFiles = groupSearchMatchesByFile(budgeted.matches);
+    const nextOffset = offset + budgeted.matches.length;
+    const nextCursor = nextOffset < parsed.matches.length ? encodeSearchCursor(nextOffset, searchSignature) : null;
+    const lines = budgeted.matches.map((match) => `${match.path}:${match.lineNumber}:${match.line}`);
     return {
       success: result.exitCode === 0 || result.exitCode === 1,
       output: lines.join("\n") || "No matches found.",
       data: {
         query,
+        mode,
         glob: call.arguments.glob || null,
         caseSensitive,
-        resultCount: lines.length,
-        truncated: allLines.length > lines.length,
+        beforeContext,
+        afterContext,
+        resultCount: budgeted.matches.length,
+        totalResultCount: parsed.matches.length,
+        truncated: Boolean(nextCursor) || budgeted.truncatedByBytes,
+        nextCursor,
+        cursorReset: cursor.reset,
+        matches: budgeted.matches,
+        files: call.arguments.groupByFile === false || call.arguments.group_by_file === false ? undefined : groupedFiles,
+        stats: {
+          files: groupedFiles.length,
+          totalMatches: parsed.matches.length,
+          returnedMatches: budgeted.matches.length,
+          omittedMatches: Math.max(0, parsed.matches.length - nextOffset),
+          returnedBytes: budgeted.bytes,
+          maxBytes,
+        },
+        ripgrepExitCode: result.exitCode,
       },
     };
   }
@@ -647,6 +710,172 @@ const displayArg = (value: string) =>
 
 const readStringArray = (value: unknown) =>
   Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+
+interface SearchContextLine {
+  lineNumber: number;
+  line: string;
+}
+
+interface SearchMatchRecord {
+  path: string;
+  lineNumber: number;
+  column: number | null;
+  line: string;
+  lineTruncated?: boolean;
+  submatches: Array<{ text: string; start: number; end: number }>;
+  contextBefore: SearchContextLine[];
+  contextAfter: SearchContextLine[];
+}
+
+const boundedInteger = (value: unknown, min: number, max: number, fallback: number) => {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+};
+
+const parseRipgrepJson = (output: string, beforeContext: number, afterContext: number) => {
+  const matches: SearchMatchRecord[] = [];
+  const beforeByFile = new Map<string, SearchContextLine[]>();
+  const lastMatchByFile = new Map<string, SearchMatchRecord>();
+
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const type = String(event.type || "");
+    const data = event.data as Record<string, unknown> | undefined;
+    const pathText = ((data?.path as Record<string, unknown> | undefined)?.text);
+    if (typeof pathText !== "string") continue;
+    const path = normalizeSearchPath(pathText);
+    const lineNumber = Number(data?.line_number || 0);
+    const text = String((data?.lines as Record<string, unknown> | undefined)?.text || "").replace(/\r?\n$/, "");
+
+    if (type === "context") {
+      const contextLine = { lineNumber, line: text };
+      const previous = lastMatchByFile.get(path);
+      if (previous && lineNumber > previous.lineNumber && previous.contextAfter.length < afterContext) {
+        previous.contextAfter.push(contextLine);
+      }
+      if (beforeContext > 0) {
+        const existing = beforeByFile.get(path) || [];
+        existing.push(contextLine);
+        beforeByFile.set(path, existing.slice(-beforeContext));
+      }
+      continue;
+    }
+
+    if (type !== "match") continue;
+    const submatches = Array.isArray(data?.submatches)
+      ? data.submatches.map((item) => {
+        const match = item as Record<string, unknown>;
+        return {
+          text: String((match.match as Record<string, unknown> | undefined)?.text || ""),
+          start: Number(match.start || 0),
+          end: Number(match.end || 0),
+        };
+      })
+      : [];
+    const record: SearchMatchRecord = {
+      path,
+      lineNumber,
+      column: submatches.length > 0 ? submatches[0].start + 1 : null,
+      line: text,
+      submatches,
+      contextBefore: beforeByFile.get(path) || [],
+      contextAfter: [],
+    };
+    beforeByFile.set(path, []);
+    lastMatchByFile.set(path, record);
+    matches.push(record);
+  }
+
+  return { matches };
+};
+
+const takeSearchMatches = (matches: SearchMatchRecord[], offset: number, maxResults: number, maxBytes: number) => {
+  const selected: SearchMatchRecord[] = [];
+  let bytes = 0;
+  let truncatedByBytes = false;
+  for (const match of matches.slice(offset)) {
+    if (selected.length >= maxResults) break;
+    const renderedBytes = Buffer.byteLength(`${match.path}:${match.lineNumber}:${match.line}\n`, "utf8");
+    if (bytes + renderedBytes > maxBytes && selected.length > 0) {
+      truncatedByBytes = true;
+      break;
+    }
+    if (renderedBytes > maxBytes) {
+      const truncated = truncateSearchMatchToBudget(match, maxBytes);
+      selected.push(truncated.match);
+      bytes += truncated.bytes;
+      truncatedByBytes = true;
+      break;
+    }
+    selected.push(match);
+    bytes += renderedBytes;
+    if (bytes >= maxBytes) {
+      truncatedByBytes = offset + selected.length < matches.length;
+      break;
+    }
+  }
+  return { matches: selected, bytes, truncatedByBytes };
+};
+
+const truncateSearchMatchToBudget = (match: SearchMatchRecord, maxBytes: number) => {
+  const prefix = `${match.path}:${match.lineNumber}:`;
+  const suffix = "\n";
+  const available = Math.max(0, maxBytes - Buffer.byteLength(prefix + suffix, "utf8"));
+  const truncatedLine = Buffer.from(match.line, "utf8").subarray(0, available).toString("utf8");
+  return {
+    match: { ...match, line: truncatedLine, lineTruncated: true },
+    bytes: Buffer.byteLength(`${prefix}${truncatedLine}${suffix}`, "utf8"),
+  };
+};
+
+const groupSearchMatchesByFile = (matches: SearchMatchRecord[]) => {
+  const grouped = new Map<string, SearchMatchRecord[]>();
+  for (const match of matches) {
+    grouped.set(match.path, [...(grouped.get(match.path) || []), match]);
+  }
+  return [...grouped.entries()].map(([path, fileMatches]) => ({
+    path,
+    matchCount: fileMatches.length,
+    matches: fileMatches,
+  }));
+};
+
+const createSearchSignature = (value: Record<string, unknown>) =>
+  JSON.stringify(sortPlainObject(value));
+
+const encodeSearchCursor = (offset: number, signature: string) =>
+  Buffer.from(JSON.stringify({ offset, signature }), "utf8").toString("base64url");
+
+const decodeSearchCursor = (value: unknown, signature: string) => {
+  if (typeof value !== "string" || !value) return { offset: 0, reset: false };
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as { offset?: unknown; signature?: unknown };
+    if (parsed.signature !== signature) return { offset: 0, reset: true };
+    return { offset: boundedInteger(parsed.offset, 0, Number.MAX_SAFE_INTEGER, 0), reset: false };
+  } catch {
+    return { offset: 0, reset: true };
+  }
+};
+
+const normalizeSearchPath = (value: string) =>
+  value.replace(/\\/g, "/").replace(/^\.\//, "");
+
+const sortPlainObject = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(sortPlainObject);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, sortPlainObject(item)]),
+  );
+};
 
 const formatGeneratedImages = (images: Array<{ id: string; provider: string; model: string; path: string; previewUrl?: string; workspacePath?: string; sizeBytes?: number; mimeType?: string }>) =>
   images.map((image, index) => [

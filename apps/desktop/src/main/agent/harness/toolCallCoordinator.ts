@@ -2,12 +2,24 @@ import type { BrowserSessionManager } from "../../browser/BrowserSessionManager"
 import type { ComputerUseManager } from "../../computer/ComputerUseManager";
 import type { NotesStore } from "../../notes/NotesStore";
 import type { TerminalManagerEventListener } from "../../terminal/sessionManager";
-import type { DesktopToolCall } from "../../../shared/types";
-import { DesktopToolOrchestrator, type DesktopToolOrchestrator as ToolOrchestratorType } from "../tools/orchestrator";
+import type { DesktopToolCall, ToolResult } from "../../../shared/types";
+import { DesktopToolOrchestrator } from "../tools/orchestrator";
 import type { ToolExecutionContext } from "../tools/executor";
+import { ToolLifecycleBus } from "../tools/lifecycle";
+
+type ToolOrchestratorPort = Pick<DesktopToolOrchestrator,
+  | "setComputerUseEnabled"
+  | "assess"
+  | "execute"
+  | "supportsParallelExecution"
+  | "getTerminalState"
+  | "readTerminalSession"
+  | "stopTerminalProcess"
+  | "resizeTerminalSession"
+>;
 
 export class ToolCallCoordinator {
-  private tools: ToolOrchestratorType;
+  private tools: ToolOrchestratorPort;
   private processIdsByThread = new Map<string, Set<number>>();
 
   constructor(
@@ -15,7 +27,8 @@ export class ToolCallCoordinator {
     notesStore?: NotesStore,
     computerUseManager?: ComputerUseManager,
     onTerminalEvent?: TerminalManagerEventListener,
-    orchestrator?: ToolOrchestratorType,
+    orchestrator?: ToolOrchestratorPort,
+    private lifecycle = new ToolLifecycleBus(),
   ) {
     this.tools = orchestrator || new DesktopToolOrchestrator(browserManager, notesStore, computerUseManager, onTerminalEvent);
   }
@@ -24,12 +37,40 @@ export class ToolCallCoordinator {
     this.tools.setComputerUseEnabled(enabled);
   }
 
-  assess(...args: Parameters<ToolOrchestratorType["assess"]>) {
-    return this.tools.assess(...args);
+  assess(...args: Parameters<ToolOrchestratorPort["assess"]>) {
+    const [call, permissionMode, workspaceId] = args;
+    const decision = this.tools.assess(...args);
+    return this.lifecycle.assessTool({ call, decision, permissionMode, workspaceId });
   }
 
-  execute(call: DesktopToolCall, context: ToolExecutionContext) {
-    return this.tools.execute(call, context);
+  async execute(call: DesktopToolCall, context: ToolExecutionContext) {
+    const startedAt = Date.now();
+    const pre = await this.lifecycle.beforeTool({ call, context });
+    if (pre.action !== "allow") {
+      const result: ToolResult = {
+        success: false,
+        error: pre.action === "block"
+          ? `Tool blocked by lifecycle policy: ${pre.reason}`
+          : `Tool requires approval before execution: ${pre.reason || "lifecycle policy requested approval"}`,
+        data: {
+          code: pre.action === "block" ? "TOOL_LIFECYCLE_BLOCKED" : "TOOL_LIFECYCLE_REQUIRES_APPROVAL",
+          reason: pre.reason,
+        },
+      };
+      await this.lifecycle.afterTool({ call, context, result, startedAt, endedAt: Date.now() });
+      return result;
+    }
+    let result: ToolResult;
+    try {
+      result = await this.tools.execute(call, context);
+    } catch (error) {
+      result = {
+        success: false,
+        error: error instanceof Error ? error.message : "Tool execution failed.",
+      };
+    }
+    await this.lifecycle.afterTool({ call, context, result, startedAt, endedAt: Date.now() });
+    return result;
   }
 
   supportsParallelExecution(call: DesktopToolCall) {

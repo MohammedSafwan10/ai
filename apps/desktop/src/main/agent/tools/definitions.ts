@@ -162,11 +162,12 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_edit_file",
-    description: "Apply structured UTF-8 text edits to one workspace file. Safer than full rewrites for precise edits and less format-sensitive than patches. Returns diff, hashes, warnings, undo metadata, and dry-run status.",
+    description: "Apply structured UTF-8 text edits to one workspace file. Safer than full rewrites for precise edits and less format-sensitive than patches. Returns diff, hashes, undo metadata, and dry-run status. Rejects stale files with STALE_FILE; reread and retry when that happens.",
     parameters: schema({
       path: textProperty("Workspace-relative UTF-8 text file path."),
       operations: editOperationsProperty("Ordered edit operations to apply."),
       dryRun: boolProperty("If true, validate and return diff preview without mutating files."),
+      expectedPreviousHash: textProperty("Optional sha256 hash from a prior read. A mismatch is a hard STALE_FILE failure."),
       reason: textProperty("Optional short reason for the edit, useful for review/audit UI."),
     }, ["path", "operations"]),
   },
@@ -179,7 +180,7 @@ export const desktopToolDefinitions = [
       content: textProperty("Full UTF-8 file contents, or base64 bytes when encoding is base64."),
       encoding: textProperty("utf8 or base64. Default utf8. Use base64 for binary assets."),
       createOnly: boolProperty("If true, fail when the file already exists."),
-      expectedPreviousHash: textProperty("Optional sha256 hash from a prior read. A mismatch is reported as a warning, not a hard block."),
+      expectedPreviousHash: textProperty("Optional sha256 hash from a prior read. A mismatch is a hard STALE_FILE failure."),
       allowOverwrite: boolProperty("Optional signal that replacing an existing file is intentional."),
       reason: textProperty("Optional short reason for the write, useful for review/audit UI."),
     }, ["path", "content"]),
@@ -187,10 +188,10 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_apply_patch",
-    description: "Apply or preview a Codex-style workspace-relative patch envelope. Supports Add File, Update File, Move to, and Delete File sections, with diff, hashes, warnings, and undo metadata.",
+    description: "Apply or preview a Codex-style workspace-relative patch envelope. Supports Add File, Update File, Move to, and Delete File sections, with transactional rollback, diff, hashes, and undo metadata. Rejects stale files with STALE_FILE; reread and retry when that happens.",
     parameters: schema({
       patch: textProperty("Patch text beginning with *** Begin Patch and ending with *** End Patch. File paths must be workspace-relative."),
-      expectedHashes: stringMapProperty("Optional map of workspace-relative paths to sha256 hashes from prior reads. Mismatches are reported as warnings, not hard blocks."),
+      expectedHashes: stringMapProperty("Optional map of workspace-relative paths to sha256 hashes from prior reads. Mismatches are hard STALE_FILE failures."),
       dryRun: boolProperty("If true, validate and return the diff preview without mutating files."),
       reason: textProperty("Optional short reason for the patch, useful for review/audit UI."),
     }, ["patch"]),
@@ -208,11 +209,20 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_search",
-    description: "Search workspace files using ripgrep.",
+    description: "Search workspace files using ripgrep. Supports literal or regex matching, context lines, grouping, generated-file exclusions, budgets, and continuation cursors.",
     parameters: schema({
       query: textProperty("Search text or regex."),
+      mode: textProperty("Search mode: literal or regex. Default regex."),
       glob: textProperty("Optional file glob such as **/*.ts."),
+      beforeContext: numberProperty("Optional lines of context before each match."),
+      afterContext: numberProperty("Optional lines of context after each match."),
+      includeHidden: boolProperty("If true, include hidden files. Default true for compatibility."),
+      includeGenerated: boolProperty("If true, include generated/dependency folders such as node_modules and dist. Default false."),
+      excludeGlobs: stringArrayProperty("Optional additional ripgrep exclude globs."),
       maxResults: numberProperty("Optional maximum results. Default 80."),
+      maxBytes: numberProperty("Optional maximum output bytes across returned match lines."),
+      cursor: textProperty("Optional continuation cursor returned by a previous search."),
+      groupByFile: boolProperty("If true, include grouped file results in structured data. Default true."),
       caseSensitive: boolProperty("If true, search is case-sensitive. Default false for friendlier code search."),
     }, ["query"]),
   },
@@ -223,6 +233,7 @@ export const desktopToolDefinitions = [
     parameters: schema({
       path: textProperty("Workspace-relative path to delete."),
       recursive: boolProperty("Whether directory deletion may be recursive."),
+      expectedPreviousHash: textProperty("Optional sha256 hash from a prior read for file deletes. A mismatch is a hard STALE_FILE failure."),
     }, ["path"]),
   },
   {
@@ -232,6 +243,7 @@ export const desktopToolDefinitions = [
     parameters: schema({
       fromPath: textProperty("Existing workspace-relative path."),
       toPath: textProperty("Destination workspace-relative path."),
+      expectedPreviousHash: textProperty("Optional sha256 hash from a prior read for file renames. A mismatch is a hard STALE_FILE failure."),
     }, ["fromPath", "toPath"]),
   },
   {
@@ -941,13 +953,52 @@ export const parseDesktopToolCall = (name: string | undefined, rawArguments: str
 export const parsePartialDesktopToolCall = (name: string | undefined, rawArguments: string) => {
   if (!isDesktopToolName(name)) return null;
   const args: Record<string, unknown> = {};
-  for (const key of ["path", "fromPath", "toPath", "command", "cmd", "query", "patch", "processId", "session_id", "sessionId", "input", "chars", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "workdir", "startLine", "endLine", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText", "prompt", "provider", "model", "size", "quality", "outputFormat", "saveToWorkspacePath", "destinationPath", "sourcePath", "id"]) {
-    const match = rawArguments.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)`));
-    if (match?.[1]) args[key] = match[1];
+  for (const key of ["path", "fromPath", "toPath", "command", "cmd", "query", "patch", "processId", "session_id", "sessionId", "input", "chars", "kind", "mode", "engine", "backend", "windowId", "value", "cwd", "workdir", "startLine", "endLine", "beforeContext", "afterContext", "maxResults", "maxBytes", "cursor", "expectedPreviousHash", "reason", "encoding", "taskName", "agentType", "target", "message", "url", "action", "ref", "targetRef", "text", "key", "windowTitle", "expectedText", "prompt", "provider", "model", "size", "quality", "outputFormat", "saveToWorkspacePath", "destinationPath", "sourcePath", "id"]) {
+    const value = partialJsonStringValue(rawArguments, key);
+    if (value) args[key] = value;
   }
   if (name === "desktop_apply_patch" && typeof args.patch !== "string") {
     const patchStart = rawArguments.indexOf("*** Begin Patch");
     if (patchStart !== -1) args.patch = rawArguments.slice(patchStart);
   }
   return Object.keys(args).length ? { name, arguments: args } : null;
+};
+
+const partialJsonStringValue = (source: string, key: string) => {
+  const keyIndex = source.indexOf(`"${key}"`);
+  if (keyIndex === -1) return "";
+  const colon = source.indexOf(":", keyIndex);
+  if (colon === -1) return "";
+  const firstQuote = source.indexOf("\"", colon + 1);
+  if (firstQuote === -1) return "";
+  let escaped = false;
+  let value = "";
+  for (let index = firstQuote + 1; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      value += `\\${char}`;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") break;
+    value += char;
+  }
+  return decodePartialJsonString(value);
+};
+
+const decodePartialJsonString = (value: string) => {
+  try {
+    return JSON.parse(`"${value.replace(/"/g, "\\\"")}"`) as string;
+  } catch {
+    return value
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
 };

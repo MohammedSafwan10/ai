@@ -3,6 +3,7 @@ import type {
   ToolDiffFileRecord,
   ToolEventRecord,
 } from "../../../../shared/types";
+import { normalizeStreamingPatchText, streamingPatchActivities } from "../../tools/streamingPatchProgress";
 import {
   activityItemsFromDiffFiles,
   diffStatsFromFiles,
@@ -12,10 +13,7 @@ import {
 const LIVE_OUTPUT_MAX_CHARS = 40_000;
 
 export const patchTargetLabel = (patch: string) => {
-  const normalized = patch
-    .replace(/\\r\\n/g, "\n")
-    .replace(/\\n/g, "\n")
-    .replace(/\\"/g, "\"");
+  const normalized = normalizeStreamingPatchText(patch);
   const match = normalized.match(/^\*\*\* (?:Add|Update|Delete) File: ([^\n]+)/m);
   return match?.[1]?.trim() || "files";
 };
@@ -34,22 +32,7 @@ export const activityItemsForTool = (call: DesktopToolCall, diff?: string, diffF
 };
 
 export const patchActivityItems = (patch: string): ToolEventRecord["activities"] => {
-  const normalized = patch
-    .replace(/\\r\\n/g, "\n")
-    .replace(/\\n/g, "\n")
-    .replace(/\\"/g, "\"");
-  return normalized
-    .split(/\r?\n/)
-    .map((line) => {
-      const add = line.match(/^\*\*\* Add File:\s*(.+)$/);
-      const update = line.match(/^\*\*\* Update File:\s*(.+)$/);
-      const del = line.match(/^\*\*\* Delete File:\s*(.+)$/);
-      if (add) return { verb: "Creating", path: add[1].trim() };
-      if (update) return { verb: "Editing", path: update[1].trim() };
-      if (del) return { verb: "Deleting", path: del[1].trim() };
-      return null;
-    })
-    .filter(Boolean) as ToolEventRecord["activities"];
+  return streamingPatchActivities(patch);
 };
 
 export const diffActivityItems = (diff?: string): ToolEventRecord["activities"] => {

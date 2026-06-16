@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
 import { resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../../security/pathSandbox";
-import { atomicWriteFile } from "../../storage/atomicWrite";
+import { atomicWriteFile, atomicWriteFileNoOverwrite } from "../../storage/atomicWrite";
 import {
   createRenameDiff,
   createStructuredDiff,
@@ -10,18 +10,18 @@ import {
   formatUnifiedDiffFiles,
 } from "./diffFormatter";
 import {
+  assertFreshFileState,
   changeMetadata,
   createMissingFileSnapshot,
   FileOperationService,
-  freshnessWarnings,
   hashBuffer,
-  hashMatches,
   hashText,
+  isStaleFileError,
   recordFileObservation,
   type FileChangeMetadata,
   type FileSnapshot,
 } from "./fileOperationService";
-import { applyPatchHunks, parsePatchEnvelope, type PatchHunk } from "./patch";
+import { applyPatchHunks, parsePatchEnvelope, type ParsedPatchOperation, type PatchHunk } from "./patch";
 
 export interface ToolExecutionContext {
   workspaceRoot: string;
@@ -50,7 +50,17 @@ interface RenameUndo {
 type UndoOperation = RestoreFileUndo | RenameUndo;
 
 export class FileMutationCoordinator {
-  private files = new FileOperationService();
+  constructor(
+    private options: {
+      beforePatchCommit?: (change: PlannedPatchChange, index: number) => Promise<void> | void;
+      beforePatchRollback?: (change: PlannedPatchChange, index: number) => Promise<void> | void;
+      beforeWriteCommit?: () => Promise<void> | void;
+      beforeEditCommit?: () => Promise<void> | void;
+      beforeDeleteCommit?: () => Promise<void> | void;
+      beforeRenameCommit?: () => Promise<void> | void;
+    } = {},
+    private files = new FileOperationService(),
+  ) {}
 
   async writeFile(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     const target = this.files.resolve(context.workspaceRoot, String(call.arguments.path || ""));
@@ -65,10 +75,8 @@ export class FileMutationCoordinator {
     if (encoding === "utf8" && existing?.binary) {
       return { success: false, error: `${existing.target.relativePath} is binary; text replacement is not supported.` };
     }
-    const warnings = [
-      ...freshnessWarnings(context.workspaceRoot, existing),
-      ...collectHashWarnings(target.relativePath, call.arguments.expectedPreviousHash, existing?.sha256 || null),
-    ];
+    assertFreshFileState(context.workspaceRoot, target.relativePath, existing, call.arguments.expectedPreviousHash);
+    const warnings: string[] = [];
     const parentDirectoryCreated = !(await pathExists(path.dirname(target.absolutePath)));
     if (encoding === "base64") {
       const buffer = decodeBase64Content(content);
@@ -84,6 +92,8 @@ export class FileMutationCoordinator {
           }
         : undefined;
       await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
+      await this.options.beforeWriteCommit?.();
+      await assertPlannedFileFresh(this.files, context.workspaceRoot, target.relativePath, existing?.sha256 ?? null, !existing, "planned write snapshot");
       const finalTarget = revalidateResolvedWorkspacePath(target);
       await atomicWriteFile(finalTarget.absolutePath, buffer);
       const afterSnapshot = await this.files.snapshot(context.workspaceRoot, finalTarget.relativePath);
@@ -136,6 +146,8 @@ export class FileMutationCoordinator {
     });
     emitLiveDiff(context, call.id, structured.diff);
     await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
+    await this.options.beforeWriteCommit?.();
+    await assertPlannedFileFresh(this.files, context.workspaceRoot, target.relativePath, existing?.sha256 ?? null, !existing, "planned write snapshot");
     const finalTarget = revalidateResolvedWorkspacePath(target);
     await atomicWriteFile(finalTarget.absolutePath, content, "utf8");
     const afterSnapshot = await this.files.snapshot(context.workspaceRoot, finalTarget.relativePath);
@@ -171,6 +183,7 @@ export class FileMutationCoordinator {
   async editFile(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     const before = await this.files.snapshot(context.workspaceRoot, String(call.arguments.path || ""));
     if (before.binary) return { success: false, error: `${before.target.relativePath} is binary; desktop_edit_file supports UTF-8 text only.` };
+    assertFreshFileState(context.workspaceRoot, before.target.relativePath, before, call.arguments.expectedPreviousHash);
     const operations = readEditOperations(call.arguments.operations);
     const dryRun = call.arguments.dryRun === true || call.arguments.dry_run === true;
     context.onCommandOutput(call.id, `${dryRun ? "Previewing edit" : "Editing"} ${before.target.relativePath}\n`);
@@ -182,10 +195,7 @@ export class FileMutationCoordinator {
       status: "modified",
     });
     emitLiveDiff(context, call.id, structured.diff);
-    const warnings = [
-      ...freshnessWarnings(context.workspaceRoot, before),
-      ...collectHashWarnings(before.target.relativePath, call.arguments.expectedPreviousHash, before.sha256),
-    ];
+    const warnings: string[] = [];
     const metadata = changeMetadata({
       path: before.target.relativePath,
       status: "modified",
@@ -203,6 +213,8 @@ export class FileMutationCoordinator {
         diffFiles: structured.diffFiles,
       };
     }
+    await this.options.beforeEditCommit?.();
+    await assertPlannedFileFresh(this.files, context.workspaceRoot, before.target.relativePath, before.sha256, false, "planned edit snapshot");
     const finalTarget = revalidateResolvedWorkspacePath(before.target);
     await atomicWriteFile(finalTarget.absolutePath, after, "utf8");
     const afterSnapshot = await this.files.snapshot(context.workspaceRoot, before.target.relativePath);
@@ -228,6 +240,7 @@ export class FileMutationCoordinator {
   async applyPatch(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     const patch = String(call.arguments.patch || "");
     const operations = parsePatchEnvelope(patch);
+    assertUniquePatchTargets(operations);
     const changed: string[] = [];
     const changeRecords: FileChangeMetadata[] = [];
     const diffFiles: ToolDiffFileRecord[] = [];
@@ -242,6 +255,7 @@ export class FileMutationCoordinator {
         context.onCommandOutput(call.id, `Creating ${target.relativePath}\n`);
         const existing = await this.files.maybeSnapshot(context.workspaceRoot, target.relativePath);
         if (existing) throw new Error(`Cannot add ${target.relativePath}: file already exists.`);
+        assertFreshFileState(context.workspaceRoot, target.relativePath, existing, expectedHashes[normalizePatchPath(target.relativePath)], "expectedHashes");
         const structured = createStructuredDiff({
           path: target.relativePath,
           before: "",
@@ -262,12 +276,13 @@ export class FileMutationCoordinator {
           target,
           before: createMissingFileSnapshot(target),
           after: operation.content,
+          afterHash: hashText(operation.content),
           structured,
           metadata,
           apply: async () => {
             await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
             const revalidatedTarget = revalidateResolvedWorkspacePath(target);
-            await atomicWriteFile(revalidatedTarget.absolutePath, operation.content, "utf8");
+            await atomicWriteFileNoOverwrite(revalidatedTarget.absolutePath, operation.content, "utf8");
           },
         });
         changed.push(`Created ${target.relativePath}`);
@@ -286,8 +301,8 @@ export class FileMutationCoordinator {
       if (operation.kind === "delete") {
       const before = await this.files.snapshot(context.workspaceRoot, operation.path);
       if (before.binary) throw new Error(`${before.target.relativePath} is binary; patch delete is not supported.`);
+      assertFreshFileState(context.workspaceRoot, before.target.relativePath, before, expectedHashes[normalizePatchPath(before.target.relativePath)], "expectedHashes");
       context.onCommandOutput(call.id, `Deleting ${before.target.relativePath}\n`);
-        warnings.push(...freshnessWarnings(context.workspaceRoot, before), ...collectHashWarnings(before.target.relativePath, expectedHashes[before.target.relativePath], before.sha256));
         const previous = before.content;
         const structured = createStructuredDiff({
           path: before.target.relativePath,
@@ -309,6 +324,7 @@ export class FileMutationCoordinator {
           target: before.target,
           before,
           after: "",
+          afterHash: null,
           structured,
           metadata,
           apply: async () => {
@@ -333,14 +349,17 @@ export class FileMutationCoordinator {
 
       const before = await this.files.snapshot(context.workspaceRoot, operation.path);
       if (before.binary) throw new Error(`${before.target.relativePath} is binary; patch update is not supported.`);
+      assertFreshFileState(context.workspaceRoot, before.target.relativePath, before, expectedHashes[normalizePatchPath(before.target.relativePath)], "expectedHashes");
       context.onCommandOutput(call.id, `${operation.moveTo ? "Moving" : "Editing"} ${before.target.relativePath}\n`);
-      warnings.push(...freshnessWarnings(context.workspaceRoot, before), ...collectHashWarnings(before.target.relativePath, expectedHashes[before.target.relativePath], before.sha256));
       operation.hunks.forEach((hunk) => emitPatchPreview(context, call.id, before.target.relativePath, hunk.lines));
       const previous = before.content;
       const next = operation.hunks.length ? applyPatchHunks(previous, operation.hunks, before.target.relativePath) : previous;
       const finalTarget = operation.moveTo
         ? this.files.resolve(context.workspaceRoot, operation.moveTo)
         : before.target;
+      if (operation.moveTo && finalTarget.absolutePath !== before.target.absolutePath && await pathExists(finalTarget.absolutePath)) {
+        throw new Error(`Cannot move ${before.target.relativePath} to ${finalTarget.relativePath}: destination already exists.`);
+      }
       const structured = createStructuredDiff({
         path: finalTarget.relativePath,
         oldPath: operation.moveTo ? before.target.relativePath : undefined,
@@ -364,12 +383,17 @@ export class FileMutationCoordinator {
         source: before.target,
         before,
         after: next,
+        afterHash: hashText(next),
         structured,
         metadata,
         apply: async () => {
           await fs.mkdir(path.dirname(finalTarget.absolutePath), { recursive: true });
           const revalidatedTarget = revalidateResolvedWorkspacePath(finalTarget);
-          await atomicWriteFile(revalidatedTarget.absolutePath, next, "utf8");
+          if (operation.moveTo && finalTarget.absolutePath !== before.target.absolutePath) {
+            await atomicWriteFileNoOverwrite(revalidatedTarget.absolutePath, next, "utf8");
+          } else {
+            await atomicWriteFile(revalidatedTarget.absolutePath, next, "utf8");
+          }
           if (operation.moveTo && finalTarget.absolutePath !== before.target.absolutePath) {
             await fs.rm(before.target.absolutePath, { force: false });
           }
@@ -401,11 +425,60 @@ export class FileMutationCoordinator {
       };
     }
 
-    for (const change of planned) {
-      await change.apply();
-      const snapshot = await this.files.maybeSnapshot(context.workspaceRoot, change.target.relativePath);
-      if (snapshot) recordFileObservation(context.workspaceRoot, snapshot);
-      context.onCommandOutput(call.id, `${change.description} ${formatDeltaFromDiffFiles(change.structured.diffFiles)}\n`);
+    const applied: PlannedPatchChange[] = [];
+    try {
+      for (const [index, change] of planned.entries()) {
+        await this.options.beforePatchCommit?.(change, index);
+        await assertPlannedPatchChangeFresh(this.files, context.workspaceRoot, change);
+        applied.push(change);
+        await change.apply();
+        const snapshot = await this.files.maybeSnapshot(context.workspaceRoot, change.target.relativePath);
+        if (snapshot) recordFileObservation(context.workspaceRoot, snapshot);
+        context.onCommandOutput(call.id, `${change.description} ${formatDeltaFromDiffFiles(change.structured.diffFiles)}\n`);
+      }
+    } catch (error) {
+      const rollback = await rollbackPatchChanges(applied, context, this.options.beforePatchRollback);
+      const rollbackFailed = rollback.some((item) => !item.success);
+      if (isStaleFileError(error)) {
+        return {
+          success: false,
+          error: `STALE_FILE: ${error.message}`,
+          data: {
+            code: error.code,
+            path: error.path,
+            reason: error.reason,
+            expectedHash: error.expectedHash,
+            actualHash: error.actualHash,
+            requiresReread: true,
+            changed,
+            changes: changeRecords,
+            warnings,
+            rollback,
+            dryRun: false,
+            mutated: rollbackFailed,
+          },
+          diff: formatUnifiedDiffFiles(diffFiles),
+          diffFiles,
+        };
+      }
+      return {
+        success: false,
+        error: [
+          `Patch failed before all changes were committed: ${error instanceof Error ? error.message : "unknown error"}`,
+          rollbackFailed ? "Rollback was attempted but one or more files could not be restored." : "Rollback completed for committed changes.",
+        ].join("\n"),
+        data: {
+          code: "PATCH_TRANSACTION_FAILED",
+          changed,
+          changes: changeRecords,
+          warnings,
+          rollback,
+          dryRun: false,
+          mutated: rollbackFailed,
+        },
+        diff: formatUnifiedDiffFiles(diffFiles),
+        diffFiles,
+      };
     }
 
     return {
@@ -421,7 +494,11 @@ export class FileMutationCoordinator {
     const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
     context.onCommandOutput(call.id, `Deleting ${target.relativePath}\n`);
     const stat = await fs.stat(target.absolutePath);
-    const previous = stat.isFile() ? await readUndoText(target.absolutePath) : "";
+    const snapshot = stat.isFile() ? await this.files.snapshot(context.workspaceRoot, target.relativePath) : null;
+    if (snapshot) assertFreshFileState(context.workspaceRoot, target.relativePath, snapshot, call.arguments.expectedPreviousHash);
+    const previous = stat.isFile() ? (snapshot?.binary ? null : await readUndoText(target.absolutePath)) : "";
+    await this.options.beforeDeleteCommit?.();
+    if (snapshot) await assertPlannedFileFresh(this.files, context.workspaceRoot, target.relativePath, snapshot.sha256, false, "planned delete snapshot");
     await fs.rm(target.absolutePath, { recursive: call.arguments.recursive === true, force: false });
     const structured = previous !== null
       ? createStructuredDiff({ path: target.relativePath, before: previous, after: "", status: "deleted" })
@@ -450,9 +527,19 @@ export class FileMutationCoordinator {
     const from = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.fromPath || ""));
     const to = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.toPath || ""));
     context.onCommandOutput(call.id, `Renaming ${from.relativePath} -> ${to.relativePath}\n`);
+    const fromStat = await fs.stat(from.absolutePath);
+    const snapshot = fromStat.isFile() ? await this.files.snapshot(context.workspaceRoot, from.relativePath) : null;
+    if (snapshot) assertFreshFileState(context.workspaceRoot, from.relativePath, snapshot, call.arguments.expectedPreviousHash);
     await fs.mkdir(path.dirname(to.absolutePath), { recursive: true });
     const finalTo = revalidateResolvedWorkspacePath(to);
+    await this.options.beforeRenameCommit?.();
+    if (snapshot) await assertPlannedFileFresh(this.files, context.workspaceRoot, from.relativePath, snapshot.sha256, false, "planned rename snapshot");
+    if (await pathExists(finalTo.absolutePath)) {
+      throw new Error(`Cannot rename ${from.relativePath} to ${to.relativePath}: destination already exists.`);
+    }
     await fs.rename(from.absolutePath, finalTo.absolutePath);
+    const afterSnapshot = fromStat.isFile() ? await this.files.maybeSnapshot(context.workspaceRoot, finalTo.relativePath) : null;
+    if (afterSnapshot) recordFileObservation(context.workspaceRoot, afterSnapshot);
     const structured = createRenameDiff(from.relativePath, to.relativePath);
     const undo: UndoOperation = { type: "rename_path", fromPath: to.relativePath, toPath: from.relativePath };
     return {
@@ -611,26 +698,139 @@ const readNonEmptyString = (value: unknown, name: string) => {
 const preview = (value: string) =>
   JSON.stringify(value.slice(0, 120));
 
+const assertUniquePatchTargets = (operations: ParsedPatchOperation[]) => {
+  const seen = new Set<string>();
+  for (const operation of operations) {
+    for (const item of [operation.path, operation.kind === "update" ? operation.moveTo : undefined]) {
+      if (!item) continue;
+      const key = item.replace(/\\/g, "/").toLowerCase();
+      if (seen.has(key)) {
+        throw new Error(`Patch touches ${item} more than once; combine edits for each file into one patch section.`);
+      }
+      seen.add(key);
+    }
+  }
+};
+
 interface PlannedPatchChange {
   description: string;
   target: ReturnType<FileOperationService["resolve"]>;
   source?: ReturnType<FileOperationService["resolve"]>;
   before: FileSnapshot;
   after: string;
+  afterHash: string | null;
   structured: ReturnType<typeof createStructuredDiff>;
   metadata: FileChangeMetadata;
   apply: () => Promise<void>;
 }
 
+interface PatchRollbackResult {
+  path: string;
+  success: boolean;
+  error?: string;
+}
+
+const assertPlannedFileFresh = async (
+  files: FileOperationService,
+  workspaceRoot: string,
+  relativePath: string,
+  expectedHash: string | null,
+  mustBeMissing: boolean,
+  label: string,
+) => {
+  const current = await files.maybeSnapshot(workspaceRoot, relativePath);
+  if (mustBeMissing && current) {
+    throw new Error(`Cannot create ${relativePath}: file appeared after planning.`);
+  }
+  assertFreshFileState(workspaceRoot, relativePath, current, expectedHash, label);
+};
+
+const assertPlannedPatchChangeFresh = async (
+  files: FileOperationService,
+  workspaceRoot: string,
+  change: PlannedPatchChange,
+) => {
+  if (!change.before.exists) {
+    await assertPlannedFileFresh(files, workspaceRoot, change.target.relativePath, null, true, "planned patch snapshot");
+    return;
+  }
+  const current = await files.snapshot(workspaceRoot, change.before.target.relativePath);
+  assertFreshFileState(workspaceRoot, change.before.target.relativePath, current, change.before.sha256, "planned patch snapshot");
+  if (change.source && change.source.absolutePath !== change.target.absolutePath && await files.maybeSnapshot(workspaceRoot, change.target.relativePath)) {
+    throw new Error(`Cannot move ${change.source.relativePath} to ${change.target.relativePath}: destination appeared after patch planning.`);
+  }
+};
+
+const rollbackPatchChanges = async (
+  applied: PlannedPatchChange[],
+  context: ToolExecutionContext,
+  beforeRollback?: (change: PlannedPatchChange, index: number) => Promise<void> | void,
+) => {
+  const results: PatchRollbackResult[] = [];
+  const reversed = [...applied].reverse();
+  for (const [index, change] of reversed.entries()) {
+    try {
+      await beforeRollback?.(change, index);
+      if (!change.before.exists) {
+        await assertRollbackTargetMatches(context.workspaceRoot, change);
+        await fs.rm(change.target.absolutePath, { force: true, recursive: false });
+      } else {
+        if (change.source && change.source.absolutePath !== change.target.absolutePath) {
+          await assertRollbackTargetMatches(context.workspaceRoot, change);
+          const sourceSnapshot = await new FileOperationService().maybeSnapshot(context.workspaceRoot, change.source.relativePath);
+          if (sourceSnapshot) {
+            if (sourceSnapshot.sha256 !== change.before.sha256) {
+              throw new Error(`Cannot rollback ${change.source.relativePath}: source path was recreated after the move.`);
+            }
+            await fs.rm(change.target.absolutePath, { force: true, recursive: false });
+            recordFileObservation(context.workspaceRoot, sourceSnapshot);
+            results.push({ path: change.target.relativePath, success: true });
+            continue;
+          }
+          await fs.rm(change.target.absolutePath, { force: true, recursive: false });
+          await fs.mkdir(path.dirname(change.source.absolutePath), { recursive: true });
+          await atomicWriteFile(change.source.absolutePath, change.before.content, "utf8");
+          const snapshot = await new FileOperationService().maybeSnapshot(context.workspaceRoot, change.source.relativePath);
+          if (snapshot) recordFileObservation(context.workspaceRoot, snapshot);
+        } else {
+          await assertRollbackTargetMatches(context.workspaceRoot, change);
+          await fs.mkdir(path.dirname(change.target.absolutePath), { recursive: true });
+          await atomicWriteFile(change.target.absolutePath, change.before.content, "utf8");
+          const snapshot = await new FileOperationService().maybeSnapshot(context.workspaceRoot, change.target.relativePath);
+          if (snapshot) recordFileObservation(context.workspaceRoot, snapshot);
+        }
+      }
+      results.push({ path: change.target.relativePath, success: true });
+    } catch (error) {
+      results.push({
+        path: change.target.relativePath,
+        success: false,
+        error: error instanceof Error ? error.message : "rollback failed",
+      });
+    }
+  }
+  return results;
+};
+
+const assertRollbackTargetMatches = async (workspaceRoot: string, change: PlannedPatchChange) => {
+  const files = new FileOperationService();
+  const current = await files.maybeSnapshot(workspaceRoot, change.target.relativePath);
+  if (change.afterHash === null) {
+    if (current) throw new Error(`Cannot rollback ${change.target.relativePath}: path was recreated after patch delete.`);
+    return;
+  }
+  if (!current || current.sha256 !== change.afterHash) {
+    throw new Error(`Cannot rollback ${change.target.relativePath}: current file no longer matches the patch-written content.`);
+  }
+};
+
 const readHashMap = (value: unknown) =>
   value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [normalizePatchPath(key), item]))
     : {};
 
-const collectHashWarnings = (filePath: string, expected: unknown, actual: string | null) =>
-  hashMatches(expected, actual)
-    ? [`${filePath} current sha256 does not match expectedPreviousHash; continuing because hash checks are warnings only.`]
-    : [];
+const normalizePatchPath = (value: string) =>
+  value.replace(/\\/g, "/");
 
 const pathExists = async (targetPath: string) => {
   try {

@@ -1112,6 +1112,17 @@ const toolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
     }));
   }
 
+  if (tool.activities?.length) {
+    return tool.activities
+      .filter((item) => item.path)
+      .map((item) => ({
+        verb: item.verb,
+        path: item.path || item.title || "",
+        additions: item.additions || 0,
+        deletions: item.deletions || 0,
+      }));
+  }
+
   const fromDiff = diffActivityItems(tool.diff);
   if (fromDiff.length > 0) return fromDiff;
 
