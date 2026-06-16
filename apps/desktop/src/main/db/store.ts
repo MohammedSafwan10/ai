@@ -722,6 +722,24 @@ const normalizeStoredMessage = (message: ChatMessageRecord): ChatMessageRecord =
   const textParts = normalizeAssistantTextParts(normalized.textParts, normalized.content.length); if (textParts.length) return { ...normalized, textParts };
   const timestamp = normalized.updatedAt || normalized.createdAt || now(); return { ...normalized, textParts: [{ id: `${normalized.id}-final-text`, phase: "final_answer", startOffset: 0, endOffset: normalized.content.length, createdAt: timestamp, updatedAt: timestamp }] };
 };
-const normalizeAssistantTextParts = (parts: AssistantTextPartRecord[] | undefined, contentLength: number) => !parts?.length ? [] : parts.filter((part) => (part.phase === "commentary" || part.phase === "final_answer") && Number.isFinite(part.startOffset) && Number.isFinite(part.endOffset)).map((part) => ({ ...part, startOffset: Math.max(0, Math.min(contentLength, part.startOffset)), endOffset: Math.max(0, Math.min(contentLength, part.endOffset)) })).filter((part) => part.endOffset > part.startOffset).sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt);
+const normalizeAssistantTextParts = (parts: AssistantTextPartRecord[] | undefined, contentLength: number) => {
+  if (!parts?.length) return [];
+  const normalized = parts
+    .filter((part) => (part.phase === "commentary" || part.phase === "final_answer") && Number.isFinite(part.startOffset) && Number.isFinite(part.endOffset))
+    .map((part) => ({ ...part, startOffset: Math.max(0, Math.min(contentLength, part.startOffset)), endOffset: Math.max(0, Math.min(contentLength, part.endOffset)) }))
+    .filter((part) => part.endOffset > part.startOffset)
+    .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt);
+  const merged: AssistantTextPartRecord[] = [];
+  normalized.forEach((part) => {
+    const last = merged[merged.length - 1];
+    if (last && last.phase === part.phase && last.endOffset >= part.startOffset) {
+      last.endOffset = Math.max(last.endOffset, part.endOffset);
+      last.updatedAt = Math.max(last.updatedAt, part.updatedAt);
+      return;
+    }
+    merged.push({ ...part });
+  });
+  return merged;
+};
 const normalizeStoredToolEvent = (event: ToolEventRecord): ToolEventRecord => isNoisyCommandReason(event.approvalReason) ? { ...event, approvalReason: undefined } : event;
 const isNoisyCommandReason = (reason?: string) => Boolean(reason?.toLowerCase().includes("mutate files") && reason.toLowerCase().includes("chain shell operations"));

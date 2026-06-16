@@ -402,20 +402,40 @@ function splitTextByPhase(message: ChatMessageRecord, startOffset: number, endOf
   return segments;
 }
 
-function normalizeTextParts(parts: AssistantTextPartRecord[], contentLength: number) {
-  return [...parts]
-    .filter((part) =>
-      (part.phase === "commentary" || part.phase === "final_answer") &&
-      Number.isFinite(part.startOffset) &&
-      Number.isFinite(part.endOffset)
-    )
-    .map((part) => ({
-      ...part,
-      startOffset: Math.max(0, Math.min(contentLength, part.startOffset)),
-      endOffset: Math.max(0, Math.min(contentLength, part.endOffset)),
-    }))
-    .filter((part) => part.endOffset > part.startOffset)
-    .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt);
+export function normalizeTextParts(parts: AssistantTextPartRecord[], contentLength: number) {
+  return mergeAdjacentTextParts(
+    [...parts]
+      .filter((part) =>
+        (part.phase === "commentary" || part.phase === "final_answer") &&
+        Number.isFinite(part.startOffset) &&
+        Number.isFinite(part.endOffset)
+      )
+      .map((part) => ({
+        ...part,
+        startOffset: Math.max(0, Math.min(contentLength, part.startOffset)),
+        endOffset: Math.max(0, Math.min(contentLength, part.endOffset)),
+      }))
+      .filter((part) => part.endOffset > part.startOffset)
+      .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt),
+  );
+}
+
+function mergeAdjacentTextParts(parts: AssistantTextPartRecord[]) {
+  const merged: AssistantTextPartRecord[] = [];
+  parts.forEach((part) => {
+    const last = merged[merged.length - 1];
+    if (last && last.phase === part.phase && last.endOffset >= part.startOffset) {
+      last.endOffset = Math.max(last.endOffset, part.endOffset);
+      last.updatedAt = Math.max(last.updatedAt, part.updatedAt);
+      return;
+    }
+    merged.push({ ...part });
+  });
+  return merged;
+}
+
+export function splitTextByPhaseForTest(message: ChatMessageRecord, startOffset: number, endOffset: number) {
+  return splitTextByPhase(message, startOffset, endOffset);
 }
 
 function compareTimelineItems(a: AssistantTimelineItem, b: AssistantTimelineItem) {

@@ -58,7 +58,8 @@
 
 .turn-undo-confirm,
 .turn-undo-conflicts,
-.turn-undo-error {
+.turn-undo-error,
+.turn-verification-transcript {
   margin-top: 8px;
   border-left: 1px solid var(--privora-border);
   color: var(--privora-muted);
@@ -82,6 +83,44 @@
 
 .turn-undo-conflicts summary {
   cursor: pointer;
+}
+
+.turn-verification-transcript summary {
+  cursor: pointer;
+  color: color-mix(in srgb, var(--privora-text) 72%, var(--privora-muted));
+  font-weight: 500;
+}
+
+.turn-verification-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 5px;
+}
+
+.turn-verification-row span {
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.turn-verification-row span.success {
+  color: var(--ok);
+}
+
+.turn-verification-row span.failed {
+  color: var(--danger);
+}
+
+.turn-verification-row code {
+  overflow: hidden;
+  color: var(--privora-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-verification-row em {
+  font-style: normal;
 }
 
 .turn-review-card .delta-add {
