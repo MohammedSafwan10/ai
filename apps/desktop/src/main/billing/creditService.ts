@@ -1,4 +1,5 @@
 import type { AiCreditSummaryRecord, SettingsRecord } from "../../shared/types";
+import { normalizeHttpsServiceBaseUrl } from "../security/serviceUrls";
 import { createAppwriteJwt } from "./appwriteAuth";
 
 const hostedCreditHelp = "Hosted AI needs Plus/Pro credits or a manual grant. You can keep using BYOK providers from Settings > Providers.";
@@ -56,7 +57,7 @@ export const executePrivoraGateway = async <T>(
   signal?: AbortSignal,
 ): Promise<T> => {
   if (!jwt.trim()) throw new Error(`Connect your Privora account before using hosted AI credits. ${hostedCreditHelp}`);
-  const endpoint = settings.appwriteEndpoint.replace(/\/+$/, "");
+  const endpoint = normalizeHttpsServiceBaseUrl(settings.appwriteEndpoint, "Appwrite");
   const response = await fetch(`${endpoint}/functions/${encodeURIComponent(settings.privoraGatewayFunctionId)}/executions`, {
     method: "POST",
     headers: {

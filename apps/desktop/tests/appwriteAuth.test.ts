@@ -33,4 +33,19 @@ describe("Appwrite desktop token session", () => {
       }),
     );
   });
+
+  it("rejects non-https Appwrite endpoints before sending credentials", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createTokenSession({
+      appwriteEndpoint: "http://sgp.cloud.appwrite.io/v1",
+      appwriteProjectId: "project",
+    }, {
+      userId: "user_123",
+      secret: "one-time-secret",
+    })).rejects.toThrow(/https/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

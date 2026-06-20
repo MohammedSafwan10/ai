@@ -6,6 +6,7 @@ import {
 } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import type { ProviderWebSearchEvent } from "./types";
+import { normalizeLocalServiceBaseUrl } from "../../security/serviceUrls";
 import { readSse } from "./sse";
 import { normalizeProviderUsage } from "./usage";
 
@@ -205,7 +206,8 @@ const webSearchActionDetail = (action: any) => {
 export class CliproxyAdapter implements ProviderAdapter {
   async stream(options: ProviderStreamOptions): Promise<void> {
     const promptCacheKey = cliproxyPromptCacheKey(options.threadId);
-    const response = await fetch(`${options.cliproxyBaseUrl.replace(/\/$/, "")}/v1/responses`, {
+    const baseUrl = normalizeLocalServiceBaseUrl(options.cliproxyBaseUrl, "CLI proxy");
+    const response = await fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -15,6 +15,9 @@
     "start": "electron-forge start",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "audit:prod": "npm audit --omit=dev",
+    "audit:all": "npm audit",
+    "verify": "npm run lint && npm test && npm run audit:prod",
     "prepare:package": "node scripts/prepare-package-resources.js",
     "build": "npm run prepare:package && electron-forge package",
     "make": "npm run prepare:package && electron-forge make",
@@ -28,7 +31,7 @@
   },
   "dependencies": {
     "@ghostery/adblocker": "^2.18.0",
-    "@google/genai": "^2.7.0",
+    "@google/genai": "^2.9.0",
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-virtual": "^3.13.26",
     "@vscode/ripgrep": "^1.18.0",
@@ -64,7 +67,9 @@
   },
   "overrides": {
     "@electron/rebuild": "^4.0.4",
-    "tar": "^7.5.15",
-    "tmp": "^0.2.7"
+    "protobufjs": "^7.6.4",
+    "tar": "^7.5.16",
+    "tmp": "^0.2.7",
+    "undici": "^7.28.0"
   }
 }

@@ -1,4 +1,5 @@
 import type { PrivoraAccountRecord, SettingsRecord } from "../../shared/types";
+import { normalizeHttpsServiceBaseUrl } from "../security/serviceUrls";
 
 const headersFor = (settings: Pick<SettingsRecord, "appwriteProjectId">, cookieHeader?: string) => ({
   "Content-Type": "application/json",
@@ -13,7 +14,7 @@ const jwtHeadersFor = (settings: Pick<SettingsRecord, "appwriteProjectId">, jwt:
 });
 
 const endpointFor = (settings: Pick<SettingsRecord, "appwriteEndpoint">, path: string) =>
-  `${settings.appwriteEndpoint.replace(/\/+$/, "")}${path}`;
+  `${normalizeHttpsServiceBaseUrl(settings.appwriteEndpoint, "Appwrite")}${path}`;
 
 const parseJsonResponse = async <T>(response: Response): Promise<T> => {
   const text = await response.text();

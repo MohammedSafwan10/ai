@@ -25,6 +25,7 @@ import type {
 } from "../../shared/types";
 import { GEMINI_35_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
+import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
 
 type SecretName =
   | "openrouter_api_key"
@@ -691,13 +692,12 @@ const attachmentUrl = (artifactId: string, mimeType: string) =>
 export const normalizeThreadTitle = (title: string) => (title.replace(/\r/g, "\n").split("\n")[0] || "").replace(/\s+/g, " ").trim().slice(0, 48);
 
 const normalizeCliproxyBaseUrl = (value: string) => {
-  const parsed = new URL(value);
-  if (!["http:", "https:"].includes(parsed.protocol) || !["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname) || parsed.username || parsed.password) {
-    throw new Error("CLI proxy URL must use http or https on localhost without embedded credentials.");
+  try {
+    return normalizeLocalServiceBaseUrl(value, "CLI proxy");
+  } catch (error) {
+    if (error instanceof Error && /localhost/i.test(error.message)) throw error;
+    throw new Error("CLI proxy URL must use http or https on localhost without embedded credentials, query strings, or fragments.");
   }
-  parsed.hash = "";
-  parsed.search = "";
-  return parsed.toString().replace(/\/$/, "");
 };
 
 const safeCliproxyBaseUrl = (value: string | undefined) => {

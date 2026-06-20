@@ -7,6 +7,7 @@ import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { ArtifactStore } from "../db/artifactStore";
 import { ensureWorkspaceParentDirectory, resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../security/pathSandbox";
+import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
 import { atomicWriteFile, atomicWriteFileSync } from "../storage/atomicWrite";
 
 export type ImageGenerationProvider = "cliproxy" | "gemini";
@@ -161,7 +162,7 @@ export class ImageGenerationManager {
     outputFormat: "png" | "jpeg" | "webp";
     references: ReferenceImage[];
   }) {
-    const baseUrl = (input.cliproxyBaseUrl || "http://127.0.0.1:8317").replace(/\/$/, "");
+    const baseUrl = normalizeLocalServiceBaseUrl(input.cliproxyBaseUrl || "http://127.0.0.1:8317", "CLI proxy");
     const endpoint = input.references.length > 0 ? "/v1/images/edits" : "/v1/images/generations";
     const body: Record<string, unknown> = {
       model: input.model,
