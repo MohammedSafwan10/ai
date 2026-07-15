@@ -1,21 +1,21 @@
 {
-  "projectId": "69af9f0700103b7f3482",
-  "sites": [
-    {
-      "$id": "privora-web",
-      "name": "Privora Web",
-      "path": "apps/web",
-      "logging": true,
-      "timeout": 30,
-      "framework": "tanstack-start",
-      "buildRuntime": "node-22",
-      "adapter": "ssr",
-      "installCommand": "npm install",
-      "buildCommand": "npm run build",
-      "outputDirectory": "./dist",
-      "buildSpecification": "s-2vcpu-2gb",
-      "runtimeSpecification": "s-0.5vcpu-512mb",
-      "deploymentRetention": 5
-    }
-  ]
+    "projectId": "69af9f0700103b7f3482",
+    "sites": [
+        {
+            "$id": "privora-web",
+            "name": "Privora Web",
+            "path": "apps/web",
+            "logging": true,
+            "timeout": 30,
+            "framework": "tanstack-start",
+            "buildRuntime": "node-22",
+            "adapter": "ssr",
+            "installCommand": "npm install",
+            "buildCommand": "npm run build",
+            "outputDirectory": "./dist",
+            "buildSpecification": "s-2vcpu-2gb",
+            "runtimeSpecification": "s-0.5vcpu-512mb",
+            "deploymentRetention": 5
+        }
+    ]
 }
