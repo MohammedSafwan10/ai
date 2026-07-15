@@ -61,7 +61,7 @@ That command:
 3. Runs desktop TypeScript lint.
 4. Runs desktop tests.
 5. Builds the Windows x64 Squirrel installer.
-6. Uploads `RELEASES`, `.nupkg`, and `PrivoraSetup.exe` to Appwrite Storage.
+6. Uploads `RELEASES`, `.nupkg`, and a versioned installer such as `PrivoraSetup-0.1.38.exe` to Appwrite Storage.
 7. Creates or updates the Appwrite release metadata document as `latest:false`.
 8. Marks the previous latest Windows x64 stable document as `latest:false`.
 9. Marks the new release as `latest:true`.

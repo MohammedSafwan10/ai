@@ -51,6 +51,13 @@ function main() {
   run("npm", ["--prefix", "apps/desktop", "run", "make:win:x64"], { cwd: repoRoot });
 
   const artifactRoot = path.join(desktopRoot, "out", "make", "squirrel.windows", "x64");
+  const installerSourcePath = path.join(artifactRoot, "PrivoraSetup.exe");
+  const versionedInstallerPath = path.join(artifactRoot, `PrivoraSetup-${targetVersion}.exe`);
+  if (!fs.existsSync(installerSourcePath)) {
+    throw new Error(`Missing release artifact: ${installerSourcePath}`);
+  }
+  fs.copyFileSync(installerSourcePath, versionedInstallerPath);
+
   const artifacts = {
     releases: {
       id: `win-x64-${versionToken}-releases`,
@@ -62,7 +69,7 @@ function main() {
     },
     installer: {
       id: `win-x64-${versionToken}-setup`,
-      path: path.join(artifactRoot, "PrivoraSetup.exe"),
+      path: versionedInstallerPath,
     },
   };
 
