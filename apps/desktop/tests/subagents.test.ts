@@ -63,11 +63,11 @@ describe("subagent topology", () => {
       taskName: "reviewer",
       agentPath: "/root/reviewer",
       prompt: "Review the workspace",
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
     });
 
-    expect(agent.model).toBe("gpt-5.5");
-    expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.5");
+    expect(agent.model).toBe("gpt-5.6-sol");
+    expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.6-sol");
   });
 
   it("always inherits the active parent model when spawning", async () => {
@@ -90,15 +90,15 @@ describe("subagent topology", () => {
         workspaceRoot: workspace.path,
         parentThreadId: rootThread.id,
         parentMessageId: "parent-message",
-        parentRun: runTracker(rootThread.id, "parent-message", { model: "gpt-5.5", reasoningEffort: "high" }),
+        parentRun: runTracker(rootThread.id, "parent-message", { model: "gpt-5.6-sol", reasoningEffort: "high" }),
         signal: new AbortController().signal,
       },
     );
 
     const [agent] = store.listDirectSubagents(rootThread.id);
     expect(result.success).toBe(true);
-    expect(agent.model).toBe("gpt-5.5");
-    expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.5");
+    expect(agent.model).toBe("gpt-5.6-sol");
+    expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.6-sol");
   });
 
   it("uses the current parent model for legacy children saved with a different provider", () => {
@@ -107,7 +107,7 @@ describe("subagent topology", () => {
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
     store.updateThreadSettings(rootThread.id, {
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: rootThread.reasoningEffort,
       collaborationMode: rootThread.collaborationMode,
     });
@@ -120,7 +120,7 @@ describe("subagent topology", () => {
       prompt: "Legacy task",
       model: "gemini-3.5-flash",
     });
-    expect(resolveSubagentModel(store, agent)).toBe("gpt-5.5");
+    expect(resolveSubagentModel(store, agent)).toBe("gpt-5.6-sol");
   });
 
   it("separates direct children from descendants and does not include the parent as its own child", () => {
@@ -249,7 +249,7 @@ describe("reviewer swarm harness", () => {
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
     store.updateThreadSettings(rootThread.id, {
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       collaborationMode: "default",
       agentHarnessMode: "review_swarm",
@@ -271,7 +271,7 @@ describe("reviewer swarm harness", () => {
       workspaceRoot: workspace.path,
       assistantText: "Done",
       iteration: 0,
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       collaborationMode: "default",
       run: runTracker(rootThread.id, assistantMessage.id),
@@ -284,7 +284,7 @@ describe("reviewer swarm harness", () => {
     expect(feedback).toContain("Reviewer Swarm reports are ready.");
     expect(feedback).toContain("Write only the user-facing final response.");
     expect(feedback).toContain("No blocking issues found.");
-    expect(reviewers.map((agent) => agent.model)).toEqual(["gpt-5.5", "gpt-5.5"]);
+    expect(reviewers.map((agent) => agent.model)).toEqual(["gpt-5.6-sol", "gpt-5.6-sol"]);
     expect(reviewers.map((agent) => agent.reasoningEffort)).toEqual(["high", "high"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.agentHarnessMode)).toEqual(["standard", "standard"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.collaborationMode)).toEqual(["plan", "plan"]);

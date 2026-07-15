@@ -31,10 +31,10 @@ const repeatedHistory = (count: number, chars: number): ProviderMessage[] =>
 
 describe("desktop context usage", () => {
   it("calculates remaining context with the Codex-style 12k token baseline", () => {
-    const budget = resolveModelRuntimeBudget("gpt-5.5", "normal");
+    const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
     const result = calculateContextUsage({
       threadId: "thread",
-      modelId: "gpt-5.5",
+      modelId: "gpt-5.6-sol",
       history: historyWithChars(100),
       budget,
       lastUsage: usage(112_000, 8_000),
@@ -61,7 +61,7 @@ describe("desktop context usage", () => {
   });
 
   it("sets a normal 1M-model auto-compact threshold around the normal input cap", () => {
-    const budget = resolveModelRuntimeBudget("gpt-5.5", "normal");
+    const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
 
     expect(budget.inputBudgetTokens).toBe(350_000);
     expect(autoCompactThresholdTokens(budget)).toBe(315_000);
@@ -69,7 +69,7 @@ describe("desktop context usage", () => {
   });
 
   it("detects oversized history and compacts it before the hard cap", () => {
-    const budget = resolveModelRuntimeBudget("gpt-5.5", "normal");
+    const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
     const history = repeatedHistory(20, 80_000);
 
     expect(shouldAutoCompactHistory(history, budget)).toBe(true);

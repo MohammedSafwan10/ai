@@ -37,19 +37,24 @@ export const OPENROUTER_MINIMAX_M3_MODEL_ID = "minimax/minimax-m3";
 export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
 export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
 export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
+export const GPT_56_SOL_MODEL_ID = "gpt-5.6-sol";
+export const GPT_56_TERRA_MODEL_ID = "gpt-5.6-terra";
+export const GPT_56_LUNA_MODEL_ID = "gpt-5.6-luna";
 
 const legacyModelReplacements: Record<string, string> = {
   "gemini-3-flash-preview": GEMINI_35_FLASH_MODEL_ID,
   "gemini-3.1-flash-lite-preview": GEMINI_31_FLASH_LITE_MODEL_ID,
-  "anthropic/claude-3.7-sonnet": "gpt-5.5",
+  "anthropic/claude-3.7-sonnet": GPT_56_SOL_MODEL_ID,
+  "gpt-5.5": GPT_56_SOL_MODEL_ID,
   "google/gemini-2.5-pro": "gemini-3.1-pro-preview",
   "deepseek/deepseek-chat": OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
   "deepseek/deepseek-v4-flash:free": OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
   "baidu/cobuddy:free": "nvidia/nemotron-3-super-120b-a12b:free",
 };
 
-const GPT_55_CONTEXT_TOKENS = 1_050_000;
-const GPT_55_MAX_OUTPUT_TOKENS = 128_000;
+const GPT_56_SOL_TERRA_CONTEXT_TOKENS = 1_050_000;
+const GPT_56_LUNA_CONTEXT_TOKENS = 400_000;
+const GPT_56_MAX_OUTPUT_TOKENS = 128_000;
 const GEMINI_LONG_CONTEXT_TOKENS = 1_048_576;
 const GEMINI_MAX_OUTPUT_TOKENS = 65_536;
 const OPENROUTER_DEFAULT_OUTPUT_TOKENS = 4_096;
@@ -113,16 +118,40 @@ export const modelOptions: ModelOption[] = [
     description: "Stronger Gemini model for harder prompts.",
   },
   {
-    id: "gpt-5.5",
-    label: "GPT-5.5",
+    id: GPT_56_SOL_MODEL_ID,
+    label: "GPT-5.6 Sol",
     provider: "cliproxy",
     supportsTools: true,
     supportsImageInput: true,
     supportsReasoning: true,
-    contextWindowTokens: GPT_55_CONTEXT_TOKENS,
-    maxOutputTokens: GPT_55_MAX_OUTPUT_TOKENS,
+    contextWindowTokens: GPT_56_SOL_TERRA_CONTEXT_TOKENS,
+    maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
     defaultOutputTokens: 32_000,
-    description: "GPT-5.5 through CLIProxy.",
+    description: "Flagship GPT-5.6 model through CLIProxy.",
+  },
+  {
+    id: GPT_56_TERRA_MODEL_ID,
+    label: "GPT-5.6 Terra",
+    provider: "cliproxy",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    contextWindowTokens: GPT_56_SOL_TERRA_CONTEXT_TOKENS,
+    maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
+    defaultOutputTokens: 32_000,
+    description: "Balanced GPT-5.6 model through CLIProxy.",
+  },
+  {
+    id: GPT_56_LUNA_MODEL_ID,
+    label: "GPT-5.6 Luna",
+    provider: "cliproxy",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    contextWindowTokens: GPT_56_LUNA_CONTEXT_TOKENS,
+    maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
+    defaultOutputTokens: 32_000,
+    description: "Efficient high-volume GPT-5.6 model through CLIProxy.",
   },
   {
     id: "gemini-3.5-flash-cliproxy",

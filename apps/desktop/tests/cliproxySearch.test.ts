@@ -3,7 +3,7 @@ import { cliproxyToolsForModel, webSearchEventFromResponse } from "../src/main/a
 
 describe("CLIProxy hosted web search", () => {
   it("sends hosted web search beside desktop function tools", () => {
-    const tools = cliproxyToolsForModel("gpt-5.5", "default");
+    const tools = cliproxyToolsForModel("gpt-5.6-sol", "default");
 
     expect(tools.some((tool) => tool.type === "function" && "name" in tool && tool.name === "desktop_read_file")).toBe(true);
     expect(tools).toContainEqual({

@@ -4,16 +4,16 @@ import { splitComposerSettingsForPersistence } from "../src/renderer/features/ch
 describe("composer settings persistence", () => {
   it("saves model and reasoning as global defaults for new chats", () => {
     const { globalSettings, threadSettings } = splitComposerSettingsForPersistence({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
     });
 
     expect(globalSettings).toEqual({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
     });
     expect(threadSettings).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
     });
   });

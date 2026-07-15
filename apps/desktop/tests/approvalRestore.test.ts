@@ -29,7 +29,7 @@ describe("approval restore", () => {
     const workspace = db.upsertWorkspace(tempDir);
     const thread = db.createThread(workspace.id);
     db.updateThreadSettings(thread.id, {
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       collaborationMode: "default",
       agentHarnessMode: "review_swarm",
@@ -46,7 +46,7 @@ describe("approval restore", () => {
     expect(bundle?.calls.map((call) => call.id)).toEqual(["provider-call:1/exec", "provider-call:2/exec"]);
     expect(bundle?.calls.map((call) => call.arguments.command)).toEqual(["npm test", "npm test"]);
     expect(bundle).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       collaborationMode: "default",
       agentHarnessMode: "review_swarm",
@@ -87,7 +87,7 @@ describe("approval restore", () => {
     db.saveRunCheckpoint({
       ...checkpoint(thread.id, assistant.id, workspace.path),
       version: 1,
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       collaborationMode: "plan",
       agentHarnessMode: "review_swarm",
@@ -96,7 +96,7 @@ describe("approval restore", () => {
     const bundle = new ApprovalCoordinator(db).restorePendingBundle(thread.id, "provider-call:1/exec", createRun);
 
     expect(bundle).toMatchObject({
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       collaborationMode: "plan",
       agentHarnessMode: "review_swarm",

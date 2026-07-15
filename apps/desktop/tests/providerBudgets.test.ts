@@ -21,7 +21,7 @@ const sseResponseWith = (chunks: string[]) => new Response(new ReadableStream({
 
 const baseOptions = (overrides: Partial<ProviderStreamOptions> = {}): ProviderStreamOptions => ({
   provider: "cliproxy",
-  model: "gpt-5.5",
+  model: "gpt-5.6-sol",
   systemInstruction: "system",
   messages: [{ role: "user", content: "hi", parts: [{ type: "text", text: "hi" }] }],
   reasoning: "medium",
@@ -65,7 +65,7 @@ describe("provider output budgets", () => {
     await new CliproxyAdapter().stream(baseOptions());
 
     const body = requestBodyAt(fetchMock, 0);
-    expect(body.model).toBe("gpt-5.5");
+    expect(body.model).toBe("gpt-5.6-sol");
     expect(body.max_output_tokens).toBe(32_000);
   });
 
@@ -91,7 +91,7 @@ describe("provider output budgets", () => {
   });
 
   it("keeps CLIProxy model aliasing centralized and preserves Antigravity Gemini 3.5 Flash", () => {
-    expect(resolveCliproxyModelId("gpt-5.5")).toBe("gpt-5.5");
+    expect(resolveCliproxyModelId("gpt-5.6-sol")).toBe("gpt-5.6-sol");
     expect(resolveCliproxyModelId("gemini-3.5-flash-cliproxy")).toBe("gemini-3-flash-agent");
     expect(cliproxyPromptCacheKey("thread-123")).toBe("privora:thread:thread-123:v1");
   });

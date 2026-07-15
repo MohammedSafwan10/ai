@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   GEMINI_31_FLASH_LITE_MODEL_ID,
+  GPT_56_LUNA_MODEL_ID,
+  GPT_56_SOL_MODEL_ID,
+  GPT_56_TERRA_MODEL_ID,
   OPENROUTER_MINIMAX_M3_MODEL_ID,
   getModelOption,
   normalizeModelId,
@@ -9,10 +12,22 @@ import {
 
 describe("desktop model metadata and runtime budgets", () => {
   it("defines verified long-context metadata for primary desktop models", () => {
-    expect(getModelOption("gpt-5.5")).toMatchObject({
+    expect(getModelOption(GPT_56_SOL_MODEL_ID)).toMatchObject({
       contextWindowTokens: 1_050_000,
       maxOutputTokens: 128_000,
       defaultOutputTokens: 32_000,
+      supportsImageInput: true,
+      supportsReasoning: true,
+    });
+    expect(getModelOption(GPT_56_TERRA_MODEL_ID)).toMatchObject({
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      supportsImageInput: true,
+      supportsReasoning: true,
+    });
+    expect(getModelOption(GPT_56_LUNA_MODEL_ID)).toMatchObject({
+      contextWindowTokens: 400_000,
+      maxOutputTokens: 128_000,
       supportsImageInput: true,
       supportsReasoning: true,
     });
@@ -57,13 +72,17 @@ describe("desktop model metadata and runtime budgets", () => {
     expect(normalizeModelId("gemini-3.1-flash-lite-preview")).toBe(GEMINI_31_FLASH_LITE_MODEL_ID);
   });
 
+  it("migrates the retired GPT-5.5 id to GPT-5.6 Sol", () => {
+    expect(normalizeModelId("gpt-5.5")).toBe(GPT_56_SOL_MODEL_ID);
+  });
+
   it("caps normal input budget while preserving a larger explicit context budget", () => {
-    const normal = resolveModelRuntimeBudget("gpt-5.5", "normal");
-    const large = resolveModelRuntimeBudget("gpt-5.5", "large_context");
+    const normal = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
+    const large = resolveModelRuntimeBudget("gpt-5.6-sol", "large_context");
 
     expect(normal.inputBudgetTokens).toBe(350_000);
     expect(large.inputBudgetTokens).toBe(965_500);
-    expect(normal.outputTokens).toBeLessThanOrEqual(getModelOption("gpt-5.5").maxOutputTokens || 0);
+    expect(normal.outputTokens).toBeLessThanOrEqual(getModelOption("gpt-5.6-sol").maxOutputTokens || 0);
     expect(large.messageCharLimit).toBe(40_000);
     expect(large.toolResultCharLimit).toBe(60_000);
   });

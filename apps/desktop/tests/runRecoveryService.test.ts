@@ -160,7 +160,7 @@ const checkpoint = (threadId: string, workspaceRoot: string) => ({
   iteration: 1,
   toolCount: 0,
   recoveryAttempts: 0,
-  model: "gpt-5.5",
+  model: "gpt-5.6-sol",
   reasoningEffort: "high" as const,
   collaborationMode: "plan" as const,
   agentHarnessMode: "standard" as const,
