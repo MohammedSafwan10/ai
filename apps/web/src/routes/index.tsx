@@ -34,7 +34,7 @@ const capabilities = [
 const modelNames = ["Gemini", "OpenRouter", "CLIProxy", "Bring your own key"];
 
 const demoVideoUrl =
-  "https://sgp.cloud.appwrite.io/v1/storage/buckets/marketing-assets/files/privora-demo-v1/view?project=69af9f0700103b7f3482";
+  "https://sgp.cloud.appwrite.io/v1/storage/buckets/marketing-assets/files/privora-demo-1080p-v2/view?project=69af9f0700103b7f3482";
 
 function ProductDemo({ playing, onPlay, onReset }: { playing: boolean; onPlay: () => void; onReset: () => void }) {
   const [videoStatus, setVideoStatus] = React.useState<"loading" | "ready" | "error">("loading");
