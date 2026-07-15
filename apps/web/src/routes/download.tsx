@@ -2,7 +2,8 @@ import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Apple, ArrowDownToLine, Check, CirclePlay, Cpu, HardDrive, Monitor, ShieldCheck, Terminal } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { WINDOWS_DESKTOP_DOWNLOAD_URL } from "@/lib/desktop-download";
+import { WINDOWS_DESKTOP_DOWNLOAD_URL, WINDOWS_DESKTOP_RELEASE_URL } from "@/lib/desktop-download";
+import { PRIVORA_DEMO_VIDEO_URL } from "@/lib/marketing-assets";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/download")({ component: DownloadPage });
@@ -15,6 +16,20 @@ const requirements = [
 
 function DownloadPage() {
   const [playing, setPlaying] = React.useState(false);
+  const [version, setVersion] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const controller = new AbortController();
+    fetch(WINDOWS_DESKTOP_RELEASE_URL, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Release metadata unavailable")))
+      .then((release: { version?: unknown }) => {
+        if (typeof release.version === "string" && /^\d+\.\d+\.\d+$/.test(release.version)) setVersion(release.version);
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setVersion(null);
+      });
+    return () => controller.abort();
+  }, []);
 
   return (
     <>
@@ -25,9 +40,9 @@ function DownloadPage() {
             <h1 className="mt-7 text-5xl font-semibold leading-[.98] tracking-[-0.06em] md:text-7xl">Your agent.<br />On your machine.</h1>
             <p className="mt-7 max-w-xl text-lg leading-8 text-muted-foreground">Run Privora inside your real project folders with local tools, visible approvals, and the models you choose.</p>
             <a href={WINDOWS_DESKTOP_DOWNLOAD_URL} className={cn(buttonVariants({ size: "lg" }), "hero-primary mt-9 w-full sm:w-auto")}>
-              <ArrowDownToLine className="h-5 w-5" /> Download for Windows
+              <ArrowDownToLine className="h-5 w-5" /> {version ? `Download v${version} for Windows` : "Download for Windows"}
             </a>
-            <p className="mt-4 text-xs text-white/40">Windows x64 · Stable channel · Automatic updates</p>
+            <p className="mt-4 text-xs text-white/40">Windows x64 · {version ? `Version ${version}` : "Latest stable version"} · Automatic updates</p>
           </div>
 
           <div className="relative">
@@ -38,7 +53,7 @@ function DownloadPage() {
                 <span className="mx-auto">Privora · Workspace</span>
               </div>
               <div className="relative aspect-video overflow-hidden bg-[#070a10]">
-                {playing ? <video className="h-full w-full object-cover" src="/privora-demo.mp4" controls autoPlay playsInline aria-label="Privora desktop demo" /> : <button type="button" className="group block h-full w-full" onClick={() => setPlaying(true)} aria-label="Play Privora desktop demo"><img src="/privora-poster.png" alt="Privora desktop workspace" className="h-full w-full object-cover object-[center_35%] opacity-90 transition duration-500 group-hover:scale-[1.015] group-hover:opacity-100" /><span className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/20 bg-black/75 px-5 py-2.5 text-[10px] font-bold uppercase tracking-[.16em] text-white backdrop-blur-md"><CirclePlay className="h-4 w-4 text-primary" /> Play demo</span></button>}
+                {playing ? <video className="h-full w-full object-cover" src={PRIVORA_DEMO_VIDEO_URL} poster="/privora-poster.png" controls autoPlay muted playsInline preload="auto" aria-label="Privora desktop demo" /> : <button type="button" className="group block h-full w-full" onClick={() => setPlaying(true)} aria-label="Play Privora desktop demo"><img src="/privora-poster.png" alt="Privora desktop workspace" className="h-full w-full object-cover object-[center_35%] opacity-90 transition duration-500 group-hover:scale-[1.015] group-hover:opacity-100" /><span className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/20 bg-black/75 px-5 py-2.5 text-[10px] font-bold uppercase tracking-[.16em] text-white backdrop-blur-md"><CirclePlay className="h-4 w-4 text-primary" /> Play demo</span></button>}
               </div>
               <div className="grid grid-cols-3 border-t border-white/[0.08] text-center text-[10px] uppercase tracking-[0.12em] text-white/45">
                 <span className="border-r border-white/[0.08] py-3">Local workspace</span><span className="border-r border-white/[0.08] py-3">Approval controls</span><span className="py-3">Your models</span>

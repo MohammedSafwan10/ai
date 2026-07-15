@@ -9,6 +9,7 @@ const bucketId = process.env.RELEASES_BUCKET_ID || "desktop-releases";
 const noStoreHeaders = {
   "cache-control": "no-store, no-cache, must-revalidate",
   "pragma": "no-cache",
+  "access-control-allow-origin": "*",
 };
 const jsonHeaders = { "content-type": "application/json; charset=utf-8", ...noStoreHeaders };
 const textHeaders = { "content-type": "text/plain; charset=utf-8", ...noStoreHeaders };

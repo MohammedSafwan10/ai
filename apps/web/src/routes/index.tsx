@@ -20,6 +20,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { PRIVORA_DEMO_VIDEO_URL } from "@/lib/marketing-assets";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({ component: HomePage });
@@ -32,9 +33,6 @@ const capabilities = [
 ];
 
 const modelNames = ["Gemini", "OpenRouter", "CLIProxy", "Bring your own key"];
-
-const demoVideoUrl =
-  "https://sgp.cloud.appwrite.io/v1/storage/buckets/marketing-assets/files/privora-demo-1080p-v2/view?project=69af9f0700103b7f3482";
 
 function ProductDemo({ playing, onPlay, onReset }: { playing: boolean; onPlay: () => void; onReset: () => void }) {
   const [videoStatus, setVideoStatus] = React.useState<"loading" | "ready" | "error">("loading");
@@ -67,7 +65,7 @@ function ProductDemo({ playing, onPlay, onReset }: { playing: boolean; onPlay: (
             <>
               <video
                 className="block h-full w-full bg-[#080b13] object-cover"
-                src={demoVideoUrl}
+                src={PRIVORA_DEMO_VIDEO_URL}
                 poster="/privora-poster.png"
                 controls
                 autoPlay
