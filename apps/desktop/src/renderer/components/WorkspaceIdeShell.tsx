@@ -13,6 +13,9 @@ import { NotesPanel } from "../features/notes/NotesPanel";
 
 loader.config({ monaco });
 
+const REVIEW_ORIGINAL_MODEL_PATH = "inmemory://privora/review/original";
+const REVIEW_MODIFIED_MODEL_PATH = "inmemory://privora/review/modified";
+
 interface WorkspaceIdeShellProps {
   workspace: WorkspaceRecord | null;
   reviewSession: ReviewSession | null;
@@ -470,13 +473,25 @@ function ReviewSurface({
     <div className="workspace-monaco-wrap">
       {file.partial && <div className="workspace-file-notice">{file.note}</div>}
       <DiffEditor
-        key={`${file.oldPath || ""}->${file.path}`}
         height="100%"
         original={file.original}
         modified={file.modified}
         language={file.language}
+        originalModelPath={REVIEW_ORIGINAL_MODEL_PATH}
+        modifiedModelPath={REVIEW_MODIFIED_MODEL_PATH}
+        keepCurrentOriginalModel
+        keepCurrentModifiedModel
         theme="vs-dark"
-        onMount={onMount}
+        onMount={(editor) => {
+          const model = editor.getModel();
+          if (model) {
+            model.original.setValue(file.original);
+            model.modified.setValue(file.modified);
+            monaco.editor.setModelLanguage(model.original, file.language);
+            monaco.editor.setModelLanguage(model.modified, file.language);
+          }
+          onMount(editor);
+        }}
         options={{
           readOnly: true,
           domReadOnly: true,

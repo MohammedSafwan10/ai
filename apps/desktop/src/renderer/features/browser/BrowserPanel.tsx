@@ -115,6 +115,13 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
     void window.privoraDesktop.setBrowserVisible(activeWorkspaceId, visible);
   }, [activeWorkspaceId, visible]);
 
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    return () => {
+      void window.privoraDesktop.setBrowserVisible(activeWorkspaceId, false).catch((error) => console.error(error));
+    };
+  }, [activeWorkspaceId]);
+
   const sendBounds = () => {
     if (!activeWorkspaceId || !visible || !viewportRef.current || !browserState) return;
     const rect = viewportRef.current.getBoundingClientRect();
