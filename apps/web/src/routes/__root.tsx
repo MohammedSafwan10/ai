@@ -10,13 +10,13 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Privora - Local-first agent workspace" },
+      { title: "Privora — Your codebase. Your tools. Your agent." },
       {
         name: "description",
-        content: "Privora is a local-first agent workspace with BYOK support, hosted AI credits, secure desktop updates, and transparent SaaS billing.",
+        content: "Privora is a local-first coding agent with real file and terminal tools, reviewable changes, a built-in browser, Reviewer Swarm, and your choice of models.",
       },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [{ rel: "stylesheet", href: appCss }, { rel: "icon", href: "/favicon.png", type: "image/png" }],
   }),
   component: RootComponent,
   notFoundComponent: NotFound,
