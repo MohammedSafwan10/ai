@@ -13,6 +13,7 @@ import {
   FolderCode,
   Globe2,
   KeyRound,
+  LoaderCircle,
   LockKeyhole,
   ShieldCheck,
   Sparkles,
@@ -32,7 +33,16 @@ const capabilities = [
 
 const modelNames = ["Gemini", "OpenRouter", "CLIProxy", "Bring your own key"];
 
-function ProductDemo({ playing, onPlay }: { playing: boolean; onPlay: () => void }) {
+const demoVideoUrl =
+  "https://sgp.cloud.appwrite.io/v1/storage/buckets/marketing-assets/files/privora-demo-v1/view?project=69af9f0700103b7f3482";
+
+function ProductDemo({ playing, onPlay, onReset }: { playing: boolean; onPlay: () => void; onReset: () => void }) {
+  const [videoStatus, setVideoStatus] = React.useState<"loading" | "ready" | "error">("loading");
+
+  React.useEffect(() => {
+    if (playing) setVideoStatus("loading");
+  }, [playing]);
+
   return (
     <div id="demo" className="product-stage scroll-mt-24">
       <div className="product-glow" />
@@ -54,7 +64,39 @@ function ProductDemo({ playing, onPlay }: { playing: boolean; onPlay: () => void
         </div>
         <div className="relative aspect-video overflow-hidden bg-[#080b13]">
           {playing ? (
-            <video className="block h-full w-full bg-[#080b13] object-cover" src="/privora-demo.mp4" controls autoPlay playsInline aria-label="Privora product demonstration" />
+            <>
+              <video
+                className="block h-full w-full bg-[#080b13] object-cover"
+                src={demoVideoUrl}
+                poster="/privora-poster.png"
+                controls
+                autoPlay
+                muted
+                playsInline
+                preload="auto"
+                onCanPlay={() => setVideoStatus("ready")}
+                onPlaying={() => setVideoStatus("ready")}
+                onError={() => setVideoStatus("error")}
+                aria-label="Privora product demonstration"
+              />
+              {videoStatus === "loading" ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-[#080b13]/45 backdrop-blur-[2px]" role="status" aria-live="polite">
+                  <span className="flex items-center gap-2.5 rounded-full border border-white/15 bg-black/70 px-4 py-2 text-xs font-medium text-white">
+                    <LoaderCircle className="h-4 w-4 animate-spin text-primary" /> Loading demo…
+                  </span>
+                </div>
+              ) : null}
+              {videoStatus === "error" ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-[#080b13]/80 px-6 text-center">
+                  <div>
+                    <p className="text-sm font-semibold text-white">The demo could not load.</p>
+                    <button type="button" onClick={onReset} className="mt-3 rounded-md border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/15">
+                      Try again
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </>
           ) : (
             <button type="button" className="group block h-full w-full overflow-hidden text-left" onClick={onPlay} aria-label="Play the Privora product demonstration">
               <img src="/privora-poster.png" alt="Privora running a polished browser game inside its desktop workspace" className="h-full w-full object-cover object-[center_32%] opacity-90 transition duration-500 group-hover:scale-[1.015] group-hover:opacity-100" />
@@ -106,7 +148,7 @@ function HomePage() {
               <span><ShieldCheck /> Your data stays yours</span>
             </div>
           </div>
-          <div className="hero-product"><ProductDemo playing={demoPlaying} onPlay={playDemo} /></div>
+          <div className="hero-product"><ProductDemo playing={demoPlaying} onPlay={playDemo} onReset={() => setDemoPlaying(false)} /></div>
         </div>
       </section>
 
