@@ -3,6 +3,8 @@ import type {
   ApprovalDecisionInput,
   RequestUserInputResponseInput,
   StartTurnInput,
+  SteerTurnInput,
+  SteerTurnResult,
   TerminalSessionRecord,
 } from "../../../shared/types";
 import type { DesktopToolOrchestrator } from "../tools/orchestrator";
@@ -14,6 +16,7 @@ export interface HarnessTerminalState {
 
 export interface AgentHarnessApi {
   startTurn(input: StartTurnInput): Promise<void>;
+  steerTurn(input: SteerTurnInput): Promise<SteerTurnResult>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): void;
   answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;

@@ -257,6 +257,57 @@ describe("file tools v2", () => {
     expect(fs.readFileSync(path.join(tempDir, "app.ts"), "utf8")).toContain("export { value };");
   });
 
+  it("does not report unchanged writes, edits, or patch files as mutations", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
+    fs.writeFileSync(path.join(tempDir, "a.ts"), "const a = 1;\n", "utf8");
+    fs.writeFileSync(path.join(tempDir, "b.ts"), "const b = 1;\n", "utf8");
+
+    const write = await execute({
+      id: "write-noop",
+      name: "desktop_write_file",
+      arguments: { path: "a.ts", content: "const a = 1;\n" },
+    });
+    expect(write.success).toBe(true);
+    expect(write.diffFiles).toBeUndefined();
+    expect(write.data).toMatchObject({ changed: [], mutated: false });
+
+    const edit = await execute({
+      id: "edit-noop",
+      name: "desktop_edit_file",
+      arguments: {
+        path: "a.ts",
+        operations: [{ type: "replace_text", match: "const a = 1;", replacement: "const a = 1;" }],
+      },
+    });
+    expect(edit.success).toBe(true);
+    expect(edit.diffFiles).toBeUndefined();
+    expect(edit.data).toMatchObject({ changed: [], mutated: false });
+
+    const patch = await execute({
+      id: "patch-with-noop-file",
+      name: "desktop_apply_patch",
+      arguments: {
+        patch: [
+          "*** Begin Patch",
+          "*** Update File: a.ts",
+          "@@",
+          "-const a = 1;",
+          "+const a = 1;",
+          "*** Update File: b.ts",
+          "@@",
+          "-const b = 1;",
+          "+const b = 2;",
+          "*** End Patch",
+        ].join("\n"),
+      },
+    });
+    expect(patch.success).toBe(true);
+    expect(patch.data).toMatchObject({ mutated: true, changed: ["Patched b.ts"] });
+    expect(patch.diffFiles).toHaveLength(1);
+    expect(patch.diffFiles?.[0]).toMatchObject({ path: "b.ts", additions: 1, deletions: 1 });
+    expect(patch.data?.warnings).toContain("Skipped a.ts: patch produced no content change.");
+  });
+
   it("rejects structured edits when expectedPreviousHash is stale", async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
     fs.writeFileSync(path.join(tempDir, "app.ts"), "const value = 1;\n", "utf8");

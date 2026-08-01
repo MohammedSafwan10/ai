@@ -394,6 +394,25 @@
   background: color-mix(in srgb, var(--privora-bg) 78%, var(--privora-surface));
 }
 
+.tool-live-file-draft {
+  display: grid;
+  gap: 3px;
+  max-width: min(100%, 52rem);
+  margin-top: 4px;
+}
+
+.tool-live-file-draft > small {
+  color: var(--privora-muted);
+  font-size: 9.5px;
+  letter-spacing: .02em;
+}
+
+.tool-live-file-draft .tool-live-output {
+  margin-top: 0;
+  max-height: 150px;
+  overscroll-behavior: contain;
+}
+
 .terminal-output-wrap {
   display: grid;
   gap: 7px;

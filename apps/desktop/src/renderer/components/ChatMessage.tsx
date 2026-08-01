@@ -33,6 +33,7 @@ const markdownComponents = {
 
 interface ChatMessageProps {
   message: ChatMessageRecord;
+  inlineSteers?: ChatMessageRecord[];
   tools: ToolEventRecord[];
   subagents: SubagentRecord[];
   activeRunStatus: string | null;
@@ -49,6 +50,7 @@ interface ChatMessageProps {
 
 function ChatMessageComponent({
   message,
+  inlineSteers = [],
   tools,
   subagents,
   activeRunStatus,
@@ -66,16 +68,16 @@ function ChatMessageComponent({
   const hasAttachments = (message.attachments || []).length > 0;
   const runActive = !isUser && (isActiveTurnStatus(activeRunStatus) || isActiveTurnStatus(message.status));
   const renderParts = useMemo(
-    () => isUser ? [] : buildAssistantRenderParts(message, tools, runActive),
-    [isUser, message, runActive, tools],
+    () => isUser ? [] : buildAssistantRenderParts(message, tools, runActive, inlineSteers),
+    [inlineSteers, isUser, message, runActive, tools],
   );
   const { activityParts, finalTextParts } = useMemo(
-    () => splitAssistantActivityAndFinalText(renderParts),
-    [renderParts],
+    () => splitAssistantActivityAndFinalText(renderParts, inlineSteers.length > 0),
+    [inlineSteers.length, renderParts],
   );
   const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
   const activityNeedsAttention = renderParts.some((part) =>
-    part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval")
+    part.type === "steer" || (part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval"))
   );
   const [activityOpen, setActivityOpen] = useState(runActive || activityNeedsAttention);
   useEffect(() => {
@@ -140,6 +142,9 @@ function ChatMessageComponent({
                               />
                             );
                           }
+                          if (part.type === "steer") {
+                            return <InlineSteerMessage key={part.key} message={part.message} />;
+                          }
                           return (
                             <div
                               key={part.key}
@@ -169,9 +174,7 @@ function ChatMessageComponent({
                       </div>
                     ))}
                   </>
-                ) : (
-                  <ThoughtPanel thought="" active={runActive} />
-                )}
+                ) : null}
               </div>
               {!runActive && (
                 <TurnReviewCard
@@ -199,6 +202,7 @@ function ChatMessageComponent({
 
 export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.message === next.message &&
+  previous.inlineSteers === next.inlineSteers &&
   previous.tools === next.tools &&
   previous.subagents === next.subagents &&
   previous.activeRunStatus === next.activeRunStatus &&
@@ -211,7 +215,8 @@ export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
 type AssistantRenderPart =
   | { type: "thought"; key: string; thought: string; active: boolean }
   | { type: "text"; key: string; text: string; phase: AssistantTextPhase; startOffset: number; endOffset: number }
-  | { type: "tools"; key: string; tools: ToolEventRecord[]; defaultOpen: boolean };
+  | { type: "tools"; key: string; tools: ToolEventRecord[]; defaultOpen: boolean }
+  | { type: "steer"; key: string; message: ChatMessageRecord };
 
 type AssistantTextRenderPart = Extract<AssistantRenderPart, { type: "text" }>;
 
@@ -232,12 +237,21 @@ type AssistantTimelineItem =
       createdAt: number;
       streamOrder?: number;
       tool: ToolEventRecord;
+    }
+  | {
+      type: "steer";
+      key: string;
+      offset: number;
+      createdAt: number;
+      streamOrder?: number;
+      message: ChatMessageRecord;
     };
 
-function buildAssistantRenderParts(
+export function buildAssistantRenderParts(
   message: ChatMessageRecord,
   tools: ToolEventRecord[],
   runActive: boolean,
+  inlineSteers: ChatMessageRecord[] = [],
 ): AssistantRenderPart[] {
   const parts: AssistantRenderPart[] = [];
   const content = message.content || "";
@@ -250,6 +264,14 @@ function buildAssistantRenderParts(
       createdAt: tool.createdAt,
       streamOrder: tool.streamOrder,
       tool,
+    })),
+    ...inlineSteers.map((steer) => ({
+      type: "steer" as const,
+      key: `steer-${steer.id}`,
+      offset: steer.steerTextOffset ?? content.length,
+      createdAt: steer.createdAt,
+      streamOrder: steer.steerStreamOrder,
+      message: steer,
     })),
   ].sort(compareTimelineItems);
 
@@ -275,8 +297,11 @@ function buildAssistantRenderParts(
     if (item.type === "thought") {
       flushPendingTools(`before-thought-${index}`);
       parts.push({ type: "thought", key: item.key, thought: item.thought, active: item.active });
-    } else {
+    } else if (item.type === "tool") {
       pendingTools.push(item.tool);
+    } else {
+      flushPendingTools(`before-steer-${index}`);
+      parts.push({ type: "steer", key: item.key, message: item.message });
     }
     cursor = Math.max(cursor, offset);
   });
@@ -338,7 +363,7 @@ function buildThoughtTimelineItems(
       const next = storedParts[index + 1];
       const thoughtText = thought.slice(part.thoughtOffset, next?.thoughtOffset ?? thought.length);
       const isLast = index === storedParts.length - 1;
-      if (!thoughtText.trim() && !(thoughtActive && isLast)) return [];
+      if (!thoughtText.trim()) return [];
       return [{
         type: "thought" as const,
         key: `thought-${part.id}`,
@@ -351,7 +376,7 @@ function buildThoughtTimelineItems(
     });
   }
 
-  if (thought.trim() || (thoughtActive && !message.content.trim() && tools.length === 0)) {
+  if (thought.trim()) {
     return [{
       type: "thought",
       key: `thought-${message.id}`,
@@ -447,7 +472,19 @@ function compareTimelineItems(a: AssistantTimelineItem, b: AssistantTimelineItem
 }
 
 function timelineRank(item: AssistantTimelineItem) {
-  return item.type === "thought" ? 0 : 1;
+  if (item.type === "thought") return 0;
+  if (item.type === "steer") return 1;
+  return 2;
+}
+
+function InlineSteerMessage({ message }: { message: ChatMessageRecord }) {
+  return (
+    <div className="inline-steer-message" aria-label="Steering message">
+      <span className="inline-steer-label">Steered</span>
+      {(message.attachments || []).length > 0 && <AttachmentGrid attachments={message.attachments || []} />}
+      {message.content && <UserMessageContent content={message.content} />}
+    </div>
+  );
 }
 
 function clampOffset(offset: number, max: number) {
@@ -709,7 +746,8 @@ const splitProposedPlan = (text: string): Array<{ type: "text" | "plan"; text: s
   ].filter((part) => part.text.length > 0);
 };
 
-function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[]) {
+function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[], preserveTimeline = false) {
+  if (preserveTimeline) return { activityParts: parts, finalTextParts: [] as AssistantTextRenderPart[] };
   return {
     activityParts: parts.filter((part) => part.type !== "text" || part.phase === "commentary"),
     finalTextParts: parts.filter((part): part is AssistantTextRenderPart =>
@@ -945,6 +983,7 @@ const attachmentSrc = (attachment: DesktopAttachmentRecord) => attachment.url;
 
 function ThoughtPanel({ thought, active }: { thought: string; active: boolean }) {
   const hasThought = thought.trim().length > 0;
+  const displayThought = normalizeThoughtMarkdown(thought);
   const shouldShowLabel = active || hasThought;
   const [open, setOpen] = useState(false);
 
@@ -968,7 +1007,7 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
         {shouldShowLabel && (
           <>
             <span className={active ? "animate-text-shimmer" : undefined}>
-              {active ? "Thinking" : "Thought process"}
+              {active ? "Thinking" : "Reasoning summary"}
             </span>
             {hasThought && <ChevronDown className={clsx("thought-chevron", !open && "closed")} size={14} />}
           </>
@@ -977,13 +1016,16 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
       {open && hasThought && (
         <div className="privora-thought-panel">
           <div className="privora-thought-content markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thought}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{displayThought}</ReactMarkdown>
           </div>
         </div>
       )}
     </div>
   );
 }
+
+export const normalizeThoughtMarkdown = (thought: string) =>
+  thought.replace(/\*{4}(?=\S)/g, "**\n\n**");
 
 function TypingIndicator({
   size = 28,

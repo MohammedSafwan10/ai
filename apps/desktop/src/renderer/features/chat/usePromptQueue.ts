@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput } from "../../../shared/types";
+import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput, SteerTurnInput, SteerTurnResult } from "../../../shared/types";
 
 type TurnSettings = Pick<StartTurnInput, "model" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">;
 
@@ -21,20 +21,24 @@ export interface QueuedPrompt {
 
 interface PromptQueueInput {
   activeThreadId: string | null;
+  activeTurnId?: string | null;
   running: boolean;
   resumableBlocked?: boolean;
   onDraft: (draft: ComposerDraft | null) => void;
   startTurn: (input: StartTurnInput) => Promise<void>;
+  steerTurn: (input: SteerTurnInput) => Promise<SteerTurnResult>;
   stopTurn: (threadId: string) => Promise<void>;
   turnSettings?: TurnSettings;
 }
 
 export const usePromptQueue = ({
   activeThreadId,
+  activeTurnId = null,
   running,
   resumableBlocked = false,
   onDraft,
   startTurn,
+  steerTurn,
   stopTurn,
   turnSettings = {},
 }: PromptQueueInput) => {
@@ -42,6 +46,8 @@ export const usePromptQueue = ({
   const [queuePaused, setQueuePaused] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
+  const [steeringPromptId, setSteeringPromptId] = useState<string | null>(null);
+  const [steerError, setSteerError] = useState<string | null>(null);
   const directSubmitInFlightRef = useRef(false);
   const queuedSubmitInFlightRef = useRef(false);
 
@@ -52,6 +58,8 @@ export const usePromptQueue = ({
     setQueuePaused(false);
     setQueueExpanded(false);
     setStoppingThreadId(null);
+    setSteeringPromptId(null);
+    setSteerError(null);
     directSubmitInFlightRef.current = false;
     queuedSubmitInFlightRef.current = false;
   }, [activeThreadId]);
@@ -176,6 +184,27 @@ export const usePromptQueue = ({
     setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
   }, []);
 
+  const steerQueuedPrompt = useCallback(async (item: QueuedPrompt) => {
+    if (!activeThreadId || !activeTurnId || !running || steeringPromptId) return;
+    setSteeringPromptId(item.id);
+    setSteerError(null);
+    try {
+      const result = await steerTurn({
+        threadId: activeThreadId,
+        expectedTurnId: activeTurnId,
+        prompt: item.prompt,
+        attachments: item.attachments,
+        contextMentions: item.contextMentions,
+      });
+      if (result.turnId !== activeTurnId) throw new Error("The active turn changed before steering completed.");
+      setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
+    } catch (error) {
+      setSteerError(error instanceof Error ? error.message : "Could not steer the active turn.");
+    } finally {
+      setSteeringPromptId(null);
+    }
+  }, [activeThreadId, activeTurnId, running, steerTurn, steeringPromptId]);
+
   const queuedHead = queuedPrompts[0] || null;
   const queuedRest = useMemo(() => queuedPrompts.slice(1), [queuedPrompts]);
 
@@ -189,6 +218,9 @@ export const usePromptQueue = ({
     removeQueuedPrompt,
     runQueuedPrompt,
     setQueueExpanded,
+    steerError,
+    steerQueuedPrompt,
+    steeringPromptId,
     startPrompt,
     stopActiveTurn,
     stopping,

@@ -23,7 +23,7 @@ import type {
   TurnUndoRecord,
   WorkspaceRecord,
 } from "../../shared/types";
-import { GEMINI_35_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
+import { GEMINI_36_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
 import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
 
@@ -88,7 +88,7 @@ const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(a
 
 const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "privoraAccountConnected"> => ({
   id: "default",
-  model: GEMINI_35_FLASH_MODEL_ID,
+  model: GEMINI_36_FLASH_MODEL_ID,
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
   collaborationMode: "default",
@@ -417,10 +417,10 @@ export class DesktopStore {
     return item ? this.hydrateTool(item) : null;
   }
   listActiveDraftToolEvents(threadId: string, messageId: string) {
-    return this.allStoredTools("SELECT payload FROM tool_events WHERE thread_id = ? AND message_id = ? AND call_id LIKE 'draft_%' AND status IN ('preparing','running') ORDER BY created_at, id", threadId, messageId);
+    return this.allStoredTools("SELECT payload FROM tool_events WHERE thread_id = ? AND message_id = ? AND status IN ('preparing','running') ORDER BY created_at, id", threadId, messageId);
   }
-  listPreparingToolEvents(threadId: string, name: string) {
-    return this.allStoredTools("SELECT payload FROM tool_events WHERE thread_id = ? AND name = ? AND status = 'preparing' ORDER BY created_at DESC, id DESC LIMIT 100", threadId, name);
+  listPreparingToolEvents(threadId: string, messageId: string, name: string) {
+    return this.allStoredTools("SELECT payload FROM tool_events WHERE thread_id = ? AND message_id = ? AND name = ? AND status = 'preparing' ORDER BY created_at DESC, id DESC LIMIT 100", threadId, messageId, name);
   }
   listToolEventsForMessages(threadId: string, messageIds: string[]) {
     if (!messageIds.length) return [];

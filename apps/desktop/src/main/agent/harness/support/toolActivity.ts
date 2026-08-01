@@ -24,11 +24,60 @@ export const activityItemsForTool = (call: DesktopToolCall, diff?: string, diffF
   const diffItems = diffActivityItems(diff) || [];
   if (diffItems.length > 0) return diffItems;
   if (call.name === "desktop_apply_patch") return patchActivityItems(String(call.arguments.patch || ""));
-  if (call.name === "desktop_edit_file") return [{ verb: "Editing", path: String(call.arguments.path || "") }];
+  if (call.name === "desktop_edit_file") return [streamingEditActivity(call)];
   if (call.name === "desktop_write_file") return [{ verb: "Writing", path: String(call.arguments.path || "") }];
   if (call.name === "desktop_delete_path") return [{ verb: "Deleting", path: String(call.arguments.path || "") }];
   if (call.name === "desktop_rename_path") return [{ verb: "Renaming", path: `${call.arguments.fromPath || ""} -> ${call.arguments.toPath || ""}` }];
   return [];
+};
+
+export const reconcileToolActivities = (
+  explicit: ToolEventRecord["activities"] | undefined,
+  computed: ToolEventRecord["activities"] | undefined,
+  existing: ToolEventRecord["activities"] | undefined,
+  hasAuthoritativeDiffFiles: boolean,
+): ToolEventRecord["activities"] => {
+  if (explicit !== undefined) return explicit;
+  if (hasAuthoritativeDiffFiles || (computed?.length || 0) > 0) return computed;
+  return existing;
+};
+
+const streamingEditActivity = (call: DesktopToolCall) => {
+  const operations = Array.isArray(call.arguments.operations) ? call.arguments.operations : [];
+  let additions = 0;
+  let deletions = 0;
+  operations.forEach((operation) => {
+    if (!operation || typeof operation !== "object") return;
+    const item = operation as Record<string, unknown>;
+    const type = String(item.type || "");
+    if (type === "replace_range" || type === "delete_range") {
+      const start = Number(item.startLine);
+      const end = Number(item.endLine);
+      if (Number.isFinite(start) && Number.isFinite(end) && end >= start) deletions += end - start + 1;
+      if (type === "replace_range") additions += textLineCount(item.content);
+      return;
+    }
+    if (type === "replace_text") {
+      deletions += textLineCount(item.match);
+      additions += textLineCount(item.replacement);
+      return;
+    }
+    if (type === "insert_text" || type === "append") additions += textLineCount(item.content);
+  });
+  return {
+    verb: "Editing",
+    path: String(call.arguments.path || ""),
+    additions,
+    deletions,
+  };
+};
+
+const textLineCount = (value: unknown) => {
+  if (typeof value !== "string" || value.length === 0) return 0;
+  const normalized = value.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  if (normalized.endsWith("\n")) lines.pop();
+  return Math.max(1, lines.length);
 };
 
 export const patchActivityItems = (patch: string): ToolEventRecord["activities"] => {
@@ -159,27 +208,27 @@ export const titleForTool = (call: DesktopToolCall) => {
     case "save_generated_image":
       return `Save generated image ${args.destinationPath || args.destination_path || ""}`.trim();
     case "browser_open":
-      return `Open browser ${args.url || ""}`.trim();
+      return `Open ${compactToolLabel(args.url, "page")}`;
     case "browser_open_link":
-      return `Open browser link ${args.text || args.ref || args.targetRef || ""}`.trim();
+      return `Open link ${compactToolLabel(args.text || args.ref || args.targetRef, "")}`.trim();
     case "browser_snapshot":
-      return "Capture browser snapshot";
+      return "Inspect page controls";
     case "browser_act":
-      return `Browser ${args.action || "action"}`;
+      return browserActionTitle(args, false);
     case "browser_inspect":
-      return `Inspect browser ${args.kind || ""}`.trim();
+      return `Inspect ${compactToolLabel(args.kind, "page")}`;
     case "browser_extract":
-      return `Extract browser ${args.mode || "content"}`;
+      return `Read page ${compactToolLabel(args.mode, "content")}`;
     case "browser_wait":
-      return `Wait for browser ${args.for || args.kind || ""}`.trim();
+      return `Wait for ${compactToolLabel(args.value || args.ref || args.for || args.kind, "page readiness")}`;
     case "browser_screenshot":
-      return `Screenshot browser ${args.mode || "viewport"}`;
+      return `Capture ${compactToolLabel(args.mode, "viewport")} screenshot`;
     case "browser_evidence":
-      return "Collect browser evidence";
+      return "Collect page evidence";
     case "browser_search":
-      return `Search browser ${args.query || ""}`.trim();
+      return `Search web for ${compactToolLabel(args.query, "query")}`;
     case "browser_tab":
-      return `Browser tab ${args.action || "list"}`;
+      return `${browserTabActionTitle(args.action)}`;
     case "browser_downloads":
       return `Browser downloads ${args.action || "list"}`;
     case "browser_shields":
@@ -195,9 +244,19 @@ export const titleForTool = (call: DesktopToolCall) => {
     case "browser_form_submit":
       return "Submit browser form";
     case "browser_trace":
-      return `Trace browser ${args.action || "action"}`;
+      return browserActionTitle(args, true);
     case "browser_verify":
-      return "Verify browser";
+      return "Verify page health";
+    case "browser_capabilities":
+      return "Check browser capabilities";
+    case "browser_workflow":
+      return `${browserWorkflowActionTitle(args.action)} workflow`;
+    case "browser_assert":
+      return `${browserAssertionActionTitle(args.action)} browser assertion`;
+    case "browser_evidence_vault":
+      return `${browserEvidenceActionTitle(args.action)} browser evidence`;
+    case "browser_diagnose":
+      return "Diagnose browser failure";
     case "notes_list":
       return "List notes";
     case "notes_create":
@@ -274,6 +333,38 @@ export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["categor
   return "other";
 };
 
+const compactToolLabel = (value: unknown, fallback: string) => {
+  const label = String(value || "").replace(/_/g, " ").trim();
+  return label ? (label.length > 80 ? `${label.slice(0, 77)}...` : label) : fallback;
+};
+
+const browserActionTitle = (args: Record<string, unknown>, traced: boolean) => {
+  const action = String(args.action || "action").toLowerCase();
+  const target = compactToolLabel(args.text || args.value || args.ref || args.targetRef, "page");
+  const verb = action === "click" ? "Click"
+    : action === "type" ? "Type into"
+      : action === "fill" ? "Fill"
+        : action === "press" ? `Press ${compactToolLabel(args.key, "key")} on`
+          : action === "scroll" ? "Scroll"
+            : action === "select" ? "Select from"
+              : action === "resize" ? "Resize"
+                : "Use";
+  return `${traced ? "Trace: " : ""}${verb} ${target}`;
+};
+
+const browserTabActionTitle = (value: unknown) => {
+  const action = String(value || "list").toLowerCase();
+  if (action === "new") return "Open new browser tab";
+  if (action === "switch") return "Switch browser tab";
+  if (action === "close") return "Close browser tab";
+  if (action === "close_all_except") return "Clean up browser tabs";
+  return "List browser tabs";
+};
+
+const browserWorkflowActionTitle = (value: unknown) => compactToolLabel(value, "Manage").replace(/^./, (char) => char.toUpperCase());
+const browserAssertionActionTitle = (value: unknown) => compactToolLabel(value, "Check").replace(/^./, (char) => char.toUpperCase());
+const browserEvidenceActionTitle = (value: unknown) => compactToolLabel(value, "Manage").replace(/^./, (char) => char.toUpperCase());
+
 export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord["status"]) => {
   if (status === "done") return undefined;
   if (status === "awaiting_approval") return "Waiting for approval";
@@ -305,13 +396,13 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "browser_open") return "Opening browser";
     if (call.name === "browser_open_link") return "Opening browser link";
     if (call.name === "browser_snapshot") return "Capturing browser";
-    if (call.name === "browser_act") return "Using browser";
+    if (call.name === "browser_act") return `${browserActionTitle(call.arguments, false)}…`;
     if (call.name === "browser_inspect") return "Inspecting browser";
     if (call.name === "browser_extract") return "Extracting browser";
     if (call.name === "browser_wait") return "Waiting for browser";
     if (call.name === "browser_screenshot") return "Capturing screenshot";
     if (call.name === "browser_evidence") return "Collecting evidence";
-    if (call.name === "browser_search") return "Searching browser";
+    if (call.name === "browser_search") return "Searching the web";
     if (call.name === "browser_tab") return "Managing browser tabs";
     if (call.name === "browser_downloads") return "Managing downloads";
     if (call.name === "browser_shields") return "Checking Shields";
@@ -320,8 +411,13 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
     if (call.name === "browser_form_fill") return "Filling form";
     if (call.name === "browser_form_validate") return "Validating form";
     if (call.name === "browser_form_submit") return "Submitting form";
-    if (call.name === "browser_trace") return "Tracing browser";
+    if (call.name === "browser_trace") return `${browserActionTitle(call.arguments, true)}…`;
     if (call.name === "browser_verify") return "Verifying browser";
+    if (call.name === "browser_capabilities") return "Checking browser capabilities";
+    if (call.name === "browser_workflow") return "Managing browser workflow";
+    if (call.name === "browser_assert") return "Checking browser assertions";
+    if (call.name === "browser_evidence_vault") return "Managing browser evidence";
+    if (call.name === "browser_diagnose") return "Diagnosing browser failure";
     if (call.name === "notes_list") return "Listing notes";
     if (call.name === "notes_create") return "Creating note";
     if (call.name === "notes_read") return "Reading note";

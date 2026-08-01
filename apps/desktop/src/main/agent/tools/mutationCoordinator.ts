@@ -144,6 +144,24 @@ export class FileMutationCoordinator {
       after: content,
       status: existed ? "modified" : "created",
     });
+    if (existed && previous === content) {
+      context.onCommandOutput(call.id, `No changes to ${target.relativePath}\n`);
+      return {
+        success: true,
+        output: `No changes to ${target.relativePath}`,
+        data: {
+          path: target.relativePath,
+          bytes: Buffer.byteLength(content, "utf8"),
+          sha256: existing?.sha256 || hashText(content),
+          beforeHash: existing?.sha256 || hashText(content),
+          afterHash: existing?.sha256 || hashText(content),
+          changed: [],
+          warnings,
+          parentDirectoryCreated: false,
+          mutated: false,
+        },
+      };
+    }
     emitLiveDiff(context, call.id, structured.diff);
     await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
     await this.options.beforeWriteCommit?.();
@@ -194,6 +212,14 @@ export class FileMutationCoordinator {
       after,
       status: "modified",
     });
+    if (after === before.content) {
+      context.onCommandOutput(call.id, `No changes to ${before.target.relativePath}\n`);
+      return {
+        success: true,
+        output: `No changes to ${before.target.relativePath}`,
+        data: { changed: [], changes: [], warnings: [], dryRun, mutated: false },
+      };
+    }
     emitLiveDiff(context, call.id, structured.diff);
     const warnings: string[] = [];
     const metadata = changeMetadata({
@@ -360,6 +386,11 @@ export class FileMutationCoordinator {
       if (operation.moveTo && finalTarget.absolutePath !== before.target.absolutePath && await pathExists(finalTarget.absolutePath)) {
         throw new Error(`Cannot move ${before.target.relativePath} to ${finalTarget.relativePath}: destination already exists.`);
       }
+      if (!operation.moveTo && next === previous) {
+        warnings.push(`Skipped ${before.target.relativePath}: patch produced no content change.`);
+        context.onCommandOutput(call.id, `No changes to ${before.target.relativePath}\n`);
+        continue;
+      }
       const structured = createStructuredDiff({
         path: finalTarget.relativePath,
         oldPath: operation.moveTo ? before.target.relativePath : undefined,
@@ -418,7 +449,7 @@ export class FileMutationCoordinator {
     if (call.arguments.dryRun === true) {
       return {
         success: true,
-        output: `Patch preview:\n${changed.join("\n")}`,
+        output: changed.length ? `Patch preview:\n${changed.join("\n")}` : "Patch preview: no file changes.",
         data: { changed, changes: changeRecords, warnings, dryRun: true, mutated: false },
         diff: formatUnifiedDiffFiles(diffFiles),
         diffFiles,
@@ -483,8 +514,8 @@ export class FileMutationCoordinator {
 
     return {
       success: true,
-      output: changed.join("\n"),
-      data: { changed, changes: changeRecords, warnings, undo, dryRun: false, mutated: true },
+      output: changed.length ? changed.join("\n") : "No file changes.",
+      data: { changed, changes: changeRecords, warnings, undo, dryRun: false, mutated: planned.length > 0 },
       diff: formatUnifiedDiffFiles(diffFiles),
       diffFiles,
     };

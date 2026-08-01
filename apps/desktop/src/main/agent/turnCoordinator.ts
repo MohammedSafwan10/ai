@@ -1,7 +1,7 @@
 import type { BrowserWindow } from "electron";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
-import { getModelOption, getProviderForModel, resolveModelRuntimeBudget, type AgentHarnessMode, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
+import { assertModelSupportsReasoningEffort, getModelOption, getProviderForModel, resolveModelRuntimeBudget, type AgentHarnessMode, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
   ApprovalDecisionScope,
@@ -16,6 +16,8 @@ import type {
   GeneratedImageEventRecord,
   RequestUserInputResponseInput,
   StartTurnInput,
+  SteerTurnInput,
+  SteerTurnResult,
   SubagentRecord,
   TokenUsageRecord,
   ToolDiffFileRecord,
@@ -23,7 +25,7 @@ import type {
   ToolResult,
 } from "../../shared/types";
 import { buildDesktopSystemPrompt } from "./systemPrompt";
-import { appendAssistantToolCalls, appendToolResults, type ProviderMessage } from "./providers/types";
+import { appendAssistantToolCalls, appendToolResults, type ProviderMessage, type ProviderPart } from "./providers/types";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
@@ -39,6 +41,7 @@ import {
   compactProviderHistoryWithInfo,
   compactToolResultForModel,
   estimateProviderHistoryTokens,
+  messagesToProviderHistory,
   sanitizeProviderHistoryForModel,
 } from "./context";
 import { buildMentionContext } from "./contextMentions";
@@ -77,6 +80,7 @@ import {
 } from "./harness/support/subagentRuntime";
 import {
   activityItemsForTool,
+  reconcileToolActivities,
   categoryForTool,
   compactLiveOutput,
   diffStats,
@@ -84,7 +88,6 @@ import {
   liveStatusFromOutput,
   patchTargetLabel,
   previewForTool,
-  sortObject,
   summarizeArgs,
   terminalMeta,
   titleForTool,
@@ -124,11 +127,53 @@ const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
 const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
 const STREAM_STALL_TIMEOUT_MS = 180_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 300_000;
+const STEER_ABORT_REASON = "privora:steer";
+
+interface PendingSteer {
+  message: ChatMessageRecord;
+  providerMessages: ProviderMessage[];
+}
+
+interface ActiveSamplingRequest {
+  controller: AbortController;
+  interruptible: boolean;
+}
 const MAX_STALL_RECOVERY_ATTEMPTS = 2;
 const TOOL_OUTPUT_FLUSH_MS = 320;
 const TOOL_OUTPUT_FORCE_FLUSH_CHARS = 80_000;
+const TOOL_DRAFT_FLUSH_MS = 80;
 
 const now = () => Date.now();
+const compactDraftText = (value: string, maxChars = 32_000) =>
+  value.length <= maxChars
+    ? value
+    : `${value.slice(0, 8_000)}\n\n[... streamed draft compacted ...]\n\n${value.slice(-24_000)}`;
+
+const compactToolDraftCall = (call: DesktopToolCall): DesktopToolCall => {
+  if (!["desktop_write_file", "desktop_edit_file", "desktop_apply_patch"].includes(call.name)) return call;
+  const argumentsCopy = { ...call.arguments };
+  for (const key of ["content", "patch"] as const) {
+    if (typeof argumentsCopy[key] === "string") argumentsCopy[key] = compactDraftText(argumentsCopy[key] as string);
+  }
+  if (Array.isArray(argumentsCopy.operations)) {
+    argumentsCopy.operations = argumentsCopy.operations.map((operation) => {
+      if (!operation || typeof operation !== "object") return operation;
+      const next = { ...(operation as Record<string, unknown>) };
+      for (const key of ["content", "replacement", "match"]) {
+        if (typeof next[key] === "string") next[key] = compactDraftText(next[key] as string, 16_000);
+      }
+      return next;
+    });
+  }
+  return { ...call, arguments: argumentsCopy };
+};
+const meaningfulDiffFiles = (files: ToolDiffFileRecord[] | undefined) =>
+  files?.filter((file) =>
+    file.status !== "modified" ||
+    file.additions > 0 ||
+    file.deletions > 0 ||
+    file.hunks.length > 0
+  ) || [];
 const isReadOnlySubagentTask = (taskName: string) =>
   taskName.startsWith("review_swarm_");
 
@@ -284,6 +329,8 @@ export class TurnCoordinator implements AgentHarnessApi {
   private modelLoop = new ModelLoop();
   private subagents: SubagentManager;
   private activeRuns = new Map<string, AgentRunTracker>();
+  private pendingSteers = new Map<string, PendingSteer[]>();
+  private samplingRequests = new Map<string, ActiveSamplingRequest>();
   private approvals: ApprovalCoordinator;
   private userInput: UserInputCoordinator;
   private turnRegistry = new TurnRegistry();
@@ -293,6 +340,13 @@ export class TurnCoordinator implements AgentHarnessApi {
     messageId: string;
     call: DesktopToolCall;
     delta: string;
+    timer: NodeJS.Timeout | null;
+  }>();
+  private pendingToolDrafts = new Map<string, {
+    threadId: string;
+    messageId: string;
+    call: DesktopToolCall;
+    textOffset: number;
     timer: NodeJS.Timeout | null;
   }>();
   private activitySequence = 0;
@@ -495,6 +549,74 @@ export class TurnCoordinator implements AgentHarnessApi {
     }
   }
 
+  async steerTurn(input: SteerTurnInput): Promise<SteerTurnResult> {
+    const prompt = input.prompt.trim();
+    if (!prompt && !input.attachments?.length && !input.contextMentions?.length) {
+      throw new Error("Steering input cannot be empty.");
+    }
+
+    const run = this.activeRuns.get(input.threadId);
+    if (!run) throw new Error("There is no active turn to steer.");
+    if (run.assistantMessageId !== input.expectedTurnId) {
+      throw new Error("The active turn changed before this message could be steered. It remains queued.");
+    }
+
+    const thread = this.store.getThread(input.threadId);
+    const workspace = thread ? this.store.getWorkspace(thread.workspaceId) : null;
+    if (!thread || !workspace) throw new Error("The active workspace is no longer available.");
+    const selectedModel = getModelOption(run.model || thread.model || this.store.getSettings().model);
+    const imageCount = (input.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/")).length;
+    if (imageCount > 0 && !selectedModel.supportsImageInput) {
+      throw new Error(`${selectedModel.label} does not support image input.`);
+    }
+
+    const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
+    const currentRun = this.activeRuns.get(input.threadId);
+    if (!currentRun) throw new Error("The turn finished before this message could be steered. It remains queued.");
+    if (currentRun.assistantMessageId !== input.expectedTurnId) {
+      throw new Error("The active turn changed before this message could be steered. It remains queued.");
+    }
+
+    const timestamp = now();
+    const activeAssistant = this.store.getMessage(currentRun.assistantMessageId);
+    const message: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      threadId: input.threadId,
+      role: "user",
+      content: prompt,
+      attachments: input.attachments,
+      contextMentions: input.contextMentions,
+      steeredTurnId: currentRun.assistantMessageId,
+      steerTextOffset: activeAssistant?.content.length || 0,
+      steerStreamOrder: this.nextActivityOrder(),
+      status: "completed",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const providerMessage = messagesToProviderHistory([message])[0];
+    const providerMessages = [
+      ...(providerMessage ? [providerMessage] : []),
+      ...(mentionContext ? [textProviderMessage(mentionContext)] : []),
+    ];
+    this.store.upsertMessage(message);
+    this.pendingSteers.set(input.threadId, [
+      ...(this.pendingSteers.get(input.threadId) || []),
+      { message, providerMessages },
+    ]);
+    this.emit({ type: "message.upserted", message });
+
+    const sampling = this.samplingRequests.get(input.threadId);
+    if (sampling?.interruptible && !sampling.controller.signal.aborted) {
+      sampling.controller.abort(STEER_ABORT_REASON);
+    }
+    markRunProgress(currentRun);
+    currentRun.reason = sampling?.interruptible
+      ? "Steering the active response."
+      : "Steer received; applying it after the current tool boundary.";
+    this.emitRun(currentRun);
+    return { turnId: currentRun.assistantMessageId };
+  }
+
   async continueRun(threadId: string) {
     if (this.isThreadBusy(threadId)) return;
     const checkpoint = this.recovery.checkpoint(threadId);
@@ -552,6 +674,7 @@ export class TurnCoordinator implements AgentHarnessApi {
   stopTurn(threadId: string) {
     const run = this.activeRuns.get(threadId);
     run?.controller.abort();
+    this.samplingRequests.get(threadId)?.controller.abort();
     this.stopThreadProcesses(threadId);
     this.store.listSubagents(threadId).forEach((agent) => {
       const childRun = this.activeRuns.get(agent.threadId);
@@ -579,6 +702,8 @@ export class TurnCoordinator implements AgentHarnessApi {
       this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
     }
     this.flushThreadToolOutputs(threadId);
+    this.discardThreadToolDrafts(threadId);
+    if (run) this.cancelPreparingToolEvents(threadId, run.assistantMessageId, "Stopped before the streamed tool call completed.");
     this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
     if (this.recovery.cancelPendingApproval(threadId, "Stopped before approval.")) this.emitSnapshot();
     this.userInput.cancelThread(threadId);
@@ -636,6 +761,24 @@ export class TurnCoordinator implements AgentHarnessApi {
     }
   }
 
+  private drainPendingSteers(
+    threadId: string,
+    history: ProviderMessage[],
+    assistantMessage: ChatMessageRecord,
+  ) {
+    const pending = this.pendingSteers.get(threadId);
+    if (!pending?.length) return history;
+    this.pendingSteers.delete(threadId);
+
+    assistantMessage.updatedAt = now();
+    this.store.upsertMessage(assistantMessage);
+    this.emit({ type: "message.upserted", message: assistantMessage });
+    return [
+      ...history,
+      ...pending.flatMap((item) => item.providerMessages),
+    ];
+  }
+
   private async continueLoop(options: ContinueOptions) {
     if (options.controller.signal.aborted) {
       this.finalizeStoppedRun(options);
@@ -646,6 +789,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     const thread = this.store.getThread(options.threadId);
     const effectiveModel = getModelOption(options.model || thread?.model || settings.model).id;
     const effectiveReasoning = options.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort;
+    assertModelSupportsReasoningEffort(effectiveModel, effectiveReasoning);
     const effectiveCollaborationMode = options.collaborationMode || thread?.collaborationMode || settings.collaborationMode;
     const effectiveAgentHarnessMode = options.agentHarnessMode || thread?.agentHarnessMode || settings.agentHarnessMode;
     const runtimeBudget = resolveModelRuntimeBudget(effectiveModel, runtimeBudgetModeForHistory(options.history));
@@ -712,12 +856,13 @@ export class TurnCoordinator implements AgentHarnessApi {
       let continuousIterations = 0;
       let lastCompactionAttemptTokens = 0;
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
+        history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
         continuousIterations += 1;
         iteration += 1;
         providerProducedProgress = false;
         const estimatedHistoryTokens = this.contextManager.estimateTokens(history);
         if (
-          shouldAutoCompactHistory(history, runtimeBudget) &&
+          shouldAutoCompactHistory(history, runtimeBudget, lastProviderUsage) &&
           estimatedHistoryTokens > lastCompactionAttemptTokens + 2_000
         ) {
           const compacted = await this.compactHistoryForRuntime({
@@ -734,6 +879,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             textOffset: assistantText.length,
           });
           history = this.contextManager.sanitize(compacted.history, effectiveModel);
+          lastProviderUsage = null;
           lastCompactionAttemptTokens = compacted.afterTokens;
         }
         this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
@@ -743,6 +889,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         this.emitRun(run);
 
         const calls: DesktopToolCall[] = [];
+        const providerContextParts: ProviderPart[] = [];
         const approvalCalls: DesktopToolCall[] = [];
         const scheduler = new ToolExecutionScheduler();
         const scheduleTool = (call: DesktopToolCall, browserExternalApproved = false) => {
@@ -830,6 +977,12 @@ export class TurnCoordinator implements AgentHarnessApi {
           activeThoughtPart = null;
         };
         let stalledAbortReason: string | null = null;
+        let steeredDuringSample = false;
+        const samplingController = new AbortController();
+        const samplingRequest: ActiveSamplingRequest = { controller: samplingController, interruptible: true };
+        const abortSampling = () => samplingController.abort(controller.signal.reason);
+        controller.signal.addEventListener("abort", abortSampling, { once: true });
+        this.samplingRequests.set(options.threadId, samplingRequest);
         const stallTimeoutMs = historyHasRecentToolResults(history)
           ? POST_TOOL_RESULT_STALL_TIMEOUT_MS
           : STREAM_STALL_TIMEOUT_MS;
@@ -857,7 +1010,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             messages: history,
             reasoning: effectiveReasoning,
             collaborationMode: effectiveCollaborationMode,
-            signal: controller.signal,
+            signal: samplingController.signal,
             threadId: options.threadId,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
             appwriteEndpoint: settings.appwriteEndpoint,
@@ -925,24 +1078,20 @@ export class TurnCoordinator implements AgentHarnessApi {
               processNarrationActive = false;
               markRunProgress(run);
               const call: DesktopToolCall = {
-                id: draft.id || `draft_${options.assistantMessage.id}_${draft.name}_${this.stableArgsKey(draft.arguments)}`,
+                id: draft.id || `draft_${options.assistantMessage.id}_${draft.name}`,
                 name: draft.name as DesktopToolCall["name"],
                 arguments: draft.arguments,
               };
-              const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, {
-                status: "preparing",
-                title: titleForTool(call),
-                textOffset: assistantText.length,
-                startedAt: now(),
-              });
-              this.emit({ type: "tool.upserted", tool: event });
+              this.queueToolDraft(options.threadId, options.assistantMessage.id, call, assistantText.length);
             },
             onToolCall: (call) => {
+              samplingRequest.interruptible = false;
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               endThoughtPart();
               processNarrationActive = false;
               markRunProgress(run);
+              this.flushMatchingToolDraft(options.threadId, options.assistantMessage.id, call);
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode, thread?.workspaceId);
               const readOnlyBlock = reviewerReadOnlyBlockReason(call, options.readOnlyTools);
@@ -980,6 +1129,10 @@ export class TurnCoordinator implements AgentHarnessApi {
               } else {
                 scheduleTool(call, Boolean(scope) || isAutoApprovedRiskyBrowserTool(call, decision));
               }
+            },
+            onProviderContextPart: (part) => {
+              samplingRequest.interruptible = part.type === "server_tool_response";
+              providerContextParts.push(part);
             },
             onUsage: (usage) => {
               lastProviderUsage = usage;
@@ -1027,6 +1180,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.emitRun(run);
             },
             onWebSearch: (search) => {
+              samplingRequest.interruptible = search.status !== "running";
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               endThoughtPart();
@@ -1058,13 +1212,37 @@ export class TurnCoordinator implements AgentHarnessApi {
           });
         } catch (error) {
           if (stalledAbortReason) throw new StreamStalledError(stalledAbortReason);
-          throw error;
+          if (samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) {
+            steeredDuringSample = true;
+          } else {
+            throw error;
+          }
         } finally {
           clearInterval(stallWatchdog);
+          controller.signal.removeEventListener("abort", abortSampling);
+          if (this.samplingRequests.get(options.threadId) === samplingRequest) {
+            this.samplingRequests.delete(options.threadId);
+          }
+        }
+
+        if (samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) {
+          steeredDuringSample = true;
         }
 
         this.closeDanglingDraftTools(options.threadId, options.assistantMessage.id, new Set(calls.map((call) => call.id)));
         flushAssistant("running", true);
+        if (steeredDuringSample) {
+          const partialText = assistantText.slice(textStart);
+          if (partialText.trim() || providerContextParts.length > 0) {
+            history = appendAssistantToolCalls(history, partialText, [], providerContextParts);
+          }
+          history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
+          run.reason = "Applying steer to the active response.";
+          markRunProgress(run);
+          this.emitRun(run);
+          this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+          continue;
+        }
         const noToolOutcome = resolveNoToolOutcome({
           iterationText: assistantText.slice(textStart),
           iterationThought: assistantThought.slice(thoughtStart),
@@ -1072,6 +1250,15 @@ export class TurnCoordinator implements AgentHarnessApi {
           recoveryAttempts,
         });
         if (calls.length === 0) {
+          if (this.pendingSteers.get(options.threadId)?.length) {
+            const iterationText = assistantText.slice(textStart);
+            if (iterationText.trim() || providerContextParts.length > 0) {
+              history = appendAssistantToolCalls(history, iterationText, [], providerContextParts);
+            }
+            history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
+            this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+            continue;
+          }
           if (noToolOutcome.action === "recover") {
             recoveryAttempts += 1;
             history = [...history, textProviderMessage(noToolOutcome.message)];
@@ -1085,6 +1272,15 @@ export class TurnCoordinator implements AgentHarnessApi {
             toolCount,
             agentHarnessMode: effectiveAgentHarnessMode,
           });
+          if (this.pendingSteers.get(options.threadId)?.length) {
+            const iterationText = assistantText.slice(textStart);
+            if (iterationText.trim() || providerContextParts.length > 0) {
+              history = appendAssistantToolCalls(history, iterationText, [], providerContextParts);
+            }
+            history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
+            this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+            continue;
+          }
           if (swarmFeedback) {
             const draftText = assistantText.slice(textStart);
             assistantText = assistantText.slice(0, textStart);
@@ -1125,7 +1321,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         if (streamTextPhase === "final_answer") {
           markAssistantTextRangePhase(options.assistantMessage, textStart, assistantText.length, "commentary");
         }
-        history = appendAssistantToolCalls(history, assistantText.slice(textStart), calls);
+        history = appendAssistantToolCalls(history, assistantText.slice(textStart), calls, providerContextParts);
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
 
         const scheduledResults = await scheduler.drainOrdered();
@@ -1494,6 +1690,21 @@ export class TurnCoordinator implements AgentHarnessApi {
       summary = await this.generateCompactionSummary(input);
       replacementHistory = buildCompactedProviderHistory(input.history, summary);
     } catch (candidateError) {
+      if (input.controller.signal.aborted) {
+        const message = "Context compaction stopped by the user.";
+        const stopped = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
+          title: "Context compaction stopped",
+          category: "other",
+          status: "stopped",
+          risk: "safe",
+          liveStatus: undefined,
+          result: { success: false, error: message },
+          output: message,
+          endedAt: now(),
+        });
+        this.emit({ type: "tool.upserted", tool: stopped });
+        throw candidateError;
+      }
       error = errorMessage(candidateError);
       summary = buildDeterministicCompactionSummary(input.history);
       replacementHistory = buildCompactedProviderHistory(input.history, summary);
@@ -1564,7 +1775,6 @@ export class TurnCoordinator implements AgentHarnessApi {
   }) {
     const settings = this.store.getSettings();
     let summary = "";
-    let thought = "";
     await this.modelLoop.stream({
       provider: getProviderForModel(input.model),
       model: input.model,
@@ -1588,14 +1798,15 @@ export class TurnCoordinator implements AgentHarnessApi {
       geminiApiKey: this.store.getSecret("gemini_api_key"),
       maxOutputTokens: 4096,
       onTextDelta: (delta) => { summary += delta; },
-      onThoughtDelta: (delta) => { thought += delta; },
+      onThoughtDelta: () => undefined,
       onToolDraft: () => undefined,
       onToolCall: () => undefined,
     });
     const trimmed = summary.trim();
-    if (trimmed) return trimmed;
-    if (thought.trim()) return thought.trim();
-    throw new Error("Compaction model returned no summary text.");
+    if (trimmed.length >= 160) return trimmed;
+    throw new Error(trimmed
+      ? `Compaction model returned an incomplete summary (${trimmed.length} characters).`
+      : "Compaction model returned no summary text.");
   }
 
   private markSubagentFinished(threadId: string, status: SubagentRecord["status"], text: string) {
@@ -1960,13 +2171,13 @@ export class TurnCoordinator implements AgentHarnessApi {
     patch: Partial<ToolEventRecord>,
     persist = true,
   ) {
-    const existing = this.findExistingToolEvent(threadId, call, patch.status);
+    const existing = this.findExistingToolEvent(threadId, messageId, call, patch.status);
     const timestamp = now();
     const output = patch.output ?? existing?.output;
     const diff = patch.diff ?? existing?.diff;
     const resultDiffFiles = (patch.result as ToolResult & { diffFiles?: ToolDiffFileRecord[] } | undefined)?.diffFiles;
     const hasNewDiffFiles = Boolean(patch.diffFiles || resultDiffFiles);
-    const diffFiles = patch.diffFiles ?? resultDiffFiles ?? existing?.diffFiles ?? parseUnifiedDiffFiles(diff);
+    const diffFiles = meaningfulDiffFiles(patch.diffFiles ?? resultDiffFiles ?? existing?.diffFiles ?? parseUnifiedDiffFiles(diff));
     const computedDiffStats = diffStatsFromFiles(diffFiles) || diffStats(diff);
     const computedActivities = activityItemsForTool(call, diff, diffFiles);
     const terminal = terminalMeta(call, patch.result ?? existing?.result);
@@ -1989,7 +2200,12 @@ export class TurnCoordinator implements AgentHarnessApi {
       diff,
       diffFiles,
       diffStats: patch.diffStats || (hasNewDiffFiles ? computedDiffStats : existing?.diffStats || computedDiffStats),
-      activities: patch.activities || (hasNewDiffFiles ? computedActivities : existing?.activities || computedActivities),
+      activities: reconcileToolActivities(
+        patch.activities,
+        computedActivities,
+        existing?.activities,
+        hasNewDiffFiles,
+      ),
       terminal: patch.terminal ?? (patch.result ? terminal : existing?.terminal ?? terminal),
       preview: patch.preview ?? existing?.preview ?? previewForTool(call, output, diff),
       approvalGroupId: patch.approvalGroupId ?? existing?.approvalGroupId,
@@ -2003,6 +2219,7 @@ export class TurnCoordinator implements AgentHarnessApi {
   }
 
   private closeDanglingDraftTools(threadId: string, messageId: string, activeCallIds: Set<string>) {
+    this.flushThreadToolDrafts(threadId, messageId);
     this.store.listActiveDraftToolEvents(threadId, messageId)
       .filter((event) => !activeCallIds.has(event.callId))
       .forEach((event) => {
@@ -2012,9 +2229,9 @@ export class TurnCoordinator implements AgentHarnessApi {
           arguments: event.args,
         };
         const closed = this.updateToolEvent(threadId, messageId, call, {
-          status: "done",
+          status: "cancelled",
           liveStatus: undefined,
-          result: event.result || { success: true },
+          result: event.result || { success: false, error: "Incomplete streamed tool call was not executed." },
           endedAt: now(),
         });
         this.emit({ type: "tool.upserted", tool: closed });
@@ -2024,6 +2241,83 @@ export class TurnCoordinator implements AgentHarnessApi {
   private nextActivityOrder() {
     this.activitySequence += 1;
     return this.activitySequence;
+  }
+
+  private queueToolDraft(threadId: string, messageId: string, call: DesktopToolCall, textOffset: number) {
+    const key = `${threadId}:${messageId}:${call.id}`;
+    const pending = this.pendingToolDrafts.get(key) || {
+      threadId,
+      messageId,
+      call,
+      textOffset,
+      timer: null,
+    };
+    pending.call = compactToolDraftCall(call);
+    pending.textOffset = textOffset;
+    this.pendingToolDrafts.set(key, pending);
+    if (pending.timer) return;
+    pending.timer = setTimeout(() => this.flushToolDraft(key), TOOL_DRAFT_FLUSH_MS);
+    pending.timer.unref?.();
+  }
+
+  private flushToolDraft(key: string) {
+    const pending = this.pendingToolDrafts.get(key);
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    this.pendingToolDrafts.delete(key);
+    const event = this.updateToolEvent(pending.threadId, pending.messageId, pending.call, {
+      status: "preparing",
+      title: titleForTool(pending.call),
+      textOffset: pending.textOffset,
+      startedAt: now(),
+    });
+    this.emit({ type: "tool.upserted", tool: event });
+  }
+
+  private flushMatchingToolDraft(threadId: string, messageId: string, call: DesktopToolCall) {
+    const exactKey = `${threadId}:${messageId}:${call.id}`;
+    if (this.pendingToolDrafts.has(exactKey)) {
+      this.flushToolDraft(exactKey);
+      return;
+    }
+    const matching = Array.from(this.pendingToolDrafts.entries()).find(([, pending]) =>
+      pending.threadId === threadId && pending.messageId === messageId && pending.call.name === call.name
+    );
+    if (matching) this.flushToolDraft(matching[0]);
+  }
+
+  private flushThreadToolDrafts(threadId: string, messageId?: string) {
+    Array.from(this.pendingToolDrafts.entries())
+      .filter(([, pending]) => pending.threadId === threadId && (!messageId || pending.messageId === messageId))
+      .forEach(([key]) => this.flushToolDraft(key));
+  }
+
+  private discardThreadToolDrafts(threadId: string) {
+    Array.from(this.pendingToolDrafts.entries())
+      .filter(([, pending]) => pending.threadId === threadId)
+      .forEach(([key, pending]) => {
+        if (pending.timer) clearTimeout(pending.timer);
+        this.pendingToolDrafts.delete(key);
+      });
+  }
+
+  private cancelPreparingToolEvents(threadId: string, messageId: string, reason: string) {
+    this.store.listActiveDraftToolEvents(threadId, messageId)
+      .filter((event) => event.status === "preparing")
+      .forEach((event) => {
+        const call: DesktopToolCall = {
+          id: event.callId,
+          name: event.name as DesktopToolCall["name"],
+          arguments: event.args,
+        };
+        const cancelled = this.updateToolEvent(threadId, messageId, call, {
+          status: "cancelled",
+          liveStatus: undefined,
+          result: event.result || { success: false, error: reason },
+          endedAt: now(),
+        });
+        this.emit({ type: "tool.upserted", tool: cancelled });
+      });
   }
 
   private appendToolOutput(threadId: string, messageId: string, call: DesktopToolCall, callId: string, delta: string) {
@@ -2078,13 +2372,12 @@ export class TurnCoordinator implements AgentHarnessApi {
       .forEach(([callId]) => this.flushToolOutput(callId));
   }
 
-  private findExistingToolEvent(threadId: string, call: DesktopToolCall, nextStatus?: ToolEventRecord["status"]) {
+  private findExistingToolEvent(threadId: string, messageId: string, call: DesktopToolCall, nextStatus?: ToolEventRecord["status"]) {
     const direct = this.store.findToolEventByCall(threadId, call.id, call.name);
     if (direct) return direct;
     if (nextStatus === "preparing") return undefined;
-    return this.store.listPreparingToolEvents(threadId, call.name)
+    return this.store.listPreparingToolEvents(threadId, messageId, call.name)
       .find((event) =>
-        event.callId.startsWith("draft_") &&
         this.isDraftForCall(event.args, call.arguments, call.name)
       );
   }
@@ -2119,10 +2412,6 @@ export class TurnCoordinator implements AgentHarnessApi {
     const entries = Object.entries(draftArgs).filter(([, value]) => value !== undefined && value !== "");
     if (entries.length === 0) return false;
     return entries.every(([key, value]) => String(finalArgs[key] ?? "") === String(value));
-  }
-
-  private stableArgsKey(value: unknown) {
-    return JSON.stringify(sortObject(value)).slice(0, 180);
   }
 
   private emitRun(run: AgentRunTracker) {

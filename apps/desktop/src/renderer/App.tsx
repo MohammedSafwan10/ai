@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, Download, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
+import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
 import clsx from "clsx";
 import { useDesktopState } from "./state/useDesktopState";
 import { Sidebar } from "./components/Sidebar";
@@ -18,6 +18,17 @@ import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentReco
 
 type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
 
+const EMPTY_MESSAGES: never[] = [];
+
+const IDE_COMPACT_WIDTH = 640;
+const clampIdeWidth = (requestedWidth: number, containerWidth: number) => {
+  if (!Number.isFinite(containerWidth) || containerWidth <= 0) return Math.max(260, requestedWidth);
+  const minimumIdeWidth = Math.min(320, Math.max(260, containerWidth * 0.24));
+  const minimumChatWidth = Math.min(360, Math.max(240, containerWidth * 0.26));
+  const maximumIdeWidth = Math.max(minimumIdeWidth, containerWidth - minimumChatWidth - 8);
+  return Math.round(Math.max(minimumIdeWidth, Math.min(maximumIdeWidth, requestedWidth)));
+};
+
 export default function App() {
   const { snapshot, activeThread, activeWorkspace, toast, refresh, loadOlderMessages, historyLoading, historyError } = useDesktopState();
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
@@ -27,6 +38,11 @@ export default function App() {
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideCollapsedByUser, setIdeCollapsedByUser] = useState(false);
   const [ideWidth, setIdeWidth] = useState(620);
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
+  const [ideResizing, setIdeResizing] = useState(false);
+  const mainWorkspaceRef = useRef<HTMLDivElement>(null);
+  const ideRatioRef = useRef(0.5);
+  const ideRatioInitializedRef = useRef(false);
   const [workspacePanelRequest, setWorkspacePanelRequest] = useState<{ mode: "files" | "review" | "browser" | "notes"; key: number } | null>(null);
   const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -50,13 +66,27 @@ export default function App() {
     runStatus === "draining" ||
     runStatus === "completing";
   const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
-  const messages = snapshot.messages;
+  const allMessages = snapshot.messages;
+  const messages = useMemo(
+    () => allMessages.filter((message) => !message.steeredTurnId),
+    [allMessages],
+  );
+  const inlineSteersByTurn = useMemo(() => {
+    const map = new Map<string, typeof allMessages>();
+    allMessages.forEach((message) => {
+      if (!message.steeredTurnId) return;
+      const current = map.get(message.steeredTurnId) || [];
+      current.push(message);
+      map.set(message.steeredTurnId, current);
+    });
+    return map;
+  }, [allMessages]);
   const promptHistory = useMemo(
-    () => messages
+    () => allMessages
       .filter((message) => message.role === "user" && message.threadId === activeThread?.id && message.content.trim())
       .map((message) => message.content)
       .filter((content, index, items) => index === 0 || content !== items[index - 1]),
-    [activeThread?.id, messages],
+    [activeThread?.id, allMessages],
   );
   const activeThreadSettings = useMemo(() => ({
     ...snapshot.settings,
@@ -222,15 +252,20 @@ export default function App() {
     removeQueuedPrompt,
     runQueuedPrompt,
     setQueueExpanded,
+    steerError,
+    steerQueuedPrompt,
+    steeringPromptId,
     startPrompt,
     stopActiveTurn,
     stopping,
   } = usePromptQueue({
     activeThreadId: activeThread?.id || null,
+    activeTurnId: snapshot.activeRun?.assistantMessageId || null,
     running,
     resumableBlocked: resumable,
     onDraft: setComposerDraft,
     startTurn: window.privoraDesktop.startTurn,
+    steerTurn: window.privoraDesktop.steerTurn,
     stopTurn: window.privoraDesktop.stopTurn,
     turnSettings: {
       model: activeThreadSettings.model,
@@ -273,20 +308,63 @@ export default function App() {
     setIdeCollapsed(false);
   };
 
+  useEffect(() => {
+    const workspace = mainWorkspaceRef.current;
+    if (!workspace) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      if (width <= 0) return;
+      setWorkspaceWidth(width);
+      setIdeWidth((current) => {
+        if (!ideRatioInitializedRef.current) {
+          ideRatioRef.current = Math.max(0.2, Math.min(0.82, current / width));
+          ideRatioInitializedRef.current = true;
+          return clampIdeWidth(current, width);
+        }
+        return clampIdeWidth(width * ideRatioRef.current, width);
+      });
+    });
+    observer.observe(workspace);
+    return () => observer.disconnect();
+  }, []);
+
   const startIdeResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startWidth = ideWidth;
+    const containerWidth = mainWorkspaceRef.current?.getBoundingClientRect().width || workspaceWidth || window.innerWidth;
+    const previousCursor = document.documentElement.style.cursor;
+    const previousUserSelect = document.documentElement.style.userSelect;
+    let animationFrame: number | null = null;
+    let requestedWidth = startWidth;
+    setIdeResizing(true);
+    document.documentElement.style.cursor = "col-resize";
+    document.documentElement.style.userSelect = "none";
     const onMove = (moveEvent: PointerEvent) => {
-      const nextWidth = Math.max(420, Math.min(920, startWidth - (moveEvent.clientX - startX)));
-      setIdeWidth(nextWidth);
+      requestedWidth = startWidth - (moveEvent.clientX - startX);
+      if (animationFrame !== null) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        const nextWidth = clampIdeWidth(requestedWidth, containerWidth);
+        ideRatioRef.current = nextWidth / containerWidth;
+        setIdeWidth(nextWidth);
+      });
     };
     const onUp = () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      const nextWidth = clampIdeWidth(requestedWidth, containerWidth);
+      ideRatioRef.current = nextWidth / containerWidth;
+      setIdeWidth(nextWidth);
+      setIdeResizing(false);
+      document.documentElement.style.cursor = previousCursor;
+      document.documentElement.style.userSelect = previousUserSelect;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   return (
@@ -360,7 +438,13 @@ export default function App() {
         )}
       />
       <div
-        className={ideCollapsed ? "main-workspace ide-collapsed" : "main-workspace"}
+        ref={mainWorkspaceRef}
+        className={clsx(
+          "main-workspace",
+          ideCollapsed && "ide-collapsed",
+          workspaceWidth > 0 && workspaceWidth < IDE_COMPACT_WIDTH && "ide-compact",
+          ideResizing && "is-resizing",
+        )}
         style={{ "--workspace-ide-width": `${ideWidth}px` } as CSSProperties}
       >
       <ChatShell
@@ -421,6 +505,7 @@ export default function App() {
                   >
                     <ChatMessage
                       message={message}
+                      inlineSteers={inlineSteersByTurn.get(message.id) || EMPTY_MESSAGES}
                       tools={toolsByMessage.get(message.id) || EMPTY_TOOLS}
                       subagents={snapshot.subagents}
                       activeRunStatus={
@@ -490,6 +575,7 @@ export default function App() {
           {queuedPrompts.length > 0 && (
             <div className={queuePaused ? "queued-prompts is-paused" : "queued-prompts"} aria-label="Queued prompts">
               {queuePaused && <div className="queued-prompt-note">Queue paused after stop</div>}
+              {steerError && <div className="queued-prompt-note is-error">{steerError} Prompt kept in queue.</div>}
               {queuedHead && (
                 <div className="queued-prompt">
                   <span className="queued-prompt-index">1</span>
@@ -515,6 +601,18 @@ export default function App() {
                       onClick={() => runQueuedPrompt(queuedHead)}
                     >
                       <Play size={13} fill="currentColor" />
+                    </button>
+                  )}
+                  {running && (
+                    <button
+                      type="button"
+                      className="queued-prompt-action is-steer"
+                      aria-label="Steer active turn with this prompt"
+                      title="Steer active turn"
+                      disabled={Boolean(steeringPromptId)}
+                      onClick={() => void steerQueuedPrompt(queuedHead)}
+                    >
+                      <CornerUpLeft size={13} />
                     </button>
                   )}
                   <button
@@ -552,6 +650,18 @@ export default function App() {
                           onClick={() => runQueuedPrompt(item)}
                         >
                           <Play size={13} fill="currentColor" />
+                        </button>
+                      )}
+                      {running && (
+                        <button
+                          type="button"
+                          className="queued-prompt-action is-steer"
+                          aria-label="Steer active turn with this prompt"
+                          title="Steer active turn"
+                          disabled={Boolean(steeringPromptId)}
+                          onClick={() => void steerQueuedPrompt(item)}
+                        >
+                          <CornerUpLeft size={13} />
                         </button>
                       )}
                       <button
@@ -630,6 +740,12 @@ export default function App() {
         aria-label="Resize workspace editor"
         title="Resize workspace editor"
         onPointerDown={startIdeResize}
+        onDoubleClick={() => {
+          const width = mainWorkspaceRef.current?.getBoundingClientRect().width || workspaceWidth;
+          if (!width) return;
+          ideRatioRef.current = 0.5;
+          setIdeWidth(clampIdeWidth(width * 0.5, width));
+        }}
         disabled={ideCollapsed}
       />
       <WorkspaceIdeShell

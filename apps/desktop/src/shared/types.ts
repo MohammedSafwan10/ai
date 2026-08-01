@@ -471,6 +471,7 @@ export interface BrowserOpenInput {
 }
 
 export interface BrowserActionInput {
+  tabId?: string;
   action: string;
   ref?: string;
   text?: string;
@@ -876,6 +877,9 @@ export interface ChatMessageRecord {
   textParts?: AssistantTextPartRecord[];
   thought?: string;
   thoughtParts?: AssistantThoughtPartRecord[];
+  steeredTurnId?: string;
+  steerTextOffset?: number;
+  steerStreamOrder?: number;
   status: TurnStatus;
   createdAt: number;
   updatedAt: number;
@@ -1384,8 +1388,11 @@ export interface ContextUsageRecord {
   modelId: string;
   contextWindowTokens?: number;
   usedTokens: number;
+  inputBudgetTokens?: number;
+  remainingTokens?: number;
   remainingPercent?: number;
   outputReserveTokens?: number;
+  safetyReserveTokens?: number;
   autoCompactAtTokens?: number;
   budgetMode: ModelRuntimeBudgetMode;
   estimated: boolean;
@@ -1606,6 +1613,18 @@ export interface StartTurnInput {
   agentHarnessMode?: AgentHarnessMode;
 }
 
+export interface SteerTurnInput {
+  threadId: string;
+  expectedTurnId: string;
+  prompt: string;
+  attachments?: DesktopAttachmentRecord[];
+  contextMentions?: ContextMentionRecord[];
+}
+
+export interface SteerTurnResult {
+  turnId: string;
+}
+
 export interface ApprovalDecisionInput {
   threadId: string;
   callId?: string;
@@ -1662,6 +1681,7 @@ export interface PrivoraDesktopApi {
   removeWorkspace(workspaceId: string): Promise<WorkspaceRecord | null>;
   setActiveThread(threadId: string): Promise<void>;
   startTurn(input: StartTurnInput): Promise<void>;
+  steerTurn(input: SteerTurnInput): Promise<SteerTurnResult>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): Promise<void>;
   answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;

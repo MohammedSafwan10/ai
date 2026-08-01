@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTextParts, splitTextByPhaseForTest } from "../src/renderer/components/ChatMessage";
+import { buildAssistantRenderParts, normalizeTextParts, normalizeThoughtMarkdown, splitTextByPhaseForTest } from "../src/renderer/components/ChatMessage";
 import type { ChatMessageRecord } from "../src/shared/types";
 
 const message = (content: string, textParts: ChatMessageRecord["textParts"]): ChatMessageRecord => ({
@@ -16,6 +16,10 @@ const message = (content: string, textParts: ChatMessageRecord["textParts"]): Ch
 });
 
 describe("assistant text part rendering", () => {
+  it("separates legacy reasoning summaries that arrived without a part boundary", () => {
+    expect(normalizeThoughtMarkdown("**Planning****Designing**")).toBe("**Planning**\n\n**Designing**");
+  });
+
   it("merges overlapping final answer ranges so final text is not repeated", () => {
     const content = "Implemented secure-notes-vault.\nVerification passed.\n";
     const parts = [
@@ -42,6 +46,26 @@ describe("assistant text part rendering", () => {
     expect(splitTextByPhaseForTest(message(content, parts), 0, content.length)).toEqual([
       expect.objectContaining({ text: "Working...\n", phase: "commentary" }),
       expect.objectContaining({ text: "Done.\n", phase: "final_answer" }),
+    ]);
+  });
+
+  it("anchors a steer message at its exact assistant stream offset", () => {
+    const assistant = message("BeforeAfter", [part("answer", "final_answer", 0, 11, 1)]);
+    const steer: ChatMessageRecord = {
+      ...message("Change direction", []),
+      id: "steer-1",
+      role: "user",
+      steeredTurnId: assistant.id,
+      steerTextOffset: 6,
+      steerStreamOrder: 2,
+      createdAt: 2,
+      updatedAt: 2,
+    };
+
+    expect(buildAssistantRenderParts(assistant, [], true, [steer]).map((item) => item.type)).toEqual([
+      "text",
+      "steer",
+      "text",
     ]);
   });
 });

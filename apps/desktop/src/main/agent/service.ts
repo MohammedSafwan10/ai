@@ -2,11 +2,14 @@ import type {
   ApprovalDecisionInput,
   RequestUserInputResponseInput,
   StartTurnInput,
+  SteerTurnInput,
+  SteerTurnResult,
 } from "../../shared/types";
 import type { AgentHarnessApi } from "./harness/contracts";
 
 export interface AgentService {
   startTurn(input: StartTurnInput): Promise<void>;
+  steerTurn(input: SteerTurnInput): Promise<SteerTurnResult>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): void;
   answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;
@@ -24,6 +27,10 @@ export class InProcessAgentService implements AgentService {
 
   startTurn(input: StartTurnInput) {
     return this.harness.startTurn(input);
+  }
+
+  steerTurn(input: SteerTurnInput) {
+    return this.harness.steerTurn(input);
   }
 
   continueRun(threadId: string) {

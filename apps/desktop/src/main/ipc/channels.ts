@@ -12,6 +12,7 @@ export const channels = {
   selectWorkspace: "desktop:selectWorkspace",
   removeWorkspace: "desktop:removeWorkspace",
   startTurn: "desktop:startTurn",
+  steerTurn: "desktop:steerTurn",
   continueRun: "desktop:continueRun",
   stopTurn: "desktop:stopTurn",
   answerRequestUserInput: "desktop:answerRequestUserInput",

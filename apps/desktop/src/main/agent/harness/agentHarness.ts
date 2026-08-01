@@ -7,6 +7,10 @@ export class AgentHarness implements AgentHarnessApi {
     return this.coordinator.startTurn(input);
   }
 
+  steerTurn(input: Parameters<AgentHarnessApi["steerTurn"]>[0]) {
+    return this.coordinator.steerTurn(input);
+  }
+
   continueRun(threadId: string) {
     return this.coordinator.continueRun(threadId);
   }

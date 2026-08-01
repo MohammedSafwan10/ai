@@ -13,12 +13,12 @@ import type {
   SubagentRecord,
   ThreadHistoryPage,
 } from "../../shared/types";
-import { GEMINI_35_FLASH_MODEL_ID } from "../../shared/models";
+import { GEMINI_36_FLASH_MODEL_ID } from "../../shared/models";
 import { isNewPrivoraEventSequence } from "../../shared/privoraProtocol";
 
 const emptySettings: SettingsRecord = {
   id: "default",
-  model: GEMINI_35_FLASH_MODEL_ID,
+  model: GEMINI_36_FLASH_MODEL_ID,
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
   collaborationMode: "default",
@@ -387,14 +387,12 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
 
 const upsertById = <T extends { id: string; createdAt?: number; updatedAt?: number }>(items: T[], item: T): T[] => {
   const index = items.findIndex((candidate) => candidate.id === item.id);
-  if (index >= 0) {
-    const next = items.slice();
-    next[index] = item;
-    return next;
-  }
-  const next = [...items, item];
-  next.sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0));
-  return next;
+  const next = index >= 0
+    ? items.map((candidate, currentIndex) => currentIndex === index ? item : candidate)
+    : [...items, item];
+  return next.sort((a, b) =>
+    (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0) || a.id.localeCompare(b.id)
+  );
 };
 
 const upsertBySessionId = <T extends { sessionId: number; updatedAt?: number }>(items: T[], item: T): T[] => {

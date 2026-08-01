@@ -63,6 +63,35 @@
   margin: 0.25rem 0;
 }
 
+.inline-steer-message {
+  justify-self: end;
+  inline-size: fit-content;
+  min-inline-size: 4.75rem;
+  max-inline-size: min(620px, 78%);
+  border: 1px solid color-mix(in srgb, var(--privora-border) 34%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--privora-user-bubble) 28%, transparent);
+  padding: 8px 12px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--privora-text) 3%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.inline-steer-label {
+  display: block;
+  margin-bottom: 4px;
+  color: color-mix(in srgb, var(--privora-muted) 88%, transparent);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.inline-steer-message p {
+  margin: 0;
+}
+
 .assistant-flow-text {
   min-width: 0;
 }

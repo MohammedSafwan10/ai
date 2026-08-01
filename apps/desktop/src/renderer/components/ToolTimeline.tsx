@@ -19,6 +19,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
   const [autoExpandedImageIds, setAutoExpandedImageIds] = useState<Set<string>>(() => new Set());
+  const [autoExpandedFileDraftIds, setAutoExpandedFileDraftIds] = useState<Set<string>>(() => new Set());
   const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
   const [imagePreview, setImagePreview] = useState<GeneratedImagePreview | null>(null);
   const messageActive = isActiveMessageStatus(messageStatus);
@@ -26,7 +27,10 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
     () => tools.map((tool) => detailedTools[tool.id] ? { ...tool, ...detailedTools[tool.id] } : tool),
     [detailedTools, tools],
   );
-  const normalizedTools = useMemo(() => normalizeStaleTools(resolvedTools, messageActive), [resolvedTools, messageActive]);
+  const normalizedTools = useMemo(
+    () => normalizeStaleTools(resolvedTools, messageActive).map(withoutNoopDiffFiles),
+    [resolvedTools, messageActive],
+  );
   const compactedTools = useMemo(() => compactTimelineTools(normalizedTools), [normalizedTools]);
   const hasLive = normalizedTools.some((tool) => tool.status === "running" || tool.status === "preparing");
   const currentLiveToolId = useMemo(() => latestLiveToolId(normalizedTools), [normalizedTools]);
@@ -56,6 +60,24 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
     });
     setUserOpen((current) => current ?? true);
   }, [autoExpandedImageIds, normalizedTools]);
+  useEffect(() => {
+    const draftIds = normalizedTools
+      .filter((tool) => isLiveFileDraft(tool) && liveFileDraftOutput(tool).length > 0)
+      .map((tool) => tool.id)
+      .filter((id) => !autoExpandedFileDraftIds.has(id));
+    if (draftIds.length === 0) return;
+    setExpandedOutputIds((current) => {
+      const next = new Set(current);
+      draftIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setAutoExpandedFileDraftIds((current) => {
+      const next = new Set(current);
+      draftIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setUserOpen((current) => current ?? true);
+  }, [autoExpandedFileDraftIds, normalizedTools]);
   const displayTools = useMemo(
     () => liveGroupOpen ? normalizedTools : showAllSteps ? compactedTools : visibleTimelineTools(compactedTools),
     [compactedTools, liveGroupOpen, normalizedTools, showAllSteps],
@@ -64,6 +86,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const summary = useMemo(() => {
     const pending = normalizedTools.filter((tool) => tool.status === "awaiting_approval").length;
     const failed = normalizedTools.filter((tool) => tool.status === "failed").length;
+    const cancelled = normalizedTools.filter((tool) => tool.status === "cancelled").length;
     const running = normalizedTools.filter((tool) => tool.status === "running" || tool.status === "preparing").length;
     const done = normalizedTools.filter((tool) => tool.status === "done").length;
     if (pending) return `${done} done · ${pending} need approval`;
@@ -71,6 +94,11 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
     if (running) {
       const doneTools = normalizedTools.filter((tool) => tool.status === "done");
       return done ? completedSummary(doneTools, done) : "Working";
+    }
+    if (cancelled) {
+      const doneTools = normalizedTools.filter((tool) => tool.status === "done");
+      const discarded = `${cancelled} incomplete ${cancelled === 1 ? "tool" : "tools"} discarded`;
+      return doneTools.length ? `${completedSummary(doneTools, done)} · ${discarded}` : discarded;
     }
     return completedSummary(normalizedTools, done);
   }, [normalizedTools]);
@@ -151,8 +179,10 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
                 {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
-                {(hasUsefulOutput(displayOutput(tool)) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
-                  isTerminalOutputTool(tool) ? (
+                {(hasUsefulOutput(displayOutput(tool)) || liveFileDraftOutput(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
+                  isLiveFileDraft(tool) ? (
+                    expandedOutputIds.has(tool.id) && <LiveFileDraft tool={tool} />
+                  ) : isTerminalOutputTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
                       <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
                     )
@@ -231,6 +261,16 @@ function LiveOutput({ output }: { output: string }) {
   );
 }
 
+function LiveFileDraft({ tool }: { tool: ToolEventRecord }) {
+  const output = liveFileDraftOutput(tool);
+  return (
+    <div className="tool-live-file-draft">
+      <small>Receiving edit from model</small>
+      <LiveOutput output={output.slice(-16_000)} />
+    </div>
+  );
+}
+
 function ToolTitleLine({
   tool,
   subagents,
@@ -249,7 +289,7 @@ function ToolTitleLine({
   const canExpand = (
     (isTerminalOutputTool(tool) && hasTerminalOutput(tool, output)) ||
     (isQuestionTool(tool) && hasUsefulOutput(output))
-  ) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
+  ) || isLiveFileDraft(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
   const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) && !isImageTool(tool)
     ? compactOutputPreview(output.trimEnd())
     : "";
@@ -922,6 +962,26 @@ const answersFromObject = (value: unknown): Record<string, string[]> => {
 const isLiveOutput = (tool: ToolEventRecord) =>
   tool.status === "running" || tool.status === "preparing";
 
+const isLiveFileDraft = (tool: ToolEventRecord) =>
+  isLiveOutput(tool) && ["desktop_write_file", "desktop_edit_file", "desktop_apply_patch"].includes(tool.name);
+
+const liveFileDraftOutput = (tool: ToolEventRecord) => {
+  if (!isLiveFileDraft(tool)) return "";
+  if (tool.name === "desktop_write_file") return String(tool.args.content || "");
+  if (tool.name === "desktop_apply_patch") return String(tool.args.patch || "");
+  const operations = Array.isArray(tool.args.operations) ? tool.args.operations : [];
+  if (operations.length === 0) return "";
+  return operations.map((operation, index) => {
+    if (!operation || typeof operation !== "object") return String(operation || "");
+    const item = operation as Record<string, unknown>;
+    const heading = `${index + 1}. ${String(item.type || "edit")}`;
+    const body = [item.match, item.replacement, item.content]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .join("\n→\n");
+    return body ? `${heading}\n${body}` : heading;
+  }).join("\n\n");
+};
+
 const isSubagentTool = (tool: ToolEventRecord) =>
   ["spawn_agent", "send_message", "assign_task", "wait_agent", "list_agents", "close_agent"].includes(tool.name);
 
@@ -1064,6 +1124,25 @@ const isActiveMessageStatus = (status: string) =>
 const hasFileDiffs = (tool: ToolEventRecord) =>
   Boolean(tool.diffFiles?.length);
 
+const withoutNoopDiffFiles = (tool: ToolEventRecord): ToolEventRecord => {
+  if (!tool.diffFiles?.length) return tool;
+  const diffFiles = tool.diffFiles.filter((file) =>
+    file.status !== "modified" ||
+    file.additions > 0 ||
+    file.deletions > 0 ||
+    file.hunks.length > 0
+  );
+  if (diffFiles.length === tool.diffFiles.length) return tool;
+  return {
+    ...tool,
+    diffFiles,
+    diffStats: diffFiles.length ? {
+      additions: diffFiles.reduce((sum, file) => sum + file.additions, 0),
+      deletions: diffFiles.reduce((sum, file) => sum + file.deletions, 0),
+    } : undefined,
+  };
+};
+
 const shouldShowActivity = (tool: ToolEventRecord) =>
   toolActivityItems(tool).length > 1;
 
@@ -1103,6 +1182,7 @@ interface ToolActivityItem {
 }
 
 const toolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
+  if (tool.status === "cancelled") return cancelledToolActivityItems(tool);
   if (tool.diffFiles?.length) {
     return tool.diffFiles.map((file) => ({
       verb: fileVerb(file.status),
@@ -1153,6 +1233,26 @@ const toolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
   }
 
   return [];
+};
+
+const cancelledToolActivityItems = (tool: ToolEventRecord): ToolActivityItem[] => {
+  const fromActivities = (tool.activities || []).filter((item) => item.path).map((item) => ({
+    verb: "Discarded",
+    path: item.path || item.title || "tool call",
+    additions: 0,
+    deletions: 0,
+  }));
+  if (fromActivities.length) return fromActivities;
+  if (tool.name === "desktop_apply_patch") {
+    return patchActivityItems(normalizePatchText(String(tool.args.patch || ""))).map((item) => ({
+      ...item,
+      verb: "Discarded",
+      additions: 0,
+      deletions: 0,
+    }));
+  }
+  const path = String(tool.args.path || tool.result?.data?.path || "").trim();
+  return path ? [{ verb: "Discarded", path, additions: 0, deletions: 0 }] : [];
 };
 
 const fileVerb = (status: string) => {
@@ -1228,7 +1328,8 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
   );
   const fileChanges = changedFiles.size || tools.filter((tool) =>
     tool.status === "done" &&
-    ["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(tool.name)
+    ["desktop_write_file", "desktop_edit_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(tool.name) &&
+    toolResultMutatedFiles(tool)
   ).length;
   const commands = tools.filter((tool) =>
     tool.status === "done" &&
@@ -1244,6 +1345,15 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
     !fileChanges && !commands && reads ? `${reads} ${reads === 1 ? "check" : "checks"}` : "",
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : `${done} ${done === 1 ? "tool" : "tools"} done`;
+};
+
+const toolResultMutatedFiles = (tool: ToolEventRecord) => {
+  const data = tool.result?.data;
+  if (data?.mutated === false) return false;
+  if (tool.diffFiles?.length) return true;
+  if (Array.isArray(data?.changed)) return data.changed.length > 0;
+  if (Array.isArray(data?.changes)) return data.changes.length > 0;
+  return true;
 };
 
 const compactTimelineTools = (tools: ToolEventRecord[]) => {
@@ -1289,16 +1399,36 @@ const isNoisyCommandReason = (reason: string) =>
   reason.toLowerCase().includes("mutate files") &&
   reason.toLowerCase().includes("chain shell operations");
 
-const normalizeStaleTools = (tools: ToolEventRecord[], messageActive: boolean): ToolEventRecord[] => {
-  if (messageActive) return tools;
+export const normalizeStaleTools = (tools: ToolEventRecord[], messageActive: boolean): ToolEventRecord[] => {
   return tools.map((tool) => {
     if (tool.status !== "preparing" && tool.status !== "running") return tool;
+    const superseded = tool.status === "preparing" && tools.some((candidate) =>
+      candidate.id !== tool.id &&
+      candidate.status !== "preparing" &&
+      candidate.status !== "running" &&
+      candidate.createdAt >= tool.createdAt &&
+      mutationTarget(candidate) !== "" &&
+      mutationTarget(candidate) === mutationTarget(tool)
+    );
+    if (messageActive && !superseded) return tool;
+    const completed = Boolean(tool.endedAt || tool.diff || tool.diffFiles?.length || tool.result?.success);
     return {
       ...tool,
-      status: "done",
+      status: completed ? "done" : "cancelled",
       liveStatus: undefined,
-      result: tool.result || { success: true },
+      result: tool.result || (completed
+        ? { success: true }
+        : { success: false, error: "Incomplete streamed tool call was not executed." }),
       endedAt: tool.endedAt || tool.updatedAt,
     };
   });
+};
+
+const mutationTarget = (tool: ToolEventRecord) => {
+  if (tool.name === "desktop_apply_patch") {
+    const match = normalizePatchText(String(tool.args.patch || "")).match(/^\*\*\* (?:Add|Update|Delete) File: ([^\n]+)/m);
+    return match?.[1]?.trim() || "";
+  }
+  if (!["desktop_write_file", "desktop_edit_file", "desktop_delete_path"].includes(tool.name)) return "";
+  return String(tool.args.path || tool.result?.data?.path || "").trim();
 };

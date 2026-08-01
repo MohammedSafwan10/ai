@@ -54,6 +54,7 @@ import type {
   SaveSettingsInput,
   SearchContextMentionsInput,
   StartTurnInput,
+  SteerTurnInput,
   StorageCleanupInput,
   TerminalReadInput,
   TerminalResizeInput,
@@ -239,6 +240,9 @@ export const registerIpc = (
   handle(channels.startTurn, z.tuple([startTurnInputSchema]), async (_event, input: StartTurnInput) => {
     await runtime.startTurn(input);
   });
+
+  handle(channels.steerTurn, z.tuple([steerTurnInputSchema]), async (_event, input: SteerTurnInput) =>
+    runtime.steerTurn(input));
 
   handle(channels.continueRun, z.tuple([idSchema]), async (_event, threadId: string) => {
     await runtime.continueRun(threadId);
@@ -991,9 +995,19 @@ const startTurnInputSchema = z.object({
   attachments: z.array(attachmentSchema).max(12).optional(),
   contextMentions: z.array(contextMentionSchema).max(24).optional(),
   model: z.string().max(160).optional(),
-  reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
+});
+
+const steerTurnInputSchema = z.object({
+  threadId: idSchema,
+  expectedTurnId: idSchema,
+  prompt: z.string().max(1_000_000),
+  attachments: z.array(attachmentSchema).max(12).optional(),
+  contextMentions: z.array(contextMentionSchema).max(24).optional(),
+}).refine((input) => Boolean(input.prompt.trim()) || Boolean(input.attachments?.length) || Boolean(input.contextMentions?.length), {
+  message: "Steering input cannot be empty.",
 });
 
 const approvalDecisionSchema = z.object({
@@ -1023,7 +1037,7 @@ const searchContextMentionsInputSchema = z.object({
 
 const saveSettingsInputSchema = z.object({
   model: z.string().max(160).optional(),
-  reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
@@ -1038,7 +1052,7 @@ const saveSettingsInputSchema = z.object({
 const saveThreadSettingsInputSchema = z.object({
   threadId: idSchema,
   model: z.string().max(160).optional(),
-  reasoningEffort: z.enum(["none", "low", "medium", "high", "extra_high"]).optional(),
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
 });
