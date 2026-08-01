@@ -113,7 +113,7 @@ const validNickname = (value: string) =>
   /^[A-Za-z0-9 _-]+$/.test(value.trim()) && value.trim().length > 0;
 
 const isReasoningEffort = (value: string): value is ReasoningEffort =>
-  value === "none" || value === "low" || value === "medium" || value === "high" || value === "extra_high";
+  value === "none" || value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
 
 const titleCase = (value: string) =>
   value.replace(/\b\w/g, (letter) => letter.toUpperCase()).replace(/\s+/g, " ").trim();

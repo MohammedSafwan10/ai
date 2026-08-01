@@ -10,19 +10,8 @@ import { normalizeLocalServiceBaseUrl } from "../../security/serviceUrls";
 import { readSse } from "./sse";
 import { normalizeProviderUsage } from "./usage";
 
-const responseReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
-  effort === "extra_high" ? "high" : effort;
-
-const CLIPROXY_ANTIGRAVITY_GEMINI_35_FLASH = "gemini-3-flash-agent";
-const CLIPROXY_ANTIGRAVITY_GEMINI_31_PRO = "gemini-pro-agent";
-
-const cliproxyModelAliases: Record<string, string> = {
-  "gemini-3.5-flash-cliproxy": CLIPROXY_ANTIGRAVITY_GEMINI_35_FLASH,
-  "gemini-3.1-pro-cliproxy": CLIPROXY_ANTIGRAVITY_GEMINI_31_PRO,
-};
-
 export const resolveCliproxyModelId = (modelId: string) =>
-  cliproxyModelAliases[modelId] || modelId;
+  modelId;
 
 export const cliproxyPromptCacheKey = (threadId: string | undefined) => {
   const trimmed = threadId?.trim();
@@ -133,8 +122,8 @@ const thoughtDelta = (event: string | undefined, data: any) => {
   const type = data?.type;
   if (
     typeof data?.delta === "string" &&
-    (event === "response.reasoning_summary_text.delta" || event === "response.reasoning_text.delta") &&
-    (type === "response.reasoning_summary_text.delta" || type === "response.reasoning_text.delta")
+    event === "response.reasoning_summary_text.delta" &&
+    type === "response.reasoning_summary_text.delta"
   ) {
     return data.delta;
   }
@@ -224,7 +213,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         } : {}),
         ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
-        ...(options.reasoning !== "none" ? { reasoning: { effort: responseReasoningEffort(options.reasoning), summary: "auto" } } : {}),
+        reasoning: { effort: options.reasoning, summary: "auto" },
         stream: true,
         temperature: 0.35,
       }),
@@ -238,6 +227,8 @@ export class CliproxyAdapter implements ProviderAdapter {
 
     const buffers = new Map<string, { id?: string; name?: string; argumentsText: string }>();
     const emitted = new Set<string>();
+    let currentReasoningSummary = "";
+    let hasReasoningSummary = false;
     const emit = (name: string, args: string, id?: string) => {
       const key = id || `${name}:${args}`;
       if (emitted.has(key)) return;
@@ -275,9 +266,30 @@ export class CliproxyAdapter implements ProviderAdapter {
         const text = textDelta(event, data);
         if (text) options.onTextDelta(text);
         const thought = thoughtDelta(event, data);
-        if (thought) options.onThoughtDelta(thought);
+        const eventType = `${event || ""} ${data?.type || ""}`;
+        if (eventType.includes("reasoning_summary_part.added")) {
+          if (hasReasoningSummary && currentReasoningSummary.trim()) options.onThoughtDelta("\n\n");
+          currentReasoningSummary = "";
+        }
+        if (thought) {
+          currentReasoningSummary += thought;
+          hasReasoningSummary = true;
+          options.onThoughtDelta(thought);
+        }
+        if (eventType.includes("reasoning_summary_text.done") && typeof data?.text === "string") {
+          const remainder = data.text.startsWith(currentReasoningSummary)
+            ? data.text.slice(currentReasoningSummary.length)
+            : currentReasoningSummary.trim()
+              ? ""
+              : data.text;
+          if (remainder) {
+            currentReasoningSummary += remainder;
+            hasReasoningSummary = true;
+            options.onThoughtDelta(remainder);
+          }
+        }
 
-        const type = `${event || ""} ${data?.type || ""}`;
+        const type = eventType;
         if (type.includes("function_call_arguments.delta") && typeof data?.delta === "string") {
           const next = {
             id,

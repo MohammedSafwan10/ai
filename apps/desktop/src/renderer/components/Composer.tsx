@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRigh
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getModelOption, getModelProviderGroups, type PermissionMode, type ReasoningEffort } from "../../shared/models";
+import { findModelOption, getModelProviderGroups, type ModelOption, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 import { ContextMeter } from "./ContextMeter";
 
@@ -35,6 +35,18 @@ interface PastedBlock {
 }
 
 type ComposerMenu = "tools" | "access" | "model";
+
+const unavailableModel = (id: string): ModelOption => ({
+  id,
+  label: "Unavailable model",
+  provider: "gemini",
+  supportsTools: false,
+  supportsImageInput: false,
+  supportsReasoning: false,
+  reasoningEfforts: [],
+  defaultReasoningEffort: "medium",
+  description: `The saved model '${id}' was removed. Select a current model before sending.`,
+});
 
 export function Composer({
   settings,
@@ -70,7 +82,8 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastHistoryTextRef = useRef<string | null>(null);
-  const activeModel = getModelOption(settings.model);
+  const activeModel = findModelOption(settings.model) ?? unavailableModel(settings.model);
+  const activeReasoningOptions = reasoningOptions.filter((option) => activeModel.reasoningEfforts.includes(option.id));
   const modelProviderGroups = getModelProviderGroups();
   const firstVisionModel = useMemo(
     () => modelProviderGroups.flatMap((group) => group.models).find((model) => model.supportsImageInput),
@@ -714,18 +727,28 @@ export function Composer({
             <button
               type="button"
               className="model-reasoning-button"
-              title={`${activeModel.label} · ${reasoningLabel(settings.reasoningEffort)}`}
+              title={`${activeModel.label} · ${reasoningLabel(settings.reasoningEffort, activeModel)}`}
               onClick={() => toggleMenu("model")}
             >
               <span className="model-short">{modelDisplayLabel(activeModel.label)}</span>
-              <span className="reasoning-short">{reasoningLabel(settings.reasoningEffort)}</span>
+              <span className="reasoning-short">{reasoningLabel(settings.reasoningEffort, activeModel)}</span>
               <ChevronDown size={13} />
             </button>
             {activeMenu === "model" && (
               <>
               <div className="floating-menu model-reasoning-menu">
-                <small>Reasoning</small>
-                {reasoningOptions.map((option) => (
+                <button
+                  type="button"
+                  className={clsx("model-branch-row", modelSubmenuOpen && "active")}
+                  onMouseEnter={() => setModelSubmenuOpen(true)}
+                  onFocus={() => setModelSubmenuOpen(true)}
+                  onClick={() => setModelSubmenuOpen((open) => !open)}
+                >
+                  <span>{modelDisplayLabel(activeModel.label)}</span>
+                  <ChevronRight size={17} />
+                </button>
+                <div className="composer-menu-divider" />
+                {activeReasoningOptions.map((option) => (
                   <button
                     key={option.id}
                     type="button"
@@ -734,21 +757,10 @@ export function Composer({
                       setActiveMenu(null);
                     }}
                   >
-                    <span>{option.label}</span>
+                    <span>{reasoningLabel(option.id, activeModel)}</span>
                     {settings.reasoningEffort === option.id && <Check size={14} />}
                   </button>
                 ))}
-                <div className="composer-menu-divider" />
-                <button
-                  type="button"
-                  className={clsx("model-branch-row", modelSubmenuOpen && "active")}
-                  onMouseEnter={() => setModelSubmenuOpen(true)}
-                  onFocus={() => setModelSubmenuOpen(true)}
-                  onClick={() => setModelSubmenuOpen((open) => !open)}
-                >
-                  <span>{activeModel.label}</span>
-                  <ChevronRight size={17} />
-                </button>
               </div>
               {modelSubmenuOpen && (
                 <div
@@ -763,9 +775,14 @@ export function Composer({
                         <button
                           key={model.id}
                           type="button"
-                          title={model.supportsImageInput ? "Supports image input" : "Text input only"}
+                          title={`${model.supportsImageInput ? "Supports image input" : "Text input only"} · ${formatTokenCount(model.contextWindowTokens)} context · ${formatTokenCount(model.maxOutputTokens)} max output`}
                           onClick={() => {
-                            onSettings({ model: model.id });
+                            onSettings({
+                              model: model.id,
+                              reasoningEffort: model.reasoningEfforts.includes(settings.reasoningEffort)
+                                ? settings.reasoningEffort
+                                : model.defaultReasoningEffort,
+                            });
                             setActiveMenu(null);
                           }}
                         >
@@ -783,7 +800,7 @@ export function Composer({
               </>
             )}
           </div>
-          <ContextMeter usage={contextUsage} modelContextWindow={activeModel.contextWindowTokens} attachedContextCount={contextMentions.length} />
+          <ContextMeter usage={contextUsage} model={activeModel} attachedContextCount={contextMentions.length} />
           <button
             type="button"
             className={clsx("send-button", stopping && "is-stopping")}
@@ -804,11 +821,13 @@ function ToggleSwitch({ checked }: { checked: boolean }) {
 }
 
 const reasoningOptions: Array<{ id: ReasoningEffort; label: string }> = [
-  { id: "none", label: "Instant" },
+  { id: "none", label: "Off" },
+  { id: "minimal", label: "Minimal" },
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
-  { id: "extra_high", label: "Extra High" },
+  { id: "xhigh", label: "Extra High" },
+  { id: "max", label: "Max" },
 ];
 
 const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
@@ -816,11 +835,20 @@ const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
   { id: "yolo", label: "Full access" },
 ];
 
-const reasoningLabel = (value: ReasoningEffort) =>
-  reasoningOptions.find((option) => option.id === value)?.label || "Medium";
+const reasoningLabel = (value: ReasoningEffort, model?: ModelOption) => {
+  if (model?.reasoningControl === "toggle" && value !== "none") return "On";
+  return reasoningOptions.find((option) => option.id === value)?.label || "Medium";
+};
+
+const formatTokenCount = (tokens?: number) => {
+  if (!tokens) return "unknown";
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}M`;
+  return `${Math.round(tokens / 1_000)}k`;
+};
 
 const modelDisplayLabel = (label: string) =>
   label
+    .replace(/^GPT-/i, "")
     .replace(/\s*\(CLIProxy\)$/i, "")
     .trim();
 

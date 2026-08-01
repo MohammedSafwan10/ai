@@ -222,6 +222,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [storageMessage, setStorageMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
+  const [providerSaveError, setProviderSaveError] = useState("");
   const accountDisplay = getAccountDisplay(settings, aiCredits);
   const profileTitle = (settings.privoraAccountConnected ? settings.privoraAccountName : "") || accountDisplay || (settings.privoraAccountConnected ? "Privora account" : "Privora user");
   const profileSubtitle = accountDisplay || (settings.privoraAccountConnected ? "Email sync pending. Refresh or sign in again if it does not appear." : "Connect Privora to show your account email.");
@@ -229,6 +230,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const saveProviderSettings = async (input: SaveSettingsInput) => {
     setSaving(true);
     setStatus("idle");
+    setProviderSaveError("");
     try {
       await onSave(input);
       setStatus("saved");
@@ -237,6 +239,8 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
     } catch (error) {
       console.error(error);
       setStatus("error");
+      const message = error instanceof Error ? error.message : String(error || "");
+      setProviderSaveError(message.replace(/^Error invoking remote method '[^']+': Error:\s*/i, "") || "Could not save provider settings.");
       return false;
     } finally {
       setSaving(false);
@@ -450,7 +454,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                     ) : "Save provider settings"}
                   </button>
                   {status === "error" && (
-                    <p className="settings-error">Could not save API keys because OS-backed secret storage is unavailable.</p>
+                    <p className="settings-error">{providerSaveError}</p>
                   )}
                 </div>
               )}

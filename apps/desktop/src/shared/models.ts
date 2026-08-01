@@ -1,6 +1,6 @@
 export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud";
 
-export type ReasoningEffort = "none" | "low" | "medium" | "high" | "extra_high";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export type PermissionMode = "ask_risky" | "yolo";
 
@@ -15,11 +15,14 @@ export interface ModelOption {
   supportsTools: boolean;
   supportsImageInput: boolean;
   supportsReasoning: boolean;
+  reasoningEfforts: ReasoningEffort[];
+  defaultReasoningEffort: ReasoningEffort;
+  reasoningControl?: "effort" | "toggle";
+  inputLimitTokens?: number;
   contextWindowTokens?: number;
   maxOutputTokens?: number;
   defaultOutputTokens?: number;
   upstreamModelId?: string;
-  deprecatedReplacementId?: string;
   description: string;
 }
 
@@ -30,8 +33,7 @@ export interface ModelProviderGroup {
   models: ModelOption[];
 }
 
-export const GEMINI_35_FLASH_MODEL_ID = "gemini-3.5-flash";
-export const GEMINI_31_FLASH_LITE_MODEL_ID = "gemini-3.1-flash-lite";
+export const GEMINI_36_FLASH_MODEL_ID = "gemini-3.6-flash";
 export const OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID = "deepseek/deepseek-v4-flash";
 export const OPENROUTER_MINIMAX_M3_MODEL_ID = "minimax/minimax-m3";
 export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
@@ -41,19 +43,7 @@ export const GPT_56_SOL_MODEL_ID = "gpt-5.6-sol";
 export const GPT_56_TERRA_MODEL_ID = "gpt-5.6-terra";
 export const GPT_56_LUNA_MODEL_ID = "gpt-5.6-luna";
 
-const legacyModelReplacements: Record<string, string> = {
-  "gemini-3-flash-preview": GEMINI_35_FLASH_MODEL_ID,
-  "gemini-3.1-flash-lite-preview": GEMINI_31_FLASH_LITE_MODEL_ID,
-  "anthropic/claude-3.7-sonnet": GPT_56_SOL_MODEL_ID,
-  "gpt-5.5": GPT_56_SOL_MODEL_ID,
-  "google/gemini-2.5-pro": "gemini-3.1-pro-preview",
-  "deepseek/deepseek-chat": OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
-  "deepseek/deepseek-v4-flash:free": OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
-  "baidu/cobuddy:free": "nvidia/nemotron-3-super-120b-a12b:free",
-};
-
 const GPT_56_SOL_TERRA_CONTEXT_TOKENS = 1_050_000;
-const GPT_56_LUNA_CONTEXT_TOKENS = 400_000;
 const GPT_56_MAX_OUTPUT_TOKENS = 128_000;
 const GEMINI_LONG_CONTEXT_TOKENS = 1_048_576;
 const GEMINI_MAX_OUTPUT_TOKENS = 65_536;
@@ -62,6 +52,9 @@ const OPENROUTER_DEFAULT_OUTPUT_TOKENS = 4_096;
 const geminiLongContext = {
   supportsImageInput: true,
   supportsReasoning: true,
+  reasoningEfforts: ["minimal", "low", "medium", "high"],
+  defaultReasoningEffort: "medium",
+  inputLimitTokens: GEMINI_LONG_CONTEXT_TOKENS,
   contextWindowTokens: GEMINI_LONG_CONTEXT_TOKENS,
   maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
 } satisfies Partial<ModelOption>;
@@ -91,31 +84,13 @@ export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
 
 export const modelOptions: ModelOption[] = [
   {
-    id: GEMINI_31_FLASH_LITE_MODEL_ID,
-    label: "Gemini 3.1 Flash Lite",
-    provider: "gemini",
-    supportsTools: true,
-    ...geminiLongContext,
-    defaultOutputTokens: 16_000,
-    description: "Lightweight Gemini option for quick local-agent turns.",
-  },
-  {
-    id: GEMINI_35_FLASH_MODEL_ID,
-    label: "Gemini 3.5 Flash",
+    id: GEMINI_36_FLASH_MODEL_ID,
+    label: "Gemini 3.6 Flash",
     provider: "gemini",
     supportsTools: true,
     ...geminiLongContext,
     defaultOutputTokens: 32_000,
-    description: "Stable Gemini model for fast agentic, coding, and multimodal tasks.",
-  },
-  {
-    id: "gemini-3.1-pro-preview",
-    label: "Gemini 3.1 Pro",
-    provider: "gemini",
-    supportsTools: true,
-    ...geminiLongContext,
-    defaultOutputTokens: 32_000,
-    description: "Stronger Gemini model for harder prompts.",
+    description: "Latest stable Gemini Flash model for agentic, coding, and multimodal tasks.",
   },
   {
     id: GPT_56_SOL_MODEL_ID,
@@ -124,6 +99,8 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: true,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
     contextWindowTokens: GPT_56_SOL_TERRA_CONTEXT_TOKENS,
     maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
     defaultOutputTokens: 32_000,
@@ -136,6 +113,8 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: true,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
     contextWindowTokens: GPT_56_SOL_TERRA_CONTEXT_TOKENS,
     maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
     defaultOutputTokens: 32_000,
@@ -148,30 +127,12 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: true,
     supportsReasoning: true,
-    contextWindowTokens: GPT_56_LUNA_CONTEXT_TOKENS,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
+    contextWindowTokens: GPT_56_SOL_TERRA_CONTEXT_TOKENS,
     maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
     defaultOutputTokens: 32_000,
     description: "Efficient high-volume GPT-5.6 model through CLIProxy.",
-  },
-  {
-    id: "gemini-3.5-flash-cliproxy",
-    label: "Gemini 3.5 Flash (CLIProxy)",
-    provider: "cliproxy",
-    supportsTools: true,
-    ...geminiLongContext,
-    defaultOutputTokens: 32_000,
-    upstreamModelId: "gemini-3-flash-agent",
-    description: "Gemini 3.5 Flash through CLIProxy Antigravity.",
-  },
-  {
-    id: "gemini-3.1-pro-cliproxy",
-    label: "Gemini 3.1 Pro (CLIProxy)",
-    provider: "cliproxy",
-    supportsTools: true,
-    ...geminiLongContext,
-    defaultOutputTokens: 32_000,
-    upstreamModelId: "gemini-pro-agent",
-    description: "Gemini 3.1 Pro through CLIProxy.",
   },
   {
     id: OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
@@ -180,8 +141,10 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: false,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
     contextWindowTokens: 1_048_576,
-    maxOutputTokens: 131_072,
+    maxOutputTokens: 393_216,
     defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
     description: "Fast DeepSeek MoE model with 1M context through your OpenRouter key.",
   },
@@ -192,6 +155,8 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: false,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "medium"],
+    defaultReasoningEffort: "medium",
     contextWindowTokens: 262_144,
     maxOutputTokens: 262_144,
     defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
@@ -204,6 +169,9 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: true,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "medium"],
+    defaultReasoningEffort: "medium",
+    reasoningControl: "toggle",
     contextWindowTokens: 524_288,
     maxOutputTokens: 512_000,
     defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
@@ -216,6 +184,8 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: false,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 8_192,
     defaultOutputTokens: 2_048,
@@ -229,6 +199,8 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: false,
     supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 8_192,
     defaultOutputTokens: 2_048,
@@ -242,7 +214,10 @@ export const modelOptions: ModelOption[] = [
     supportsTools: true,
     supportsImageInput: true,
     supportsReasoning: true,
-    contextWindowTokens: 1_048_576,
+    reasoningEfforts: ["none", "medium"],
+    defaultReasoningEffort: "medium",
+    reasoningControl: "toggle",
+    contextWindowTokens: 524_288,
     maxOutputTokens: 8_192,
     defaultOutputTokens: 2_048,
     upstreamModelId: "minimax/minimax-m3",
@@ -251,17 +226,30 @@ export const modelOptions: ModelOption[] = [
 ];
 
 export const normalizeModelId = (modelId: string | undefined) => {
-  const normalizedId = modelId ? legacyModelReplacements[modelId] ?? modelId : undefined;
-  return normalizedId && modelOptions.some((option) => option.id === normalizedId)
-    ? normalizedId
-    : GEMINI_35_FLASH_MODEL_ID;
+  const normalizedId = modelId?.trim();
+  return normalizedId || GEMINI_36_FLASH_MODEL_ID;
 };
 
-export const getModelOption = (modelId: string) =>
-  modelOptions.find((option) => option.id === normalizeModelId(modelId)) ?? modelOptions[1];
+export const findModelOption = (modelId: string | undefined) =>
+  modelOptions.find((option) => option.id === normalizeModelId(modelId));
+
+export const getModelOption = (modelId: string) => {
+  const model = findModelOption(modelId);
+  if (!model) throw new Error(`Unknown or removed model: ${modelId}`);
+  return model;
+};
 
 export const getProviderForModel = (modelId: string): ProviderId =>
   getModelOption(modelId).provider;
+
+export const modelSupportsReasoningEffort = (modelId: string, effort: ReasoningEffort) =>
+  getModelOption(modelId).reasoningEfforts.includes(effort);
+
+export const assertModelSupportsReasoningEffort = (modelId: string, effort: ReasoningEffort) => {
+  const model = getModelOption(modelId);
+  if (model.reasoningEfforts.includes(effort)) return;
+  throw new Error(`${model.label} does not support ${effort} reasoning. Choose one of: ${model.reasoningEfforts.join(", ")}.`);
+};
 
 export type ModelRuntimeBudgetMode = "normal" | "large_context";
 
@@ -269,6 +257,7 @@ export interface ModelRuntimeBudget {
   mode: ModelRuntimeBudgetMode;
   contextWindowTokens?: number;
   outputTokens?: number;
+  safetyReserveTokens?: number;
   hardInputBudgetTokens?: number;
   inputBudgetTokens?: number;
   messageCharLimit: number;
@@ -280,7 +269,7 @@ export const resolveModelRuntimeBudget = (
   modelId: string | undefined,
   mode: ModelRuntimeBudgetMode = "normal",
 ): ModelRuntimeBudget => {
-  const model = getModelOption(modelId || GEMINI_35_FLASH_MODEL_ID);
+  const model = getModelOption(modelId || GEMINI_36_FLASH_MODEL_ID);
   const contextWindowTokens = model.contextWindowTokens;
   const maxOutputTokens = model.maxOutputTokens;
   const defaultOutputTokens = model.defaultOutputTokens;
@@ -288,20 +277,17 @@ export const resolveModelRuntimeBudget = (
     ? Math.min(defaultOutputTokens, maxOutputTokens)
     : defaultOutputTokens;
 
-  const safetyReserve = contextWindowTokens ? Math.max(8_000, Math.floor(contextWindowTokens * 0.05)) : undefined;
+  const safetyReserve = contextWindowTokens ? Math.max(8_000, Math.floor(contextWindowTokens * 0.03)) : undefined;
   const hardInputBudgetTokens = contextWindowTokens
     ? Math.max(8_000, contextWindowTokens - (outputTokens || 0) - (safetyReserve || 0))
     : undefined;
-  const inputBudgetTokens = hardInputBudgetTokens
-    ? mode === "large_context"
-      ? hardInputBudgetTokens
-      : Math.min(hardInputBudgetTokens, 350_000)
-    : 28_000;
+  const inputBudgetTokens = hardInputBudgetTokens ?? 28_000;
 
   return {
     mode,
     contextWindowTokens,
     outputTokens,
+    safetyReserveTokens: safetyReserve,
     hardInputBudgetTokens,
     inputBudgetTokens,
     messageCharLimit: mode === "large_context" ? 40_000 : 12_000,

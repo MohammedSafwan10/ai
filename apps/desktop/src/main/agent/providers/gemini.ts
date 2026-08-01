@@ -1,5 +1,5 @@
-import { GoogleGenAI, type ThinkingLevel } from "@google/genai";
-import { geminiDesktopFunctionDeclarations, parseDesktopToolCall } from "../tools/definitions";
+import { GoogleGenAI, type ToolConfig } from "@google/genai";
+import { geminiDesktopFunctionDeclarations, parseDesktopToolCall, parsePartialDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { createToolCallId } from "./types";
 import { normalizeProviderUsage } from "./usage";
@@ -14,13 +14,14 @@ interface GeminiGroundingMetadata {
 }
 
 const geminiThinkingLevel = (effort: ProviderStreamOptions["reasoning"]) => {
+  if (effort === "minimal") return "minimal";
   if (effort === "low") return "low";
   if (effort === "medium") return "medium";
-  if (effort === "high" || effort === "extra_high") return "high";
-  return "minimal";
+  if (effort === "high") return "high";
+  throw new Error(`Gemini 3.6 Flash does not support ${effort} thinking.`);
 };
 
-const toGeminiContents = (messages: ProviderMessage[]) =>
+export const toGeminiContents = (messages: ProviderMessage[]) =>
   messages.map((message) => {
     const parts: Array<Record<string, unknown>> = [];
     message.parts?.forEach((part) => {
@@ -35,12 +36,30 @@ const toGeminiContents = (messages: ProviderMessage[]) =>
       }
       if (part.type === "function_call") {
         parts.push({
-          functionCall: { name: part.name, args: part.arguments || {} },
+          functionCall: { id: part.id, name: part.name, args: part.arguments || {} },
           ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
         });
       }
       if (part.type === "function_response") {
-        parts.push({ functionResponse: { name: part.name, response: part.response || {} } });
+        parts.push({ functionResponse: { id: part.id, name: part.name, response: part.response || {} } });
+      }
+      if (part.type === "server_tool_call") {
+        parts.push({
+          toolCall: {
+            ...(part.id ? { id: part.id } : {}),
+            ...(part.toolType ? { toolType: part.toolType } : {}),
+            ...(part.arguments ? { args: part.arguments } : {}),
+          },
+        });
+      }
+      if (part.type === "server_tool_response") {
+        parts.push({
+          toolResponse: {
+            ...(part.id ? { id: part.id } : {}),
+            ...(part.toolType ? { toolType: part.toolType } : {}),
+            ...(part.response ? { response: part.response } : {}),
+          },
+        });
       }
     });
     if (parts.length === 0) parts.push({ text: message.content || "" });
@@ -66,6 +85,93 @@ export const geminiToolsForModel = (
     tools.push({ googleSearch: {} });
   }
   return tools;
+};
+
+export const geminiToolConfigForModel = (model: string): ToolConfig => {
+  const combinesBuiltInAndFunctionTools = supportsGeminiGoogleSearch(model);
+  return {
+    functionCallingConfig: { mode: combinesBuiltInAndFunctionTools ? "VALIDATED" : "AUTO" },
+    ...(combinesBuiltInAndFunctionTools ? { includeServerSideToolInvocations: true } : {}),
+  } as ToolConfig;
+};
+
+export const toGeminiInteractionInput = (messages: ProviderMessage[]) => {
+  const input: Array<Record<string, unknown>> = [];
+  for (const message of messages) {
+    const parts = message.parts?.length ? message.parts : [{ type: "text" as const, text: message.content || "" }];
+    let content: Array<Record<string, unknown>> = [];
+    const flushContent = () => {
+      if (content.length === 0) return;
+      input.push({ role: message.role === "assistant" ? "model" : "user", content });
+      content = [];
+    };
+    for (const part of parts) {
+      if (part.type === "text") {
+        content.push({ type: "text", text: part.text });
+        continue;
+      }
+      if (part.type === "image") {
+        content.push({ type: "image", data: part.data, mime_type: part.mimeType });
+        continue;
+      }
+      flushContent();
+      if (part.type === "function_call") {
+        input.push({ type: "function_call", id: part.id, name: part.name, arguments: part.arguments || {} });
+      } else if (part.type === "function_response") {
+        input.push({
+          type: "function_result",
+          call_id: part.id,
+          name: part.name,
+          is_error: part.response.success === false,
+          result: [{ type: "text", text: JSON.stringify(part.response) }],
+        });
+      }
+    }
+    flushContent();
+  }
+  return input;
+};
+
+const geminiInteractionTools = (
+  model: string,
+  collaborationMode: ProviderStreamOptions["collaborationMode"],
+) => [
+  ...geminiDesktopFunctionDeclarations(collaborationMode).map((tool) => ({
+    type: "function",
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parametersJsonSchema,
+  })),
+  ...(supportsGeminiGoogleSearch(model) ? [{ type: "google_search" }] : []),
+];
+
+const parseNestedProviderMessage = (value: unknown): string => {
+  if (value instanceof Error) return parseNestedProviderMessage(value.message);
+  if (typeof value !== "string") return String(value || "").trim();
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed);
+    const nested = parsed?.error?.message ?? parsed?.message;
+    return nested === undefined ? trimmed : parseNestedProviderMessage(nested);
+  } catch {
+    return trimmed;
+  }
+};
+
+export const normalizeGeminiError = (value: unknown) => {
+  const message = parseNestedProviderMessage(value);
+  if (!message) return "Gemini request failed.";
+  if (/api key not valid|api_key_invalid|invalid api key/i.test(message)) {
+    return "Gemini rejected the saved API key. Replace it in Settings > Providers with a valid Google AI Studio Gemini API key.";
+  }
+  if (/permission denied|permission_denied/i.test(message)) {
+    return `Gemini denied access for this API key or project. Check that the Gemini API is enabled and that the selected model is available. (${message})`;
+  }
+  if (/quota|resource_exhausted|rate limit/i.test(message)) {
+    return `Gemini quota or rate limit was reached. Check the key's Google AI Studio project quota and retry. (${message})`;
+  }
+  return message;
 };
 
 export const applyGeminiGroundingCitations = (text: string, metadata?: GeminiGroundingMetadata | null) => {
@@ -110,56 +216,57 @@ export class GeminiAdapter implements ProviderAdapter {
     if (!options.geminiApiKey) {
       throw new Error("Gemini API key is not configured in desktop settings.");
     }
+    try {
+      await this.streamGemini(options);
+    } catch (error) {
+      if (options.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+      throw new Error(normalizeGeminiError(error));
+    }
+  }
+
+  private async streamGemini(options: ProviderStreamOptions): Promise<void> {
     const ai = new GoogleGenAI({ apiKey: options.geminiApiKey });
-    const responseStream = await ai.models.generateContentStream({
+    const responseStream = await ai.interactions.create({
       model: options.model,
-      contents: toGeminiContents(options.messages),
-      config: {
-        systemInstruction: options.systemInstruction,
-        temperature: 0.35,
-        ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-        ...(options.reasoning !== "none"
-          ? {
-              thinkingConfig: {
-                thinkingLevel: geminiThinkingLevel(options.reasoning) as ThinkingLevel,
-                includeThoughts: true,
-              },
-            }
-          : {}),
-        ...(!options.disableTools ? {
-          tools: geminiToolsForModel(options.model, options.collaborationMode) as any,
-          toolConfig: { functionCallingConfig: { mode: "AUTO" } } as any,
-        } : {}),
+      input: toGeminiInteractionInput(options.messages) as any,
+      system_instruction: options.systemInstruction,
+      stream: true,
+      store: false,
+      generation_config: {
+        thinking_level: geminiThinkingLevel(options.reasoning) as any,
+        thinking_summaries: "auto",
+        ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
+        ...(!options.disableTools ? { tool_choice: supportsGeminiGoogleSearch(options.model) ? "validated" : "auto" } : {}),
       },
-    });
+      ...(!options.disableTools ? { tools: geminiInteractionTools(options.model, options.collaborationMode) as any } : {}),
+    } as any, { abortSignal: options.signal } as any);
 
-    let emittedText = "";
-    let emittedThought = "";
-    let groundingMetadata: GeminiGroundingMetadata | null = null;
+    const activeSteps = new Map<number, {
+      id: string;
+      name: string;
+      argumentsText: string;
+    }>();
+    const citationSources = new Map<string, string>();
     let webSearchEventId = "";
-    const emitIncrementalText = (text: string, thought = false) => {
-      const previous = thought ? emittedThought : emittedText;
-      const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
-      if (thought) {
-        emittedThought = text.startsWith(previous) ? text : `${emittedThought}${delta}`;
-        if (delta) options.onThoughtDelta(delta);
-      } else {
-        emittedText = text.startsWith(previous) ? text : `${emittedText}${delta}`;
-        if (delta) options.onTextDelta(delta);
-      }
-    };
-
-    for await (const chunk of responseStream) {
+    for await (const rawEvent of responseStream as any) {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
       options.onStreamProgress?.();
-      const usage = normalizeProviderUsage((chunk as any).usageMetadata || (chunk as any).usage);
+      const event = rawEvent as Record<string, any>;
+      const usage = normalizeProviderUsage(event.metadata?.total_usage || event.interaction?.usage || event.usage);
       if (usage) options.onUsage?.(usage);
-      const candidateGroundingMetadata = chunk.candidates?.[0]?.groundingMetadata;
-      if (candidateGroundingMetadata?.groundingChunks?.length || candidateGroundingMetadata?.groundingSupports?.length) {
-        groundingMetadata = candidateGroundingMetadata as GeminiGroundingMetadata;
-        const queries = groundingMetadata.webSearchQueries || [];
-        if (!webSearchEventId) {
-          webSearchEventId = createToolCallId().replace("desktop_call", "web_search");
+      if (event.event_type === "step.start") {
+        const step = event.step || {};
+        if (step.type === "function_call" && step.name) {
+          activeSteps.set(event.index, {
+            id: step.id || createToolCallId(),
+            name: step.name,
+            argumentsText: typeof step.arguments === "string"
+              ? step.arguments
+              : step.arguments ? JSON.stringify(step.arguments) : "",
+          });
+        } else if (step.type === "google_search_call") {
+          const queries = Array.isArray(step.arguments?.queries) ? step.arguments.queries : [];
+          webSearchEventId = step.id || createToolCallId().replace("desktop_call", "web_search");
           options.onWebSearch?.({
             id: webSearchEventId,
             status: "running",
@@ -168,36 +275,56 @@ export class GeminiAdapter implements ProviderAdapter {
             output: queries[0] ? `Searching web for ${queries[0]}` : undefined,
           });
         }
+        continue;
       }
-      const parts = chunk.candidates?.[0]?.content?.parts || [];
-      for (const part of parts) {
-        if (part.functionCall?.name) {
-          const call = parseDesktopToolCall(
-            part.functionCall.name,
-            JSON.stringify(part.functionCall.args || {}),
-            createToolCallId(),
-          );
-          if (call) options.onToolCall({ ...call, thoughtSignature: part.thoughtSignature });
-        } else if (part.thought && part.text) {
-          emitIncrementalText(part.text, true);
-        } else if (!part.thought && part.text) {
-          emitIncrementalText(part.text);
+      if (event.event_type === "step.delta") {
+        const delta = event.delta || {};
+        if (delta.type === "text" && typeof delta.text === "string") options.onTextDelta(delta.text);
+        if ((delta.type === "thought" && typeof delta.text === "string") || delta.type === "thought_summary") {
+          const thought = typeof delta.text === "string" ? delta.text : delta.content?.text;
+          if (thought) options.onThoughtDelta(thought);
+        }
+        if (delta.type === "google_search_call") {
+          const queries = Array.isArray(delta.arguments?.queries) ? delta.arguments.queries : [];
+          if (!webSearchEventId) webSearchEventId = createToolCallId().replace("desktop_call", "web_search");
+          options.onWebSearch?.({ id: webSearchEventId, status: "running", query: queries[0], title: "Searching web" });
+        }
+        if (delta.type === "text_annotation_delta" && Array.isArray(delta.annotations)) {
+          delta.annotations.forEach((annotation: Record<string, unknown>) => {
+            const url = typeof annotation.url === "string" ? annotation.url : "";
+            if (url) citationSources.set(url, typeof annotation.title === "string" ? annotation.title : url);
+          });
+        }
+        const argumentsDelta = delta.partial_arguments ?? (delta.type === "arguments_delta" ? delta.arguments : undefined);
+        const active = activeSteps.get(event.index);
+        if (active && typeof argumentsDelta === "string") {
+          active.argumentsText += argumentsDelta;
+          const draft = parsePartialDesktopToolCall(active.name, active.argumentsText);
+          if (draft) options.onToolDraft({ ...draft, id: active.id });
+        }
+        continue;
+      }
+      if (event.event_type === "step.stop") {
+        const active = activeSteps.get(event.index);
+        if (active) {
+          const rawArguments = active.argumentsText || "{}";
+          const call = parseDesktopToolCall(active.name, rawArguments, active.id);
+          if (call) options.onToolCall(call);
+          activeSteps.delete(event.index);
         }
       }
-      if (parts.length === 0 && chunk.text) emitIncrementalText(chunk.text);
     }
 
-    const citedText = applyGeminiGroundingCitations(emittedText, groundingMetadata);
-    if (citedText !== emittedText) options.onTextReplace?.(citedText);
+    if (citationSources.size > 0) {
+      options.onTextDelta(`\n\nSources:\n${Array.from(citationSources, ([url, title]) => `- [${title}](${url})`).join("\n")}`);
+    }
+
     if (webSearchEventId) {
-      const queries = groundingMetadata?.webSearchQueries || [];
-      const query = queries[0] || "";
       options.onWebSearch?.({
         id: webSearchEventId,
         status: "done",
-        query,
         title: "Searched web",
-        output: query ? `Searched web for ${query}` : "Searched web",
+        output: "Gemini completed a grounded web search.",
       });
     }
   }

@@ -285,6 +285,7 @@ const callOpenRouter = async ({ catalogModel, body }) => {
       tool_choice: body.toolChoice || "auto",
       parallel_tool_calls: true,
       max_tokens: Math.min(Number(body.maxOutputTokens || 4096), 8192),
+      reasoning: body.reasoning,
       stream: false,
       temperature: 0.35,
     }),

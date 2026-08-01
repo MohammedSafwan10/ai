@@ -1,25 +1,28 @@
 import clsx from "clsx";
 import type { CSSProperties } from "react";
 import type { ContextUsageRecord } from "../../shared/types";
+import type { ModelOption } from "../../shared/models";
 
 export function ContextMeter({
   usage,
-  modelContextWindow,
+  model,
   attachedContextCount,
 }: {
   usage?: ContextUsageRecord;
-  modelContextWindow?: number;
+  model: ModelOption;
   attachedContextCount: number;
 }) {
-  const percent = usage?.remainingPercent ?? 100;
-  const usedTokens = usage?.usedTokens ?? 0;
-  const windowTokens = usage?.contextWindowTokens ?? modelContextWindow;
+  const currentUsage = usage?.modelId === model.id ? usage : undefined;
+  const percent = currentUsage?.remainingPercent ?? 100;
+  const usedTokens = currentUsage?.usedTokens ?? 0;
+  const windowTokens = model.contextWindowTokens;
+  const inputBudget = currentUsage?.inputBudgetTokens;
   const tone = percent < 20 ? "danger" : percent < 50 ? "warn" : "ok";
   const ringStyle = {
     "--context-percent": `${Math.max(0, Math.min(100, percent))}%`,
   } as CSSProperties;
   return (
-    <div className={clsx("context-meter-wrap", usage?.estimated && "is-estimated")}>
+    <div className={clsx("context-meter-wrap", currentUsage?.estimated && "is-estimated")}>
       <button
         type="button"
         className={clsx("context-meter", `tone-${tone}`)}
@@ -31,32 +34,42 @@ export function ContextMeter({
       <div className="context-meter-popover" role="tooltip">
         <div className="context-meter-popover-title">
           <strong>{percent}% context left</strong>
-          <span>{usage?.estimated ? "estimated" : "exact"}</span>
+          <span>{currentUsage?.estimated || !currentUsage ? "estimated" : "provider usage"}</span>
         </div>
         <dl>
           <div>
             <dt>Used</dt>
-            <dd>{formatTokenCount(usedTokens)}{windowTokens ? ` / ${formatTokenCount(windowTokens)}` : ""}</dd>
+            <dd>{formatTokenCount(usedTokens)}{inputBudget ? ` / ${formatTokenCount(inputBudget)} usable` : ""}</dd>
+          </div>
+          <div>
+            <dt>Model limits</dt>
+            <dd>{model.inputLimitTokens
+              ? `${formatTokenCount(model.inputLimitTokens)} input · ${formatTokenCount(model.maxOutputTokens || 0)} output`
+              : `${formatTokenCount(windowTokens || 0)} context · ${formatTokenCount(model.maxOutputTokens || 0)} output`}</dd>
+          </div>
+          <div>
+            <dt>Remaining</dt>
+            <dd>{currentUsage?.remainingTokens === undefined ? "Not measured yet" : formatTokenCount(currentUsage.remainingTokens)}</dd>
           </div>
           <div>
             <dt>Last turn</dt>
-            <dd>{formatTokenCount(usage?.lastTokenUsage.inputTokens || 0)} in · {formatTokenCount(usage?.lastTokenUsage.outputTokens || 0)} out</dd>
+            <dd>{formatTokenCount(currentUsage?.lastTokenUsage.inputTokens || 0)} in · {formatTokenCount(currentUsage?.lastTokenUsage.outputTokens || 0)} out</dd>
           </div>
           <div>
             <dt>Reasoning</dt>
-            <dd>{formatTokenCount(usage?.lastTokenUsage.reasoningOutputTokens || 0)}</dd>
+            <dd>{formatTokenCount(currentUsage?.lastTokenUsage.reasoningOutputTokens || 0)}</dd>
           </div>
           <div>
-            <dt>Reserve</dt>
-            <dd>{formatTokenCount(usage?.outputReserveTokens || 0)}</dd>
+            <dt>Reserved</dt>
+            <dd>{formatTokenCount(currentUsage?.outputReserveTokens || model.defaultOutputTokens || 0)} output · {formatTokenCount(currentUsage?.safetyReserveTokens || 0)} safety</dd>
           </div>
           <div>
             <dt>Auto compact</dt>
-            <dd>{usage?.autoCompactAtTokens ? formatTokenCount(usage.autoCompactAtTokens) : "provider default"}</dd>
+            <dd>{currentUsage?.autoCompactAtTokens ? formatTokenCount(currentUsage.autoCompactAtTokens) : "After usage is measured"}</dd>
           </div>
           <div>
             <dt>Mode</dt>
-            <dd>{usage?.budgetMode === "large_context" ? "Large context" : "Normal"}</dd>
+            <dd>{currentUsage?.budgetMode === "large_context" ? "Large attachments" : "Standard"}</dd>
           </div>
           <div>
             <dt>Attached</dt>

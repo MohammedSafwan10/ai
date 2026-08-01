@@ -2,9 +2,14 @@ import { openRouterDesktopTools, parseDesktopToolCall, parsePartialDesktopToolCa
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
 import { normalizeProviderUsage } from "./usage";
+import { getModelOption, type ReasoningEffort } from "../../../shared/models";
 
-const openRouterReasoningEffort = (effort: ProviderStreamOptions["reasoning"]) =>
-  effort === "extra_high" ? "high" : effort;
+export const openRouterReasoningConfig = (modelId: string, effort: ReasoningEffort) => {
+  const model = getModelOption(modelId);
+  if (effort === "none") return { enabled: false, exclude: false };
+  if (model.reasoningControl === "toggle") return { enabled: true, exclude: false };
+  return { effort, exclude: false };
+};
 
 const getOpenRouterErrorMessage = (value: string) => {
   const trimmed = value.trim();
@@ -123,7 +128,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
           parallel_tool_calls: true,
         } : {}),
         ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
-        ...(options.reasoning !== "none" ? { reasoning: { effort: openRouterReasoningEffort(options.reasoning), exclude: false } } : {}),
+        reasoning: openRouterReasoningConfig(options.model, options.reasoning),
         stream: true,
         stream_options: { include_usage: true },
         temperature: 0.35,
@@ -131,25 +136,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
       signal: options.signal,
     });
 
-    let response = await request(options.maxOutputTokens);
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      const affordability = response.status === 402
-        ? parseOpenRouterAffordableOutputTokens(errorText)
-        : undefined;
-      const affordableOutputTokens = affordability?.affordable;
-      if (
-        options.maxOutputTokens
-        && affordableOutputTokens
-        && affordableOutputTokens >= 1
-        && affordableOutputTokens < options.maxOutputTokens
-      ) {
-        response = await request(affordableOutputTokens);
-      } else {
-        throw new Error(normalizeOpenRouterError(errorText || `OpenRouter request failed with ${response.status}`));
-      }
-    }
+    const response = await request(options.maxOutputTokens);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");

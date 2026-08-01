@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  GEMINI_31_FLASH_LITE_MODEL_ID,
   GPT_56_LUNA_MODEL_ID,
   GPT_56_SOL_MODEL_ID,
   GPT_56_TERRA_MODEL_ID,
   OPENROUTER_MINIMAX_M3_MODEL_ID,
+  assertModelSupportsReasoningEffort,
   getModelOption,
   normalizeModelId,
   resolveModelRuntimeBudget,
@@ -26,29 +26,19 @@ describe("desktop model metadata and runtime budgets", () => {
       supportsReasoning: true,
     });
     expect(getModelOption(GPT_56_LUNA_MODEL_ID)).toMatchObject({
-      contextWindowTokens: 400_000,
+      contextWindowTokens: 1_050_000,
       maxOutputTokens: 128_000,
       supportsImageInput: true,
       supportsReasoning: true,
     });
-    expect(getModelOption("gemini-3.5-flash")).toMatchObject({
+    expect(getModelOption("gemini-3.6-flash")).toMatchObject({
       contextWindowTokens: 1_048_576,
       maxOutputTokens: 65_536,
       defaultOutputTokens: 32_000,
-    });
-    expect(getModelOption("gemini-3.1-pro-preview")).toMatchObject({
-      contextWindowTokens: 1_048_576,
-      maxOutputTokens: 65_536,
-      defaultOutputTokens: 32_000,
-    });
-    expect(getModelOption(GEMINI_31_FLASH_LITE_MODEL_ID)).toMatchObject({
-      contextWindowTokens: 1_048_576,
-      maxOutputTokens: 65_536,
-      defaultOutputTokens: 16_000,
     });
     expect(getModelOption("deepseek/deepseek-v4-flash")).toMatchObject({
       contextWindowTokens: 1_048_576,
-      maxOutputTokens: 131_072,
+      maxOutputTokens: 393_216,
       defaultOutputTokens: 4_096,
       supportsImageInput: false,
     });
@@ -68,20 +58,29 @@ describe("desktop model metadata and runtime budgets", () => {
     });
   });
 
-  it("normalizes the retired flash-lite preview id to the stable model", () => {
-    expect(normalizeModelId("gemini-3.1-flash-lite-preview")).toBe(GEMINI_31_FLASH_LITE_MODEL_ID);
+  it("does not migrate removed model IDs", () => {
+    expect(normalizeModelId("gemini-3.5-flash")).toBe("gemini-3.5-flash");
+    expect(() => getModelOption("gemini-3.5-flash")).toThrow(/unknown or removed model/i);
+    expect(() => getModelOption("gemini-3.5-flash-cliproxy")).toThrow(/unknown or removed model/i);
+    expect(() => getModelOption("gpt-5.5")).toThrow(/unknown or removed model/i);
   });
 
-  it("migrates the retired GPT-5.5 id to GPT-5.6 Sol", () => {
-    expect(normalizeModelId("gpt-5.5")).toBe(GPT_56_SOL_MODEL_ID);
+  it("exposes only verified reasoning levels and rejects unsupported selections", () => {
+    expect(getModelOption(GPT_56_SOL_MODEL_ID).reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(getModelOption("gemini-3.6-flash").reasoningEfforts).toEqual(["minimal", "low", "medium", "high"]);
+    expect(getModelOption("deepseek/deepseek-v4-flash").reasoningEfforts).toEqual(["none", "high", "xhigh"]);
+    expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free").reasoningEfforts).toEqual(["none", "low", "medium"]);
+    expect(getModelOption(OPENROUTER_MINIMAX_M3_MODEL_ID).reasoningControl).toBe("toggle");
+    expect(() => assertModelSupportsReasoningEffort("gemini-3.6-flash", "none")).toThrow(/does not support none/i);
+    expect(() => assertModelSupportsReasoningEffort(GPT_56_SOL_MODEL_ID, "max")).not.toThrow();
   });
 
-  it("caps normal input budget while preserving a larger explicit context budget", () => {
+  it("uses the verified model budget in both standard and large-attachment modes", () => {
     const normal = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
     const large = resolveModelRuntimeBudget("gpt-5.6-sol", "large_context");
 
-    expect(normal.inputBudgetTokens).toBe(350_000);
-    expect(large.inputBudgetTokens).toBe(965_500);
+    expect(normal.inputBudgetTokens).toBe(986_500);
+    expect(large.inputBudgetTokens).toBe(986_500);
     expect(normal.outputTokens).toBeLessThanOrEqual(getModelOption("gpt-5.6-sol").maxOutputTokens || 0);
     expect(large.messageCharLimit).toBe(40_000);
     expect(large.toolResultCharLimit).toBe(60_000);
@@ -93,10 +92,10 @@ describe("desktop model metadata and runtime budgets", () => {
     const minimax = resolveModelRuntimeBudget(OPENROUTER_MINIMAX_M3_MODEL_ID, "normal");
 
     expect(deepseek.outputTokens).toBe(4_096);
-    expect(deepseek.inputBudgetTokens).toBe(350_000);
+    expect(deepseek.inputBudgetTokens).toBe(1_013_023);
     expect(nemotron.outputTokens).toBe(4_096);
-    expect(nemotron.hardInputBudgetTokens).toBeLessThanOrEqual(245_000);
+    expect(nemotron.hardInputBudgetTokens).toBe(250_048);
     expect(minimax.outputTokens).toBe(4_096);
-    expect(minimax.inputBudgetTokens).toBe(350_000);
+    expect(minimax.inputBudgetTokens).toBe(504_464);
   });
 });

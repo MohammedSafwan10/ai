@@ -14,7 +14,7 @@ describe("CLIProxy hosted web search", () => {
   });
 
   it("keeps Plan Mode filtering for desktop tools without disabling search", () => {
-    const tools = cliproxyToolsForModel("gemini-3.5-flash-cliproxy", "plan");
+    const tools = cliproxyToolsForModel("gpt-5.6-terra", "plan");
 
     expect(tools.some((tool) => tool.type === "function" && "name" in tool && tool.name === "request_user_input")).toBe(true);
     expect(tools).toContainEqual(expect.objectContaining({ type: "web_search" }));

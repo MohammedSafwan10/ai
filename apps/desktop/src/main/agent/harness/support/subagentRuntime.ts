@@ -73,7 +73,7 @@ export const normalizeRoleName = (value: string) =>
 
 export const parseReasoningEffort = (value: unknown) => {
   const normalized = String(value || "").trim().toLowerCase();
-  return ["none", "low", "medium", "high", "extra_high"].includes(normalized) ? normalized as ReasoningEffort : undefined;
+  return ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(normalized) ? normalized as ReasoningEffort : undefined;
 };
 
 export const formatSubagentLabel = (agent: Pick<SubagentRecord, "agentNickname" | "agentRole" | "taskName">) => {

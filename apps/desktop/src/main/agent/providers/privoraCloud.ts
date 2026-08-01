@@ -3,6 +3,7 @@ import { createAppwriteJwt } from "../../billing/appwriteAuth";
 import { openRouterDesktopTools, parseDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { normalizeProviderUsage } from "./usage";
+import { openRouterReasoningConfig } from "./openrouter";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -106,7 +107,7 @@ export class PrivoraCloudAdapter implements ProviderAdapter {
           toolChoice: "auto",
         } : {}),
         maxOutputTokens: options.maxOutputTokens,
-        reasoning: options.reasoning,
+        reasoning: openRouterReasoningConfig(options.model, options.reasoning),
       },
       options.signal,
     );

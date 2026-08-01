@@ -13,7 +13,9 @@ export type ProviderPart =
   | { type: "text"; text: string }
   | { type: "image"; name: string; mimeType: string; data: string }
   | { type: "function_call"; id: string; name: string; arguments: Record<string, unknown>; thoughtSignature?: string }
-  | { type: "function_response"; id: string; name: string; response: ToolResult };
+  | { type: "function_response"; id: string; name: string; response: ToolResult }
+  | { type: "server_tool_call"; id?: string; toolType?: string; arguments?: Record<string, unknown> }
+  | { type: "server_tool_response"; id?: string; toolType?: string; response?: Record<string, unknown> };
 
 export interface ProviderMessage {
   role: "user" | "assistant";
@@ -44,6 +46,7 @@ export interface ProviderStreamOptions {
   onThoughtDelta: (delta: string) => void;
   onToolDraft: (draft: { id?: string; name: string; arguments: Record<string, unknown> }) => void;
   onToolCall: (call: DesktopToolCall) => void;
+  onProviderContextPart?: (part: Extract<ProviderPart, { type: "server_tool_call" | "server_tool_response" }>) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
   onAiCredits?: (event: { creditsUsed: number; estimatedCredits: number; summary?: AiCreditSummaryRecord }) => void;
   onStreamProgress?: () => void;
@@ -62,6 +65,7 @@ export const appendAssistantToolCalls = (
   messages: ProviderMessage[],
   content: string,
   calls: DesktopToolCall[],
+  providerContextParts: ProviderPart[] = [],
 ): ProviderMessage[] => [
   ...messages,
   {
@@ -69,6 +73,7 @@ export const appendAssistantToolCalls = (
     content,
     parts: [
       ...(content.trim() ? [{ type: "text" as const, text: content }] : []),
+      ...providerContextParts,
       ...calls.map((call) => ({
         type: "function_call" as const,
         id: call.id,

@@ -4,8 +4,6 @@ import type { ProviderMessage } from "../../providers/types";
 import { emptyTokenUsage } from "../../providers/usage";
 import { estimateProviderHistoryTokens } from "../../context";
 
-const BASELINE_CONTEXT_TOKENS = 12_000;
-
 export const autoCompactThresholdTokens = (budget: ModelRuntimeBudget) => {
   const inputThreshold = budget.inputBudgetTokens ? Math.floor(budget.inputBudgetTokens * 0.9) : undefined;
   const hardThreshold = budget.hardInputBudgetTokens ? Math.floor(budget.hardInputBudgetTokens * 0.92) : undefined;
@@ -19,10 +17,15 @@ export const autoCompactTargetTokens = (budget: ModelRuntimeBudget) => {
   return Math.max(8_000, Math.floor(threshold * 0.82));
 };
 
-export const shouldAutoCompactHistory = (history: ProviderMessage[], budget: ModelRuntimeBudget) => {
+export const shouldAutoCompactHistory = (
+  history: ProviderMessage[],
+  budget: ModelRuntimeBudget,
+  lastUsage?: TokenUsageRecord | null,
+) => {
   const threshold = autoCompactThresholdTokens(budget);
   if (!threshold) return false;
-  return estimateProviderHistoryTokens(history) > threshold;
+  const measuredContext = lastUsage ? lastUsage.inputTokens + lastUsage.outputTokens : 0;
+  return Math.max(estimateProviderHistoryTokens(history), measuredContext) > threshold;
 };
 
 export const calculateContextUsage = (input: {
@@ -37,17 +40,23 @@ export const calculateContextUsage = (input: {
   const lastUsage = input.lastUsage || estimatedTokenUsage(estimatedTokens);
   const totalUsage = input.totalUsage || lastUsage;
   const usedTokens = input.lastUsage
-    ? Math.max(lastUsage.inputTokens + lastUsage.outputTokens, lastUsage.totalTokens)
+    ? Math.max(estimatedTokens, lastUsage.inputTokens + lastUsage.outputTokens)
     : estimatedTokens;
-  const remainingPercent = contextRemainingPercent(usedTokens, input.budget.contextWindowTokens);
+  const remainingTokens = input.budget.inputBudgetTokens === undefined
+    ? undefined
+    : Math.max(0, input.budget.inputBudgetTokens - usedTokens);
+  const remainingPercent = contextRemainingPercent(usedTokens, input.budget.inputBudgetTokens);
 
   return {
     threadId: input.threadId,
     modelId: input.modelId,
     contextWindowTokens: input.budget.contextWindowTokens,
     usedTokens,
+    inputBudgetTokens: input.budget.inputBudgetTokens,
+    remainingTokens,
     remainingPercent,
     outputReserveTokens: input.budget.outputTokens,
+    safetyReserveTokens: input.budget.safetyReserveTokens,
     autoCompactAtTokens: autoCompactThresholdTokens(input.budget),
     budgetMode: input.budget.mode,
     estimated: !input.lastUsage,
@@ -77,9 +86,7 @@ const estimatedTokenUsage = (tokens: number): TokenUsageRecord => ({
   totalTokens: tokens,
 });
 
-const contextRemainingPercent = (usedTokens: number, contextWindowTokens?: number) => {
-  if (!contextWindowTokens || contextWindowTokens <= BASELINE_CONTEXT_TOKENS) return undefined;
-  const effectiveWindow = contextWindowTokens - BASELINE_CONTEXT_TOKENS;
-  const effectiveUsed = Math.max(0, usedTokens - BASELINE_CONTEXT_TOKENS);
-  return Math.max(0, Math.min(100, Math.round(((effectiveWindow - effectiveUsed) / effectiveWindow) * 100)));
+const contextRemainingPercent = (usedTokens: number, inputBudgetTokens?: number) => {
+  if (!inputBudgetTokens || inputBudgetTokens <= 0) return undefined;
+  return Math.max(0, Math.min(100, Math.round(((inputBudgetTokens - usedTokens) / inputBudgetTokens) * 100)));
 };

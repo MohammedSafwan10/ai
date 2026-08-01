@@ -30,7 +30,7 @@ const repeatedHistory = (count: number, chars: number): ProviderMessage[] =>
   }));
 
 describe("desktop context usage", () => {
-  it("calculates remaining context with the Codex-style 12k token baseline", () => {
+  it("calculates remaining context against the model's usable input budget", () => {
     const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
     const result = calculateContextUsage({
       threadId: "thread",
@@ -42,15 +42,17 @@ describe("desktop context usage", () => {
 
     expect(result.estimated).toBe(false);
     expect(result.usedTokens).toBe(120_000);
-    expect(result.remainingPercent).toBe(90);
+    expect(result.remainingPercent).toBe(88);
+    expect(result.inputBudgetTokens).toBe(986_500);
+    expect(result.remainingTokens).toBe(866_500);
     expect(result.outputReserveTokens).toBe(32_000);
   });
 
   it("falls back to estimated history tokens when provider usage is missing", () => {
-    const budget = resolveModelRuntimeBudget("gemini-3.5-flash", "normal");
+    const budget = resolveModelRuntimeBudget("gemini-3.6-flash", "normal");
     const result = calculateContextUsage({
       threadId: "thread",
-      modelId: "gemini-3.5-flash",
+      modelId: "gemini-3.6-flash",
       history: historyWithChars(40_000),
       budget,
     });
@@ -60,17 +62,17 @@ describe("desktop context usage", () => {
     expect(result.lastTokenUsage.totalTokens).toBe(result.usedTokens);
   });
 
-  it("sets a normal 1M-model auto-compact threshold around the normal input cap", () => {
+  it("sets a 1M-model auto-compact threshold around its real usable input budget", () => {
     const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
 
-    expect(budget.inputBudgetTokens).toBe(350_000);
-    expect(autoCompactThresholdTokens(budget)).toBe(315_000);
-    expect(autoCompactTargetTokens(budget)).toBe(258_299);
+    expect(budget.inputBudgetTokens).toBe(986_500);
+    expect(autoCompactThresholdTokens(budget)).toBe(887_850);
+    expect(autoCompactTargetTokens(budget)).toBe(728_037);
   });
 
   it("detects oversized history and compacts it before the hard cap", () => {
     const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
-    const history = repeatedHistory(20, 80_000);
+    const history = repeatedHistory(50, 80_000);
 
     expect(shouldAutoCompactHistory(history, budget)).toBe(true);
 
@@ -78,5 +80,13 @@ describe("desktop context usage", () => {
     expect(compacted.beforeTokens).toBeGreaterThan(compacted.afterTokens);
     expect(compacted.compacted).toBe(true);
     expect(compacted.history[0]?.content).toContain("Conversation summary before recent context");
+  });
+
+  it("uses exact provider usage when schemas and system instructions exceed the text estimate", () => {
+    const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
+    const shortHistory = historyWithChars(1_000);
+
+    expect(shouldAutoCompactHistory(shortHistory, budget)).toBe(false);
+    expect(shouldAutoCompactHistory(shortHistory, budget, usage(900_000, 1_000))).toBe(true);
   });
 });

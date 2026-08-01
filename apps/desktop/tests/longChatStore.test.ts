@@ -24,6 +24,38 @@ afterEach(() => {
 });
 
 describe("long chat SQLite repository", () => {
+  it("finds unfinished streamed tools after a provider assigns a real call id", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const assistant = message("assistant", thread.id, 1);
+    db.upsertMessage(assistant);
+    db.upsertToolEvent({
+      ...tool("draft-tool", thread.id, assistant.id, ""),
+      callId: "call_provider_assigned",
+      status: "preparing",
+    });
+
+    expect(db.listActiveDraftToolEvents(thread.id, assistant.id)).toEqual([
+      expect.objectContaining({ callId: "call_provider_assigned", status: "preparing" }),
+    ]);
+  });
+
+  it("scopes preparing streamed tools to their assistant turn", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const first = message("assistant", thread.id, 1);
+    const second = message("assistant-2", thread.id, 2);
+    db.upsertMessage(first);
+    db.upsertMessage(second);
+    db.upsertToolEvent({ ...tool("first-draft", thread.id, first.id, ""), name: "desktop_write_file", status: "preparing" });
+    db.upsertToolEvent({ ...tool("second-draft", thread.id, second.id, ""), name: "desktop_write_file", status: "preparing" });
+
+    expect(db.listPreparingToolEvents(thread.id, second.id, "desktop_write_file")).toEqual([
+      expect.objectContaining({ messageId: second.id }),
+    ]);
+  });
+
+
   it("keeps the bootstrap page bounded with 10,000 messages", { timeout: 120_000 }, () => {
     const db = createStore();
     const thread = db.createThread(null);
@@ -190,7 +222,7 @@ describe("long chat SQLite repository", () => {
       compactedThroughMessageId: user.id,
       compactedThroughMessageCreatedAt: user.createdAt,
       workspaceRoot: tempDir,
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       trigger: "pre_turn",
       reason: "context_limit",
       status: "completed",
@@ -227,7 +259,7 @@ describe("long chat SQLite repository", () => {
       compactedThroughMessageId: user.id,
       compactedThroughMessageCreatedAt: user.createdAt,
       workspaceRoot: tempDir,
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       trigger: "pre_turn",
       reason: "context_limit",
       status: "completed",
@@ -279,7 +311,7 @@ describe("long chat SQLite repository", () => {
       id: "compact-1",
       threadId: thread.id,
       workspaceRoot: tempDir,
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       trigger: "pre_turn",
       reason: "context_limit",
       status: "completed",

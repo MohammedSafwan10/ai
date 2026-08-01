@@ -7,12 +7,13 @@ import { detectProjectProfileSync } from "./diagnostics";
 import { getModelOption, type ModelRuntimeBudget } from "../../shared/models";
 import type { ChatMessageRecord, ToolEventRecord, ToolResult } from "../../shared/types";
 
-const MAX_HISTORY_MESSAGES = 18;
+const MAX_HISTORY_MESSAGES = 500;
 const MAX_MESSAGE_CHARS = 12_000;
 const MAX_TOOL_OUTPUT_CHARS = 2_000;
 const MAX_PROVIDER_HISTORY_TOKENS = 28_000;
 const MIN_RECENT_PROVIDER_MESSAGES = 12;
-const RETAINED_USER_MESSAGE_TOKENS = 20_000;
+const RETAINED_RECENT_MESSAGE_TOKENS = 20_000;
+const ESTIMATED_IMAGE_TOKENS = 2_048;
 
 export const COMPACTION_SYSTEM_INSTRUCTION = [
   "You are performing a CONTEXT CHECKPOINT COMPACTION for Privora Desktop.",
@@ -81,7 +82,7 @@ export const messagesToProviderHistory = (
   messages: ChatMessageRecord[],
   messageCharLimit = MAX_MESSAGE_CHARS,
 ): ProviderMessage[] =>
-  messages.map((message): ProviderMessage => {
+  expandInlineSteers(messages).map((message): ProviderMessage => {
     const content = compactTextForModel(message.content, messageCharLimit) || "";
     const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/"));
     const parts: ProviderMessage["parts"] = [
@@ -99,6 +100,43 @@ export const messagesToProviderHistory = (
       parts: parts.length ? parts : undefined,
     };
   });
+
+export const expandInlineSteers = (messages: ChatMessageRecord[]): ChatMessageRecord[] => {
+  const messageIds = new Set(messages.map((message) => message.id));
+  const steersByTurn = new Map<string, ChatMessageRecord[]>();
+  messages.forEach((message) => {
+    if (!message.steeredTurnId || !messageIds.has(message.steeredTurnId)) return;
+    const current = steersByTurn.get(message.steeredTurnId) || [];
+    current.push(message);
+    steersByTurn.set(message.steeredTurnId, current);
+  });
+  steersByTurn.forEach((steers) => steers.sort((first, second) =>
+    (first.steerTextOffset ?? Number.MAX_SAFE_INTEGER) - (second.steerTextOffset ?? Number.MAX_SAFE_INTEGER) ||
+    (first.steerStreamOrder ?? 0) - (second.steerStreamOrder ?? 0) ||
+    first.createdAt - second.createdAt
+  ));
+
+  const expanded: ChatMessageRecord[] = [];
+  messages.forEach((message) => {
+    if (message.steeredTurnId && messageIds.has(message.steeredTurnId)) return;
+    const steers = steersByTurn.get(message.id);
+    if (message.role !== "assistant" || !steers?.length) {
+      expanded.push(message);
+      return;
+    }
+    let cursor = 0;
+    steers.forEach((steer, index) => {
+      const offset = Math.max(cursor, Math.min(message.content.length, steer.steerTextOffset ?? message.content.length));
+      const content = message.content.slice(cursor, offset);
+      if (content.trim()) expanded.push({ ...message, id: `${message.id}:before-steer:${index}`, content });
+      expanded.push(steer);
+      cursor = offset;
+    });
+    const tail = message.content.slice(cursor);
+    if (tail.trim() || !message.content.trim()) expanded.push({ ...message, id: `${message.id}:after-steer`, content: tail });
+  });
+  return expanded;
+};
 
 export const sanitizeProviderHistoryForModel = (history: ProviderMessage[], modelId: string): ProviderMessage[] => {
   const model = getModelOption(modelId);
@@ -208,17 +246,17 @@ export const compactProviderHistory = (history: ProviderMessage[], maxTokens = M
 export const buildCompactedProviderHistory = (
   history: ProviderMessage[],
   summary: string,
-  maxRetainedUserTokens = RETAINED_USER_MESSAGE_TOKENS,
+  maxRetainedTokens = RETAINED_RECENT_MESSAGE_TOKENS,
 ): ProviderMessage[] => {
-  const retainedUsers = retainRecentUserMessages(history, maxRetainedUserTokens);
+  const retainedRecent = retainRecentMessages(history, maxRetainedTokens);
   const summaryText = [
     COMPACTION_SUMMARY_PREFIX,
     "",
     summary.trim() || "(no compaction summary available)",
   ].join("\n");
   return repairProviderToolPairs([
-    ...retainedUsers,
     textProviderMessage(summaryText),
+    ...retainedRecent,
   ]);
 };
 
@@ -326,12 +364,11 @@ export const compactProviderHistoryWithInfo = (
 
 const estimatedTokens = estimateProviderHistoryTokens;
 
-const retainRecentUserMessages = (history: ProviderMessage[], maxTokens: number) => {
+const retainRecentMessages = (history: ProviderMessage[], maxTokens: number) => {
   const retained: ProviderMessage[] = [];
   let remaining = Math.max(0, maxTokens);
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const message = history[index];
-    if (message.role !== "user" || messageHasOnlyToolResponses(message)) continue;
     const tokens = estimateMessageTokens(message);
     if (tokens <= remaining) {
       retained.unshift(message);
@@ -342,7 +379,7 @@ const retainRecentUserMessages = (history: ProviderMessage[], maxTokens: number)
       const compacted = compactTextForModel(message.content, remaining * 4);
       if (compacted?.trim()) {
         retained.unshift({
-          role: "user",
+          role: message.role,
           content: compacted,
           parts: [{ type: "text", text: compacted }],
         });
@@ -351,11 +388,6 @@ const retainRecentUserMessages = (history: ProviderMessage[], maxTokens: number)
     break;
   }
   return retained;
-};
-
-const messageHasOnlyToolResponses = (message: ProviderMessage) => {
-  const parts = message.parts || [];
-  return parts.length > 0 && parts.every((part) => part.type === "function_response");
 };
 
 const validateProviderHistory = (value: unknown): ProviderMessage[] => {
@@ -407,6 +439,22 @@ const validateProviderPart = (part: unknown): ProviderPart | null => {
       response,
     };
   }
+  if (part.type === "server_tool_call") {
+    return {
+      type: "server_tool_call",
+      id: typeof part.id === "string" ? part.id : undefined,
+      toolType: typeof part.toolType === "string" ? part.toolType : undefined,
+      arguments: isRecord(part.arguments) ? part.arguments : undefined,
+    };
+  }
+  if (part.type === "server_tool_response") {
+    return {
+      type: "server_tool_response",
+      id: typeof part.id === "string" ? part.id : undefined,
+      toolType: typeof part.toolType === "string" ? part.toolType : undefined,
+      response: isRecord(part.response) ? part.response : undefined,
+    };
+  }
   return null;
 };
 
@@ -426,7 +474,9 @@ const estimateMessageTokens = (message: ProviderMessage) => {
       if (part.type === "text") return part.text;
       if (part.type === "function_call") return `${part.name} ${JSON.stringify(part.arguments)}`;
       if (part.type === "function_response") return `${part.name} ${part.response.output || part.response.error || ""}`;
-      if (part.type === "image") return `[image ${part.name} ${part.mimeType}]`;
+      if (part.type === "image") return `${"x".repeat(ESTIMATED_IMAGE_TOKENS * 4)}[image ${part.name} ${part.mimeType}]`;
+      if (part.type === "server_tool_call") return `${part.toolType || "server_tool"} ${JSON.stringify(part.arguments || {})}`;
+      if (part.type === "server_tool_response") return `${part.toolType || "server_tool"} ${JSON.stringify(part.response || {})}`;
       return "";
     }),
   ].join("\n");
@@ -434,14 +484,16 @@ const estimateMessageTokens = (message: ProviderMessage) => {
 };
 
 const summaryMessage = (messages: ProviderMessage[]): ProviderMessage => {
-  const lines = messages
-    .map((message, index) => {
+  const entries = messages.map((message, index) => {
       const label = message.role === "assistant" ? "Assistant" : "User";
       const text = messageTextForSummary(message);
-      return text ? `${index + 1}. ${label}: ${text}` : "";
-    })
-    .filter(Boolean)
-    .slice(-40);
+      return text ? { index, line: `${index + 1}. ${label}: ${text}` } : null;
+    }).filter((entry): entry is { index: number; line: string } => Boolean(entry));
+  const recent = entries.slice(-40);
+  const firstUser = entries.find((entry) => messages[entry.index]?.role === "user");
+  const lines = firstUser && !recent.some((entry) => entry.index === firstUser.index)
+    ? [`Original goal: ${firstUser.line}`, "Recent transcript:", ...recent.map((entry) => entry.line)]
+    : recent.map((entry) => entry.line);
   const content = [
     `Conversation summary before recent context (${messages.length} older messages compacted):`,
     ...lines,
