@@ -141,6 +141,29 @@ export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, co
     }
   }
 
+  if (call.name === "browser_search" && call.arguments.open !== false) {
+    return {
+      risk: "risky",
+      requiresApproval: mode !== "yolo",
+      reason: "Web search navigates Privora Browser to an external search provider.",
+    };
+  }
+
+  if (call.name === "browser_tab" && String(call.arguments.action || "").toLowerCase() === "new" && call.arguments.url) {
+    try {
+      const decision = browserOriginDecision(String(call.arguments.url), "agent");
+      if (!decision.allowed) {
+        return { risk: "risky", requiresApproval: mode !== "yolo", reason: decision.reason };
+      }
+    } catch (error) {
+      return {
+        risk: "blocked",
+        requiresApproval: false,
+        reason: error instanceof Error ? error.message : "Invalid browser URL.",
+      };
+    }
+  }
+
   if (call.name === "browser_open_link" && context.browserCurrentPageRequiresApproval) {
     return {
       risk: "risky",

@@ -96,7 +96,7 @@ describe("browser tool executor", () => {
       open: true,
       limit: 3,
       newTab: false,
-    }));
+    }), expect.objectContaining({ agentApproved: false, signal: expect.any(AbortSignal) }));
   });
 
   it("routes browser open link with approval context", async () => {
@@ -117,7 +117,7 @@ describe("browser tool executor", () => {
     expect(openLink).toHaveBeenCalledWith("workspace", expect.objectContaining({
       ref: "b7",
       newTab: true,
-    }), { agentApproved: true });
+    }), expect.objectContaining({ agentApproved: true, signal: expect.any(AbortSignal) }));
   });
 
   it("treats full access as approved external browser link navigation", async () => {
@@ -136,6 +136,7 @@ describe("browser tool executor", () => {
 
     expect(openLink).toHaveBeenCalledWith("workspace", expect.objectContaining({ text: "MrBeast" }), {
       agentApproved: true,
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -152,7 +153,7 @@ describe("browser tool executor", () => {
     expect(search).toHaveBeenCalledWith("workspace", "privora", expect.objectContaining({
       newTab: true,
       tabId: "tab-1",
-    }));
+    }), expect.objectContaining({ agentApproved: false, signal: expect.any(AbortSignal) }));
   });
 
   it("routes browser tab actions through the manager", async () => {
@@ -192,7 +193,7 @@ describe("browser tool executor", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(tab).toHaveBeenCalledWith("workspace", expect.objectContaining({ action: "close_all_except", tabId: "tab-1" }));
+    expect(tab).toHaveBeenCalledWith("workspace", expect.objectContaining({ action: "close_all_except", tabId: "tab-1" }), expect.objectContaining({ agentApproved: false, signal: expect.any(AbortSignal) }));
     expect(result.data).toEqual({
       tabs: [expect.objectContaining({ id: "tab-1" })],
       activeTabId: "tab-1",
@@ -319,5 +320,32 @@ describe("browser tool executor", () => {
 
     expect(result.success).toBe(false);
     expect(result.output).toContain("Timed out waiting for text Ready");
+  });
+
+  it("routes page inspection to the requested tab", async () => {
+    const snapshot = vi.fn(async () => ({ url: "https://example.com", title: "Example", snapshot: "- button" }));
+    const executor = new BrowserToolExecutor({ snapshot } as never);
+
+    await executor.execute(browserCall("browser_snapshot", { tabId: "tab-2", depth: 3 }), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: new AbortController().signal,
+    });
+
+    expect(snapshot).toHaveBeenCalledWith("workspace", expect.objectContaining({ tabId: "tab-2", depth: 3 }));
+  });
+
+  it("does not start a browser call after its turn is aborted", async () => {
+    const snapshot = vi.fn();
+    const executor = new BrowserToolExecutor({ snapshot } as never);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(executor.execute(browserCall("browser_snapshot", {}), {
+      workspaceId: "workspace",
+      workspaceRoot: "D:/work",
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(snapshot).not.toHaveBeenCalled();
   });
 });

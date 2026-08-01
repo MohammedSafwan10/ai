@@ -20,7 +20,12 @@ export class BrowserCdpClient {
 
   attach() {
     if (this.contents.isDestroyed()) throw new Error("Browser page is not available.");
-    if (!this.contents.debugger.isAttached()) this.contents.debugger.attach("1.3");
+    if (!this.contents.debugger.isAttached()) {
+      this.contents.debugger.attach("1.3");
+      this.accessibilityEnabled = false;
+      this.networkEnabled = false;
+      this.runtimeEnabled = false;
+    }
     this.attached = true;
   }
 

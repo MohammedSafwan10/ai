@@ -105,6 +105,25 @@ describe("desktop permission classifier", () => {
     });
   });
 
+  it("gates browser search navigation and external new-tab URLs", () => {
+    expect(classifyToolCall(call("browser_search", { query: "browser reliability" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("browser_search", { query: "browser reliability", open: false }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+    expect(classifyToolCall(call("browser_tab", { action: "new", url: "https://example.com" }), "ask_risky")).toMatchObject({
+      risk: "risky",
+      requiresApproval: true,
+    });
+    expect(classifyToolCall(call("browser_tab", { action: "new", url: "localhost:5173" }), "ask_risky")).toMatchObject({
+      risk: "safe",
+      requiresApproval: false,
+    });
+  });
+
   it("requires approval for interactions on an external browser page", () => {
     expect(classifyToolCall(call("browser_trace", { action: "click", ref: "b1" }), "ask_risky", {
       browserCurrentPageRequiresApproval: true,

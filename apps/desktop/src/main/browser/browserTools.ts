@@ -16,6 +16,7 @@ export class BrowserToolExecutor {
 
   async execute(call: DesktopToolCall, context: BrowserToolContext): Promise<ToolResult> {
     if (!context.workspaceId) return { success: false, error: "Choose a workspace before using Privora Browser." };
+    context.signal.throwIfAborted();
     const resolvedContext: ResolvedBrowserToolContext = { ...context, workspaceId: context.workspaceId };
     const args = call.arguments;
     let result: ToolResult;
@@ -99,6 +100,7 @@ export class BrowserToolExecutor {
         return { success: false, error: `Unknown browser tool ${call.name}` };
     }
     if (!["browser_capabilities", "browser_shields", "browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"].includes(call.name)) {
+      context.signal.throwIfAborted();
       this.manager.recordWorkflowTool?.(resolvedContext.workspaceId, call, result);
     }
     return result;
@@ -145,6 +147,7 @@ export class BrowserToolExecutor {
       throwOnLoadFailure: true,
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       newTab: args.newTab === true || args.new_tab === true,
+      signal: context.signal,
     });
     return {
       success: true,
@@ -172,7 +175,7 @@ export class BrowserToolExecutor {
       href: typeof args.href === "string" ? args.href : undefined,
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       newTab: args.newTab === true || args.new_tab === true,
-    }, { agentApproved: browserApproved(context) });
+    }, { agentApproved: browserApproved(context), signal: context.signal });
     return { success: true, output: result.output, data: result.data };
   }
 
@@ -181,6 +184,7 @@ export class BrowserToolExecutor {
       depth: Number(args.depth) || undefined,
       includeBoxes: args.includeBoxes === true || args.include_boxes === true,
       targetRef: typeof args.targetRef === "string" ? args.targetRef : undefined,
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
     });
     return {
       success: true,
@@ -195,6 +199,7 @@ export class BrowserToolExecutor {
 
   private async act(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.act(context.workspaceId, {
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       action: String(args.action || ""),
       ref: typeof args.ref === "string" ? args.ref : typeof args.targetRef === "string" ? args.targetRef : undefined,
       text: typeof args.text === "string" ? args.text : undefined,
@@ -212,23 +217,24 @@ export class BrowserToolExecutor {
 
   private async inspect(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const kind = String(args.kind || "console");
-    const result = await this.manager.inspect(context.workspaceId, kind);
+    const result = await this.manager.inspect(context.workspaceId, kind, typeof args.tabId === "string" ? args.tabId : undefined);
     return { success: true, output: result.output, data: result.data };
   }
 
   private async extract(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
-    const result = await this.manager.extract(context.workspaceId, args.mode);
+    const result = await this.manager.extract(context.workspaceId, args.mode, typeof args.tabId === "string" ? args.tabId : undefined);
     return { success: true, output: result.output, data: result.data };
   }
 
   private async wait(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.wait(context.workspaceId, {
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       kind: String(args.for || args.kind || "network_idle"),
       value: typeof args.value === "string" ? args.value : undefined,
       ref: typeof args.ref === "string" ? args.ref : typeof args.targetRef === "string" ? args.targetRef : undefined,
       timeoutMs: Number.isFinite(Number(args.timeoutMs || args.timeout_ms)) ? Number(args.timeoutMs || args.timeout_ms) : undefined,
       idleMs: Number.isFinite(Number(args.idleMs || args.idle_ms)) ? Number(args.idleMs || args.idle_ms) : undefined,
-    });
+    }, context.signal);
     return {
       success: result.matched,
       output: result.matched
@@ -240,6 +246,7 @@ export class BrowserToolExecutor {
 
   private async screenshot(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.screenshot(context.workspaceId, {
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       mode: String(args.mode || "viewport"),
       ref: typeof args.ref === "string" ? args.ref : typeof args.targetRef === "string" ? args.targetRef : undefined,
       x: Number.isFinite(Number(args.x)) ? Number(args.x) : undefined,
@@ -256,6 +263,7 @@ export class BrowserToolExecutor {
 
   private async evidence(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.evidence(context.workspaceId, {
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
       includeVisibleText: args.includeVisibleText !== false && args.include_visible_text !== false,
       includeConsole: args.includeConsole !== false && args.include_console !== false,
@@ -272,7 +280,7 @@ export class BrowserToolExecutor {
       limit: Number.isFinite(Number(args.limit)) ? Number(args.limit) : undefined,
       newTab: args.newTab === true || args.new_tab === true,
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
-    });
+    }, { agentApproved: browserApproved(context), signal: context.signal });
     return { success: true, output: result.output, data: result.data };
   }
 
@@ -282,7 +290,7 @@ export class BrowserToolExecutor {
       action: normalizeTabAction(args.action),
       tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       url: typeof args.url === "string" ? args.url : undefined,
-    });
+    }, { agentApproved: browserApproved(context), signal: context.signal });
     return {
       success: true,
       output: result.tabs.map((tab) => `${tab.id === result.activeTabId ? "*" : "-"} ${tab.title || "New tab"} ${tab.url}`).join("\n") || "No browser tabs.",
@@ -401,12 +409,18 @@ export class BrowserToolExecutor {
 
   private async trace(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.trace(context.workspaceId, {
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
       action: String(args.action || "click"),
       ref: typeof args.ref === "string" ? args.ref : typeof args.targetRef === "string" ? args.targetRef : undefined,
       text: typeof args.text === "string" ? args.text : undefined,
       key: typeof args.key === "string" ? args.key : undefined,
       x: Number.isFinite(Number(args.x)) ? Number(args.x) : undefined,
       y: Number.isFinite(Number(args.y)) ? Number(args.y) : undefined,
+      deltaX: Number.isFinite(Number(args.deltaX || args.delta_x)) ? Number(args.deltaX || args.delta_x) : undefined,
+      deltaY: Number.isFinite(Number(args.deltaY || args.delta_y)) ? Number(args.deltaY || args.delta_y) : undefined,
+      value: typeof args.value === "string" ? args.value : undefined,
+      width: Number.isFinite(Number(args.width)) ? Number(args.width) : undefined,
+      height: Number.isFinite(Number(args.height)) ? Number(args.height) : undefined,
       includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
     }, { agentApproved: browserApproved(context) });
     return { success: true, output: result.finding, data: result as unknown as Record<string, unknown> };
@@ -415,6 +429,7 @@ export class BrowserToolExecutor {
   private async verify(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
     const result = await this.manager.verify(context.workspaceId, {
       reload: args.reload !== false,
+      tabId: typeof args.tabId === "string" ? args.tabId : undefined,
     });
     return { success: result.passed, output: result.output, data: result as unknown as Record<string, unknown> };
   }

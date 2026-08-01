@@ -57,7 +57,11 @@ describe("desktop browser tool executor gate", () => {
     const result = await executor.execute(call("browser_open_link", { ref: "b19" }), context);
 
     expect(result).toMatchObject({ success: true, output: "opened" });
-    expect(openLink).toHaveBeenCalledWith("workspace", expect.objectContaining({ ref: "b19" }), { agentApproved: true });
+    expect(openLink).toHaveBeenCalledWith(
+      "workspace",
+      expect.objectContaining({ ref: "b19" }),
+      expect.objectContaining({ agentApproved: true, signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("passes full access to browser tools as external approval", async () => {

@@ -102,6 +102,7 @@ interface OpenOptions {
   throwOnLoadFailure?: boolean;
   tabId?: string;
   newTab?: boolean;
+  signal?: AbortSignal;
 }
 
 interface VerifyOptions {
@@ -109,6 +110,7 @@ interface VerifyOptions {
 }
 
 interface BrowserWaitOptions {
+  tabId?: string;
   kind: string;
   value?: string;
   ref?: string;
@@ -127,6 +129,7 @@ interface BrowserScreenshotOptions {
 }
 
 interface BrowserEvidenceOptions {
+  tabId?: string;
   includeScreenshot?: boolean;
   includeVisibleText?: boolean;
   includeConsole?: boolean;
@@ -180,7 +183,7 @@ export class BrowserSessionManager {
     }
     this.clearPageEvidence(session);
     try {
-      await session.view.webContents.loadURL(url);
+      await loadUrlWithGuards(session.view.webContents, url, options.signal);
     } catch (error) {
       const message = cleanLoadError(error);
       const softNavigation = isSoftNavigationAbort(error, url, session.view.webContents.getURL());
@@ -207,7 +210,7 @@ export class BrowserSessionManager {
     return session.state;
   }
 
-  async openLink(workspaceId: string, input: BrowserOpenLinkInput, options: { agentApproved?: boolean } = {}) {
+  async openLink(workspaceId: string, input: BrowserOpenLinkInput, options: { agentApproved?: boolean; signal?: AbortSignal } = {}) {
     const session = this.ensureSession(workspaceId, input.tabId);
     this.assertAgentMayControl(session, options.agentApproved === true);
     const link = await this.resolvePageLink(session, input);
@@ -221,6 +224,7 @@ export class BrowserSessionManager {
       throwOnLoadFailure: true,
       tabId: input.tabId,
       newTab: input.newTab,
+      signal: options.signal,
     });
     return {
       output: `Opened link ${link.text || targetUrl} -> ${state.url}`,
@@ -294,10 +298,21 @@ export class BrowserSessionManager {
     return session.state;
   }
 
-  async snapshot(workspaceId: string, options: BrowserSnapshotOptions = {}) {
-    const session = this.ensureSession(workspaceId);
+  async snapshot(workspaceId: string, options: BrowserSnapshotOptions & { tabId?: string } = {}) {
+    const session = this.ensureSession(workspaceId, options.tabId);
+    const previousTarget = options.targetRef ? session.refs.get(options.targetRef) : undefined;
+    if (options.targetRef && !previousTarget) {
+      throw new Error(`Browser ref ${options.targetRef} is stale. Capture a fresh browser_snapshot without targetRef.`);
+    }
     await session.cdp.snapshot({ depth: 1 }).catch(() => undefined);
-    const snapshot = await this.collectInteractiveSnapshot(session, options);
+    let snapshot = await this.collectInteractiveSnapshot(session, options);
+    if (options.targetRef) {
+      const refreshedTarget = session.refs.get(options.targetRef);
+      if (!refStillMatches(previousTarget, refreshedTarget)) {
+        throw new Error(`Browser ref ${options.targetRef} changed with the page. Capture a fresh browser_snapshot.`);
+      }
+      snapshot = focusBrowserSnapshot(snapshot, options.targetRef);
+    }
     this.updateStateFromContents(session);
     return {
       url: session.state.url,
@@ -357,8 +372,8 @@ export class BrowserSessionManager {
     throw new Error(`Unknown browser inspect kind: ${kind}`);
   }
 
-  async extract(workspaceId: string, modeInput: unknown) {
-    const session = this.ensureSession(workspaceId);
+  async extract(workspaceId: string, modeInput: unknown, tabId?: string) {
+    const session = this.ensureSession(workspaceId, tabId);
     const mode = normalizeExtractMode(modeInput);
     const result = await this.extractPage(session, mode);
     return {
@@ -367,8 +382,8 @@ export class BrowserSessionManager {
     };
   }
 
-  async wait(workspaceId: string, options: BrowserWaitOptions) {
-    const session = this.ensureSession(workspaceId);
+  async wait(workspaceId: string, options: BrowserWaitOptions, signal?: AbortSignal) {
+    const session = this.ensureSession(workspaceId, options.tabId);
     this.ensureOpenPage(session);
     const kind = normalizeWaitKind(options.kind);
     const value = String(options.value || options.ref || "").trim();
@@ -379,6 +394,7 @@ export class BrowserSessionManager {
     let lastDomSignature = "";
     if (kind === "network_idle") await session.cdp.enableNetwork().catch(() => undefined);
     while (Date.now() - startedAt <= timeoutMs) {
+      signal?.throwIfAborted();
       const matched = await this.browserWaitMatched(session, kind, value, idleMs, lastDomSignature, stableSince);
       lastDomSignature = matched.domSignature || lastDomSignature;
       stableSince = matched.stableSince || stableSince;
@@ -392,7 +408,7 @@ export class BrowserSessionManager {
           url: compactUrl(session.view.webContents.getURL()),
         };
       }
-      await delay(150);
+      await abortableDelay(150, signal);
     }
     this.updateStateFromContents(session);
     return {
@@ -426,7 +442,7 @@ export class BrowserSessionManager {
   }
 
   async evidence(workspaceId: string, options: BrowserEvidenceOptions) {
-    const session = this.ensureSession(workspaceId);
+    const session = this.ensureSession(workspaceId, options.tabId);
     this.ensureOpenPage(session);
     const includeVisibleText = options.includeVisibleText !== false;
     const includeConsole = options.includeConsole !== false;
@@ -467,14 +483,28 @@ export class BrowserSessionManager {
     };
   }
 
-  async search(workspaceId: string, query: string, options: { engine?: string; open?: boolean; limit?: number; newTab?: boolean; tabId?: string } = {}) {
+  async search(
+    workspaceId: string,
+    query: string,
+    options: { engine?: string; open?: boolean; limit?: number; newTab?: boolean; tabId?: string } = {},
+    control: { agentApproved?: boolean; signal?: AbortSignal } = {},
+  ) {
     const engine = normalizeSearchEngine(options.engine);
     const url = searchUrl(engine, query);
+    let targetTabId = options.tabId;
     if (options.open !== false) {
-      await this.openUrl(workspaceId, url, { scope: "user", throwOnLoadFailure: true, newTab: options.newTab, tabId: options.tabId });
-      await waitForBrowserSettle(this.ensureSession(workspaceId).view.webContents, 850);
+      const opened = await this.openUrl(workspaceId, url, {
+        scope: control.agentApproved ? "user" : "agent",
+        rememberAgentApproval: control.agentApproved,
+        throwOnLoadFailure: true,
+        newTab: options.newTab,
+        tabId: options.tabId,
+        signal: control.signal,
+      });
+      targetTabId = opened.activeTabId;
+      await waitForBrowserSettle(this.ensureSession(workspaceId, targetTabId).view.webContents, 850);
     }
-    const session = this.ensureSession(workspaceId);
+    const session = this.ensureSession(workspaceId, targetTabId);
     const links = await this.extractPage(session, "links").catch(() => ({ links: [] as BrowserExtractionResult["links"] }));
     const results = uniqueBrowserSearchResults((links.links || [])
       .filter((link) => link.href && link.text && !isSearchChromeLink(link.href, engine))
@@ -494,11 +524,21 @@ export class BrowserSessionManager {
     };
   }
 
-  async tab(workspaceId: string, input: BrowserTabInput) {
+  async tab(workspaceId: string, input: BrowserTabInput, options: { agentApproved?: boolean; signal?: AbortSignal } = {}) {
     this.ensureSession(workspaceId);
     if (input.action === "new") {
+      if (input.url) {
+        const decision = browserOriginDecision(input.url, options.agentApproved ? "user" : "agent");
+        if (!decision.allowed) throw new Error(decision.reason || "Browser navigation is not allowed.");
+      }
       const tab = this.createTab(workspaceId, { activate: true });
-      if (input.url) await this.openUrl(workspaceId, input.url, { scope: "user", tabId: tab.id, throwOnLoadFailure: true });
+      if (input.url) await this.openUrl(workspaceId, input.url, {
+        scope: options.agentApproved ? "user" : "agent",
+        rememberAgentApproval: options.agentApproved,
+        tabId: tab.id,
+        throwOnLoadFailure: true,
+        signal: options.signal,
+      });
       return this.ensureSession(workspaceId).state;
     }
     if (input.action === "switch") {
@@ -863,8 +903,8 @@ export class BrowserSessionManager {
     session.view.webContents.openDevTools({ mode: "detach" });
   }
 
-  async verify(workspaceId: string, options: VerifyOptions) {
-    const session = this.ensureSession(workspaceId);
+  async verify(workspaceId: string, options: VerifyOptions & { tabId?: string }) {
+    const session = this.ensureSession(workspaceId, options.tabId);
     if (options.reload) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 3500);
@@ -950,6 +990,7 @@ export class BrowserSessionManager {
     const tabs = this.workspaceTabs.get(workspaceId) || [];
     const explicit = tabId ? tabs.find((tab) => tab.id === tabId) : null;
     if (explicit) return explicit;
+    if (tabId) throw new Error(`Browser tab ${tabId} was not found. List tabs and use a current tabId.`);
     const existing = this.sessions.get(workspaceId);
     if (existing) return existing;
     return this.createTab(workspaceId, { activate: true });
@@ -1305,6 +1346,7 @@ export class BrowserSessionManager {
       shields: this.shields.stateFor(session.workspaceId, session.view.webContents.getURL(), session.view.webContents.id),
     });
     session.forms = [];
+    session.refs.clear();
   }
 
   private async replayWorkflow(workspaceId: string, workflow: Pick<BrowserWorkflowRecord, "id" | "steps" | "assertions">, options: { agentApproved: boolean; newTab: boolean }) {
@@ -1755,12 +1797,11 @@ export class BrowserSessionManager {
       return { text: redactSensitiveText(String(input.text || input.href), 180), href: String(input.href) };
     }
     if (input.ref) {
-      let ref = session.refs.get(input.ref);
-      if (!ref) {
-        await this.collectInteractiveSnapshot(session, { depth: 5 }).catch(() => undefined);
-        ref = session.refs.get(input.ref);
-      }
-      if (!ref) throw new Error(`Browser ref ${input.ref} was not found. Capture a fresh browser_snapshot and try again.`);
+      const previousRef = session.refs.get(input.ref);
+      if (!previousRef) throw new Error(`Browser ref ${input.ref} was not found. Capture a fresh browser_snapshot and try again.`);
+      await this.collectInteractiveSnapshot(session, { depth: 5 });
+      const ref = session.refs.get(input.ref);
+      if (!ref || !refStillMatches(previousRef, ref)) throw new Error(`Browser ref ${input.ref} changed with the page. Capture a fresh browser_snapshot.`);
       if (ref.role !== "link" || !ref.href) throw new Error(`Browser ref ${input.ref} is not a navigable link.`);
       return { text: ref.name, href: ref.href };
     }
@@ -1795,11 +1836,19 @@ export class BrowserSessionManager {
   }
 
   private async performAction(workspaceId: string, input: BrowserActionInput, includeScreenshot: boolean, options: { agentApproved?: boolean } = {}) {
-    const session = this.ensureSession(workspaceId);
+    const session = this.ensureSession(workspaceId, input.tabId);
     this.assertAgentMayControl(session, options.agentApproved === true);
     await session.cdp.enableNetwork().catch(() => undefined);
     await session.cdp.enableRuntime().catch(() => undefined);
     const action = normalizeAction(input.action);
+    if (input.ref) {
+      const previousRef = session.refs.get(input.ref);
+      if (!previousRef) throw new Error(`Browser ref ${input.ref} was not found. Capture a fresh browser_snapshot.`);
+      await this.collectInteractiveSnapshot(session, { depth: 5 });
+      if (!refStillMatches(previousRef, session.refs.get(input.ref))) {
+        throw new Error(`Browser ref ${input.ref} changed with the page. Capture a fresh browser_snapshot.`);
+      }
+    }
     const actionLabel = actionLabelForInput(action, input, session.refs.get(input.ref || ""));
     const actionStartedAt = Date.now();
     session.journal.begin(actionLabel, pageSummary(session.view.webContents), includeScreenshot);
@@ -1813,19 +1862,27 @@ export class BrowserSessionManager {
         const usedFallback = await this.maybeOpenClickedLinkFallback(session, input, beforeUrl, options.agentApproved === true);
         if (usedFallback) await this.waitForActionEvidenceSettle(session, actionStartedAt);
       }
+      const finding = await session.journal.finish(session.view.webContents, pageSummary(session.view.webContents));
+      if (!finding) throw new Error("Browser action did not produce a trace.");
+      this.updateState(session, {
+        agentActive: false,
+        lastAction: actionLabel,
+        lastFinding: finding.finding,
+        consoleErrorCount: session.journal.recentConsole().filter((entry) => entry.level === "error").length,
+        failedRequestCount: countRealFailedRequests(session.journal.recentNetwork()),
+      });
+      return finding;
+    } catch (error) {
+      const message = cleanLoadError(error);
+      this.updateState(session, {
+        agentActive: false,
+        lastAction: actionLabel,
+        lastFinding: message,
+      });
+      throw error;
     } finally {
       void hideBrowserCursorOverlay(session.view.webContents);
     }
-    const finding = await session.journal.finish(session.view.webContents, pageSummary(session.view.webContents));
-    this.updateState(session, {
-      agentActive: false,
-      lastAction: actionLabel,
-      lastFinding: finding?.finding,
-      consoleErrorCount: session.journal.recentConsole().filter((entry) => entry.level === "error").length,
-      failedRequestCount: countRealFailedRequests(session.journal.recentNetwork()),
-    });
-    if (!finding) throw new Error("Browser action did not produce a trace.");
-    return finding;
   }
 
   private async dispatchAction(session: BrowserSessionRecord, action: string, input: BrowserActionInput) {
@@ -1847,13 +1904,21 @@ export class BrowserSessionManager {
       });
       return;
     }
-    if (action === "click" || action === "type" || action === "select") {
+    if (action === "click" || action === "type" || action === "fill" || action === "select") {
       const point = this.pointForInput(session, input);
+      if (action === "select") {
+        const selected = await session.view.webContents.executeJavaScript(buildSelectAtPointScript(point, String(input.value || "")), true);
+        if (!selected) throw new Error(`No enabled option matched ${JSON.stringify(String(input.value || ""))} at the selected control.`);
+        return;
+      }
       session.view.webContents.focus();
       session.view.webContents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y, button: "left", clickCount: 1 });
       session.view.webContents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y, button: "left", clickCount: 1 });
-      if (action === "type" && input.text) await session.view.webContents.insertText(input.text);
-      if (action === "select" && input.value) await session.view.webContents.insertText(input.value);
+      if (action === "fill") {
+        session.view.webContents.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: process.platform === "darwin" ? ["meta"] : ["control"] });
+        session.view.webContents.sendInputEvent({ type: "keyUp", keyCode: "A", modifiers: process.platform === "darwin" ? ["meta"] : ["control"] });
+      }
+      if ((action === "type" || action === "fill") && input.text) await session.view.webContents.insertText(input.text);
       return;
     }
     if (action === "press") {
@@ -2157,8 +2222,8 @@ const viewportForPreset = (preset: BrowserViewportPreset) => {
 
 const normalizeAction = (value: string) => {
   const action = value.trim().toLowerCase();
-  if (["click", "type", "press", "scroll", "select", "resize"].includes(action)) return action;
-  throw new Error("browser action must be click, type, press, scroll, select, or resize.");
+  if (["click", "type", "fill", "press", "scroll", "select", "resize"].includes(action)) return action;
+  throw new Error("browser action must be click, type, fill, press, scroll, select, or resize.");
 };
 
 type BrowserWaitKind = "text" | "url_contains" | "network_idle" | "dom_stable" | "ref";
@@ -2592,11 +2657,29 @@ const isInternalBrowserConsoleMessage = (details: { sourceId?: string; message?:
 const actionLabelForInput = (action: string, input: BrowserActionInput, ref?: BrowserElementRef) => {
   const target = ref?.name || input.ref || (Number.isFinite(input.x) ? `${input.x},${input.y}` : "page");
   if (action === "type") return `Typed into ${target}`;
+  if (action === "fill") return `Filled ${target}`;
   if (action === "press") return `Pressed ${input.key || "Enter"}`;
   if (action === "scroll") return `Scrolled ${target}`;
   if (action === "resize") return `Resized browser to ${input.width}x${input.height}`;
   return `${action.charAt(0).toUpperCase()}${action.slice(1)}ed ${target}`;
 };
+
+const buildSelectAtPointScript = (point: { x: number; y: number }, requestedValue: string) => `
+(() => {
+  const hit = document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)});
+  const select = hit && (hit instanceof HTMLSelectElement ? hit : hit.closest('select'));
+  if (!(select instanceof HTMLSelectElement) || select.disabled) return false;
+  const requested = ${JSON.stringify(requestedValue)};
+  const option = Array.from(select.options).find((item) =>
+    !item.disabled && (item.value === requested || item.label === requested || item.text.trim() === requested)
+  );
+  if (!option) return false;
+  select.value = option.value;
+  select.dispatchEvent(new Event('input', { bubbles: true }));
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  return select.value === option.value;
+})()
+`;
 
 const sanitizeBrowserElementRef = (item: BrowserElementRef): BrowserElementRef => ({
   ref: String(item.ref || ""),
@@ -2608,6 +2691,21 @@ const sanitizeBrowserElementRef = (item: BrowserElementRef): BrowserElementRef =
   width: Math.max(0, Number(item.width) || 0),
   height: Math.max(0, Number(item.height) || 0),
 });
+
+const refStillMatches = (before: BrowserElementRef | undefined, after: BrowserElementRef | undefined) => Boolean(
+  before &&
+  after &&
+  before.role === after.role &&
+  before.name === after.name &&
+  (before.href || "") === (after.href || "")
+);
+
+const focusBrowserSnapshot = (snapshot: string, targetRef: string) => {
+  const lines = snapshot.split("\n");
+  const index = lines.findIndex((line) => line.includes(`[ref=${targetRef}]`));
+  if (index < 0) throw new Error(`Browser ref ${targetRef} is no longer visible. Capture a fresh browser_snapshot.`);
+  return lines.slice(Math.max(0, index - 4), Math.min(lines.length, index + 13)).join("\n");
+};
 
 const isLinkFallbackCandidate = (beforeUrl: string, targetUrl: string) => {
   try {
@@ -2668,6 +2766,49 @@ const waitForBrowserSettle = (contents: WebContents, timeoutMs: number) =>
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const abortableDelay = (ms: number, signal?: AbortSignal) => {
+  if (!signal) return delay(ms);
+  signal.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException("Browser operation aborted.", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
+const loadUrlWithGuards = (contents: WebContents, url: string, signal?: AbortSignal, timeoutMs = 30_000) => {
+  signal?.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      contents.stop();
+      finish(() => reject(signal?.reason instanceof Error ? signal.reason : new DOMException("Browser navigation aborted.", "AbortError")));
+    };
+    const timer = setTimeout(() => {
+      contents.stop();
+      finish(() => reject(new Error(`Browser navigation timed out after ${timeoutMs}ms.`)));
+    }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    contents.loadURL(url).then(
+      () => finish(resolve),
+      (error) => finish(() => reject(error)),
+    );
+  });
+};
 
 const cleanLoadError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || "Page load failed.");

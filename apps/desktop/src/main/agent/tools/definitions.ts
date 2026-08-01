@@ -149,7 +149,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_read_file",
-    description: "Read a workspace file with metadata. Supports line ranges, line numbers, truncation, hashing, and binary detection.",
+    description: "Read a workspace file, optionally by line range. Returns content plus freshness and file metadata.",
     parameters: schema({
       path: textProperty("Workspace-relative file path."),
       maxBytes: numberProperty("Optional maximum bytes to return. Default 120000."),
@@ -162,7 +162,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_edit_file",
-    description: "Apply structured UTF-8 text edits to one workspace file. Safer than full rewrites for precise edits and less format-sensitive than patches. Returns diff, hashes, undo metadata, and dry-run status. Rejects stale files with STALE_FILE; reread and retry when that happens.",
+    description: "Apply ordered, precise UTF-8 edits to one existing file. Returns a diff and rejects stale input; reread before retrying.",
     parameters: schema({
       path: textProperty("Workspace-relative UTF-8 text file path."),
       operations: editOperationsProperty("Ordered edit operations to apply."),
@@ -174,7 +174,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_write_file",
-    description: "Create or replace a UTF-8 text file or base64 binary file in the selected workspace. Returns diff when text, hashes, warnings, and undo metadata.",
+    description: "Create a file or intentionally replace its complete contents. Prefer edit or patch for targeted changes to existing text.",
     parameters: schema({
       path: textProperty("Workspace-relative file path."),
       content: textProperty("Full UTF-8 file contents, or base64 bytes when encoding is base64."),
@@ -188,7 +188,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_apply_patch",
-    description: "Apply or preview a Codex-style workspace-relative patch envelope. Supports Add File, Update File, Move to, and Delete File sections, with transactional rollback, diff, hashes, and undo metadata. Rejects stale files with STALE_FILE; reread and retry when that happens.",
+    description: "Apply a transactional Codex-style patch across one or more workspace files. Returns a diff and rolls back the patch on failure.",
     parameters: schema({
       patch: textProperty("Patch text beginning with *** Begin Patch and ending with *** End Patch. File paths must be workspace-relative."),
       expectedHashes: stringMapProperty("Optional map of workspace-relative paths to sha256 hashes from prior reads. Mismatches are hard STALE_FILE failures."),
@@ -628,6 +628,7 @@ export const desktopToolDefinitions = [
       ref: textProperty("Link ref from browser_snapshot, such as b3."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Visible link text to match when a ref is unavailable."),
+      href: textProperty("Exact href returned by browser_extract mode=links."),
       tabId: textProperty("Optional browser tab id. Defaults to active tab."),
       newTab: boolProperty("If true, open the link in a new browser tab."),
     }, []),
@@ -640,6 +641,7 @@ export const desktopToolDefinitions = [
       depth: numberProperty("Optional snapshot depth, 1-8. Default 5."),
       includeBoxes: boolProperty("If true, include element bounding boxes."),
       targetRef: textProperty("Optional ref from a prior browser_snapshot to focus the snapshot."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },
   {
@@ -647,7 +649,7 @@ export const desktopToolDefinitions = [
     name: "browser_act",
     description: "Interact with the current built-in browser page using a snapshot ref or x/y coordinate. Prefer refs from browser_snapshot.",
     parameters: schema({
-      action: textProperty("Action: click, type, press, scroll, select, or resize."),
+      action: textProperty("Action: click, type, fill, press, scroll, select, or resize. Use fill to replace existing field text; type appends."),
       ref: textProperty("Element ref from browser_snapshot, such as b1."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Text to type for action=type."),
@@ -656,9 +658,10 @@ export const desktopToolDefinitions = [
       y: numberProperty("Viewport y coordinate when a ref is unavailable."),
       deltaX: numberProperty("Horizontal scroll delta for action=scroll."),
       deltaY: numberProperty("Vertical scroll delta for action=scroll."),
-      value: textProperty("Value for action=select."),
+      value: textProperty("Option value or visible label for action=select."),
       width: numberProperty("Viewport width for action=resize."),
       height: numberProperty("Viewport height for action=resize."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, ["action"]),
   },
   {
@@ -667,6 +670,7 @@ export const desktopToolDefinitions = [
     description: "Inspect concise current-page browser evidence: console, network, dom, screenshot, or source/Privora DevBridge data. Reopen/reload the target URL if evidence appears stale.",
     parameters: schema({
       kind: textProperty("Inspection kind: console, network, dom, screenshot, or source."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, ["kind"]),
   },
   {
@@ -675,6 +679,7 @@ export const desktopToolDefinitions = [
     description: "Extract bounded, redacted current-page content for research or QA: visible_text, main_text, links, tables, forms, or metadata. Does not read cookies, storage, headers, or input values.",
     parameters: schema({
       mode: textProperty("Extraction mode: visible_text, main_text, links, tables, forms, or metadata. Default visible_text."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },
   {
@@ -689,6 +694,7 @@ export const desktopToolDefinitions = [
       targetRef: textProperty("Alias for ref."),
       timeoutMs: numberProperty("Timeout in milliseconds. Default 5000, max 30000."),
       idleMs: numberProperty("Network idle window in milliseconds. Default 600."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, ["for"]),
   },
   {
@@ -703,6 +709,7 @@ export const desktopToolDefinitions = [
       y: numberProperty("Region y coordinate for mode=region."),
       width: numberProperty("Region width for mode=region."),
       height: numberProperty("Region height for mode=region."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },
   {
@@ -714,12 +721,13 @@ export const desktopToolDefinitions = [
       includeVisibleText: boolProperty("If false, omit visible text. Default true."),
       includeConsole: boolProperty("If false, omit console entries. Default true."),
       includeNetwork: boolProperty("If false, omit network entries. Default true."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },
   {
     type: "function",
     name: "browser_search",
-    description: "Search the web using the built-in browser session and return top visible result links. Defaults to DuckDuckGo to reduce embedded-browser CAPTCHA friction.",
+    description: "Search the web in Privora Browser and return bounded visible result links. Navigating to a search provider follows normal external-origin approval; set open=false only when extracting an already-open results page.",
     parameters: schema({
       query: textProperty("Search query."),
       engine: textProperty("Search engine: duckduckgo, bing, or google. Default duckduckgo."),
@@ -884,13 +892,19 @@ export const desktopToolDefinitions = [
     name: "browser_trace",
     description: "Perform one browser action and return a compact causal finding with URL change, console errors, failed requests, and optional screenshot artifact.",
     parameters: schema({
-      action: textProperty("Action: click, type, press, scroll, select, or resize."),
+      action: textProperty("Action: click, type, fill, press, scroll, select, or resize."),
       ref: textProperty("Element ref from browser_snapshot."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Text to type for action=type."),
       key: textProperty("Key to press for action=press."),
       x: numberProperty("Viewport x coordinate when a ref is unavailable."),
       y: numberProperty("Viewport y coordinate when a ref is unavailable."),
+      deltaX: numberProperty("Horizontal scroll delta for action=scroll."),
+      deltaY: numberProperty("Vertical scroll delta for action=scroll."),
+      value: textProperty("Option value or visible label for action=select."),
+      width: numberProperty("Viewport width for action=resize."),
+      height: numberProperty("Viewport height for action=resize."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
       includeScreenshot: boolProperty("If true, save a local screenshot artifact and return its path."),
     }, ["action"]),
   },
@@ -900,6 +914,7 @@ export const desktopToolDefinitions = [
     description: "Reload or re-check the current built-in browser page after a change and report whether current-page console or network failures remain.",
     parameters: schema({
       reload: boolProperty("If true, reload before checking. Default true."),
+      tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },
 ] as const;
@@ -961,7 +976,40 @@ export const parsePartialDesktopToolCall = (name: string | undefined, rawArgumen
     const patchStart = rawArguments.indexOf("*** Begin Patch");
     if (patchStart !== -1) args.patch = rawArguments.slice(patchStart);
   }
+  if (name === "desktop_write_file") {
+    const content = partialJsonStringValue(rawArguments, "content");
+    if (content || rawArguments.includes('"content"')) args.content = content;
+  }
+  if (name === "desktop_edit_file") {
+    const operation = partialEditOperation(rawArguments);
+    if (operation) args.operations = [operation];
+  }
   return Object.keys(args).length ? { name, arguments: args } : null;
+};
+
+const partialEditOperation = (source: string) => {
+  if (!source.includes('"operations"')) return null;
+  const operation: Record<string, unknown> = {};
+  for (const key of ["type", "match", "replacement", "content", "occurrence", "position"]) {
+    const value = partialJsonStringValue(source, key);
+    if (value || source.includes(`"${key}"`)) operation[key] = value;
+  }
+  for (const key of ["startLine", "endLine"]) {
+    const value = partialJsonNumberValue(source, key);
+    if (value !== undefined) operation[key] = value;
+  }
+  return Object.keys(operation).length ? operation : null;
+};
+
+const partialJsonNumberValue = (source: string, key: string) => {
+  const keyIndex = source.indexOf(`"${key}"`);
+  if (keyIndex === -1) return undefined;
+  const colon = source.indexOf(":", keyIndex);
+  if (colon === -1) return undefined;
+  const match = source.slice(colon + 1).match(/^\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : undefined;
 };
 
 const partialJsonStringValue = (source: string, key: string) => {
