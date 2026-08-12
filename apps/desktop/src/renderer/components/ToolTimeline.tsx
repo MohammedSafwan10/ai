@@ -817,6 +817,61 @@ const computerDetails = (tool: ToolEventRecord): Array<{ label: string; value: s
   const action = stringValue(data.action) || stringValue(result.action) || stringValue(trace.action);
   const success = booleanLabel(data.success ?? result.success ?? trace.success ?? tool.result?.success);
   if (action || success) details.push({ label: "Action", value: [action, success].filter(Boolean).join("\n") });
+  const inputCapability = stringValue(result.inputCapability) || stringValue(traceResult.inputCapability) || stringValue(diagnosis?.capability);
+  const globalInputUsed = result.globalInputUsed ?? traceResult.globalInputUsed;
+  const foregroundBefore = stringValue(result.foregroundBefore) || stringValue(traceResult.foregroundBefore);
+  const foregroundAfter = stringValue(result.foregroundAfter) || stringValue(traceResult.foregroundAfter);
+  if (inputCapability || typeof globalInputUsed === "boolean" || foregroundBefore || foregroundAfter) {
+    details.push({
+      label: "Input & focus",
+      value: [
+        inputCapability && `capability: ${inputCapability}`,
+        typeof globalInputUsed === "boolean" && `global input: ${globalInputUsed ? "used" : "not used"}`,
+        foregroundBefore && `foreground before: ${foregroundBefore}`,
+        foregroundAfter && `foreground after: ${foregroundAfter}`,
+        result.focusRestored === true && "focus restored: yes",
+      ].filter(Boolean).join("\n"),
+    });
+  }
+  const referenceStatus = stringValue(result.referenceStatus) || stringValue(traceResult.referenceStatus);
+  if (referenceStatus) {
+    details.push({
+      label: "Reference",
+      value: [
+        `status: ${referenceStatus}`,
+        stringValue(result.oldRef) && `old: ${stringValue(result.oldRef)}`,
+        stringValue(result.newRef) && `new: ${stringValue(result.newRef)}`,
+        stringValue(result.referenceReason),
+      ].filter(Boolean).join("\n"),
+    });
+  }
+  const verification = firstRecord(result.verification, traceResult.verification);
+  if (verification) {
+    details.push({
+      label: "Verification",
+      value: compactBrowserText([
+        `verified: ${verification.verified === true ? "yes" : "no"}`,
+        stringValue(verification.requestedValue) && `requested: ${stringValue(verification.requestedValue)}`,
+        stringValue(verification.observedValue) && `observed: ${stringValue(verification.observedValue)}`,
+      ].filter(Boolean).join("\n"), 2200),
+    });
+  }
+  const snapshot = firstRecord(data.snapshot, objectValue(trace.after));
+  if (snapshot) {
+    const activeTab = objectValue(snapshot.activeTab);
+    const scope = stringValue(snapshot.scope);
+    const activeDocumentRef = stringValue(snapshot.activeDocumentRef);
+    if (scope || activeTab.title || activeDocumentRef) {
+      details.push({
+        label: "Semantic scope",
+        value: [
+          scope && `scope: ${scope}`,
+          stringValue(activeTab.title) && `active tab: ${stringValue(activeTab.title)}`,
+          activeDocumentRef && `active document: ${activeDocumentRef}`,
+        ].filter(Boolean).join("\n"),
+      });
+    }
+  }
   if (output) details.push({ label: tool.result?.success === false ? "Error" : "Output", value: compactBrowserText(output, 2600) });
   const windows = arraySummary(data.windows || result.windows, (item) => {
     const entry = objectValue(item);
@@ -833,6 +888,7 @@ const computerDetails = (tool: ToolEventRecord): Array<{ label: string; value: s
       stringValue(entry.name),
       stringValue(entry.source) && `[${stringValue(entry.source)}]`,
       stringValue(entry.executablePath) || stringValue(entry.shortcutPath) || stringValue(entry.installLocation),
+      entry.verified === true ? `verified${stringValue(entry.verificationMethod) ? `:${stringValue(entry.verificationMethod)}` : ""}` : "unverified",
       typeof entry.score === "number" ? `score ${entry.score}` : "",
     ].filter(Boolean).join(" ");
   });
@@ -847,7 +903,7 @@ const computerDetails = (tool: ToolEventRecord): Array<{ label: string; value: s
   ].filter(Boolean), (item) => String(item));
   if (artifacts) details.push({ label: "Artifacts", value: artifacts });
   if (details.length === 0) details.push({ label: "Details", value: "(no computer-use details)" });
-  return dedupeBrowserDetails(details).slice(0, 8);
+  return dedupeBrowserDetails(details).slice(0, 12);
 };
 
 const firstRecord = (...values: unknown[]): Record<string, unknown> | null => {

@@ -467,7 +467,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "computer_find_apps",
-    description: "Search installed Windows apps by friendly name using Start Menu shortcuts, App Paths, registry entries, PATH commands, and common app folders. Use before computer_open_app when the user gives a product name like Antigravity IDE instead of an exact exe path.",
+    description: "Search installed Windows apps by friendly name using Start Menu shortcuts, App Paths, registry entries, PATH commands, and common app folders. Results explicitly report whether the executable/shortcut exists and how it was verified. Use before computer_open_app for friendly product names.",
     parameters: schema({
       backend: textProperty("Optional backend: privora_windows_native or cua_driver."),
       query: textProperty("Friendly app name or partial name, for example Antigravity IDE, Chrome, VS Code, or Calculator."),
@@ -492,6 +492,9 @@ export const desktopToolDefinitions = [
       windowId: textProperty("Optional window id. Defaults to the foreground window."),
       depth: numberProperty("Optional UIA tree depth, default 3, max 5."),
       includeBoxes: boolProperty("If true, include element bounding boxes. Default true where available."),
+      scope: textProperty("Snapshot scope: window (default), active_document, or matching_controls."),
+      role: textProperty("Optional exact UIA role filter, such as Document, Edit, Button, or TabItem."),
+      editableOnly: boolProperty("If true, return only enabled editable Document/Edit controls."),
     }, []),
   },
   {
@@ -507,11 +510,12 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "computer_act",
-    description: "Perform one desktop action using semantic refs first, then honest foreground input fallback. Requires Computer Use mode. Hard-blocks credentials, secure desktop, and irreversible real-world actions.",
+    description: "Perform one desktop action using background-safe UI Automation first. Foreground mouse/keyboard fallback is disabled unless interactionMode=allow_foreground. Requires Computer Use mode and hard-blocks sensitive or irreversible actions.",
     parameters: schema({
       backend: textProperty("Optional backend."),
       windowId: textProperty("Optional window id."),
       action: textProperty("Action: click, double_click, type, press, scroll, drag, set_value, invoke, select, or focus."),
+      interactionMode: textProperty("background_only (default) or allow_foreground. Use allow_foreground only when the user permits focus stealing and will not interact with the desktop during the action."),
       ref: textProperty("Preferred ref from computer_snapshot."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Text to type. Never use for passwords, MFA, card data, API keys, tokens, or secrets."),
@@ -523,28 +527,34 @@ export const desktopToolDefinitions = [
       deltaY: numberProperty("Drag or scroll vertical delta."),
       durationMs: numberProperty("Optional action duration for gestures."),
       includeScreenshot: boolProperty("If true, also save screenshot evidence where supported."),
+      verifyValue: boolProperty("For type/set_value, verify the observed control value before reporting success. Default true."),
     }, ["action"]),
   },
   {
     type: "function",
     name: "computer_wait",
-    description: "Wait for desktop evidence: text, window_title, focused_window, or idle. Use after opening apps or dynamic actions.",
+    description: "Wait for semantic desktop evidence: text, editable_text, element, active_tab, tab_count, window_title, or focused_window. Use after opening apps or dynamic actions.",
     parameters: schema({
       backend: textProperty("Optional backend."),
-      for: textProperty("Wait target: text, window_title, focused_window, or idle."),
+      for: textProperty("Wait target: text, editable_text, element, active_tab, tab_count, window_title, or focused_window."),
       value: textProperty("Expected text or title fragment."),
       windowId: textProperty("Optional window id."),
       timeoutMs: numberProperty("Timeout in milliseconds. Default 5000, max 30000."),
+      role: textProperty("Optional UIA role for element waits."),
+      ref: textProperty("Optional semantic ref to wait on."),
+      count: numberProperty("Required minimum count for tab_count."),
+      exact: boolProperty("If true, require exact normalized text/title equality rather than substring matching."),
     }, []),
   },
   {
     type: "function",
     name: "computer_trace",
-    description: "Run one desktop action with before/after snapshots, optional screenshot evidence, and concise diagnosis.",
+    description: "Run one desktop action with before/after snapshots, optional screenshot evidence, and concise diagnosis. Background-only is the default; foreground fallback must be explicitly enabled.",
     parameters: schema({
       backend: textProperty("Optional backend."),
       windowId: textProperty("Optional window id."),
       action: textProperty("Action: click, double_click, type, press, scroll, drag, set_value, invoke, select, or focus."),
+      interactionMode: textProperty("background_only (default) or allow_foreground."),
       ref: textProperty("Preferred ref from computer_snapshot."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Text to type. Never use for passwords, MFA, card data, API keys, tokens, or secrets."),
@@ -555,6 +565,7 @@ export const desktopToolDefinitions = [
       deltaX: numberProperty("Drag or scroll horizontal delta."),
       deltaY: numberProperty("Drag or scroll vertical delta."),
       includeScreenshot: boolProperty("If true, save screenshot evidence."),
+      verifyValue: boolProperty("For type/set_value, verify the observed value. Default true."),
     }, ["action"]),
   },
   {
@@ -586,12 +597,13 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "computer_open_app",
-    description: "Open a desktop application by app name or absolute path. Requires Computer Use mode.",
+    description: "Open a desktop application by verified app name or absolute path. URL/document arguments are preserved through Start Menu shortcuts. Background-only is the default and restores the user's prior foreground window if the launched app activates itself.",
     parameters: schema({
       backend: textProperty("Optional backend."),
       app: textProperty("Application executable/name, for example notepad.exe or calc.exe."),
       path: textProperty("Absolute executable or document path."),
       args: stringArrayProperty("Optional process arguments."),
+      interactionMode: textProperty("background_only (default) or allow_foreground. Background-only restores the previous foreground window after launch."),
     }, []),
   },
   {

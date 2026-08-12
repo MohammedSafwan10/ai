@@ -738,6 +738,8 @@ export interface ComputerAppRecord {
   arguments?: string;
   installLocation?: string;
   score: number;
+  verified: boolean;
+  verificationMethod?: "filesystem" | "app_paths" | "command";
 }
 
 export interface ComputerSnapshotNodeRecord {
@@ -748,6 +750,7 @@ export interface ComputerSnapshotNodeRecord {
   automationId?: string;
   enabled?: boolean;
   focused?: boolean;
+  selected?: boolean;
   sensitive?: boolean;
   bounds?: ComputerUseRectRecord;
   capability?: ComputerUseCapability;
@@ -760,6 +763,9 @@ export interface ComputerSnapshotRecord {
   window?: ComputerWindowRecord;
   nodes: ComputerSnapshotNodeRecord[];
   text: string;
+  scope?: "window" | "active_document" | "matching_controls";
+  activeTab?: { ref: string; title: string };
+  activeDocumentRef?: string;
   artifactPaths?: string[];
   diagnosis?: ComputerUseDiagnosisRecord;
   createdAt: number;
@@ -777,6 +783,21 @@ export interface ComputerUseActionResultRecord {
   success: boolean;
   finding: string;
   diagnosis?: ComputerUseDiagnosisRecord;
+  inputCapability?: ComputerUseCapability;
+  globalInputUsed?: boolean;
+  foregroundBefore?: string;
+  foregroundAfter?: string;
+  foregroundChangedDuringAction?: boolean;
+  focusRestored?: boolean;
+  referenceStatus?: "none" | "stable" | "stale" | "remapped";
+  oldRef?: string;
+  newRef?: string;
+  referenceReason?: string;
+  verification?: {
+    verified: boolean;
+    requestedValue?: string;
+    observedValue?: string;
+  };
   window?: ComputerWindowRecord;
   artifactPaths?: string[];
   startedAt: number;
@@ -815,6 +836,8 @@ export interface ComputerUseInputBase {
 
 export interface ComputerUseActionInput extends ComputerUseInputBase {
   action: ComputerUseActionKind | string;
+  interactionMode?: "background_only" | "allow_foreground";
+  verifyValue?: boolean;
   ref?: string;
   targetRef?: string;
   text?: string;

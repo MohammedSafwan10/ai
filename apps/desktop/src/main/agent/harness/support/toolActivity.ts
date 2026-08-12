@@ -278,15 +278,19 @@ export const titleForTool = (call: DesktopToolCall) => {
     case "computer_focus_window":
       return `Focus window ${args.windowId || args.window_id || ""}`.trim();
     case "computer_snapshot":
-      return "Capture desktop snapshot";
+      return args.scope === "active_document"
+        ? "Inspect active document"
+        : args.scope === "matching_controls"
+          ? `Inspect ${args.role || (args.editableOnly || args.editable_only ? "editable" : "matching")} controls`
+          : "Inspect desktop window";
     case "computer_inspect":
       return `Inspect desktop ${args.kind || ""}`.trim();
     case "computer_act":
-      return `Desktop ${args.action || "action"}`;
+      return computerActionTitle(args);
     case "computer_wait":
       return `Wait for desktop ${args.for || args.kind || ""}`.trim();
     case "computer_trace":
-      return `Trace desktop ${args.action || "action"}`;
+      return `Trace: ${computerActionTitle(args)}`;
     case "computer_verify":
       return "Verify desktop";
     case "computer_screenshot":
@@ -364,6 +368,19 @@ const browserTabActionTitle = (value: unknown) => {
 const browserWorkflowActionTitle = (value: unknown) => compactToolLabel(value, "Manage").replace(/^./, (char) => char.toUpperCase());
 const browserAssertionActionTitle = (value: unknown) => compactToolLabel(value, "Check").replace(/^./, (char) => char.toUpperCase());
 const browserEvidenceActionTitle = (value: unknown) => compactToolLabel(value, "Manage").replace(/^./, (char) => char.toUpperCase());
+
+const computerActionTitle = (args: Record<string, unknown>) => {
+  const action = String(args.action || "action").toLowerCase();
+  const target = compactToolLabel(args.ref || args.targetRef || args.target_ref, "control");
+  if (action === "set_value" || action === "type") return `Set value in ${target}`;
+  if (action === "invoke" || action === "click") return `Invoke ${target}`;
+  if (action === "select") return `Select ${target}`;
+  if (action === "scroll") return `Scroll ${target}`;
+  if (action === "press") return `Press ${compactToolLabel(args.key, "key")} on ${target}`;
+  if (action === "focus") return `Focus ${target}`;
+  if (action === "drag") return `Drag in ${target}`;
+  return `Desktop ${action.replace(/_/g, " ")}`;
+};
 
 export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord["status"]) => {
   if (status === "done") return undefined;

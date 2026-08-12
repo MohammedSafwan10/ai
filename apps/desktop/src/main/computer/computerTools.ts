@@ -30,6 +30,9 @@ export class ComputerUseToolExecutor {
           windowId: readString(args, "windowId", "window_id"),
           depth: readNumber(args, "depth"),
           includeBoxes: args.includeBoxes === true || args.include_boxes === true,
+          scope: readSnapshotScope(args),
+          role: readString(args, "role"),
+          editableOnly: args.editableOnly === true || args.editable_only === true,
         }, context.signal);
       case "computer_inspect":
         return this.manager.inspect({
@@ -42,6 +45,7 @@ export class ComputerUseToolExecutor {
           backend: readBackend(args),
           windowId: readString(args, "windowId", "window_id"),
           action: String(args.action || ""),
+          interactionMode: readInteractionMode(args),
           ref: readString(args, "ref"),
           targetRef: readString(args, "targetRef", "target_ref"),
           text: readString(args, "text"),
@@ -53,6 +57,7 @@ export class ComputerUseToolExecutor {
           deltaY: readNumber(args, "deltaY", "delta_y"),
           durationMs: readNumber(args, "durationMs", "duration_ms"),
           includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
+          verifyValue: args.verifyValue !== false && args.verify_value !== false,
         }, context.signal);
       case "computer_wait":
         return this.manager.wait({
@@ -61,12 +66,17 @@ export class ComputerUseToolExecutor {
           value: readString(args, "value", "text", "windowTitle", "window_title"),
           windowId: readString(args, "windowId", "window_id"),
           timeoutMs: readNumber(args, "timeoutMs", "timeout_ms"),
+          role: readString(args, "role"),
+          ref: readString(args, "ref"),
+          count: readNumber(args, "count"),
+          exact: args.exact === true,
         }, context.signal);
       case "computer_trace":
         return this.manager.trace({
           backend: readBackend(args),
           windowId: readString(args, "windowId", "window_id"),
           action: String(args.action || ""),
+          interactionMode: readInteractionMode(args),
           ref: readString(args, "ref"),
           targetRef: readString(args, "targetRef", "target_ref"),
           text: readString(args, "text"),
@@ -77,6 +87,7 @@ export class ComputerUseToolExecutor {
           deltaX: readNumber(args, "deltaX", "delta_x"),
           deltaY: readNumber(args, "deltaY", "delta_y"),
           includeScreenshot: args.includeScreenshot === true || args.include_screenshot === true,
+          verifyValue: args.verifyValue !== false && args.verify_value !== false,
         }, context.workspaceId, context.signal);
       case "computer_verify":
         return this.manager.verify({
@@ -101,6 +112,7 @@ export class ComputerUseToolExecutor {
           app: readString(args, "app"),
           path: readString(args, "path"),
           args: Array.isArray(args.args) ? args.args : undefined,
+          interactionMode: readInteractionMode(args),
         }, context.signal);
       case "computer_clipboard":
         return this.manager.clipboardAction({
@@ -134,4 +146,14 @@ const readNumber = (args: Record<string, unknown>, ...keys: string[]) => {
 const readBackend = (args: Record<string, unknown>) => {
   const backend = readString(args, "backend");
   return backend === "privora_windows_native" || backend === "cua_driver" ? backend : undefined;
+};
+
+const readInteractionMode = (args: Record<string, unknown>) => {
+  const mode = readString(args, "interactionMode", "interaction_mode");
+  return mode === "allow_foreground" ? mode : "background_only";
+};
+
+const readSnapshotScope = (args: Record<string, unknown>) => {
+  const scope = readString(args, "scope");
+  return scope === "active_document" || scope === "matching_controls" ? scope : "window";
 };

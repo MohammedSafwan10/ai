@@ -83,6 +83,7 @@ export class ComputerUseManager {
         app.name,
         `[${app.source}]`,
         app.executablePath || app.shortcutPath || app.installLocation || "",
+        app.verified ? `[verified:${app.verificationMethod || "filesystem"}]` : "[unverified]",
       ].filter(Boolean).join(" ")).join("\n") || "No installed app candidates found.",
       data: { backend: backend.id, apps },
     };
@@ -100,7 +101,7 @@ export class ComputerUseManager {
     return this.wrapAction(result);
   }
 
-  async snapshot(input: { backend?: ComputerUseBackendId; windowId?: string; depth?: number; includeBoxes?: boolean } = {}, signal?: AbortSignal): Promise<ToolResult> {
+  async snapshot(input: { backend?: ComputerUseBackendId; windowId?: string; depth?: number; includeBoxes?: boolean; scope?: "window" | "active_document" | "matching_controls"; role?: string; editableOnly?: boolean } = {}, signal?: AbortSignal): Promise<ToolResult> {
     if (!this.state.enabled) return computerUseDisabled();
     const snapshot = await this.resolveBackend(input.backend).snapshot(input, signal);
     this.updateState({ activeWindow: snapshot.window, lastFinding: snapshot.diagnosis?.message || `Captured ${snapshot.nodes.length} root node(s).` });
@@ -125,11 +126,25 @@ export class ComputerUseManager {
     if (!this.state.enabled) return failure("Computer Use mode is off. Turn it on in the composer tools menu before controlling desktop apps.", "blocked_by_policy");
     const lockedInput = this.targetLockedInput(input);
     if (requiresTargetWindow(lockedInput) && !lockedInput.windowId) {
-      return failure("Computer Use needs a target window before using foreground input. Focus, wait for, or snapshot the intended app first.", "stale_target");
+      return failure("Computer Use needs a target window. List, wait for, or snapshot the intended app first.", "stale_target");
     }
     const target = await this.resolveActionTarget(lockedInput, signal);
     if (requiresTrustedTarget(lockedInput) && !target) {
-      return failure("Computer Use requires a currently resolved UI element reference for this action.", "stale_target");
+      const ref = String(lockedInput.ref || lockedInput.targetRef || "");
+      return this.wrapAction({
+        backend: lockedInput.backend || this.state.backend,
+        action: lockedInput.action,
+        success: false,
+        finding: "The UI element reference is stale and no trusted identity is available for safe remapping.",
+        diagnosis: { kind: "stale_target", message: "The UI element reference is stale and no trusted identity is available for safe remapping.", capability: "uia_direct" },
+        inputCapability: "uia_direct",
+        globalInputUsed: false,
+        referenceStatus: "stale",
+        oldRef: ref || undefined,
+        referenceReason: "The ref was absent from the fresh tree and no cached semantic identity remained.",
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      });
     }
     const hardBlock = computerActionHardBlockReason(lockedInput, target);
     if (hardBlock) {
@@ -147,7 +162,31 @@ export class ComputerUseManager {
     }
     this.updateState({ active: true, lastAction: String(lockedInput.action || "") });
     try {
-      const result = await this.resolveBackend(lockedInput.backend).act(lockedInput, signal);
+      const backend = this.resolveBackend(lockedInput.backend);
+      const result = await backend.act(lockedInput, signal);
+      const isVerifiedMutation = ["type", "set_value"].includes(String(lockedInput.action || "").toLowerCase())
+        && lockedInput.verifyValue !== false
+        // A UIA mutation may complete before a later focus-restoration check
+        // fails. Independently verify that mutation instead of preserving an
+        // optimistic in-process ValuePattern result.
+        && (result.success || result.verification?.verified === true);
+      if (isVerifiedMutation) {
+        const expected = String(lockedInput.text ?? lockedInput.value ?? "");
+        // Re-read every editable control so verification still targets the mutated
+        // document when the user changes tabs while a background action is running.
+        const snapshot = await backend.snapshot({ windowId: lockedInput.windowId, depth: 5, scope: "matching_controls", editableOnly: true }, signal).catch(() => null);
+        const nodes = snapshot ? flattenSnapshotNodes(snapshot.nodes) : [];
+        const preferredRef = result.newRef || String(lockedInput.ref || lockedInput.targetRef || "");
+        const observedNode = nodes.find((node) => node.ref === preferredRef) || nodes.find((node) => node.ref === snapshot?.activeDocumentRef) || nodes[0];
+        const observed = String(observedNode?.value || "");
+        const verified = normalizeComputerValue(observed) === normalizeComputerValue(expected);
+        result.verification = { verified, requestedValue: expected, observedValue: observed };
+        if (!verified) {
+          result.success = false;
+          result.finding = "The control accepted the mutation, but an independent fresh snapshot did not match the requested value.";
+          result.diagnosis = { kind: "validation_failed", message: result.finding, capability: result.inputCapability || "uia_direct" };
+        }
+      }
       this.updateState({ active: false, lastFinding: result.finding });
       return this.wrapAction(result);
     } finally {
@@ -198,7 +237,7 @@ export class ComputerUseManager {
     };
   }
 
-  async wait(input: { backend?: ComputerUseBackendId; for?: string; value?: string; windowId?: string; timeoutMs?: number }, signal?: AbortSignal): Promise<ToolResult> {
+  async wait(input: { backend?: ComputerUseBackendId; for?: string; value?: string; windowId?: string; timeoutMs?: number; role?: string; ref?: string; count?: number; exact?: boolean }, signal?: AbortSignal): Promise<ToolResult> {
     if (!this.state.enabled) return computerUseDisabled();
     const kind = String(input.for || "text").toLowerCase();
     const expected = String(input.value || "");
@@ -207,6 +246,14 @@ export class ComputerUseManager {
     while (Date.now() - started < timeoutMs) {
       if (signal?.aborted) throw new Error("Computer Use wait was stopped.");
       const backend = this.resolveBackend(input.backend);
+      if (kind === "window_title" && input.windowId) {
+        const targetSnapshot = await backend.snapshot({ windowId: input.windowId, depth: 4 }, signal).catch(() => null);
+        const semanticTitle = [targetSnapshot?.window?.title, targetSnapshot?.text].filter(Boolean).join("\n");
+        if (semanticTitle.toLowerCase().includes(expected.toLowerCase())) {
+          if (targetSnapshot?.window) this.updateState({ activeWindow: targetSnapshot.window });
+          return { success: true, output: `Matched target window title "${expected}" from a fresh semantic snapshot.`, data: { elapsedMs: Date.now() - started, snapshot: targetSnapshot } };
+        }
+      }
       const windows = kind === "window_title" || kind === "focused_window"
         ? await backend.listWindows(signal)
         : [];
@@ -224,6 +271,19 @@ export class ComputerUseManager {
         const snapshot = await this.resolveBackend(input.backend).snapshot({ windowId: input.windowId, depth: 3 }, signal).catch(() => null);
         if (snapshot?.text.toLowerCase().includes(expected.toLowerCase())) {
           return { success: true, output: `Matched text "${expected}".`, data: { elapsedMs: Date.now() - started, snapshot } };
+        }
+      }
+      if (["editable_text", "element", "active_tab", "tab_count"].includes(kind)) {
+        const snapshot = await backend.snapshot({
+          windowId: input.windowId,
+          depth: 5,
+          scope: kind === "editable_text" ? "active_document" : "window",
+          role: kind === "element" ? input.role : undefined,
+          editableOnly: kind === "editable_text",
+        }, signal).catch(() => null);
+        const match = snapshot ? semanticWaitMatch(snapshot, { kind, expected, role: input.role, ref: input.ref, count: input.count, exact: input.exact === true }) : null;
+        if (match?.matched) {
+          return { success: true, output: match.message, data: { elapsedMs: Date.now() - started, snapshot, match } };
         }
       }
       await delay(180);
@@ -248,10 +308,10 @@ export class ComputerUseManager {
     return this.captureScreenshotArtifact(undefined, input.backend, input.windowId, signal, input);
   }
 
-  async openApp(input: { backend?: ComputerUseBackendId; app?: string; path?: string; args?: unknown }, signal?: AbortSignal): Promise<ToolResult> {
+  async openApp(input: { backend?: ComputerUseBackendId; app?: string; path?: string; args?: unknown; interactionMode?: "background_only" | "allow_foreground" }, signal?: AbortSignal): Promise<ToolResult> {
     if (!this.state.enabled) return failure("Computer Use mode is off. Turn it on in the composer tools menu before opening desktop apps.", "blocked_by_policy");
     const args = Array.isArray(input.args) ? input.args.map((item) => String(item)) : [];
-    return this.wrapAction(await this.resolveBackend(input.backend).openApp({ app: input.app, path: input.path, args }, signal));
+    return this.wrapAction(await this.resolveBackend(input.backend).openApp({ app: input.app, path: input.path, args, interactionMode: input.interactionMode || "background_only" }, signal));
   }
 
   async clipboardAction(input: { action?: string; text?: string }): Promise<ToolResult> {
@@ -293,11 +353,29 @@ export class ComputerUseManager {
       lastFinding: result.finding,
       ...(result.window ? { activeWindow: result.window } : {}),
     });
+    const evidence = {
+      inputCapability: result.inputCapability,
+      globalInputUsed: result.globalInputUsed,
+      foregroundBefore: result.foregroundBefore,
+      foregroundAfter: result.foregroundAfter,
+      focusRestored: result.focusRestored,
+      referenceStatus: result.referenceStatus,
+      oldRef: result.oldRef,
+      newRef: result.newRef,
+      referenceReason: result.referenceReason,
+      requestedValue: result.verification?.requestedValue,
+      observedValue: result.verification?.observedValue,
+      verified: result.verification?.verified,
+    };
     return {
       success: result.success,
       output: result.finding,
       error: result.success ? undefined : result.diagnosis?.message || result.finding,
-      data: { result },
+      // Keep diagnosis at its legacy location while exposing the complete,
+      // evidence-rich action record to newer consumers.
+      // Flatten key evidence as well as retaining the complete action record.
+      // This keeps it visible to compact tool consumers and older renderers.
+      data: { result, diagnosis: result.diagnosis, ...evidence },
     };
   }
 
@@ -309,8 +387,10 @@ export class ComputerUseManager {
   private async resolveActionTarget(input: ComputerUseActionInput, signal?: AbortSignal) {
     const ref = String(input.ref || input.targetRef || "");
     if (!ref) return undefined;
-    const snapshot = await this.resolveBackend(input.backend).snapshot({ windowId: input.windowId, depth: 5 }, signal);
-    return findSnapshotNode(snapshot.nodes, ref);
+    const backend = this.resolveBackend(input.backend);
+    const cached = backend.resolveCachedNode?.(ref);
+    const snapshot = await backend.snapshot({ windowId: input.windowId, depth: 5 }, signal);
+    return findSnapshotNode(snapshot.nodes, ref) || cached;
   }
 
   private async captureScreenshotArtifact(
@@ -382,6 +462,40 @@ const findSnapshotNode = (nodes: ComputerSnapshotRecord["nodes"], ref: string): 
   return undefined;
 };
 
+const semanticWaitMatch = (
+  snapshot: ComputerSnapshotRecord,
+  input: { kind: string; expected: string; role?: string; ref?: string; count?: number; exact: boolean },
+) => {
+  const nodes = flattenSnapshotNodes(snapshot.nodes);
+  const normalizedExpected = normalizeComputerValue(input.expected);
+  const matchesText = (value: string | undefined) => {
+    const normalized = normalizeComputerValue(value || "");
+    return input.exact ? normalized === normalizedExpected : normalized.includes(normalizedExpected);
+  };
+  if (input.kind === "active_tab") {
+    const title = snapshot.activeTab?.title || "";
+    return { matched: Boolean(title && matchesText(title)), message: `Active tab matched "${input.expected}".` };
+  }
+  if (input.kind === "tab_count") {
+    const count = nodes.filter((node) => node.role.replace(/^ControlType\./i, "").toLowerCase() === "tabitem").length;
+    const expectedCount = Math.max(0, Number(input.count ?? input.expected) || 0);
+    return { matched: input.exact ? count === expectedCount : count >= expectedCount, message: `Observed ${count} tab(s); required ${input.exact ? "exactly" : "at least"} ${expectedCount}.`, count };
+  }
+  const candidates = nodes.filter((node) => {
+    if (input.ref && node.ref !== input.ref) return false;
+    if (input.role && node.role.replace(/^ControlType\./i, "").toLowerCase() !== input.role.replace(/^ControlType\./i, "").toLowerCase()) return false;
+    if (input.kind === "editable_text" && !["document", "edit"].includes(node.role.replace(/^ControlType\./i, "").toLowerCase())) return false;
+    return true;
+  });
+  const node = candidates.find((candidate) => matchesText(candidate.value) || matchesText(candidate.name));
+  return { matched: Boolean(node), message: node ? `Matched ${node.role} ${node.ref}.` : `No matching ${input.kind} evidence yet.`, ref: node?.ref };
+};
+
+const flattenSnapshotNodes = (nodes: ComputerSnapshotRecord["nodes"]): ComputerSnapshotRecord["nodes"] =>
+  nodes.flatMap((node) => [node, ...flattenSnapshotNodes(node.children || [])]);
+
+const normalizeComputerValue = (value: string) => value.replace(/\r\n/g, "\n").trim().toLowerCase();
+
 const requiresTargetWindow = (input: ComputerUseActionInput) =>
   [
     "click",
@@ -405,9 +519,10 @@ const requiresTrustedTarget = (input: ComputerUseActionInput) =>
     "select",
     "set_value",
     "type",
-    "press",
     "drag",
-  ].includes(String(input.action || "").toLowerCase());
+  ].includes(String(input.action || "").toLowerCase()) || (
+    String(input.action || "").toLowerCase() === "press" && input.interactionMode !== "allow_foreground"
+  );
 
 const delay = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));

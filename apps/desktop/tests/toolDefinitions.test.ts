@@ -87,4 +87,22 @@ describe("desktop tool definitions", () => {
       arguments: { action: "click", ref: "c1", includeScreenshot: true },
     });
   });
+
+  it("keeps Computer Use background-safe unless foreground fallback is explicit", () => {
+    const action = desktopToolDefinitions.find((tool) => tool.name === "computer_act");
+    const trace = desktopToolDefinitions.find((tool) => tool.name === "computer_trace");
+    const openApp = desktopToolDefinitions.find((tool) => tool.name === "computer_open_app");
+    const snapshot = desktopToolDefinitions.find((tool) => tool.name === "computer_snapshot");
+    const wait = desktopToolDefinitions.find((tool) => tool.name === "computer_wait");
+    expect(action?.parameters.properties).toHaveProperty("interactionMode");
+    expect(action?.parameters.properties).toHaveProperty("verifyValue");
+    expect(trace?.parameters.properties).toHaveProperty("interactionMode");
+    expect(openApp?.parameters.properties).toHaveProperty("interactionMode");
+    expect(snapshot?.parameters.properties).toHaveProperty("scope");
+    expect(snapshot?.parameters.properties).toHaveProperty("role");
+    expect(snapshot?.parameters.properties).toHaveProperty("editableOnly");
+    expect(wait?.parameters.properties).toHaveProperty("exact");
+    expect(wait?.parameters.properties).toHaveProperty("count");
+    expect(action?.description).toContain("Foreground mouse/keyboard fallback is disabled");
+  });
 });

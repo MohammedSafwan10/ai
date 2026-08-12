@@ -26,6 +26,17 @@ interface PowerShellActionResult {
   window?: RawWindowRecord;
   path?: string;
   candidates?: RawAppRecord[];
+  foregroundBefore?: string;
+  foregroundAfter?: string;
+  globalInputUsed?: boolean;
+  focusRestored?: boolean;
+  referenceStatus?: "none" | "stable" | "stale" | "remapped";
+  oldRef?: string;
+  newRef?: string;
+  referenceReason?: string;
+  verified?: boolean;
+  requestedValue?: string;
+  observedValue?: string;
 }
 
 interface RawAppRecord {
@@ -55,6 +66,10 @@ export class WindowsNativeComputerUseBackend implements ComputerUseBackend {
   readonly id = BACKEND_ID;
   private refCache = new Map<string, ComputerSnapshotNodeRecord>();
 
+  resolveCachedNode(ref: string) {
+    return this.refCache.get(ref);
+  }
+
   async capabilities(): Promise<ComputerUseCapabilitiesRecord> {
     const available = process.platform === "win32";
     return {
@@ -76,18 +91,32 @@ export class WindowsNativeComputerUseBackend implements ComputerUseBackend {
     const raw = await runPowerShellJson<RawWindowRecord[]>(`
 ${win32TypeDefinition()}
 $foreground = [PrivoraWin32]::GetForegroundWindow()
-$windows = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } | ForEach-Object {
+$handles = New-Object System.Collections.Generic.List[System.IntPtr]
+$callback = [PrivoraEnumWindowsProc]{
+  param([IntPtr]$hwnd, [IntPtr]$lParam)
+  if ([PrivoraWin32]::IsWindowVisible($hwnd) -and [PrivoraWin32]::GetWindowTextLength($hwnd) -gt 0) { $handles.Add($hwnd) | Out-Null }
+  return $true
+}
+[PrivoraWin32]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+$windows = $handles | ForEach-Object {
+  $hwnd = $_
+  $titleBuffer = New-Object System.Text.StringBuilder ([PrivoraWin32]::GetWindowTextLength($hwnd) + 1)
+  [PrivoraWin32]::GetWindowText($hwnd, $titleBuffer, $titleBuffer.Capacity) | Out-Null
+  $title = $titleBuffer.ToString()
+  [uint32]$windowProcessId = 0
+  [PrivoraWin32]::GetWindowThreadProcessId($hwnd, [ref]$windowProcessId) | Out-Null
+  $proc = Get-Process -Id $windowProcessId -ErrorAction SilentlyContinue
   [PrivoraRect]$rect = New-Object PrivoraRect
-  [PrivoraWin32]::GetWindowRect($_.MainWindowHandle, [ref]$rect) | Out-Null
+  [PrivoraWin32]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
   $path = ""
-  try { $path = $_.MainModule.FileName } catch { $path = "" }
+  try { $path = $proc.MainModule.FileName } catch { $path = "" }
   [ordered]@{
-    id = [string]$_.MainWindowHandle
-    title = [string]$_.MainWindowTitle
-    processName = [string]$_.ProcessName
-    processId = [int]$_.Id
+    id = [string]$hwnd
+    title = [string]$title
+    processName = $(if ($proc) { [string]$proc.ProcessName } else { "" })
+    processId = [int]$windowProcessId
     executablePath = $path
-    focused = ($_.MainWindowHandle -eq $foreground)
+    focused = ($hwnd -eq $foreground)
     elevated = $false
     bounds = [ordered]@{
       x = [int]$rect.Left
@@ -100,7 +129,7 @@ $windows = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWi
 }
 @($windows) | ConvertTo-Json -Depth 6
 `, signal);
-    return (Array.isArray(raw) ? raw : []).map(normalizeWindow).filter(Boolean) as ComputerWindowRecord[];
+    return arrayify<RawWindowRecord>(raw).map(normalizeWindow).filter(Boolean) as ComputerWindowRecord[];
   }
 
   async focusWindow(windowId: string, signal?: AbortSignal): Promise<ComputerUseActionResultRecord> {
@@ -123,9 +152,11 @@ $ok = PrivoraForceForeground $hwnd
   async findApps(input: { query?: string; limit?: number }, signal?: AbortSignal): Promise<ComputerAppRecord[]> {
     ensureWindows();
     const originalQuery = String(input.query || "");
-    const fastStartMenuApps = findStartMenuApps(originalQuery, Math.max(1, Math.min(30, Number(input.limit) || 10)));
-    const query = escapePowerShellString(originalQuery);
     const limit = Math.max(1, Math.min(30, Number(input.limit) || 10));
+    const commandApps = await findCommandApps(originalQuery, signal);
+    if (commandApps.length > 0) return dedupeApps(commandApps).slice(0, limit);
+    const fastStartMenuApps = findStartMenuApps(originalQuery, limit);
+    const query = escapePowerShellString(originalQuery);
     const raw = await runPowerShellJson<RawAppRecord[]>(`
 $query = '${query}'.Trim()
 $limit = ${limit}
@@ -265,12 +296,13 @@ $deduped = $items |
 @($deduped) | ConvertTo-Json -Depth 5
 `, signal, 8_000).catch(() => []);
     return dedupeApps([
+      ...commandApps,
       ...fastStartMenuApps,
-      ...(Array.isArray(raw) ? raw : []).map(normalizeApp).filter(Boolean) as ComputerAppRecord[],
+      ...arrayify<RawAppRecord>(raw).map(normalizeApp).filter(Boolean) as ComputerAppRecord[],
     ]).slice(0, limit);
   }
 
-  async snapshot(input: { windowId?: string; depth?: number; includeBoxes?: boolean }, signal?: AbortSignal): Promise<ComputerSnapshotRecord> {
+  async snapshot(input: { windowId?: string; depth?: number; includeBoxes?: boolean; scope?: "window" | "active_document" | "matching_controls"; role?: string; editableOnly?: boolean }, signal?: AbortSignal): Promise<ComputerSnapshotRecord> {
     ensureWindows();
     const depth = Math.max(1, Math.min(5, Number(input.depth) || 3));
     const windowId = input.windowId ? String(input.windowId) : "";
@@ -290,7 +322,9 @@ if ($hwnd -eq [IntPtr]::Zero) {
   [ordered]@{ nodes = @(); text = ""; diagnosis = "element_missing"; message = "No foreground window is available." } | ConvertTo-Json -Depth 8
   exit
 }
-$proc = Get-Process | Where-Object { $_.MainWindowHandle -eq $hwnd } | Select-Object -First 1
+[uint32]$windowPid = 0
+[PrivoraWin32]::GetWindowThreadProcessId($hwnd, [ref]$windowPid) | Out-Null
+$proc = $(if ($windowPid -gt 0) { Get-Process -Id $windowPid -ErrorAction SilentlyContinue } else { $null })
 [PrivoraRect]$winRect = New-Object PrivoraRect
 [PrivoraWin32]::GetWindowRect($hwnd, [ref]$winRect) | Out-Null
 function SafeInt($value, [int]$fallback = 0) {
@@ -336,24 +370,26 @@ function BoundsFromWinRect($rect) {
 }
 $window = [ordered]@{
   id = [string]$hwnd
-  title = $(if ($proc) { SafeString $proc.MainWindowTitle } else { "" })
+  title = $(if ($proc -and $proc.MainWindowTitle) { SafeString $proc.MainWindowTitle } else { "" })
   processName = $(if ($proc) { SafeString $proc.ProcessName } else { "" })
   processId = $(if ($proc) { SafeInt $proc.Id } else { 0 })
-  executablePath = ""
-  focused = $true
+  executablePath = $(if ($proc) { try { SafeString $proc.MainModule.FileName } catch { "" } } else { "" })
+  focused = ([PrivoraWin32]::GetForegroundWindow() -eq $hwnd)
   elevated = $false
   bounds = BoundsFromWinRect $winRect
   capabilities = @("uia_direct", "send_input_foreground")
 }
 try {
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $window.title) { try { $window.title = SafeString $root.Current.Name } catch {} }
   $script:index = 0
   function ElementValue($el, [bool]$sensitive) {
     if ($sensitive) { return "" }
     try {
       $pattern = $null
       if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
-        return SafeString $pattern.Current.Value
+        $value = SafeString $pattern.Current.Value
+        if ($value) { return $value }
       }
     } catch {}
     try {
@@ -374,19 +410,29 @@ try {
       if ($role.StartsWith("ControlType.")) { $role = $role.Substring(12) }
       $sensitive = ($role -match "Password")
       $value = ElementValue $el $sensitive
+      $runtimeId = @()
+      try { $runtimeId = @($el.GetRuntimeId()) } catch {}
+      $stableRef = $(if ($runtimeId.Count -gt 0) { "u" + (($runtimeId | ForEach-Object { ([string]$_).Replace("-", "n") }) -join "_") } else { "c" + $script:index })
       $node = [ordered]@{
-        ref = ("c" + $script:index)
+        ref = $stableRef
         role = $role
         name = $name
         value = $value
         automationId = SafeString $el.Current.AutomationId
         enabled = SafeBool $el.Current.IsEnabled $true
         focused = SafeBool $el.Current.HasKeyboardFocus $false
+        selected = $false
         sensitive = $sensitive
         capability = "uia_direct"
         bounds = BoundsFromRect $rect
         children = @()
       }
+      try {
+        $selectionPattern = $null
+        if ($el.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selectionPattern)) {
+          $node.selected = SafeBool $selectionPattern.Current.IsSelected $false
+        }
+      } catch {}
     } catch {
       return [ordered]@{
         ref = ("c" + $script:index)
@@ -433,15 +479,36 @@ try {
 `, signal);
 
     const window = raw.window ? normalizeWindow(raw.window) || undefined : undefined;
-    const nodes = normalizeNodes(raw.nodes || []);
-    this.refCache.clear();
-    flattenNodes(nodes).forEach((node) => this.refCache.set(node.ref, node));
+    const allNodes = normalizeNodes(raw.nodes || []);
+    const flatNodes = flattenNodes(allNodes);
+    flatNodes.forEach((node) => this.refCache.set(node.ref, node));
+    while (this.refCache.size > 1_000) {
+      const oldest = this.refCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.refCache.delete(oldest);
+    }
+    const activeTab = flatNodes.find((node) => normalizeRole(node.role) === "tabitem" && (node.selected === true || node.focused === true));
+    const activeDocument = flatNodes.find((node) => isEditableNode(node) && node.focused === true)
+      || flatNodes.find((node) => isEditableNode(node));
+    const scope = input.scope || "window";
+    const role = normalizeRole(input.role || "");
+    let nodes = allNodes;
+    if (scope === "active_document") nodes = activeDocument ? [activeDocument] : [];
+    else if (scope === "matching_controls" || role || input.editableOnly) {
+      nodes = flatNodes.filter((node) => (!role || normalizeRole(node.role) === role) && (!input.editableOnly || isEditableNode(node)));
+    }
+    const scopedText = scope === "window" && !role && !input.editableOnly
+      ? String(raw.text || compactNodes(nodes))
+      : compactNodesWithValues(nodes);
     return {
       backend: BACKEND_ID,
       mode: nodes.length > 0 ? "uia" : "summary",
       window,
       nodes,
-      text: redactComputerText(String(raw.text || compactNodes(nodes))),
+      text: redactComputerText(scopedText),
+      scope,
+      activeTab: activeTab ? { ref: activeTab.ref, title: activeTab.name } : undefined,
+      activeDocumentRef: activeDocument?.ref,
       diagnosis: raw.diagnosis ? { kind: raw.diagnosis as ComputerUseDiagnosisKind, message: String(raw.message || raw.diagnosis) } : undefined,
       createdAt: Date.now(),
     };
@@ -458,10 +525,38 @@ try {
     const text = escapePowerShellString(String(input.text ?? input.value ?? ""));
     const clickCount = action === "double_click" ? 2 : 1;
     const targetWindowId = Number(input.windowId) || 0;
+    const interactionMode = input.interactionMode === "allow_foreground" ? "allow_foreground" : "background_only";
+    const directResult = await runPowerShellJson<PowerShellActionResult>(directUiaActionScript({
+      action,
+      targetWindowId,
+      ref,
+      cached,
+      text: String(input.text ?? input.value ?? ""),
+      key: String(input.key || ""),
+      deltaY: Number(input.deltaY ?? input.value ?? -480),
+      preserveForeground: interactionMode === "background_only",
+    }), signal).catch((error: unknown) => ({
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      diagnosis: "unsupported_surface",
+      capability: "uia_direct" as const,
+    }));
+    if (directResult.ok === true) return actionResult(action, directResult, startedAt);
+    if (interactionMode === "background_only") {
+      const reason = String(directResult.message || "This control does not expose a background-safe UI Automation action.");
+      return actionResult(action, {
+        ...directResult,
+        ok: false,
+        message: `${reason} Foreground input was not used because this action is background-only. Retry with interactionMode=allow_foreground only when the user permits focus stealing.`,
+        diagnosis: directResult.diagnosis === "stale_target" ? "stale_target" : "unsupported_surface",
+        capability: directResult.capability || "uia_direct",
+      }, startedAt);
+    }
     const result = await runPowerShellJson<PowerShellActionResult>(`
 ${win32TypeDefinition()}
 Add-Type -AssemblyName System.Windows.Forms
 $targetHwnd = [IntPtr]${targetWindowId}
+$foregroundBefore = [string][PrivoraWin32]::GetForegroundWindow()
 ${foregroundFocusHelpers()}
 if ($targetHwnd -ne [IntPtr]::Zero) {
   if (-not (PrivoraForceForeground $targetHwnd)) {
@@ -470,6 +565,9 @@ if ($targetHwnd -ne [IntPtr]::Zero) {
       message = "Target window is not foreground; refused foreground input to avoid typing into the wrong app."
       diagnosis = "stale_target"
       capability = "send_input_foreground"
+      foregroundBefore = $foregroundBefore
+      foregroundAfter = [string][PrivoraWin32]::GetForegroundWindow()
+      globalInputUsed = $false
     } | ConvertTo-Json -Depth 4
     exit
   }
@@ -531,7 +629,18 @@ Start-Sleep -Milliseconds 80
   $ok = $false
   if (-not $message -or $message -eq "Action completed with foreground input fallback.") { $message = $_.Exception.Message }
 }
-[ordered]@{ ok = [bool]$ok; message = $message; diagnosis = $(if ($ok) { "ok" } else { "stale_target" }); capability = "send_input_foreground" } | ConvertTo-Json -Depth 4
+[ordered]@{
+  ok = [bool]$ok
+  message = $message
+  diagnosis = $(if ($ok) { "ok" } else { "stale_target" })
+  capability = "send_input_foreground"
+  foregroundBefore = $foregroundBefore
+  foregroundAfter = [string][PrivoraWin32]::GetForegroundWindow()
+  globalInputUsed = $true
+  referenceStatus = $(if ('${escapePowerShellString(ref)}') { "stable" } else { "none" })
+  oldRef = '${escapePowerShellString(ref)}'
+  newRef = '${escapePowerShellString(ref)}'
+} | ConvertTo-Json -Depth 4
 `, signal);
     if (!point && ["click", "double_click", "focus", "invoke", "select", "drag"].includes(action)) {
       return {
@@ -581,7 +690,7 @@ $graphics.Dispose(); $bitmap.Dispose()
     return output;
   }
 
-  async openApp(input: { app?: string; path?: string; args?: string[] }, signal?: AbortSignal): Promise<ComputerUseActionResultRecord> {
+  async openApp(input: { app?: string; path?: string; args?: string[]; interactionMode?: "background_only" | "allow_foreground" }, signal?: AbortSignal): Promise<ComputerUseActionResultRecord> {
     ensureWindows();
     const startedAt = Date.now();
     const requested = String(input.path || input.app || "").trim();
@@ -594,16 +703,8 @@ $graphics.Dispose(); $bitmap.Dispose()
       shortcutPath = directTarget.shortcutPath || "";
       resolvedApp = directTarget.app;
     } else if (requested && !path.isAbsolute(requested)) {
-      const startMenuCandidate = findStartMenuLaunchCandidate(requested);
-      if (startMenuCandidate) {
-        appOrPath = startMenuCandidate.launchPath;
-        shortcutPath = startMenuCandidate.shortcutPath || "";
-        resolvedApp = startMenuCandidate.app;
-      }
-    }
-    if (!resolvedApp && requested && !path.isAbsolute(requested)) {
       const candidates = await this.findApps({ query: requested, limit: 5 }, signal).catch(() => []);
-      resolvedApp = candidates.find((candidate) => candidate.executablePath || candidate.shortcutPath);
+      resolvedApp = preferredLaunchCandidate(candidates, requested);
       if (resolvedApp?.shortcutPath && resolvedApp.source === "start_menu") {
         appOrPath = resolvedApp.shortcutPath;
         shortcutPath = resolvedApp.shortcutPath;
@@ -613,24 +714,105 @@ $graphics.Dispose(); $bitmap.Dispose()
         appOrPath = resolvedApp.shortcutPath;
         shortcutPath = resolvedApp.shortcutPath;
       }
+      if (!resolvedApp) {
+        const startMenuCandidate = findStartMenuLaunchCandidate(requested);
+        if (startMenuCandidate) {
+          appOrPath = startMenuCandidate.launchPath;
+          shortcutPath = startMenuCandidate.shortcutPath || "";
+          resolvedApp = startMenuCandidate.app;
+        }
+      }
     }
     const escapedAppOrPath = escapePowerShellString(appOrPath);
     const args = Array.isArray(input.args) ? input.args.map((item) => `'${escapePowerShellString(String(item))}'`).join(",") : "";
+    const backgroundOnly = input.interactionMode !== "allow_foreground";
     const result = await runPowerShellJson<PowerShellActionResult>(`
+${win32TypeDefinition()}
+${foregroundFocusHelpers()}
 $ok = $true
 $message = "Started app."
+$diagnosis = "ok"
+$priorForeground = [PrivoraWin32]::GetForegroundWindow()
+$foregroundBefore = [string]$priorForeground
+$focusRestored = $null
+$priorForegroundPath = ""
+if ($priorForeground -ne [IntPtr]::Zero) {
+  [uint32]$priorForegroundPid = 0
+  [PrivoraWin32]::GetWindowThreadProcessId($priorForeground, [ref]$priorForegroundPid) | Out-Null
+  try { $priorForegroundPath = [string](Get-Process -Id $priorForegroundPid -ErrorAction Stop).MainModule.FileName } catch {}
+}
+$launchPath = '${escapedAppOrPath}'
+$launchArgs = @(${args})
 try {
-  Start-Process -FilePath '${escapedAppOrPath}' ${args && !shortcutPath ? `-ArgumentList @(${args})` : ""} | Out-Null
+  if ('${escapePowerShellString(shortcutPath)}') {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut('${escapePowerShellString(shortcutPath)}')
+    if ($shortcut.TargetPath) {
+      $launchPath = [string]$shortcut.TargetPath
+      $shortcutArgs = @()
+      if ($shortcut.Arguments) { $shortcutArgs = @([string]$shortcut.Arguments) }
+      $launchArgs = @($shortcutArgs + $launchArgs)
+    }
+  }
+  $launchName = [System.IO.Path]::GetFileName($launchPath)
+  $hasUrlArgument = @($launchArgs | Where-Object { ([string]$_) -match '^https?://' }).Count -gt 0
+  $hasNewWindow = @($launchArgs | Where-Object { ([string]$_) -eq '--new-window' }).Count -gt 0
+  if ($launchName -ieq 'chrome.exe' -and $hasUrlArgument -and -not $hasNewWindow) {
+    $launchArgs = @('--new-window') + $launchArgs
+  }
+  if ($launchArgs.Count -gt 0) { $startedProcess = Start-Process -FilePath $launchPath -ArgumentList $launchArgs -PassThru }
+  else { $startedProcess = Start-Process -FilePath $launchPath -PassThru }
+  ${backgroundOnly ? `
+  Start-Sleep -Milliseconds 700
+  $currentForeground = [PrivoraWin32]::GetForegroundWindow()
+  $currentForegroundPath = ""
+  if ($currentForeground -ne [IntPtr]::Zero) {
+    [uint32]$currentForegroundPid = 0
+    [PrivoraWin32]::GetWindowThreadProcessId($currentForeground, [ref]$currentForegroundPid) | Out-Null
+    try { $currentForegroundPath = [string](Get-Process -Id $currentForegroundPid -ErrorAction Stop).MainModule.FileName } catch {}
+  }
+  $launchFileName = [System.IO.Path]::GetFileName($launchPath)
+  $currentFileName = $(if ($currentForegroundPath) { [System.IO.Path]::GetFileName($currentForegroundPath) } else { "" })
+  $priorFileName = $(if ($priorForegroundPath) { [System.IO.Path]::GetFileName($priorForegroundPath) } else { "" })
+  # A new top-level window can belong to the same executable as the previous
+  # foreground window (Chrome is the common case). HWND identity is therefore
+  # part of the activation check; executable equality alone is insufficient.
+  $launchActivatedItself = $currentForeground -ne $priorForeground -and $currentFileName -and ([string]::Equals($currentFileName, $launchFileName, [System.StringComparison]::OrdinalIgnoreCase))
+  if ($launchActivatedItself -and $priorForeground -ne [IntPtr]::Zero) {
+      $focusRestored = PrivoraForceForeground $priorForeground
+  }
+  $finalForeground = [PrivoraWin32]::GetForegroundWindow()
+  if ($launchActivatedItself -and $finalForeground -ne $priorForeground) {
+    $ok = $false
+    $diagnosis = "validation_failed"
+    $message = "App started, but Windows did not restore the prior foreground window in background-only mode."
+  } elseif ($launchActivatedItself) {
+    $message = "Started app in background-only mode and restored the prior foreground window after the app activated itself."
+  } else {
+    $message = "Started app in background-only mode without global input; the launched app did not retain foreground focus."
+  }
+  ` : `$message = "Started app with foreground activation allowed."`}
 } catch {
   $ok = $false
+  $diagnosis = "backend_unavailable"
   $message = $_.Exception.Message
 }
-[ordered]@{ ok = [bool]$ok; message = $message; diagnosis = $(if ($ok) { "ok" } else { "backend_unavailable" }); capability = "send_input_foreground" } | ConvertTo-Json -Depth 4
+[ordered]@{
+  ok = [bool]$ok
+  message = $message
+  diagnosis = $diagnosis
+  capability = "window_message"
+  foregroundBefore = $foregroundBefore
+  foregroundAfter = [string][PrivoraWin32]::GetForegroundWindow()
+  globalInputUsed = $false
+  focusRestored = $focusRestored
+  referenceStatus = "none"
+} | ConvertTo-Json -Depth 4
 `, signal);
     const output = actionResult("open_app", result, startedAt);
     if (resolvedApp) {
       output.finding = output.success
-        ? `Started ${resolvedApp.name} from ${resolvedApp.source}.`
+        ? `${output.finding} Resolved ${resolvedApp.name} from ${resolvedApp.source}.`
         : `${output.finding}\nResolved candidate: ${resolvedApp.name} (${resolvedApp.executablePath || resolvedApp.shortcutPath || "no launch path"})`;
     }
     if (!output.success && requested) {
@@ -695,8 +877,14 @@ const win32TypeDefinition = () => `
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public struct PrivoraRect { public int Left; public int Top; public int Right; public int Bottom; }
+public delegate bool PrivoraEnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 public class PrivoraWin32 {
+  [DllImport("user32.dll")] public static extern bool EnumWindows(PrivoraEnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
@@ -759,6 +947,201 @@ function PrivoraForceForeground($hwnd) {
 }
 `;
 
+const directUiaActionScript = (input: {
+  action: string;
+  targetWindowId: number;
+  ref: string;
+  cached?: ComputerSnapshotNodeRecord;
+  text: string;
+  key: string;
+  deltaY: number;
+  preserveForeground: boolean;
+}) => {
+  const role = String(input.cached?.role || "").replace(/^ControlType\./i, "");
+  const bounds = input.cached?.bounds;
+  return `
+${win32TypeDefinition()}
+${foregroundFocusHelpers()}
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$targetHwnd = [IntPtr]${input.targetWindowId}
+$targetRef = '${escapePowerShellString(input.ref)}'
+$targetAutomationId = '${escapePowerShellString(String(input.cached?.automationId || ""))}'
+$targetName = '${escapePowerShellString(String(input.cached?.name || ""))}'
+$targetRole = '${escapePowerShellString(role)}'
+$targetX = ${bounds ? Math.trunc(bounds.x + bounds.width / 2) : 0}
+$targetY = ${bounds ? Math.trunc(bounds.y + bounds.height / 2) : 0}
+$action = '${escapePowerShellString(input.action)}'
+$text = '${escapePowerShellString(input.text)}'
+$key = '${escapePowerShellString(input.key.trim().toLowerCase())}'
+$deltaY = ${Number.isFinite(input.deltaY) ? Math.trunc(input.deltaY) : -480}
+$ok = $false
+$message = "No matching UI Automation element is available."
+$diagnosis = "stale_target"
+$foregroundBeforeHwnd = [PrivoraWin32]::GetForegroundWindow()
+$foregroundBefore = [string]$foregroundBeforeHwnd
+$focusRestored = $null
+$referenceStatus = $(if ($targetRef) { "stale" } else { "none" })
+$newRef = ""
+$observed = ""
+$verified = $false
+try {
+  if ($targetHwnd -eq [IntPtr]::Zero) { throw "A target window is required for background automation." }
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($targetHwnd)
+  if ($null -eq $root) { throw "The target window no longer exposes a UI Automation root." }
+  function ElementRef($element) {
+    try {
+      $runtimeId = @($element.GetRuntimeId())
+      if ($runtimeId.Count -gt 0) { return "u" + (($runtimeId | ForEach-Object { ([string]$_).Replace("-", "n") }) -join "_") }
+    } catch {}
+    return ""
+  }
+  $elements = @($root)
+  try { $elements += @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) } catch {}
+  $target = $null
+  $remapped = $false
+  if ($targetRef) {
+    foreach ($candidate in $elements) {
+      if ((ElementRef $candidate) -eq $targetRef) { $target = $candidate; $referenceStatus = "stable"; break }
+    }
+  }
+  if ($null -eq $target -and ($targetAutomationId -or $targetName -or $targetRole)) {
+    $bestScore = -1
+    foreach ($candidate in $elements) {
+      try {
+        $score = 0
+        $candidateId = [string]$candidate.Current.AutomationId
+        $candidateName = [string]$candidate.Current.Name
+        $candidateRole = [string]$candidate.Current.ControlType.ProgrammaticName
+        if ($candidateRole.StartsWith("ControlType.")) { $candidateRole = $candidateRole.Substring(12) }
+        if ($targetAutomationId -and $candidateId -eq $targetAutomationId) { $score += 100 }
+        if ($targetName -and $candidateName -eq $targetName) { $score += 40 }
+        if ($targetRole -and $candidateRole -eq $targetRole) { $score += 20 }
+        if ($targetX -or $targetY) {
+          $rect = $candidate.Current.BoundingRectangle
+          $centerX = [double]$rect.X + ([double]$rect.Width / 2)
+          $centerY = [double]$rect.Y + ([double]$rect.Height / 2)
+          $distance = [Math]::Abs($centerX - $targetX) + [Math]::Abs($centerY - $targetY)
+          if ($distance -lt 12) { $score += 15 } elseif ($distance -lt 80) { $score += 5 }
+        }
+        if ($score -gt $bestScore) { $bestScore = $score; $target = $candidate }
+      } catch {}
+    }
+    if ($bestScore -lt 20) { $target = $null }
+    elseif ($null -ne $target) { $remapped = $true; $referenceStatus = "remapped" }
+  }
+  if ($null -eq $target -and $action -eq "scroll") { $target = $root }
+  if ($null -eq $target) { throw "The UI element reference became stale and could not be remapped safely." }
+  $newRef = ElementRef $target
+  if (-not $target.Current.IsEnabled) {
+    $message = "The target UI element is disabled."
+    $diagnosis = "element_disabled"
+    throw $message
+  }
+  $pattern = $null
+  if ($action -in @("click", "invoke") -or ($action -eq "press" -and $key -in @("enter", "space"))) {
+    if ($target.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+      $pattern.Invoke(); $ok = $true; $message = "Invoked control in the background with UI Automation."
+    } elseif ($target.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
+      $pattern.Select(); $ok = $true; $message = "Selected control in the background with UI Automation."
+    } elseif ($target.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
+      $pattern.Toggle(); $ok = $true; $message = "Toggled control in the background with UI Automation."
+    } elseif ($target.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+      $pattern.Expand(); $ok = $true; $message = "Expanded control in the background with UI Automation."
+    }
+  } elseif ($action -in @("type", "set_value")) {
+    if ($target.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and -not $pattern.Current.IsReadOnly) {
+      $pattern.SetValue($text)
+      Start-Sleep -Milliseconds 80
+      $observed = ""
+      try { $observed = [string]$pattern.Current.Value } catch {}
+      if (-not $observed) {
+        try {
+          $textPattern = $null
+          if ($target.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern)) {
+            $observed = [string]$textPattern.DocumentRange.GetText([Math]::Max(2000, $text.Length + 100))
+          }
+        } catch {}
+      }
+      if (-not $text -or $observed.Contains($text)) {
+        $ok = $true; $verified = $true; $message = "Set and verified the control value in the background with UI Automation."
+      } else {
+        $diagnosis = "validation_failed"; $message = "UI Automation accepted SetValue, but the control did not expose the requested text afterward."
+      }
+    }
+  } elseif ($action -eq "select") {
+    if ($target.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
+      $pattern.Select(); $ok = $true; $message = "Selected the item in the background with UI Automation."
+    }
+  } elseif ($action -eq "scroll") {
+    if ($target.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$pattern)) {
+      $amount = $(if ($deltaY -lt 0) { [System.Windows.Automation.ScrollAmount]::SmallIncrement } else { [System.Windows.Automation.ScrollAmount]::SmallDecrement })
+      $pattern.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount, $amount)
+      $ok = $true; $message = "Scrolled in the background with UI Automation."
+    }
+  }
+  if (-not $ok -and $diagnosis -ne "element_disabled") {
+    $message = "The target does not expose a direct UI Automation pattern for '$action'."
+    $diagnosis = "unsupported_surface"
+  } elseif ($ok) {
+    $diagnosis = "ok"
+    if ($remapped) { $message += " Remapped the stale UI reference using stable element identity." }
+  }
+} catch {
+  if (-not $message -or $message -eq "No matching UI Automation element is available.") { $message = $_.Exception.Message }
+}
+$foregroundAfterAction = [PrivoraWin32]::GetForegroundWindow()
+${input.preserveForeground ? `
+if ($foregroundBeforeHwnd -ne [IntPtr]::Zero) {
+  [uint32]$targetPid = 0
+  [PrivoraWin32]::GetWindowThreadProcessId($targetHwnd, [ref]$targetPid) | Out-Null
+  # InvokePattern and modern XAML controls can activate their window after the
+  # method returns. Observe a short settle window and restore every delayed
+  # activation attributable to the target process.
+  for ($attempt = 0; $attempt -lt 5; $attempt += 1) {
+    $currentForeground = [PrivoraWin32]::GetForegroundWindow()
+    if ($currentForeground -ne $foregroundBeforeHwnd) {
+      [uint32]$currentPid = 0
+      [PrivoraWin32]::GetWindowThreadProcessId($currentForeground, [ref]$currentPid) | Out-Null
+      if ($targetPid -gt 0 -and $targetPid -eq $currentPid) {
+        $focusRestored = PrivoraForceForeground $foregroundBeforeHwnd
+      }
+    }
+    Start-Sleep -Milliseconds 90
+  }
+  $finalForeground = [PrivoraWin32]::GetForegroundWindow()
+  if ($finalForeground -ne $foregroundBeforeHwnd) {
+    [uint32]$finalPid = 0
+    [PrivoraWin32]::GetWindowThreadProcessId($finalForeground, [ref]$finalPid) | Out-Null
+    if ($targetPid -gt 0 -and $targetPid -eq $finalPid -and $ok) {
+      $focusRestored = $false
+      $ok = $false
+      $diagnosis = "validation_failed"
+      $message = "The UI Automation action completed, but the target app kept foreground focus in background-only mode."
+    }
+  }
+}
+` : ""}
+[ordered]@{
+  ok = [bool]$ok
+  message = $message
+  diagnosis = $diagnosis
+  capability = "uia_direct"
+  foregroundBefore = $foregroundBefore
+  foregroundAfter = [string][PrivoraWin32]::GetForegroundWindow()
+  globalInputUsed = $false
+  focusRestored = $focusRestored
+  referenceStatus = $referenceStatus
+  oldRef = $targetRef
+  newRef = $newRef
+  referenceReason = $(if ($remapped) { "Runtime id was stale; matched automation id, role, name, and bounds." } elseif ($referenceStatus -eq "stale") { "The element could not be resolved safely." } else { "" })
+  verified = $verified
+  requestedValue = $(if ($action -in @("type", "set_value")) { $text } else { "" })
+  observedValue = $(if ($action -in @("type", "set_value")) { $observed } else { "" })
+} | ConvertTo-Json -Depth 4
+`;
+};
+
 const normalizeWindow = (raw: RawWindowRecord): ComputerWindowRecord | null => {
   const id = String(raw.id || "");
   if (!id) return null;
@@ -798,6 +1181,10 @@ const normalizeApp = (raw: RawAppRecord): ComputerAppRecord | null => {
     arguments: typeof raw.arguments === "string" && raw.arguments.trim() ? raw.arguments.trim() : undefined,
     installLocation,
     score: Number(raw.score) || 0,
+    verified: Boolean((executablePath && fs.existsSync(executablePath)) || (shortcutPath && fs.existsSync(shortcutPath))),
+    verificationMethod: executablePath
+      ? (normalizedSource === "app_paths" ? "app_paths" : normalizedSource === "path" ? "command" : "filesystem")
+      : shortcutPath ? "filesystem" : undefined,
   };
 };
 
@@ -821,6 +1208,42 @@ const findStartMenuLaunchCandidate = (query: string): { launchPath: string; shor
     }))
     .filter((item) => item.launchPath);
   return candidates[0] || null;
+};
+
+const findCommandApps = async (query: string, signal?: AbortSignal): Promise<ComputerAppRecord[]> => {
+  const requested = query.trim();
+  if (!requested) return [];
+  const variants = new Set([requested, requested.replace(/\s+/g, "")]);
+  if (!/\.exe$/i.test(requested)) variants.add(`${requested}.exe`);
+  if (/^[a-z0-9_-]+exe$/i.test(requested) && !/\.exe$/i.test(requested)) {
+    variants.add(requested.replace(/exe$/i, ".exe"));
+  }
+  const psVariants = [...variants].map((item) => `'${escapePowerShellString(item)}'`).join(",");
+  const raw = await runPowerShellJson<RawAppRecord[] | RawAppRecord>(`
+$items = New-Object System.Collections.Generic.List[object]
+foreach ($name in @(${psVariants})) {
+  try {
+    Get-Command $name -CommandType Application -ErrorAction Stop | ForEach-Object {
+      $target = [string]$_.Source
+      if (-not $target) { $target = [string]$_.Path }
+      if ($target -and (Test-Path -LiteralPath $target)) {
+        $items.Add([ordered]@{
+          id = ("path:" + $target).ToLowerInvariant()
+          name = [System.IO.Path]::GetFileNameWithoutExtension($target)
+          source = "path"
+          executablePath = $target
+          shortcutPath = ""
+          arguments = ""
+          installLocation = [System.IO.Path]::GetDirectoryName($target)
+          score = 180
+        }) | Out-Null
+      }
+    }
+  } catch {}
+}
+$items | ConvertTo-Json -Depth 5
+`, signal, 3_000).catch(() => []);
+  return arrayify<RawAppRecord>(raw).map(normalizeApp).filter(Boolean) as ComputerAppRecord[];
 };
 
 const findStartMenuApps = (query: string, limit: number) =>
@@ -864,6 +1287,8 @@ const launchCandidateFromPath = (filePath: string, source: ComputerAppRecord["so
     shortcutPath: extension === ".lnk" || extension === ".appref-ms" ? filePath : undefined,
     installLocation: path.dirname(filePath),
     score: scoreAppCandidate(path.basename(filePath, extension), filePath, meaningfulAppTokens(path.basename(filePath, extension))),
+    verified: fs.existsSync(filePath),
+    verificationMethod: "filesystem",
   };
   return {
     launchPath: filePath,
@@ -882,6 +1307,22 @@ const dedupeApps = (apps: ComputerAppRecord[]) => {
       seen.add(key);
       return true;
     });
+};
+
+const preferredLaunchCandidate = (apps: ComputerAppRecord[], query: string) => {
+  const tokens = meaningfulAppTokens(query);
+  return apps
+    .filter((app) => app.executablePath || app.shortcutPath)
+    .filter((app) => {
+      const identity = `${app.name} ${app.executablePath || ""}`.toLowerCase();
+      return tokens.length === 0 || tokens.every((token) => identity.includes(token));
+    })
+    .sort((first, second) => {
+      const sourcePriority = (app: ComputerAppRecord) => app.executablePath
+        ? (app.source === "app_paths" || app.source === "path" ? 3 : 2)
+        : 1;
+      return sourcePriority(second) - sourcePriority(first) || second.score - first.score;
+    })[0];
 };
 
 const startMenuRoots = () => [
@@ -942,6 +1383,8 @@ const normalizeRect = (value: Partial<ComputerUseRectRecord> | undefined): Compu
   return rect.width || rect.height ? rect : undefined;
 };
 
+const arrayify = <T>(value: T | T[] | null | undefined): T[] => value == null ? [] : Array.isArray(value) ? value : [value];
+
 const normalizeNodes = (nodes: ComputerSnapshotNodeRecord[]): ComputerSnapshotNodeRecord[] =>
   (Array.isArray(nodes) ? nodes : []).map((node) => ({
     ref: String(node.ref || ""),
@@ -951,6 +1394,7 @@ const normalizeNodes = (nodes: ComputerSnapshotNodeRecord[]): ComputerSnapshotNo
     automationId: typeof node.automationId === "string" ? redactComputerText(node.automationId, 300) : undefined,
     enabled: node.enabled,
     focused: node.focused,
+    selected: node.selected,
     sensitive: node.sensitive,
     bounds: normalizeRect(node.bounds),
     capability: isComputerCapability(node.capability) ? node.capability : "uia_direct",
@@ -965,6 +1409,22 @@ const compactNodes = (nodes: ComputerSnapshotNodeRecord[]) =>
     .slice(0, 120)
     .map((node) => `${node.ref} ${node.role}${node.name ? ` "${node.name}"` : ""}${node.enabled === false ? " disabled" : ""}`)
     .join("\n");
+
+const compactNodesWithValues = (nodes: ComputerSnapshotNodeRecord[]) =>
+  flattenNodes(nodes)
+    .slice(0, 120)
+    .map((node) => [
+      node.ref,
+      node.role,
+      node.name ? `"${node.name}"` : "",
+      node.value || "",
+      node.selected ? "selected" : "",
+      node.focused ? "focused" : "",
+    ].filter(Boolean).join(" "))
+    .join("\n");
+
+const normalizeRole = (value: string) => value.replace(/^ControlType\./i, "").trim().toLowerCase();
+const isEditableNode = (node: ComputerSnapshotNodeRecord) => ["document", "edit"].includes(normalizeRole(node.role)) && node.enabled !== false && node.sensitive !== true;
 
 const resolvePoint = (input: ComputerUseActionInput, cached?: ComputerSnapshotNodeRecord) => {
   const x = Number(input.x);
@@ -991,6 +1451,23 @@ const actionResult = (action: string, result: PowerShellActionResult, startedAt:
       message,
       capability: result.capability,
     },
+    inputCapability: result.capability,
+    globalInputUsed: result.globalInputUsed === true,
+    foregroundBefore: result.foregroundBefore,
+    foregroundAfter: result.foregroundAfter,
+    foregroundChangedDuringAction: Boolean(result.foregroundBefore && result.foregroundAfter && result.foregroundBefore !== result.foregroundAfter),
+    focusRestored: result.focusRestored,
+    referenceStatus: result.referenceStatus,
+    oldRef: result.oldRef,
+    newRef: result.newRef,
+    referenceReason: result.referenceReason ? redactComputerText(result.referenceReason, 500) : undefined,
+    verification: result.requestedValue !== undefined || result.observedValue !== undefined
+      ? {
+        verified: result.verified === true,
+        requestedValue: result.requestedValue ? redactComputerText(result.requestedValue, 1_000) : undefined,
+        observedValue: result.observedValue ? redactComputerText(result.observedValue, 1_000) : undefined,
+      }
+      : undefined,
     window: result.window ? normalizeWindow(result.window) || undefined : undefined,
     startedAt,
     endedAt: Date.now(),

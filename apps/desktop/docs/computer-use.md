@@ -33,6 +33,12 @@ Privora uses a semantic-first loop:
 3. Use foreground input fallback only when UIA/direct patterns are unavailable.
 4. Report the capability used in results and traces.
 
+Actions default to `background_only`. In that mode Privora never moves the real pointer, sends global keys, or steals the foreground. An action that lacks a direct UI Automation pattern reports that foreground access is required. `allow_foreground` enables the existing guarded input fallback for visual/canvas-style surfaces, and should only be used while the user is not interacting with the desktop.
+
+Verification is point-in-time evidence. Privora verifies important results immediately with a fresh semantic snapshot. Later user activity in the same app, another tab, another window, or another virtual desktop is reported as a newer state and does not invalidate an outcome that was already verified.
+
+For lower latency and less noise, snapshots support `scope=active_document` and `scope=matching_controls`, plus `role` and `editableOnly` filters. Snapshot results identify `activeTab` and `activeDocumentRef` when UI Automation exposes them. Text mutations verify their observed value atomically, and action results separately expose input capability, global-input use, foreground before/after, focus restoration, and reference lifecycle (`stable`, `stale`, or `remapped`). Semantic waits cover editable text, elements, active tabs, and tab counts.
+
 Capability labels:
 
 - `uia_direct`
