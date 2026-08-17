@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -742,7 +742,7 @@ export function Composer({
             </button>
             {activeMenu === "model" && (
               <>
-              <div className="floating-menu model-reasoning-menu">
+              <div className={clsx("floating-menu model-reasoning-menu", modelSubmenuOpen && "submenu-open")}>
                 <button
                   type="button"
                   className={clsx("model-branch-row", modelSubmenuOpen && "active")}
@@ -773,6 +773,14 @@ export function Composer({
                   className="floating-menu model-picker-submenu"
                   onMouseEnter={() => setModelSubmenuOpen(true)}
                 >
+                  <button
+                    type="button"
+                    className="model-picker-back"
+                    onClick={() => setModelSubmenuOpen(false)}
+                  >
+                    <ChevronLeft size={15} />
+                    <span>Model and effort</span>
+                  </button>
                   <small>Model</small>
                   {modelProviderGroups.map((group) => (
                     <div className="model-group" key={group.id}>
