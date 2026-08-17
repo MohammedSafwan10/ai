@@ -669,7 +669,7 @@ export interface BrowserOverlayInput {
   height?: number;
 }
 
-export type ComputerUseBackendId = "privora_windows_native" | "cua_driver";
+export type ComputerUseBackendId = "privora_windows_native";
 
 export type ComputerUseCapability =
   | "uia_direct"

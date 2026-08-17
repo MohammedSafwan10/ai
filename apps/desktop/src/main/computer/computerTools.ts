@@ -145,7 +145,7 @@ const readNumber = (args: Record<string, unknown>, ...keys: string[]) => {
 
 const readBackend = (args: Record<string, unknown>) => {
   const backend = readString(args, "backend");
-  return backend === "privora_windows_native" || backend === "cua_driver" ? backend : undefined;
+  return backend === "privora_windows_native" ? backend : undefined;
 };
 
 const readInteractionMode = (args: Record<string, unknown>) => {

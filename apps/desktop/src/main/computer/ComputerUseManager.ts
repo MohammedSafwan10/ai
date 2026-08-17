@@ -10,7 +10,6 @@ import type {
   ComputerUseTraceRecord,
   ToolResult,
 } from "../../shared/types";
-import { CuaComputerUseBackend } from "./cuaBackend";
 import { computerActionHardBlockReason, redactComputerText } from "./safety";
 import type { ComputerUseBackend } from "./types";
 import { WindowsNativeComputerUseBackend } from "./windowsNativeBackend";
@@ -33,7 +32,6 @@ export class ComputerUseManager {
     private onState?: (state: ComputerUseStateRecord) => void,
   ) {
     this.backends.set("privora_windows_native", new WindowsNativeComputerUseBackend());
-    this.backends.set("cua_driver", new CuaComputerUseBackend());
   }
 
   setEnabled(enabled: boolean) {
@@ -170,8 +168,9 @@ export class ComputerUseManager {
         // fails. Independently verify that mutation instead of preserving an
         // optimistic in-process ValuePattern result.
         && (result.success || result.verification?.verified === true);
-      if (isVerifiedMutation) {
-        const expected = String(lockedInput.text ?? lockedInput.value ?? "");
+      const expected = String(lockedInput.text ?? lockedInput.value ?? "");
+      const canVerifyFromPublicSnapshot = expected.length <= 700 && redactComputerText(expected, 800) === expected;
+      if (isVerifiedMutation && canVerifyFromPublicSnapshot) {
         // Re-read every editable control so verification still targets the mutated
         // document when the user changes tabs while a background action is running.
         const snapshot = await backend.snapshot({ windowId: lockedInput.windowId, depth: 5, scope: "matching_controls", editableOnly: true }, signal).catch(() => null);
@@ -179,7 +178,7 @@ export class ComputerUseManager {
         const preferredRef = result.newRef || String(lockedInput.ref || lockedInput.targetRef || "");
         const observedNode = nodes.find((node) => node.ref === preferredRef) || nodes.find((node) => node.ref === snapshot?.activeDocumentRef) || nodes[0];
         const observed = String(observedNode?.value || "");
-        const verified = normalizeComputerValue(observed) === normalizeComputerValue(expected);
+        const verified = normalizeExactComputerValue(observed) === normalizeExactComputerValue(expected);
         result.verification = { verified, requestedValue: expected, observedValue: observed };
         if (!verified) {
           result.success = false;
@@ -371,10 +370,8 @@ export class ComputerUseManager {
       success: result.success,
       output: result.finding,
       error: result.success ? undefined : result.diagnosis?.message || result.finding,
-      // Keep diagnosis at its legacy location while exposing the complete,
-      // evidence-rich action record to newer consumers.
-      // Flatten key evidence as well as retaining the complete action record.
-      // This keeps it visible to compact tool consumers and older renderers.
+      // Keep compact evidence beside the complete action record so model
+      // context can inspect the outcome without expanding the full payload.
       data: { result, diagnosis: result.diagnosis, ...evidence },
     };
   }
@@ -388,7 +385,7 @@ export class ComputerUseManager {
     const ref = String(input.ref || input.targetRef || "");
     if (!ref) return undefined;
     const backend = this.resolveBackend(input.backend);
-    const cached = backend.resolveCachedNode?.(ref);
+    const cached = backend.resolveCachedNode?.(ref, input.windowId);
     const snapshot = await backend.snapshot({ windowId: input.windowId, depth: 5 }, signal);
     return findSnapshotNode(snapshot.nodes, ref) || cached;
   }
@@ -495,6 +492,7 @@ const flattenSnapshotNodes = (nodes: ComputerSnapshotRecord["nodes"]): ComputerS
   nodes.flatMap((node) => [node, ...flattenSnapshotNodes(node.children || [])]);
 
 const normalizeComputerValue = (value: string) => value.replace(/\r\n/g, "\n").trim().toLowerCase();
+const normalizeExactComputerValue = (value: string) => value.replace(/\r\n/g, "\n");
 
 const requiresTargetWindow = (input: ComputerUseActionInput) =>
   [

@@ -57,7 +57,10 @@ export const computerActionHardBlockReason = (
 export const redactComputerText = (value: string, maxChars = 4_000) => {
   const redacted = value
     .replace(/(password|passwd|pwd|otp|mfa|2fa|api[_-]?key|secret|token|cookie)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/\bsk-[a-z0-9_-]{8,}\b/gi, "[redacted-api-key]")
+    .replace(/\bbearer\s+[a-z0-9._~+/=-]{8,}\b/gi, "Bearer [redacted]")
     .replace(/\b(?:\d[ -]*?){13,19}\b/g, "[redacted-card]")
+    .replace(/\b\d{6,8}\b/g, "[redacted-code]")
     .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[redacted-email]");
   return redacted.length > maxChars ? `${redacted.slice(0, maxChars)}\n[truncated]` : redacted;
 };

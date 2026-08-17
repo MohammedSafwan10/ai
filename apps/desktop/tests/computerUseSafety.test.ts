@@ -27,9 +27,13 @@ describe("Computer Use safety", () => {
   });
 
   it("redacts sensitive desktop text", () => {
-    const redacted = redactComputerText("email me at user@example.com password=secret card 4111 1111 1111 1111");
+    const redacted = redactComputerText("email user@example.com password=secret card 4111 1111 1111 1111 sk-testsecret123456 bearer abcdefghijklmnop 123456");
     expect(redacted).toContain("[redacted-email]");
     expect(redacted).toContain("password=[redacted]");
     expect(redacted).toContain("[redacted-card]");
+    expect(redacted).toContain("[redacted-api-key]");
+    expect(redacted).toContain("Bearer [redacted]");
+    expect(redacted).toContain("[redacted-code]");
+    expect(redacted).not.toContain("sk-testsecret123456");
   });
 });

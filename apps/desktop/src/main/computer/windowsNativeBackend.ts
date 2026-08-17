@@ -64,10 +64,12 @@ interface RawWindowRecord {
 
 export class WindowsNativeComputerUseBackend implements ComputerUseBackend {
   readonly id = BACKEND_ID;
-  private refCache = new Map<string, ComputerSnapshotNodeRecord>();
+  private refCache = new Map<string, { node: ComputerSnapshotNodeRecord; windowId: string }>();
 
-  resolveCachedNode(ref: string) {
-    return this.refCache.get(ref);
+  resolveCachedNode(ref: string, windowId?: string) {
+    const cached = this.refCache.get(ref);
+    if (!cached || (windowId && cached.windowId !== windowId)) return undefined;
+    return cached.node;
   }
 
   async capabilities(): Promise<ComputerUseCapabilitiesRecord> {
@@ -368,9 +370,12 @@ function BoundsFromWinRect($rect) {
   $bottom = SafeInt $rect.Bottom
   return [ordered]@{ x = $left; y = $top; width = [Math]::Max(0, $right - $left); height = [Math]::Max(0, $bottom - $top) }
 }
+$titleLength = [PrivoraWin32]::GetWindowTextLength($hwnd)
+$titleBuffer = New-Object System.Text.StringBuilder ([Math]::Max(1, $titleLength + 1))
+if ($titleLength -gt 0) { [PrivoraWin32]::GetWindowText($hwnd, $titleBuffer, $titleBuffer.Capacity) | Out-Null }
 $window = [ordered]@{
   id = [string]$hwnd
-  title = $(if ($proc -and $proc.MainWindowTitle) { SafeString $proc.MainWindowTitle } else { "" })
+  title = SafeString $titleBuffer.ToString()
   processName = $(if ($proc) { SafeString $proc.ProcessName } else { "" })
   processId = $(if ($proc) { SafeInt $proc.Id } else { 0 })
   executablePath = $(if ($proc) { try { SafeString $proc.MainModule.FileName } catch { "" } } else { "" })
@@ -409,6 +414,7 @@ try {
       $role = SafeString $el.Current.ControlType.ProgrammaticName
       if ($role.StartsWith("ControlType.")) { $role = $role.Substring(12) }
       $sensitive = ($role -match "Password")
+      try { $sensitive = $sensitive -or [bool]$el.Current.IsPassword } catch {}
       $value = ElementValue $el $sensitive
       $runtimeId = @()
       try { $runtimeId = @($el.GetRuntimeId()) } catch {}
@@ -481,7 +487,8 @@ try {
     const window = raw.window ? normalizeWindow(raw.window) || undefined : undefined;
     const allNodes = normalizeNodes(raw.nodes || []);
     const flatNodes = flattenNodes(allNodes);
-    flatNodes.forEach((node) => this.refCache.set(node.ref, node));
+    const cacheWindowId = window?.id || String(input.windowId || "");
+    flatNodes.forEach((node) => this.refCache.set(node.ref, { node, windowId: cacheWindowId }));
     while (this.refCache.size > 1_000) {
       const oldest = this.refCache.keys().next().value as string | undefined;
       if (!oldest) break;
@@ -518,15 +525,27 @@ try {
     ensureWindows();
     const startedAt = Date.now();
     const action = String(input.action || "").toLowerCase();
+    const allowedActions = new Set(["click", "double_click", "type", "press", "scroll", "drag", "set_value", "invoke", "select", "focus"]);
+    if (!allowedActions.has(action)) {
+      return {
+        backend: BACKEND_ID,
+        action,
+        success: false,
+        finding: `Unsupported Computer Use action: ${action || "(empty)"}.`,
+        diagnosis: { kind: "unsupported_surface", message: "The requested action is not in the supported action whitelist." },
+        startedAt,
+        endedAt: Date.now(),
+      };
+    }
     const ref = String(input.ref || input.targetRef || "");
-    const cached = ref ? this.refCache.get(ref) : undefined;
+    const cachedEntry = ref ? this.refCache.get(ref) : undefined;
+    const cached = cachedEntry && (!input.windowId || cachedEntry.windowId === input.windowId) ? cachedEntry.node : undefined;
     const point = resolvePoint(input, cached);
-    const key = escapePowerShellString(String(input.key || ""));
     const text = escapePowerShellString(String(input.text ?? input.value ?? ""));
     const clickCount = action === "double_click" ? 2 : 1;
     const targetWindowId = Number(input.windowId) || 0;
     const interactionMode = input.interactionMode === "allow_foreground" ? "allow_foreground" : "background_only";
-    const directResult = await runPowerShellJson<PowerShellActionResult>(directUiaActionScript({
+    const directResult: PowerShellActionResult = await runPowerShellJson<PowerShellActionResult>(directUiaActionScript({
       action,
       targetWindowId,
       ref,
@@ -542,15 +561,33 @@ try {
       capability: "uia_direct" as const,
     }));
     if (directResult.ok === true) return actionResult(action, directResult, startedAt);
+    // The direct mutation already happened. A later focus-restoration failure
+    // must never cause foreground fallback to paste/type it a second time.
+    if (["type", "set_value"].includes(action) && directResult.verified === true) {
+      return actionResult(action, directResult, startedAt);
+    }
     if (interactionMode === "background_only") {
       const reason = String(directResult.message || "This control does not expose a background-safe UI Automation action.");
       return actionResult(action, {
         ...directResult,
         ok: false,
         message: `${reason} Foreground input was not used because this action is background-only. Retry with interactionMode=allow_foreground only when the user permits focus stealing.`,
-        diagnosis: directResult.diagnosis === "stale_target" ? "stale_target" : "unsupported_surface",
+        diagnosis: directResult.diagnosis || "unsupported_surface",
         capability: directResult.capability || "uia_direct",
       }, startedAt);
+    }
+    if (!point && ["click", "double_click", "focus", "invoke", "select", "drag", "type", "set_value"].includes(action)) {
+      return {
+        backend: BACKEND_ID,
+        action,
+        success: false,
+        finding: `Could not resolve target ${ref || "(none)"} for ${action}.`,
+        diagnosis: { kind: "stale_target", message: "No trusted UIA ref or coordinates were available; foreground input was not attempted." },
+        inputCapability: "send_input_foreground",
+        globalInputUsed: false,
+        startedAt,
+        endedAt: Date.now(),
+      };
     }
     const result = await runPowerShellJson<PowerShellActionResult>(`
 ${win32TypeDefinition()}
@@ -598,12 +635,24 @@ if (-not (PrivoraWindowReady $targetHwnd)) {
   $message = "Target window lost foreground before typing; action was blocked."
   throw $message
 }
-$oldClipboard = ""
-try { $oldClipboard = Get-Clipboard -Raw -ErrorAction SilentlyContinue } catch {}
-Set-Clipboard -Value '${text}'
-[System.Windows.Forms.SendKeys]::SendWait("^v")
-Start-Sleep -Milliseconds 120
-try { if ($null -ne $oldClipboard) { Set-Clipboard -Value $oldClipboard } } catch {}
+$oldClipboardData = $null
+try { $oldClipboardData = [System.Windows.Forms.Clipboard]::GetDataObject() } catch {}
+$injectedSequence = 0
+try {
+  [System.Windows.Forms.Clipboard]::SetText('${text}')
+  $injectedSequence = [PrivoraWin32]::GetClipboardSequenceNumber()
+  ${action === "set_value" ? `[System.Windows.Forms.SendKeys]::SendWait("^a")
+Start-Sleep -Milliseconds 40` : ""}
+  [System.Windows.Forms.SendKeys]::SendWait("^v")
+  Start-Sleep -Milliseconds 120
+} finally {
+  if ($injectedSequence -gt 0 -and [PrivoraWin32]::GetClipboardSequenceNumber() -eq $injectedSequence) {
+    try {
+      if ($null -ne $oldClipboardData) { [System.Windows.Forms.Clipboard]::SetDataObject($oldClipboardData, $true) }
+      else { [System.Windows.Forms.Clipboard]::Clear() }
+    } catch {}
+  }
+}
 ` : ""}
   ${action === "press" ? `
 if (-not (PrivoraWindowReady $targetHwnd)) {
@@ -642,17 +691,6 @@ Start-Sleep -Milliseconds 80
   newRef = '${escapePowerShellString(ref)}'
 } | ConvertTo-Json -Depth 4
 `, signal);
-    if (!point && ["click", "double_click", "focus", "invoke", "select", "drag"].includes(action)) {
-      return {
-        backend: BACKEND_ID,
-        action,
-        success: false,
-        finding: `Could not resolve target ${ref || "(none)"} for ${action}.`,
-        diagnosis: { kind: "stale_target", message: "No cached UIA ref or coordinates were available for this action." },
-        startedAt,
-        endedAt: Date.now(),
-      };
-    }
     return actionResult(action, result, startedAt);
   }
 
@@ -714,14 +752,19 @@ $graphics.Dispose(); $bitmap.Dispose()
         appOrPath = resolvedApp.shortcutPath;
         shortcutPath = resolvedApp.shortcutPath;
       }
-      if (!resolvedApp) {
-        const startMenuCandidate = findStartMenuLaunchCandidate(requested);
-        if (startMenuCandidate) {
-          appOrPath = startMenuCandidate.launchPath;
-          shortcutPath = startMenuCandidate.shortcutPath || "";
-          resolvedApp = startMenuCandidate.app;
-        }
-      }
+    }
+    if (!resolvedApp?.verified) {
+      return {
+        backend: BACKEND_ID,
+        action: "open_app",
+        success: false,
+        finding: `Could not resolve a verified installed application for ${requested || "(empty)"}.`,
+        diagnosis: { kind: "stale_target", message: "Only verified executable or shortcut paths may be launched." },
+        inputCapability: "window_message",
+        globalInputUsed: false,
+        startedAt,
+        endedAt: Date.now(),
+      };
     }
     const escapedAppOrPath = escapePowerShellString(appOrPath);
     const args = Array.isArray(input.args) ? input.args.map((item) => `'${escapePowerShellString(String(item))}'`).join(",") : "";
@@ -894,6 +937,7 @@ public class PrivoraWin32 {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+  [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PrivoraRect lpRect);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
   [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, UIntPtr dwExtraInfo);
@@ -1007,6 +1051,7 @@ try {
   }
   if ($null -eq $target -and ($targetAutomationId -or $targetName -or $targetRole)) {
     $bestScore = -1
+    $bestMatches = 0
     foreach ($candidate in $elements) {
       try {
         $score = 0
@@ -1024,15 +1069,28 @@ try {
           $distance = [Math]::Abs($centerX - $targetX) + [Math]::Abs($centerY - $targetY)
           if ($distance -lt 12) { $score += 15 } elseif ($distance -lt 80) { $score += 5 }
         }
-        if ($score -gt $bestScore) { $bestScore = $score; $target = $candidate }
+        if ($score -gt $bestScore) { $bestScore = $score; $bestMatches = 1; $target = $candidate }
+        elseif ($score -eq $bestScore) { $bestMatches += 1 }
       } catch {}
     }
-    if ($bestScore -lt 20) { $target = $null }
+    # Role-only matches are unsafe (many windows contain several Buttons/Edits).
+    # Require a unique automation-id match or a unique name+role match.
+    if ($bestScore -lt 60 -or $bestMatches -ne 1) { $target = $null }
     elseif ($null -ne $target) { $remapped = $true; $referenceStatus = "remapped" }
   }
   if ($null -eq $target -and $action -eq "scroll") { $target = $root }
   if ($null -eq $target) { throw "The UI element reference became stale and could not be remapped safely." }
   $newRef = ElementRef $target
+  $diagnosis = "unsupported_surface"
+  try {
+    if ([bool]$target.Current.IsPassword) {
+      $diagnosis = "blocked_by_policy"
+      $message = "Computer Use will not interact with password or credential controls."
+      throw $message
+    }
+  } catch {
+    if ($diagnosis -eq "blocked_by_policy") { throw }
+  }
   if (-not $target.Current.IsEnabled) {
     $message = "The target UI element is disabled."
     $diagnosis = "element_disabled"
@@ -1063,7 +1121,9 @@ try {
           }
         } catch {}
       }
-      if (-not $text -or $observed.Contains($text)) {
+      $normalizedObserved = [regex]::Replace($observed, '\r\n?', [string][char]10)
+      $normalizedRequested = [regex]::Replace($text, '\r\n?', [string][char]10)
+      if ([string]::Equals($normalizedObserved, $normalizedRequested, [System.StringComparison]::Ordinal)) {
         $ok = $true; $verified = $true; $message = "Set and verified the control value in the background with UI Automation."
       } else {
         $diagnosis = "validation_failed"; $message = "UI Automation accepted SetValue, but the control did not expose the requested text afterward."
@@ -1080,7 +1140,7 @@ try {
       $ok = $true; $message = "Scrolled in the background with UI Automation."
     }
   }
-  if (-not $ok -and $diagnosis -ne "element_disabled") {
+  if (-not $ok -and $diagnosis -eq "unsupported_surface") {
     $message = "The target does not expose a direct UI Automation pattern for '$action'."
     $diagnosis = "unsupported_surface"
   } elseif ($ok) {
@@ -1197,17 +1257,6 @@ const resolveDirectLaunchTarget = (requested: string): { launchPath: string; sho
     : requested;
   if (!candidate) return null;
   return launchCandidateFromPath(candidate, "common_folder");
-};
-
-const findStartMenuLaunchCandidate = (query: string): { launchPath: string; shortcutPath?: string; app: ComputerAppRecord } | null => {
-  const candidates = findStartMenuApps(query, 20)
-    .map((app) => ({
-      launchPath: app.shortcutPath || app.executablePath || "",
-      shortcutPath: app.shortcutPath,
-      app,
-    }))
-    .filter((item) => item.launchPath);
-  return candidates[0] || null;
 };
 
 const findCommandApps = async (query: string, signal?: AbortSignal): Promise<ComputerAppRecord[]> => {
@@ -1495,6 +1544,7 @@ const sendKeysToken = (key: string) => {
     pageup: "{PGUP}",
     pagedown: "{PGDN}",
     space: " ",
+    "ctrl+a": "^a",
   };
   return escapePowerShellString(map[normalized] || key);
 };
