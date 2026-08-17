@@ -258,7 +258,9 @@
 }
 
 .composer {
-  width: min(760px, calc(100% - 64px));
+  container-type: inline-size;
+  container-name: composer;
+  width: min(760px, calc(100% - 32px));
   margin: 0 auto;
   border: 1px solid color-mix(in srgb, var(--privora-border) 42%, transparent);
   border-radius: 20px;
@@ -710,8 +712,30 @@
   gap: 6px;
 }
 
-.toolbar-right {
+.toolbar-left {
   flex: 1 1 auto;
+  overflow: visible;
+}
+
+.toolbar-primary,
+.toolbar-modes {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.toolbar-primary {
+  flex: 0 0 auto;
+}
+
+.toolbar-modes {
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.toolbar-right {
+  flex: 0 1 auto;
   justify-content: flex-end;
   overflow: visible;
 }
@@ -996,7 +1020,42 @@
   }
 }
 
-@media (max-width: 620px) {
+@container composer (max-width: 680px) {
+  .composer-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+  }
+
+  .toolbar-left {
+    display: contents;
+  }
+
+  .toolbar-primary {
+    grid-column: 1;
+    grid-row: 1;
+    overflow: visible;
+  }
+
+  .toolbar-right {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .toolbar-modes:not(:empty) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    overflow: visible;
+    border-top: 1px solid color-mix(in srgb, var(--privora-border) 46%, transparent);
+    padding: 3px 4px 0;
+  }
+
+  .toolbar-modes .composer-mode-status:first-child {
+    border-left: 0;
+    padding-left: 0;
+  }
+
   .model-reasoning-button {
     max-width: 190px;
     gap: 5px;
@@ -1008,6 +1067,47 @@
 
   .reasoning-short {
     max-width: 58px;
+  }
+}
+
+@container composer (max-width: 390px) {
+  .permission-pill {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .permission-pill .permission-label {
+    display: none;
+  }
+
+  .permission-pill > svg:last-child {
+    display: none;
+  }
+
+  .model-reasoning-button {
+    max-width: 132px;
+  }
+
+  .model-short {
+    max-width: 92px;
+  }
+
+  .reasoning-short {
+    display: none;
+  }
+}
+
+@container composer (max-width: 310px) {
+  .context-meter-wrap {
+    display: none;
+  }
+
+  .model-reasoning-button {
+    max-width: 108px;
+  }
+
+  .model-short {
+    max-width: 76px;
   }
 }
 

@@ -581,7 +581,8 @@ export function Composer({
       )}
       <div className="composer-toolbar">
         <div className="toolbar-left">
-          <div className="menu-anchor">
+          <div className="toolbar-primary">
+            <div className="menu-anchor">
             <button
               type="button"
               className="icon-tool-button"
@@ -654,15 +655,17 @@ export function Composer({
                 </button>
               </div>
             )}
-          </div>
-          <div className="menu-anchor">
+            </div>
+            <div className="menu-anchor">
             <button
               type="button"
               className="tool-pill permission-pill"
+              title={`Access mode: ${settings.permissionMode === "yolo" ? "Full access" : "Ask risky"}`}
+              aria-label={`Access mode: ${settings.permissionMode === "yolo" ? "Full access" : "Ask risky"}`}
               onClick={() => toggleMenu("access")}
             >
               {settings.permissionMode === "yolo" ? <Zap size={15} /> : <ShieldAlert size={15} />}
-              {settings.permissionMode === "yolo" ? "Full access" : "Ask risky"}
+              <span className="permission-label">{settings.permissionMode === "yolo" ? "Full access" : "Ask risky"}</span>
               <ChevronDown size={13} />
             </button>
             {activeMenu === "access" && (
@@ -681,8 +684,10 @@ export function Composer({
                 ))}
               </div>
             )}
+            </div>
           </div>
-          {settings.collaborationMode === "plan" && (
+          <div className="toolbar-modes">
+            {settings.collaborationMode === "plan" && (
             <button
               type="button"
               className="composer-mode-status"
@@ -694,8 +699,8 @@ export function Composer({
               <span>Plan</span>
               <X className="composer-mode-dismiss" size={13} />
             </button>
-          )}
-          {settings.computerUseEnabled && (
+            )}
+            {settings.computerUseEnabled && (
             <button
               type="button"
               className="composer-mode-status computer-use-status"
@@ -707,8 +712,8 @@ export function Composer({
               <span>Computer Use</span>
               <X className="composer-mode-dismiss" size={13} />
             </button>
-          )}
-          {settings.agentHarnessMode === "review_swarm" && (
+            )}
+            {settings.agentHarnessMode === "review_swarm" && (
             <button
               type="button"
               className="composer-mode-status"
@@ -720,7 +725,8 @@ export function Composer({
               <span>Reviewer Swarm</span>
               <X className="composer-mode-dismiss" size={13} />
             </button>
-          )}
+            )}
+          </div>
         </div>
         <div className="toolbar-right">
           <div className="menu-anchor">

@@ -1023,7 +1023,7 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
         {shouldShowLabel && (
           <>
             <span className={active ? "animate-text-shimmer" : undefined}>
-              {active ? "Thinking" : "Reasoning summary"}
+              {active ? "Thinking" : "Thought"}
             </span>
             {hasThought && <ChevronDown className={clsx("thought-chevron", !open && "closed")} size={14} />}
           </>
