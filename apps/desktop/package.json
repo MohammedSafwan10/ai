@@ -1,7 +1,7 @@
 {
   "name": "@privora/desktop",
   "private": true,
-  "version": "0.1.44",
+  "version": "0.1.45",
   "description": "Privora Desktop agent for local workspaces.",
   "author": "Privora",
   "main": ".vite/build/main.js",
