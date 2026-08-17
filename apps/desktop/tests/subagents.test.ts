@@ -52,7 +52,7 @@ describe("subagent topology", () => {
 
   it("persists the inherited model on both the subagent and its hidden thread", () => {
     const store = createStore();
-    store.saveSettings({ model: "gemini-3.6-flash" });
+    store.saveSettings({ model: "gemini-3.7-flash" });
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
 
@@ -72,7 +72,7 @@ describe("subagent topology", () => {
 
   it("always inherits the active parent model when spawning", async () => {
     const store = createStore();
-    store.saveSettings({ model: "gemini-3.6-flash" });
+    store.saveSettings({ model: "gemini-3.7-flash" });
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
     const manager = new SubagentManager(store, subagentPorts());
@@ -83,7 +83,7 @@ describe("subagent topology", () => {
         arguments: {
           taskName: "reviewer",
           message: "Review the workspace",
-          model: "gemini-3.6-flash",
+          model: "gemini-3.7-flash",
         },
       },
       {
@@ -103,7 +103,7 @@ describe("subagent topology", () => {
 
   it("uses the current parent model for child turns", () => {
     const store = createStore();
-    store.saveSettings({ model: "gemini-3.6-flash" });
+    store.saveSettings({ model: "gemini-3.7-flash" });
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
     store.updateThreadSettings(rootThread.id, {
@@ -118,7 +118,7 @@ describe("subagent topology", () => {
       taskName: "child",
       agentPath: "/root/child",
       prompt: "Child task",
-      model: "gemini-3.6-flash",
+      model: "gemini-3.7-flash",
     });
     expect(resolveSubagentModel(store, agent)).toBe("gpt-5.6-sol");
   });
@@ -245,7 +245,7 @@ describe("subagent waiting", () => {
 describe("reviewer swarm harness", () => {
   it("starts exactly two read-only reviewers that inherit the parent model and reasoning effort", async () => {
     const store = createStore();
-    store.saveSettings({ model: "gemini-3.6-flash", agentHarnessMode: "review_swarm" });
+    store.saveSettings({ model: "gemini-3.7-flash", agentHarnessMode: "review_swarm" });
     const workspace = store.upsertWorkspace(tempDir);
     const rootThread = store.createThread(workspace.id);
     store.updateThreadSettings(rootThread.id, {

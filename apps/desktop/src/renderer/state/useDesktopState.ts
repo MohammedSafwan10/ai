@@ -11,12 +11,12 @@ import type {
   RequestUserInputRequestRecord,
   ThreadHistoryPage,
 } from "../../shared/types";
-import { GEMINI_36_FLASH_MODEL_ID } from "../../shared/models";
+import { GEMINI_37_FLASH_MODEL_ID } from "../../shared/models";
 import { isNewPrivoraEventSequence } from "../../shared/privoraProtocol";
 
 const emptySettings: SettingsRecord = {
   id: "default",
-  model: GEMINI_36_FLASH_MODEL_ID,
+  model: GEMINI_37_FLASH_MODEL_ID,
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
   collaborationMode: "default",

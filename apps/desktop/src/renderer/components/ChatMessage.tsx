@@ -17,7 +17,7 @@ import type {
 } from "../../shared/types";
 import { ToolTimeline } from "./ToolTimeline";
 import { TurnReviewCard } from "./TurnReviewCard";
-import { isActiveTurnStatus } from "../../shared/runStatus";
+import { describeActiveTurnStatus, isActiveTurnStatus } from "../../shared/runStatus";
 
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
@@ -117,6 +117,7 @@ function ChatMessageComponent({
               <AssistantRunMeta
                 message={message}
                 active={runActive}
+                activeRunStatus={activeRunStatus}
                 hasActivity={hasAssistantActivity}
                 activityOpen={activityOpen}
                 onToggleActivity={() => setActivityOpen((value) => !value)}
@@ -517,17 +518,21 @@ function clampOffset(offset: number, max: number) {
 function AssistantRunMeta({
   message,
   active,
+  activeRunStatus,
   hasActivity,
   activityOpen,
   onToggleActivity,
 }: {
   message: ChatMessageRecord;
   active: boolean;
+  activeRunStatus: string | null;
   hasActivity: boolean;
   activityOpen: boolean;
   onToggleActivity: () => void;
 }) {
   const elapsed = useElapsedTime(message.createdAt, active ? undefined : message.updatedAt);
+  const activeLabel = describeActiveTurnStatus(activeRunStatus || message.status, hasActivity);
+  const runLabel = active ? `${activeLabel} for ${elapsed}` : `Worked for ${elapsed}`;
   return (
     <div className="assistant-run-meta">
       {hasActivity ? (
@@ -537,11 +542,11 @@ function AssistantRunMeta({
           aria-expanded={activityOpen}
           onClick={onToggleActivity}
         >
-          <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
+          <span>{runLabel}</span>
           <ChevronDown className={clsx("assistant-run-chevron", !activityOpen && "closed")} size={14} />
         </button>
       ) : (
-        <span>{active ? `Working for ${elapsed}` : `Worked for ${elapsed}`}</span>
+        <span>{runLabel}</span>
       )}
     </div>
   );

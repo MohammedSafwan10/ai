@@ -13,7 +13,7 @@ const history: ProviderMessage[] = [{
 
 describe("provider history image sanitization", () => {
   it("preserves image parts for vision-capable models", () => {
-    const sanitized = sanitizeProviderHistoryForModel(history, "gemini-3.6-flash");
+    const sanitized = sanitizeProviderHistoryForModel(history, "gemini-3.7-flash");
     expect(sanitized[0].parts?.some((part) => part.type === "image")).toBe(true);
   });
 

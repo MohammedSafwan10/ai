@@ -49,10 +49,10 @@ describe("desktop context usage", () => {
   });
 
   it("falls back to estimated history tokens when provider usage is missing", () => {
-    const budget = resolveModelRuntimeBudget("gemini-3.6-flash", "normal");
+    const budget = resolveModelRuntimeBudget("gemini-3.7-flash", "normal");
     const result = calculateContextUsage({
       threadId: "thread",
-      modelId: "gemini-3.6-flash",
+      modelId: "gemini-3.7-flash",
       history: historyWithChars(40_000),
       budget,
     });

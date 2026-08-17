@@ -78,7 +78,7 @@ describe("approval restore", () => {
 
   it("restores the effective run configuration from checkpoint v1", () => {
     const db = createStore();
-    db.saveSettings({ model: "gemini-3.6-flash", reasoningEffort: "low" });
+    db.saveSettings({ model: "gemini-3.7-flash", reasoningEffort: "low" });
     const workspace = db.upsertWorkspace(tempDir);
     const thread = db.createThread(workspace.id);
     const assistant = chatMessage("assistant-message", thread.id, "Need approval.");

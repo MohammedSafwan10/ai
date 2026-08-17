@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  GEMINI_37_FLASH_MODEL_ID,
   GPT_56_LUNA_MODEL_ID,
   GPT_56_SOL_MODEL_ID,
   GPT_56_TERRA_MODEL_ID,
@@ -30,7 +31,8 @@ describe("desktop model metadata and runtime budgets", () => {
       supportsImageInput: true,
       supportsReasoning: true,
     });
-    expect(getModelOption("gemini-3.6-flash")).toMatchObject({
+    expect(getModelOption(GEMINI_37_FLASH_MODEL_ID)).toMatchObject({
+      label: "Gemini 3.7 Flash",
       contextWindowTokens: 1_048_576,
       maxOutputTokens: 65_536,
       defaultOutputTokens: 32_000,
@@ -59,11 +61,11 @@ describe("desktop model metadata and runtime budgets", () => {
 
   it("exposes only verified reasoning levels and rejects unsupported selections", () => {
     expect(getModelOption(GPT_56_SOL_MODEL_ID).reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
-    expect(getModelOption("gemini-3.6-flash").reasoningEfforts).toEqual(["minimal", "low", "medium", "high"]);
+    expect(getModelOption(GEMINI_37_FLASH_MODEL_ID).reasoningEfforts).toEqual(["low", "medium", "high"]);
     expect(getModelOption("deepseek/deepseek-v4-flash").reasoningEfforts).toEqual(["none", "high", "xhigh"]);
     expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free").reasoningEfforts).toEqual(["none", "low", "medium"]);
     expect(getModelOption(OPENROUTER_MINIMAX_M3_MODEL_ID).reasoningControl).toBe("toggle");
-    expect(() => assertModelSupportsReasoningEffort("gemini-3.6-flash", "none")).toThrow(/does not support none/i);
+    expect(() => assertModelSupportsReasoningEffort(GEMINI_37_FLASH_MODEL_ID, "minimal")).toThrow(/does not support minimal/i);
     expect(() => assertModelSupportsReasoningEffort(GPT_56_SOL_MODEL_ID, "max")).not.toThrow();
   });
 

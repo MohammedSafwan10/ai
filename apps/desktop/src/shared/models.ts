@@ -33,7 +33,7 @@ export interface ModelProviderGroup {
   models: ModelOption[];
 }
 
-export const GEMINI_36_FLASH_MODEL_ID = "gemini-3.6-flash";
+export const GEMINI_37_FLASH_MODEL_ID = "gemini-3.7-flash";
 export const OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID = "deepseek/deepseek-v4-flash";
 export const OPENROUTER_MINIMAX_M3_MODEL_ID = "minimax/minimax-m3";
 export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
@@ -52,7 +52,7 @@ const OPENROUTER_DEFAULT_OUTPUT_TOKENS = 4_096;
 const geminiLongContext = {
   supportsImageInput: true,
   supportsReasoning: true,
-  reasoningEfforts: ["minimal", "low", "medium", "high"],
+  reasoningEfforts: ["low", "medium", "high"],
   defaultReasoningEffort: "medium",
   inputLimitTokens: GEMINI_LONG_CONTEXT_TOKENS,
   contextWindowTokens: GEMINI_LONG_CONTEXT_TOKENS,
@@ -84,8 +84,8 @@ const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
 
 const modelOptions: ModelOption[] = [
   {
-    id: GEMINI_36_FLASH_MODEL_ID,
-    label: "Gemini 3.6 Flash",
+    id: GEMINI_37_FLASH_MODEL_ID,
+    label: "Gemini 3.7 Flash",
     provider: "gemini",
     supportsTools: true,
     ...geminiLongContext,
@@ -227,7 +227,7 @@ const modelOptions: ModelOption[] = [
 
 export const normalizeModelId = (modelId: string | undefined) => {
   const normalizedId = modelId?.trim();
-  return normalizedId || GEMINI_36_FLASH_MODEL_ID;
+  return normalizedId || GEMINI_37_FLASH_MODEL_ID;
 };
 
 export const findModelOption = (modelId: string | undefined) =>
@@ -266,7 +266,7 @@ export const resolveModelRuntimeBudget = (
   modelId: string | undefined,
   mode: ModelRuntimeBudgetMode = "normal",
 ): ModelRuntimeBudget => {
-  const model = getModelOption(modelId || GEMINI_36_FLASH_MODEL_ID);
+  const model = getModelOption(modelId || GEMINI_37_FLASH_MODEL_ID);
   const contextWindowTokens = model.contextWindowTokens;
   const maxOutputTokens = model.maxOutputTokens;
   const defaultOutputTokens = model.defaultOutputTokens;

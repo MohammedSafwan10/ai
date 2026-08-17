@@ -23,7 +23,7 @@ import type {
   TurnUndoRecord,
   WorkspaceRecord,
 } from "../../shared/types";
-import { GEMINI_36_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
+import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
 import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
 
@@ -71,7 +71,7 @@ const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(a
 
 const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "privoraAccountConnected"> => ({
   id: "default",
-  model: GEMINI_36_FLASH_MODEL_ID,
+  model: GEMINI_37_FLASH_MODEL_ID,
   reasoningEffort: "medium",
   permissionMode: "ask_risky",
   collaborationMode: "default",

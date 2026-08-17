@@ -14,11 +14,10 @@ interface GeminiGroundingMetadata {
 }
 
 const geminiThinkingLevel = (effort: ProviderStreamOptions["reasoning"]) => {
-  if (effort === "minimal") return "minimal";
   if (effort === "low") return "low";
   if (effort === "medium") return "medium";
   if (effort === "high") return "high";
-  throw new Error(`Gemini 3.6 Flash does not support ${effort} thinking.`);
+  throw new Error(`Gemini 3.7 Flash does not support ${effort} thinking.`);
 };
 
 export const toGeminiContents = (messages: ProviderMessage[]) =>

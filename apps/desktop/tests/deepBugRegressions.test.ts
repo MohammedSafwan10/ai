@@ -3,12 +3,14 @@ import { initialGeminiFunctionArguments, geminiStepStartText } from "../src/main
 import { diffStats } from "../src/main/agent/harness/support/toolActivity";
 import { mergeToolDetail } from "../src/renderer/components/ToolTimeline";
 import { mergeUniqueByFreshness } from "../src/renderer/state/useDesktopState";
-import { isActiveTurnStatus } from "../src/shared/runStatus";
+import { describeActiveTurnStatus, isActiveTurnStatus } from "../src/shared/runStatus";
 import type { ToolEventRecord } from "../src/shared/types";
 
 describe("deep bug regressions", () => {
   it("keeps verification in the active streaming lifecycle", () => {
     expect(isActiveTurnStatus("waiting_verification")).toBe(true);
+    expect(describeActiveTurnStatus("waiting_verification", true)).toBe("Verifying changes");
+    expect(describeActiveTurnStatus("sampling", true)).toBe("Continuing after tools");
     expect(isActiveTurnStatus("completed")).toBe(false);
   });
 

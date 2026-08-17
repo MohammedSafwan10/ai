@@ -28,7 +28,7 @@ describe("Gemini native Google Search", () => {
       role: "assistant",
       content: "",
       parts: [
-        { type: "server_tool_call", id: "search-1", toolType: "GOOGLE_SEARCH_WEB", arguments: { query: "Gemini 3.6" } },
+        { type: "server_tool_call", id: "search-1", toolType: "GOOGLE_SEARCH_WEB", arguments: { query: "Gemini 3.7" } },
         { type: "server_tool_response", id: "search-1", toolType: "GOOGLE_SEARCH_WEB", response: { result: "Found" } },
         { type: "function_call", id: "call-1", name: "read_file", arguments: { path: "README.md" } },
       ],
@@ -39,7 +39,7 @@ describe("Gemini native Google Search", () => {
     }])).toEqual([{
       role: "model",
       parts: [
-        { toolCall: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB", args: { query: "Gemini 3.6" } } },
+        { toolCall: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB", args: { query: "Gemini 3.7" } } },
         { toolResponse: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB", response: { result: "Found" } } },
         { functionCall: { id: "call-1", name: "read_file", args: { path: "README.md" } } },
       ],
