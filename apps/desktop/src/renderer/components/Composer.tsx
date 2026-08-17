@@ -746,7 +746,6 @@ export function Composer({
                 <button
                   type="button"
                   className={clsx("model-branch-row", modelSubmenuOpen && "active")}
-                  onMouseEnter={() => setModelSubmenuOpen(true)}
                   onFocus={() => setModelSubmenuOpen(true)}
                   onClick={() => setModelSubmenuOpen((open) => !open)}
                 >
@@ -771,7 +770,6 @@ export function Composer({
               {modelSubmenuOpen && (
                 <div
                   className="floating-menu model-picker-submenu"
-                  onMouseEnter={() => setModelSubmenuOpen(true)}
                 >
                   <button
                     type="button"

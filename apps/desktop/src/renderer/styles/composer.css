@@ -1207,25 +1207,38 @@
 
 .model-picker-submenu {
   top: auto;
-  right: 0;
+  right: 180px;
   bottom: 44px;
-  width: min(214px, calc(100cqw - 16px));
-  max-height: min(360px, 58vh);
+  width: 214px;
+  max-width: calc(100cqw - 16px);
+  max-height: min(310px, 54vh);
   overflow: auto;
 }
 
-.model-reasoning-menu.submenu-open {
+.composer .floating-menu .model-picker-back {
   display: none;
 }
 
-.composer .floating-menu .model-picker-back {
-  display: flex;
-  justify-content: flex-start;
-  gap: 6px;
-  margin-bottom: 3px;
-  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 68%, transparent);
-  border-radius: 7px 7px 0 0;
-  color: var(--privora-muted);
+@container composer (max-width: 430px) {
+  .model-reasoning-menu.submenu-open {
+    display: none;
+  }
+
+  .model-picker-submenu {
+    right: 0;
+    width: min(214px, calc(100cqw - 16px));
+    max-height: min(360px, 58vh);
+  }
+
+  .composer .floating-menu .model-picker-back {
+    display: flex;
+    justify-content: flex-start;
+    gap: 6px;
+    margin-bottom: 3px;
+    border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 68%, transparent);
+    border-radius: 7px 7px 0 0;
+    color: var(--privora-muted);
+  }
 }
 
 .model-branch-row.active {
