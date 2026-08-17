@@ -14,7 +14,8 @@ import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue, type QueuedPrompt } from "./features/chat/usePromptQueue";
 import { splitComposerSettingsForPersistence } from "./features/chat/settingsPersistence";
 import { buildReviewSession, type ReviewSession } from "./reviewModels";
-import type { AiCreditSummaryRecord, ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
+import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
+import { isActiveTurnStatus } from "../shared/runStatus";
 
 type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
 
@@ -56,25 +57,18 @@ export default function App() {
     contextMentions?: ContextMentionRecord[];
   } | null>(null);
   const runStatus = snapshot.activeRun?.status;
-  const running =
-    runStatus === "sampling" ||
-    runStatus === "running" ||
-    runStatus === "executing_tool" ||
-    runStatus === "waiting_tool" ||
-    runStatus === "waiting_verification" ||
-    runStatus === "awaiting_approval" ||
-    runStatus === "draining" ||
-    runStatus === "completing";
+  const running = isActiveTurnStatus(runStatus);
   const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
   const allMessages = snapshot.messages;
-  const messages = useMemo(
-    () => allMessages.filter((message) => !message.steeredTurnId),
-    [allMessages],
-  );
+  const messages = useMemo(() => {
+    const availableParents = new Set(allMessages.map((message) => message.id));
+    return allMessages.filter((message) => !message.steeredTurnId || !availableParents.has(message.steeredTurnId));
+  }, [allMessages]);
   const inlineSteersByTurn = useMemo(() => {
     const map = new Map<string, typeof allMessages>();
+    const availableParents = new Set(allMessages.map((message) => message.id));
     allMessages.forEach((message) => {
-      if (!message.steeredTurnId) return;
+      if (!message.steeredTurnId || !availableParents.has(message.steeredTurnId)) return;
       const current = map.get(message.steeredTurnId) || [];
       current.push(message);
       map.set(message.steeredTurnId, current);
@@ -105,7 +99,8 @@ export default function App() {
       .sort((first, second) => (second.updatedAt || second.createdAt || 0) - (first.updatedAt || first.createdAt || 0))[0];
     return browserTool ? `${browserTool.id}:${browserTool.status}:${browserTool.updatedAt || browserTool.createdAt || 0}` : "";
   }, [snapshot.toolEvents]);
-  const latestActivityKey = `${messages[messages.length - 1]?.id || ""}:${messages[messages.length - 1]?.updatedAt || 0}:${lastToolUpdatedAt}:${snapshot.activeRun?.updatedAt || 0}`;
+  const latestMessage = allMessages[allMessages.length - 1];
+  const latestActivityKey = `${latestMessage?.id || ""}:${latestMessage?.updatedAt || 0}:${lastToolUpdatedAt}:${snapshot.activeRun?.updatedAt || 0}`;
   const {
     handleMessagePointerDown,
     handleMessageScroll,
@@ -421,19 +416,12 @@ export default function App() {
           <SettingsPanel
             settings={snapshot.settings}
             aiCredits={snapshot.aiCredits}
-            updateStatus={updateStatus}
-            workspaceDisabled={!activeWorkspace}
             open={settingsOpen}
-            onOpen={() => {
-              setSettingsInitialTab("general");
-              setSettingsOpen(true);
-            }}
             onOpenTab={(tab) => {
               setSettingsInitialTab(tab);
               setSettingsOpen(true);
             }}
             onClose={() => setSettingsOpen(false)}
-            onSave={saveSettings}
           />
         )}
       />
@@ -755,7 +743,6 @@ export default function App() {
         requestedPanelMode={workspacePanelRequest?.mode}
         requestedPanelModeKey={workspacePanelRequest?.key}
         fileRefreshKey={lastToolUpdatedAt}
-        onReviewClosed={() => setReviewSession(null)}
         onToggleCollapsed={() => {
           setIdeCollapsed((value) => {
             const next = !value;

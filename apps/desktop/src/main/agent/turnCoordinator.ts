@@ -4,7 +4,6 @@ import { isPlaceholderThreadTitle } from "../db/store";
 import { assertModelSupportsReasoningEffort, getModelOption, getProviderForModel, resolveModelRuntimeBudget, type AgentHarnessMode, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
 import type {
   ApprovalDecisionInput,
-  ApprovalDecisionScope,
   ApprovalScopeRecord,
   AssistantThoughtPartRecord,
   ChatMessageRecord,
@@ -36,46 +35,31 @@ import {
   buildCompactedProviderHistory,
   buildDeterministicCompactionSummary,
   buildProviderHistory,
-  buildProviderHistoryWithCompaction,
   buildRuntimeContext,
-  compactProviderHistoryWithInfo,
-  compactToolResultForModel,
   estimateProviderHistoryTokens,
   messagesToProviderHistory,
-  sanitizeProviderHistoryForModel,
 } from "./context";
 import { buildMentionContext } from "./contextMentions";
-import { loadSubagentRoles, pickSubagentNickname, type SubagentRoleConfig } from "./subagents";
+import { loadSubagentRoles, type SubagentRoleConfig } from "./subagents";
 import {
   markRunProgress,
   toActiveRunState,
   transitionRun,
   type AgentRunTracker,
 } from "./runState";
-import { approvalCommandPrefix, approvalCwd, findMatchingApprovalScope } from "./tools/permissions";
 import { diffStatsFromFiles, parseUnifiedDiffFiles } from "./tools/diffFormatter";
-import { normalizeApprovalDecisions, approvalScopeBounds, scopeLabel, type ApprovalDecision } from "./harness/support/approvals";
+import { normalizeApprovalDecisions, scopeLabel } from "./harness/support/approvals";
 import { runtimeBudgetModeForHistory, runtimeBudgetModeForTurn } from "./harness/support/budget";
-import { addTokenUsage, autoCompactTargetTokens, calculateContextUsage, shouldAutoCompactHistory } from "./harness/support/contextUsage";
-import { StreamStalledError, delay, errorMessage, windowlessInterval } from "./harness/support/errors";
+import { addTokenUsage, calculateContextUsage, shouldAutoCompactHistory } from "./harness/support/contextUsage";
+import { StreamStalledError, errorMessage, windowlessInterval } from "./harness/support/errors";
 import { historyHasRecentToolResults, resolveNoToolOutcome } from "./harness/support/recovery";
 import { ToolExecutionScheduler } from "./harness/support/scheduler";
 import {
-  MAX_SUBAGENT_DEPTH,
   buildForkedParentHistory,
   buildSubagentRuntimeContext,
   compactPreview,
-  formatSubagentLabel,
-  isLiveSubagent,
   isSubagentTool,
-  normalizeForkTurns,
-  normalizeRoleName,
-  normalizeTaskName,
-  parseReasoningEffort,
-  subagentDepth,
   subagentInstructionMessage,
-  subagentStatusSummary,
-  subagentToolData,
   textProviderMessage,
 } from "./harness/support/subagentRuntime";
 import {
@@ -88,7 +72,6 @@ import {
   liveStatusFromOutput,
   patchTargetLabel,
   previewForTool,
-  summarizeArgs,
   terminalMeta,
   titleForTool,
 } from "./harness/support/toolActivity";
@@ -123,8 +106,6 @@ export { createThreadTitleFilterState, fallbackThreadTitle, filterThreadTitleDel
 
 const MAX_CONTINUOUS_MODEL_ITERATIONS = 2048;
 const MAX_TOOL_CALLS = 2_000;
-const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
-const MAX_LIVE_SUBAGENTS_PER_TREE = 6;
 const STREAM_STALL_TIMEOUT_MS = 180_000;
 const POST_TOOL_RESULT_STALL_TIMEOUT_MS = 300_000;
 const STEER_ABORT_REASON = "privora:steer";
@@ -354,7 +335,7 @@ export class TurnCoordinator implements AgentHarnessApi {
   constructor(
     private store: DesktopStore,
     private getMainWindow: () => BrowserWindow | null,
-    private getActiveIds: () => { activeThreadId: string | null; activeWorkspaceId: string | null },
+    getActiveIds: () => { activeThreadId: string | null; activeWorkspaceId: string | null },
     browserManager?: BrowserSessionManager,
     notesStore?: NotesStore,
     computerUseManager?: ComputerUseManager,
@@ -1071,6 +1052,18 @@ export class TurnCoordinator implements AgentHarnessApi {
               flushAssistant("running");
               this.emitRun(run);
             },
+            onThoughtReplace: (text) => {
+              const thoughtPart = ensureThoughtPart();
+              const previous = assistantThought.slice(thoughtPart.thoughtOffset);
+              if (previous === text) return;
+              providerProducedProgress = true;
+              successfulImageAwaitingFollowup = false;
+              assistantThought = `${assistantThought.slice(0, thoughtPart.thoughtOffset)}${text}`;
+              thoughtPart.updatedAt = now();
+              markRunProgress(run);
+              flushAssistant("running", true);
+              this.emitRun(run);
+            },
             onToolDraft: (draft) => {
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
@@ -1326,7 +1319,7 @@ export class TurnCoordinator implements AgentHarnessApi {
 
         const scheduledResults = await scheduler.drainOrdered();
         if (controller.signal.aborted) throw new Error("Stopped.");
-        for (const item of scheduledResults) {
+        for (let index = 0; index < scheduledResults.length; index += 1) {
           toolCount += 1;
           run.toolCount = toolCount;
           this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
@@ -1342,7 +1335,7 @@ export class TurnCoordinator implements AgentHarnessApi {
           if (results.length > 0) {
             history = appendToolResults(history, results);
           }
-          const bundle = this.createApprovalBundle({
+          this.createApprovalBundle({
             options,
             calls: approvalCalls,
             history,

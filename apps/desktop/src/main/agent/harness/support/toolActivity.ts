@@ -80,11 +80,11 @@ const textLineCount = (value: unknown) => {
   return Math.max(1, lines.length);
 };
 
-export const patchActivityItems = (patch: string): ToolEventRecord["activities"] => {
+const patchActivityItems = (patch: string): ToolEventRecord["activities"] => {
   return streamingPatchActivities(patch);
 };
 
-export const diffActivityItems = (diff?: string): ToolEventRecord["activities"] => {
+const diffActivityItems = (diff?: string): ToolEventRecord["activities"] => {
   if (!diff) return [];
   const parsed = parseUnifiedDiffFiles(diff);
   const structured = activityItemsFromDiffFiles(parsed);
@@ -94,8 +94,8 @@ export const diffActivityItems = (diff?: string): ToolEventRecord["activities"] 
     .map((section) => {
       const before = section.match(/^---\s+(.+)$/m)?.[1]?.trim() || "";
       const after = section.match(/^\+\+\+\s+(.+)$/m)?.[1]?.trim() || before;
-      const additions = section.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length;
-      const deletions = section.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length;
+      const additions = section.split(/\r?\n/).filter((line) => /^\+(?!\+\+)/.test(line)).length;
+      const deletions = section.split(/\r?\n/).filter((line) => /^-(?!--)/.test(line)).length;
       if (!after && !before) return null;
       return {
         verb: !before || before === "/dev/null" ? "Created" : additions === 0 && deletions > 0 ? "Deleted" : "Edited",
@@ -113,8 +113,8 @@ export const diffStats = (diff?: string) => {
   const structuredStats = diffStatsFromFiles(parsed);
   if (parsed.length > 0) return structuredStats;
   return {
-    additions: diff.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length,
-    deletions: diff.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length,
+    additions: diff.split(/\r?\n/).filter((line) => /^\+(?!\+\+)/.test(line)).length,
+    deletions: diff.split(/\r?\n/).filter((line) => /^-(?!--)/.test(line)).length,
   };
 };
 
@@ -126,7 +126,7 @@ export const previewForTool = (call: DesktopToolCall, output?: string, diff?: st
   return undefined;
 };
 
-export const terminalCommandLabel = (call: DesktopToolCall) => {
+const terminalCommandLabel = (call: DesktopToolCall) => {
   const argv = call.arguments.argv;
   if (Array.isArray(argv) && argv.length > 0) return argv.map((item) => displayArg(String(item))).join(" ");
   return String(call.arguments.cmd || call.arguments.command || call.arguments.kind || "").trim();
@@ -149,7 +149,7 @@ export const compactLiveOutput = (value: string, maxChars = LIVE_OUTPUT_MAX_CHAR
   return `${head}\n\n[... live output compacted ...]\n\n${tail}`;
 };
 
-export const sortObject = (value: unknown): unknown => {
+const sortObject = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map((item) => sortObject(item));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(

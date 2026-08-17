@@ -17,6 +17,7 @@ import type {
 } from "../../shared/types";
 import { ToolTimeline } from "./ToolTimeline";
 import { TurnReviewCard } from "./TurnReviewCard";
+import { isActiveTurnStatus } from "../../shared/runStatus";
 
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
@@ -281,7 +282,9 @@ export function buildAssistantRenderParts(
     if (pendingTools.length === 0) return;
     parts.push({
       type: "tools",
-      key: `tools-${keySuffix}-${pendingTools.map((tool) => tool.id).join("-")}`,
+      // Group membership grows while tools stream. Anchor the key to the first
+      // tool so appending a tool does not remount the timeline and erase its UI state.
+      key: `tools-${keySuffix}-${pendingTools[0].id}`,
       tools: pendingTools,
       defaultOpen: false,
     });
@@ -428,7 +431,7 @@ function splitTextByPhase(message: ChatMessageRecord, startOffset: number, endOf
 }
 
 export function normalizeTextParts(parts: AssistantTextPartRecord[], contentLength: number) {
-  return mergeAdjacentTextParts(
+  const normalized = mergeAdjacentTextParts(
     [...parts]
       .filter((part) =>
         (part.phase === "commentary" || part.phase === "final_answer") &&
@@ -443,7 +446,27 @@ export function normalizeTextParts(parts: AssistantTextPartRecord[], contentLeng
       .filter((part) => part.endOffset > part.startOffset)
       .sort((a, b) => a.startOffset - b.startOffset || a.createdAt - b.createdAt),
   );
+  if (normalized.length === 0) return normalized;
+  const covered: AssistantTextPartRecord[] = [];
+  let cursor = 0;
+  normalized.forEach((part, index) => {
+    if (part.startOffset > cursor) covered.push(fallbackTextPart(cursor, part.startOffset, index));
+    const startOffset = Math.max(cursor, part.startOffset);
+    if (part.endOffset > startOffset) covered.push({ ...part, startOffset });
+    cursor = Math.max(cursor, part.endOffset);
+  });
+  if (cursor < contentLength) covered.push(fallbackTextPart(cursor, contentLength, covered.length));
+  return mergeAdjacentTextParts(covered);
 }
+
+const fallbackTextPart = (startOffset: number, endOffset: number, index: number): AssistantTextPartRecord => ({
+  id: `recovered-text-gap-${index}-${startOffset}`,
+  phase: "final_answer",
+  startOffset,
+  endOffset,
+  createdAt: 0,
+  updatedAt: 0,
+});
 
 function mergeAdjacentTextParts(parts: AssistantTextPartRecord[]) {
   const merged: AssistantTextPartRecord[] = [];
@@ -489,18 +512,6 @@ function InlineSteerMessage({ message }: { message: ChatMessageRecord }) {
 
 function clampOffset(offset: number, max: number) {
   return Math.max(0, Math.min(max, offset));
-}
-
-function isActiveTurnStatus(status: string | null | undefined) {
-  return (
-    status === "sampling" ||
-    status === "running" ||
-    status === "executing_tool" ||
-    status === "waiting_tool" ||
-    status === "awaiting_approval" ||
-    status === "draining" ||
-    status === "completing"
-  );
 }
 
 function AssistantRunMeta({
@@ -983,7 +994,7 @@ const attachmentSrc = (attachment: DesktopAttachmentRecord) => attachment.url;
 
 function ThoughtPanel({ thought, active }: { thought: string; active: boolean }) {
   const hasThought = thought.trim().length > 0;
-  const displayThought = normalizeThoughtMarkdown(thought);
+  const displayThought = thought;
   const shouldShowLabel = active || hasThought;
   const [open, setOpen] = useState(false);
 
@@ -1023,9 +1034,6 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
     </div>
   );
 }
-
-export const normalizeThoughtMarkdown = (thought: string) =>
-  thought.replace(/\*{4}(?=\S)/g, "**\n\n**");
 
 function TypingIndicator({
   size = 28,

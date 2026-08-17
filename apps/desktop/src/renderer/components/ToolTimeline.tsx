@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, SubagentRecord, ToolEventRecord } from "../../shared/types";
+import { isActiveTurnStatus } from "../../shared/runStatus";
 import { InlineFileChangeList } from "./InlineDiff";
 
 interface ToolTimelineProps {
@@ -22,9 +23,9 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [autoExpandedFileDraftIds, setAutoExpandedFileDraftIds] = useState<Set<string>>(() => new Set());
   const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
   const [imagePreview, setImagePreview] = useState<GeneratedImagePreview | null>(null);
-  const messageActive = isActiveMessageStatus(messageStatus);
+  const messageActive = isActiveTurnStatus(messageStatus);
   const resolvedTools = useMemo(
-    () => tools.map((tool) => detailedTools[tool.id] ? { ...tool, ...detailedTools[tool.id] } : tool),
+    () => tools.map((tool) => detailedTools[tool.id] ? mergeToolDetail(tool, detailedTools[tool.id]) : tool),
     [detailedTools, tools],
   );
   const normalizedTools = useMemo(
@@ -165,7 +166,6 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                 {!hasFileDiffs(tool) && (
                   <ToolTitleLine
                     tool={tool}
-                    subagents={subagents}
                     output={displayOutput(tool)}
                     expanded={expandedOutputIds.has(tool.id)}
                     live={tool.id === currentLiveToolId}
@@ -273,14 +273,12 @@ function LiveFileDraft({ tool }: { tool: ToolEventRecord }) {
 
 function ToolTitleLine({
   tool,
-  subagents,
   output,
   expanded,
   live,
   onToggle,
 }: {
   tool: ToolEventRecord;
-  subagents: SubagentRecord[];
   output: string;
   expanded: boolean;
   live: boolean;
@@ -382,13 +380,8 @@ function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: 
           </pre>
         </section>
       ))}
-      <TerminalStats tool={tool} />
     </div>
   );
-}
-
-function TerminalStats({ tool }: { tool: ToolEventRecord }) {
-  return null;
 }
 
 function BrowserOutputPanel({ tool }: { tool: ToolEventRecord }) {
@@ -617,11 +610,6 @@ const compactOutputPreview = (output: string) => {
   return line.length <= 140 ? line : `${line.slice(0, 139)}...`;
 };
 
-const formatDuration = (durationMs: number) => {
-  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))}ms`;
-  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
-};
-
 const formatBytes = (bytes: number) => {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
@@ -677,12 +665,6 @@ function InlineDelta({ additions, deletions }: { additions: number; deletions: n
     </span>
   );
 }
-
-const formatToolName = (name: string) =>
-  name
-    .replace(/^desktop_/, "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const hasUsefulOutput = (output?: string) => {
   const trimmed = output?.trim();
@@ -1166,16 +1148,11 @@ const usefulSubagentPreview = (agent: SubagentRecord, tool: ToolEventRecord) => 
 const stringValue = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
 
-const isActiveMessageStatus = (status: string) =>
-  [
-    "sampling",
-    "running",
-    "executing_tool",
-    "waiting_tool",
-    "awaiting_approval",
-    "draining",
-    "completing",
-  ].includes(status);
+export const mergeToolDetail = (live: ToolEventRecord, detail: ToolEventRecord): ToolEventRecord => {
+  const liveStamp = live.updatedAt || live.createdAt || 0;
+  const detailStamp = detail.updatedAt || detail.createdAt || 0;
+  return detailStamp > liveStamp ? { ...live, ...detail } : { ...detail, ...live };
+};
 
 const hasFileDiffs = (tool: ToolEventRecord) =>
   Boolean(tool.diffFiles?.length);
@@ -1355,8 +1332,8 @@ const diffActivityItems = (diff?: string): ToolActivityItem[] => {
   const items = sections.map((section) => {
     const before = section.match(/^---\s+(.+)$/m)?.[1]?.trim() || "";
     const after = section.match(/^\+\+\+\s+(.+)$/m)?.[1]?.trim() || before;
-    const additions = section.split(/\r?\n/).filter((line) => line.startsWith("+ ") && !line.startsWith("+++")).length;
-    const deletions = section.split(/\r?\n/).filter((line) => line.startsWith("- ") && !line.startsWith("---")).length;
+    const additions = section.split(/\r?\n/).filter((line) => /^\+(?!\+\+)/.test(line)).length;
+    const deletions = section.split(/\r?\n/).filter((line) => /^-(?!--)/.test(line)).length;
     const path = after || before;
     const verb = !before || before === "/dev/null"
       ? "Created"

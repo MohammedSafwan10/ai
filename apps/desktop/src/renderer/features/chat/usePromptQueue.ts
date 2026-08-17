@@ -42,7 +42,22 @@ export const usePromptQueue = ({
   stopTurn,
   turnSettings = {},
 }: PromptQueueInput) => {
-  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const [queuedPromptsByThread, setQueuedPromptsByThread] = useState<Record<string, QueuedPrompt[]>>({});
+  const queuedPrompts = activeThreadId ? queuedPromptsByThread[activeThreadId] || [] : [];
+  const setQueuedPrompts = useCallback((update: QueuedPrompt[] | ((current: QueuedPrompt[]) => QueuedPrompt[])) => {
+    if (!activeThreadId) return;
+    setQueuedPromptsByThread((current) => {
+      const previous = current[activeThreadId] || [];
+      const next = typeof update === "function" ? update(previous) : update;
+      if (next === previous) return current;
+      if (next.length === 0) {
+        const rest = { ...current };
+        delete rest[activeThreadId];
+        return rest;
+      }
+      return { ...current, [activeThreadId]: next };
+    });
+  }, [activeThreadId]);
   const [queuePaused, setQueuePaused] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
@@ -50,11 +65,11 @@ export const usePromptQueue = ({
   const [steerError, setSteerError] = useState<string | null>(null);
   const directSubmitInFlightRef = useRef(false);
   const queuedSubmitInFlightRef = useRef(false);
+  const steeringInFlightRef = useRef<string | null>(null);
 
   const stopping = Boolean(activeThreadId && stoppingThreadId === activeThreadId && running);
 
   useEffect(() => {
-    setQueuedPrompts([]);
     setQueuePaused(false);
     setQueueExpanded(false);
     setStoppingThreadId(null);
@@ -62,6 +77,7 @@ export const usePromptQueue = ({
     setSteerError(null);
     directSubmitInFlightRef.current = false;
     queuedSubmitInFlightRef.current = false;
+    steeringInFlightRef.current = null;
   }, [activeThreadId]);
 
   useEffect(() => {
@@ -185,7 +201,8 @@ export const usePromptQueue = ({
   }, []);
 
   const steerQueuedPrompt = useCallback(async (item: QueuedPrompt) => {
-    if (!activeThreadId || !activeTurnId || !running || steeringPromptId) return;
+    if (!activeThreadId || !activeTurnId || !running || steeringInFlightRef.current) return;
+    steeringInFlightRef.current = item.id;
     setSteeringPromptId(item.id);
     setSteerError(null);
     try {
@@ -201,6 +218,7 @@ export const usePromptQueue = ({
     } catch (error) {
       setSteerError(error instanceof Error ? error.message : "Could not steer the active turn.");
     } finally {
+      steeringInFlightRef.current = null;
       setSteeringPromptId(null);
     }
   }, [activeThreadId, activeTurnId, running, steerTurn, steeringPromptId]);

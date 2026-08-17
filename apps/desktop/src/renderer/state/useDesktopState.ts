@@ -7,10 +7,8 @@ import type {
   SettingsRecord,
   ThreadRecord,
   ToolEventRecord,
-  TurnUndoRecord,
   WorkspaceRecord,
   RequestUserInputRequestRecord,
-  SubagentRecord,
   ThreadHistoryPage,
 } from "../../shared/types";
 import { GEMINI_36_FLASH_MODEL_ID } from "../../shared/models";
@@ -263,9 +261,11 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
 const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): DesktopUiSnapshot => {
   const activeThreadId = snapshot.activeThreadId;
   const sameThread = Boolean(activeThreadId && activeThreadId === current.activeThreadId);
-  const messages = sameThread ? mergeUnique(current.messages, snapshot.messages) : snapshot.messages;
-  const toolEvents = sameThread ? mergeUnique(current.toolEvents, snapshot.toolEvents) : snapshot.toolEvents;
-  const turnUndos = sameThread ? mergeUnique(current.turnUndos, snapshot.turnUndos) : snapshot.turnUndos;
+  // A direct IPC refresh is not sequenced with pushed events. Never let an
+  // older snapshot roll a streamed message/tool back to an earlier state.
+  const messages = sameThread ? mergeUnique(current.messages, snapshot.messages, false) : snapshot.messages;
+  const toolEvents = sameThread ? mergeUnique(current.toolEvents, snapshot.toolEvents, false) : snapshot.toolEvents;
+  const turnUndos = sameThread ? mergeUnique(current.turnUndos, snapshot.turnUndos, false) : snapshot.turnUndos;
   const activeRunsByThread = Object.fromEntries((snapshot.activeRuns || []).map((run) => [run.threadId, run]));
   if (snapshot.activeRun) activeRunsByThread[snapshot.activeRun.threadId] = snapshot.activeRun;
 
@@ -309,11 +309,26 @@ export const prependHistoryPage = (current: DesktopUiSnapshot, page: ThreadHisto
   };
 };
 
-const mergeUnique = <T extends { id: string; createdAt?: number; updatedAt?: number }>(older: T[], current: T[]) => {
-  const byId = new Map(older.map((item) => [item.id, item]));
-  current.forEach((item) => byId.set(item.id, item));
+export const mergeUniqueByFreshness = <T extends { id: string; createdAt?: number; updatedAt?: number }>(
+  existing: T[],
+  incoming: T[],
+  preferIncomingOnTie = true,
+) => {
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  incoming.forEach((item) => {
+    const previous = byId.get(item.id);
+    if (!previous) {
+      byId.set(item.id, item);
+      return;
+    }
+    const previousStamp = previous.updatedAt || previous.createdAt || 0;
+    const incomingStamp = item.updatedAt || item.createdAt || 0;
+    if (incomingStamp > previousStamp || (preferIncomingOnTie && incomingStamp === previousStamp)) byId.set(item.id, item);
+  });
   return [...byId.values()].sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0) || a.id.localeCompare(b.id));
 };
+
+const mergeUnique = mergeUniqueByFreshness;
 
 export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEventEnvelope[] => {
   const coalesced: PrivoraEventEnvelope[] = [];
