@@ -112,7 +112,7 @@ export class ShieldsManager {
   }
 }
 
-export const originFor = (rawUrl: string) => {
+const originFor = (rawUrl: string) => {
   try {
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";

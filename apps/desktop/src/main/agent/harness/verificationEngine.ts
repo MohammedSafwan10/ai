@@ -147,7 +147,7 @@ export class VerificationEngine {
   }
 }
 
-export const formatReviewerFeedback = (reviewers: SubagentRecord[]) => {
+const formatReviewerFeedback = (reviewers: SubagentRecord[]) => {
   if (reviewers.length === 0) return "";
   const reports = reviewers.map((agent, index) => {
     const label = agent.agentNickname || `Reviewer ${index + 1}`;

@@ -63,7 +63,7 @@ function InlineDelta({ additions, deletions }: { additions: number; deletions: n
   );
 }
 
-export function InlineDiffPanel({ file }: { file: ToolDiffFileRecord }) {
+function InlineDiffPanel({ file }: { file: ToolDiffFileRecord }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const rows = useMemo(() => diffRows(file), [file]);
   const rowVirtualizer = useVirtualizer({

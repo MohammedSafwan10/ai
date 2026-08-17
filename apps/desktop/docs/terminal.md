@@ -1,8 +1,6 @@
 # Privora Terminal
 
-Privora Terminal uses a Codex-style unified exec runtime. The old polling tools
-(`desktop_spawn_process`, `desktop_write_process`, `desktop_resize_process`, and
-`desktop_kill_process`) are intentionally not part of the active agent surface.
+Privora Terminal uses a Codex-style unified exec runtime.
 
 ## Agent Tool Surface
 

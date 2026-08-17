@@ -101,6 +101,3 @@ export const ensureWorkspaceParentDirectory = (target: ResolvedWorkspacePath) =>
   }
   return current;
 };
-
-export const describePath = (workspaceRoot: string, userPath: string) =>
-  resolveWorkspacePath(workspaceRoot, userPath).relativePath || ".";

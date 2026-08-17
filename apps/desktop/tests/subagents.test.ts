@@ -8,7 +8,7 @@ import { ToolCallCoordinator } from "../src/main/agent/harness/toolCallCoordinat
 import { TurnRegistry } from "../src/main/agent/harness/turnRegistry";
 import { DesktopStore } from "../src/main/db/store";
 import type { AgentRunTracker } from "../src/main/agent/runState";
-import type { ChatMessageRecord, SubagentRecord } from "../src/shared/types";
+import type { ChatMessageRecord } from "../src/shared/types";
 
 let tempDir = "";
 let currentStore: DesktopStore | null = null;
@@ -101,7 +101,7 @@ describe("subagent topology", () => {
     expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.6-sol");
   });
 
-  it("uses the current parent model for legacy children saved with a different provider", () => {
+  it("uses the current parent model for child turns", () => {
     const store = createStore();
     store.saveSettings({ model: "gemini-3.6-flash" });
     const workspace = store.upsertWorkspace(tempDir);
@@ -115,9 +115,9 @@ describe("subagent topology", () => {
       parentThreadId: rootThread.id,
       parentMessageId: "parent-message",
       workspaceId: workspace.id,
-      taskName: "legacy",
-      agentPath: "/root/legacy",
-      prompt: "Legacy task",
+      taskName: "child",
+      agentPath: "/root/child",
+      prompt: "Child task",
       model: "gemini-3.6-flash",
     });
     expect(resolveSubagentModel(store, agent)).toBe("gpt-5.6-sol");

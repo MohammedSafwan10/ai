@@ -74,7 +74,7 @@ describe("thread title normalization", () => {
   it("normalizes title text and placeholder state", () => {
     expect(normalizeThreadTitle("  Fix   the sidebar\nignore me  ")).toBe("Fix the sidebar");
     expect(fallbackThreadTitle("Please fix the composer scroll bug and verify it works")).toBe("Please fix the composer scroll bug and verify it");
-    expect(isPlaceholderThreadTitle({ title: "New local agent chat" })).toBe(true);
+    expect(isPlaceholderThreadTitle({ title: "New local agent chat" })).toBe(false);
     expect(isPlaceholderThreadTitle({ title: "New chat", titleSource: "placeholder" })).toBe(true);
     expect(isPlaceholderThreadTitle({ title: "Manual title", titleSource: "user" })).toBe(false);
   });

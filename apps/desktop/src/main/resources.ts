@@ -9,7 +9,7 @@ const firstExistingFile = (candidates: string[]) => candidates.find((candidate) 
   }
 });
 
-export const resourcePathCandidates = (...segments: string[]) => [
+const resourcePathCandidates = (...segments: string[]) => [
   process.resourcesPath ? path.join(process.resourcesPath, ...segments) : "",
   path.join(process.cwd(), ...segments),
 ].filter(Boolean);

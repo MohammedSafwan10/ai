@@ -88,7 +88,7 @@ export class DiagnosticsEngine {
   }
 }
 
-export const detectProjectProfile = async (workspaceRoot: string): Promise<ProjectProfile> => {
+const detectProjectProfile = async (workspaceRoot: string): Promise<ProjectProfile> => {
   const entries = await Promise.all([
     readPackageJson(workspaceRoot),
     exists(path.join(workspaceRoot, "tsconfig.json")),

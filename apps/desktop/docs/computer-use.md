@@ -5,7 +5,6 @@ Privora Computer Use is the native desktop-control surface that complements file
 ## V1 Shape
 
 - `privora_windows_native` is the default backend on Windows.
-- `cua_driver` exists only as an optional compatibility slot and is disabled until a separate audit and smoke-test pass.
 - The stable agent tools are:
   - `computer_capabilities`
   - `computer_list_windows`

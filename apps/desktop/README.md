@@ -190,7 +190,7 @@ The unified terminal runtime is documented in [docs/terminal.md](docs/terminal.m
 
 ## Computer Use
 
-The native desktop-control surface is documented in [docs/computer-use.md](docs/computer-use.md). V1 uses Privora's Windows-native backend by default, keeps Cua as a disabled experimental adapter slot, and hard-blocks secure desktop, credentials/MFA/payment data, hidden secrets, elevated/system boundaries, and irreversible real-world actions.
+The native desktop-control surface is documented in [docs/computer-use.md](docs/computer-use.md). Privora uses its audited Windows-native backend and hard-blocks secure desktop, credentials/MFA/payment data, hidden secrets, elevated/system boundaries, and irreversible real-world actions.
 
 ## Production Updates
 
@@ -208,7 +208,7 @@ The public Windows download page at `https://privora.nexdark.com/download` reads
 
 From `package.json`:
 
-- Electron `^42.3.0`
+- Electron `^42.9.2`
 - Electron Forge `^7.11.2`
 - React `^19.2.6`
 - TypeScript `^6.0.3`

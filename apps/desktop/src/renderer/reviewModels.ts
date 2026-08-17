@@ -38,7 +38,7 @@ export const buildReviewSession = (input: {
   };
 };
 
-export const buildReviewFiles = (tools: ToolEventRecord[]): ReviewFileModel[] => {
+const buildReviewFiles = (tools: ToolEventRecord[]): ReviewFileModel[] => {
   const entries: Array<{ order: number; file: ToolDiffFileRecord; undo: RestoreUndo[] }> = [];
   tools
     .filter((tool) => tool.status === "done" && tool.result?.success !== false)

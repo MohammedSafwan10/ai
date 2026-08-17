@@ -37,7 +37,7 @@ export const searchWorkspaceIndex = async (
     .slice(0, limit);
 };
 
-export const loadOrBuildWorkspaceIndex = async (workspaceRoot: string) => {
+const loadOrBuildWorkspaceIndex = async (workspaceRoot: string) => {
   const indexPath = workspaceIndexPath(workspaceRoot);
   const existing = await readIndex(indexPath);
   if (existing?.workspaceRoot === workspaceRoot && await indexStillFresh(workspaceRoot, existing)) return existing;

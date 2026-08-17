@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Bug, Database, Download, ExternalLink, Globe2, Loader2, Monitor, MoreHorizontal, Play, Plus, RefreshCw, RotateCw, Save, Shield, Smartphone, Square, Tablet, X } from "lucide-react";
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, ArrowRight, Bug, ExternalLink, Globe2, Loader2, Monitor, MoreHorizontal, Plus, RefreshCw, RotateCw, Shield, Smartphone, Square, Tablet, X } from "lucide-react";
 import clsx from "clsx";
 import type { BrowserPanelStateRecord, BrowserToolsMenuAction, BrowserViewportPreset, WorkspaceRecord } from "../../../shared/types";
 
@@ -227,16 +227,6 @@ export function BrowserPanel({ workspace, active, hidden }: BrowserPanelProps) {
       await showOverlay("Current evidence", result.output || "(empty)");
     } catch (error) {
       await showOverlay("Current evidence", error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const allowNextDownload = async () => {
-    if (!activeWorkspaceId) return;
-    try {
-      const result = await window.privoraDesktop.browserDownload({ workspaceId: activeWorkspaceId, action: "allow_next" });
-      await showOverlay("Downloads", result.output || "(empty)", { width: 420, height: 260 });
-    } catch (error) {
-      await showOverlay("Downloads", error instanceof Error ? error.message : String(error), { width: 420, height: 260 });
     }
   };
 
@@ -560,15 +550,3 @@ const computeBrowserBounds = (rect: DOMRect, preset: BrowserViewportPreset, zoom
 const normalizeZoomFactor = (value: number) => Number.isFinite(value) && value > 0 ? value : 1;
 
 const currentWindowZoomFactor = () => normalizeZoomFactor(window.visualViewport?.scale || 1);
-
-const formatBytes = (bytes: number) => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-};

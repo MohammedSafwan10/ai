@@ -37,6 +37,3 @@ specialized artifacts keep their existing independent stores.
   once per animation frame.
 - The long-chat stress suite verifies 10,000-message pagination and a bounded
   100,000-tool turn.
-
-The old `privora-desktop.json` store is intentionally unsupported. Privora was
-still in development when the SQLite store became authoritative.

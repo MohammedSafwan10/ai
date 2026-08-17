@@ -28,6 +28,14 @@ import { TargetIcon } from "./AppLauncher";
 interface SettingsPanelProps {
   settings: SettingsRecord;
   aiCredits?: AiCreditSummaryRecord;
+  open: boolean;
+  onClose: () => void;
+  onOpenTab?: (tab: SettingsTab) => void;
+}
+
+interface SettingsScreenProps {
+  settings: SettingsRecord;
+  aiCredits?: AiCreditSummaryRecord;
   updateStatus: UpdateStatus | null;
   workspaceDisabled: boolean;
   open: boolean;
@@ -35,13 +43,11 @@ interface SettingsPanelProps {
   onClose: () => void;
   onSave: (settings: SaveSettingsInput) => Promise<void> | void;
   initialTab?: SettingsTab;
-  onOpenTab?: (tab: SettingsTab) => void;
-  className?: string;
 }
 
 type SettingsTab = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
 
-export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOpenTab }: SettingsPanelProps) {
+export function SettingsPanel({ settings, aiCredits, open, onClose, onOpenTab }: SettingsPanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [usageRefreshing, setUsageRefreshing] = useState(false);
@@ -208,7 +214,7 @@ export function SettingsPanel({ settings, aiCredits, open, onOpen, onClose, onOp
   );
 }
 
-export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, initialTab = "general", className }: SettingsPanelProps) {
+export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, initialTab = "general" }: SettingsScreenProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");

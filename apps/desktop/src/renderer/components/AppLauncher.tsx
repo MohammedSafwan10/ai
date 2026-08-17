@@ -73,7 +73,7 @@ export function TargetIcon({ target, size }: { target: Pick<WorkspaceOpenTargetI
   return <Icon size={size} />;
 }
 
-export const iconForTarget = (target: Pick<WorkspaceOpenTargetInfo, "icon">) => {
+const iconForTarget = (target: Pick<WorkspaceOpenTargetInfo, "icon">) => {
   if (target.icon === "vscode") return Code2;
   if (target.icon === "terminal") return TerminalSquare;
   if (target.icon === "xcode") return Hammer;

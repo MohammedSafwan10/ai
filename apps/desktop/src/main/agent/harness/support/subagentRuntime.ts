@@ -105,7 +105,7 @@ export const compactPreview = (value: string, maxLength: number) => {
   return compact.length <= maxLength ? compact : `${compact.slice(0, Math.max(0, maxLength - 1))}...`;
 };
 
-export const compactLongText = (value: string, maxLength: number) => {
+const compactLongText = (value: string, maxLength: number) => {
   if (value.length <= maxLength) return value;
   const headLength = Math.floor(maxLength * 0.62);
   const tailLength = Math.max(0, maxLength - headLength - 80);

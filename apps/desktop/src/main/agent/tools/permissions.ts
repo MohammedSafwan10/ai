@@ -3,14 +3,6 @@ import type { ApprovalScopeRecord, DesktopToolCall, ToolRisk } from "../../../sh
 import { browserOriginDecision } from "../../browser/browserSecurity";
 import { computerActionHardBlockReason } from "../../computer/safety";
 
-const destructiveCommandPattern =
-  /\b(rm|del|erase|rd|rmdir|format|shutdown|restart-computer|stop-process|remove-item|move-item|rename-item|set-content|out-file|new-item|git\s+(reset|checkout|clean|push|commit|merge|rebase)|npm\s+i|npm\s+install|pnpm\s+i|pnpm\s+install|yarn\s+(add|install)|bun\s+install|pip\s+install|cargo\s+install)\b/i;
-
-const networkCommandPattern =
-  /\b(curl|wget|invoke-webrequest|iwr|invoke-restmethod|irm|ssh|scp|ftp|gh\s+auth|npm\s+publish|pnpm\s+publish)\b/i;
-
-const shellControlPattern = /(\|\||&&|;|>|<|\|\s*(set-content|out-file|tee-object|%|foreach-object))/i;
-
 const patchContainsRiskyFileOperation = (patch: string) =>
   /^\*\*\* Delete File: /im.test(patch) || /^\*\*\* Move to: /im.test(patch);
 
@@ -284,22 +276,6 @@ const normalizeCommand = (value: string) =>
 
 const normalizedArgv = (value: unknown) =>
   Array.isArray(value) ? value.map((item) => normalizeCommand(String(item))).filter(Boolean) : [];
-
-const riskyArgv = (value: unknown) => {
-  const argv = normalizedArgv(value);
-  if (argv.length === 0) return false;
-  const [program = "", subcommand = ""] = argv;
-  if (["rm", "del", "erase", "rd", "rmdir", "format", "shutdown", "restart-computer", "stop-process", "remove-item", "move-item", "rename-item", "set-content", "out-file", "new-item"].includes(program)) return true;
-  if (program === "git" && ["reset", "checkout", "clean", "push", "commit", "merge", "rebase"].includes(subcommand)) return true;
-  if (["npm", "pnpm"].includes(program) && ["i", "install", "publish"].includes(subcommand)) return true;
-  if (program === "yarn" && ["add", "install"].includes(subcommand)) return true;
-  if (program === "bun" && subcommand === "install") return true;
-  if (program === "pip" && subcommand === "install") return true;
-  if (program === "cargo" && subcommand === "install") return true;
-  if (["curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "ssh", "scp", "ftp"].includes(program)) return true;
-  if (program === "gh" && subcommand === "auth") return true;
-  return false;
-};
 
 const browserActionLooksSensitive = (call: DesktopToolCall) => {
   const action = String(call.arguments.action || "").toLowerCase();

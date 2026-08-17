@@ -64,26 +64,9 @@ type StoredMessage = Omit<ChatMessageRecord, "attachments"> & {
 };
 
 const now = () => Date.now();
-const sqlString = (value: string) => `'${value.replace(/'/g, "''")}'`;
-const SCHEMA_VERSION = 2;
 const INITIAL_HISTORY_LIMIT = 60;
 const TOOL_PAGE_LIMIT = 2_000;
-const APP_TABLES = [
-  "kv",
-  "workspaces",
-  "threads",
-  "messages",
-  "tool_events",
-  "subagents",
-  "turn_undos",
-  "approval_scopes",
-  "approval_history",
-  "checkpoints",
-  "compaction_checkpoints",
-  "browser_workspaces",
-] as const;
-export const PLACEHOLDER_THREAD_TITLE = "New chat";
-const LEGACY_PLACEHOLDER_THREAD_TITLES = new Set(["New local agent chat", PLACEHOLDER_THREAD_TITLE]);
+const PLACEHOLDER_THREAD_TITLE = "New chat";
 const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(app?.isPackaged);
 
 const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "privoraAccountConnected"> => ({
@@ -120,7 +103,6 @@ export class DesktopStore {
     });
     this.artifacts = new ArtifactStore(userDataPath);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
-    this.migrateSchema();
     this.createSchema();
     this.ensureDefaultSettings();
   }
@@ -189,9 +171,32 @@ export class DesktopStore {
       appwriteProjectId: defaultSettings().appwriteProjectId,
       privoraGatewayFunctionId: defaultSettings().privoraGatewayFunctionId,
     };
-    this.putKv("settings", "default", next);
-    if (input.openRouterApiKey !== undefined) this.setSecret("openrouter_api_key", input.openRouterApiKey);
-    if (input.geminiApiKey !== undefined) this.setSecret("gemini_api_key", input.geminiApiKey);
+    // Encrypt every supplied secret before mutating settings. If OS-backed
+    // encryption is unavailable, the save fails without partially applying
+    // unrelated settings.
+    const pendingSecrets: Array<{ name: SecretName; value: string; envelope?: StoredSecretEnvelope }> = [];
+    if (input.openRouterApiKey !== undefined) pendingSecrets.push({
+      name: "openrouter_api_key",
+      value: input.openRouterApiKey,
+      envelope: input.openRouterApiKey.trim() ? this.encryptSecret(input.openRouterApiKey.trim()) : undefined,
+    });
+    if (input.geminiApiKey !== undefined) pendingSecrets.push({
+      name: "gemini_api_key",
+      value: input.geminiApiKey,
+      envelope: input.geminiApiKey.trim() ? this.encryptSecret(input.geminiApiKey.trim()) : undefined,
+    });
+    this.run("BEGIN IMMEDIATE");
+    try {
+      this.putKv("settings", "default", next);
+      pendingSecrets.forEach(({ name, value, envelope }) => {
+        if (!value.trim()) this.run("DELETE FROM kv WHERE scope = 'secrets' AND key = ?", name);
+        else this.putKv("secrets", name, envelope);
+      });
+      this.run("COMMIT");
+    } catch (error) {
+      this.run("ROLLBACK");
+      throw error;
+    }
     return this.getSettings();
   }
 
@@ -538,40 +543,6 @@ export class DesktopStore {
       CREATE INDEX IF NOT EXISTS compaction_thread_created ON compaction_checkpoints(thread_id, created_at DESC);
       CREATE TABLE IF NOT EXISTS browser_workspaces (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE INDEX IF NOT EXISTS threads_workspace_updated ON threads(workspace_id, updated_at DESC);
-      PRAGMA user_version = ${SCHEMA_VERSION};
-    `);
-  }
-  private migrateSchema() {
-    const existingTables = this.count(`SELECT COUNT(*) count FROM sqlite_schema WHERE type = 'table' AND name IN (${placeholders(APP_TABLES.length)})`, ...APP_TABLES);
-    if (existingTables === 0) return;
-    const version = Number((this.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined)?.user_version || 0);
-    if (version > SCHEMA_VERSION) {
-      this.db.close();
-      throw new Error(`This Privora build cannot open newer SQLite schema version ${version}. Update Privora before continuing.`);
-    }
-    if (version === SCHEMA_VERSION && this.hasColumn("tool_events", "call_id")) return;
-    const backupPath = `${this.dbPath}.backup-v${version}-${Date.now()}`;
-    this.db.exec(`VACUUM INTO ${sqlString(backupPath)}`);
-    console.warn(`[desktop-store] Migrating SQLite schema version ${version}; backup created at ${backupPath}.`);
-    const toolEventsExists = this.count("SELECT COUNT(*) count FROM sqlite_schema WHERE type = 'table' AND name = 'tool_events'") > 0;
-    if (!toolEventsExists) return;
-    const requiredToolColumns = [
-      ["call_id", "TEXT NOT NULL DEFAULT ''"],
-      ["name", "TEXT NOT NULL DEFAULT ''"],
-      ["status", "TEXT NOT NULL DEFAULT ''"],
-      ["created_at", "INTEGER NOT NULL DEFAULT 0"],
-      ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
-    ] as const;
-    requiredToolColumns.forEach(([column, definition]) => {
-      if (!this.hasColumn("tool_events", column)) this.db.exec(`ALTER TABLE tool_events ADD COLUMN ${column} ${definition};`);
-    });
-    this.db.exec(`
-      UPDATE tool_events SET
-        call_id = COALESCE(NULLIF(call_id, ''), NULLIF(json_extract(payload, '$.callId'), ''), id),
-        name = COALESCE(NULLIF(name, ''), NULLIF(json_extract(payload, '$.name'), ''), 'unknown'),
-        status = COALESCE(NULLIF(status, ''), NULLIF(json_extract(payload, '$.status'), ''), 'done'),
-        created_at = CASE WHEN created_at = 0 THEN COALESCE(json_extract(payload, '$.createdAt'), 0) ELSE created_at END,
-        updated_at = CASE WHEN updated_at = 0 THEN COALESCE(json_extract(payload, '$.updatedAt'), created_at, 0) ELSE updated_at END;
     `);
   }
   private ensureDefaultSettings() { if (!this.getKv("settings", "default")) this.putKv("settings", "default", defaultSettings()); }
@@ -651,9 +622,6 @@ export class DesktopStore {
     return this.allStoredToolPreviews(`SELECT payload FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(messageIds.length)}) ORDER BY created_at DESC, id DESC LIMIT ${TOOL_PAGE_LIMIT}`, threadId, ...messageIds).reverse();
   }
   private count(sql: string, ...params: unknown[]) { return Number((this.prepare(sql).get(...params as never[]) as { count: number }).count); }
-  private hasColumn(table: string, column: string) {
-    return (this.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>).some((row) => row.name === column);
-  }
   private run(sql: string, ...params: unknown[]) { return this.prepare(sql).run(...params as never[]); }
   private prepare(sql: string) { let statement = this.statements.get(sql); if (!statement) { statement = this.db.prepare(sql); this.statements.set(sql, statement); } return statement; }
   private transaction<T>(fn: () => T): T {
@@ -707,9 +675,9 @@ const safeCliproxyBaseUrl = (value: string | undefined) => {
     return defaultSettings().cliproxyBaseUrl;
   }
 };
-export const isPlaceholderThreadTitle = (thread: Pick<ThreadRecord, "title" | "titleSource">) => thread.titleSource === "placeholder" || (!thread.titleSource && LEGACY_PLACEHOLDER_THREAD_TITLES.has(thread.title.trim()));
+export const isPlaceholderThreadTitle = (thread: Pick<ThreadRecord, "title" | "titleSource">) => thread.titleSource === "placeholder";
 const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
-  const title = thread.title?.trim() || PLACEHOLDER_THREAD_TITLE; const titleSource = thread.titleSource || (LEGACY_PLACEHOLDER_THREAD_TITLES.has(title) ? "placeholder" : "user");
+  const title = thread.title?.trim() || PLACEHOLDER_THREAD_TITLE; const titleSource = thread.titleSource || "user";
   return { ...thread, title: titleSource === "placeholder" ? PLACEHOLDER_THREAD_TITLE : normalizeThreadTitle(title) || PLACEHOLDER_THREAD_TITLE, titleSource, titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(), hidden: thread.hidden === true, model: thread.model ? normalizeModelId(thread.model) : undefined, agentHarnessMode: thread.agentHarnessMode === "review_swarm" ? "review_swarm" : "standard" };
 };
 const normalizeStoredSubagent = (agent: SubagentRecord): SubagentRecord => {

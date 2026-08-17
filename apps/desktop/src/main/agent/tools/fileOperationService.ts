@@ -205,7 +205,7 @@ export const changeMetadata = (input: {
   sizeBytes: Buffer.byteLength(input.after, "utf8"),
 });
 
-export const hashMatches = (expected: unknown, actual: string | null) =>
+const hashMatches = (expected: unknown, actual: string | null) =>
   typeof expected === "string" && expected.length > 0 && actual !== expected;
 
 export class StaleFileError extends Error {

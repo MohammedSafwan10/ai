@@ -221,7 +221,7 @@ const scanManyDirectories = async (roots: string[]) => {
   return total;
 };
 
-export const scanDirectory = async (root: string): Promise<DirectoryStats> => {
+const scanDirectory = async (root: string): Promise<DirectoryStats> => {
   const resolvedRoot = path.resolve(root);
   const stats = emptyStats();
   if (!fsSync.existsSync(resolvedRoot)) return stats;

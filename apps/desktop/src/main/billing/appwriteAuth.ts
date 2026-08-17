@@ -7,12 +7,6 @@ const headersFor = (settings: Pick<SettingsRecord, "appwriteProjectId">, cookieH
   ...(cookieHeader ? { Cookie: cookieHeader } : {}),
 });
 
-const jwtHeadersFor = (settings: Pick<SettingsRecord, "appwriteProjectId">, jwt: string) => ({
-  "Content-Type": "application/json",
-  "x-appwrite-project": settings.appwriteProjectId,
-  "x-appwrite-jwt": jwt,
-});
-
 const endpointFor = (settings: Pick<SettingsRecord, "appwriteEndpoint">, path: string) =>
   `${normalizeHttpsServiceBaseUrl(settings.appwriteEndpoint, "Appwrite")}${path}`;
 
@@ -97,25 +91,6 @@ export const getAppwriteAccount = async (
   if (!cookieHeader.trim()) return { authenticated: false };
   const response = await fetch(endpointFor(settings, "/account"), {
     headers: headersFor(settings, cookieHeader),
-  });
-  if (response.status === 401) return { authenticated: false };
-  const account = await parseJsonResponse<any>(response);
-  return {
-    authenticated: true,
-    userId: account.$id,
-    email: account.email,
-    name: account.name,
-    emailVerification: Boolean(account.emailVerification),
-  };
-};
-
-export const getAppwriteAccountFromJwt = async (
-  settings: Pick<SettingsRecord, "appwriteEndpoint" | "appwriteProjectId">,
-  jwt: string,
-): Promise<PrivoraAccountRecord> => {
-  if (!jwt.trim()) return { authenticated: false };
-  const response = await fetch(endpointFor(settings, "/account"), {
-    headers: jwtHeadersFor(settings, jwt),
   });
   if (response.status === 401) return { authenticated: false };
   const account = await parseJsonResponse<any>(response);

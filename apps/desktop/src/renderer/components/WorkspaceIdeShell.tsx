@@ -23,7 +23,6 @@ interface WorkspaceIdeShellProps {
   requestedPanelMode?: WorkspacePanelMode | null;
   requestedPanelModeKey?: number;
   fileRefreshKey?: string | number;
-  onReviewClosed: () => void;
   onToggleCollapsed: () => void;
 }
 
@@ -49,7 +48,6 @@ export function WorkspaceIdeShell({
   requestedPanelMode,
   requestedPanelModeKey,
   fileRefreshKey,
-  onReviewClosed,
   onToggleCollapsed,
 }: WorkspaceIdeShellProps) {
   const [listings, setListings] = useState<Record<string, WorkspaceDirectoryListing>>({});

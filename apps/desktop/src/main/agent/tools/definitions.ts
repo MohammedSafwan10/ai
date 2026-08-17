@@ -98,7 +98,6 @@ export const desktopToolDefinitions = [
       agent_type: textProperty("Alias for agentType."),
       forkTurns: textProperty("Context fork mode: all, none, or a positive integer string. Default all."),
       fork_turns: textProperty("Alias for forkTurns."),
-      model: textProperty("Deprecated. Child agents always inherit the current parent model."),
       reasoningEffort: textProperty("Optional reasoning effort override. Omit to inherit current setting."),
     }, ["taskName", "message"]),
   },
@@ -216,7 +215,7 @@ export const desktopToolDefinitions = [
       glob: textProperty("Optional file glob such as **/*.ts."),
       beforeContext: numberProperty("Optional lines of context before each match."),
       afterContext: numberProperty("Optional lines of context after each match."),
-      includeHidden: boolProperty("If true, include hidden files. Default true for compatibility."),
+      includeHidden: boolProperty("If true, include hidden files. Default true."),
       includeGenerated: boolProperty("If true, include generated/dependency folders such as node_modules and dist. Default false."),
       excludeGlobs: stringArrayProperty("Optional additional ripgrep exclude globs."),
       maxResults: numberProperty("Optional maximum results. Default 80."),
@@ -452,7 +451,7 @@ export const desktopToolDefinitions = [
     name: "computer_capabilities",
     description: "Report Privora Computer Use backend availability, capabilities, limitations, and diagnostics. Use before broad desktop-control tasks or when a backend appears stale.",
     parameters: schema({
-      backend: textProperty("Optional backend: privora_windows_native or cua_driver. Defaults to Privora's Windows-native backend."),
+      backend: textProperty("Optional backend. The current backend is privora_windows_native."),
     }, []),
   },
   {
@@ -460,7 +459,7 @@ export const desktopToolDefinitions = [
     name: "computer_list_windows",
     description: "List visible top-level desktop windows with process, bounds, focus state, and capability labels.",
     parameters: schema({
-      backend: textProperty("Optional backend: privora_windows_native or cua_driver."),
+      backend: textProperty("Optional backend. The current backend is privora_windows_native."),
       includeAll: boolProperty("If true, include all visible top-level windows where the backend supports it."),
     }, []),
   },
@@ -469,7 +468,7 @@ export const desktopToolDefinitions = [
     name: "computer_find_apps",
     description: "Search installed Windows apps by friendly name using Start Menu shortcuts, App Paths, registry entries, PATH commands, and common app folders. Results explicitly report whether the executable/shortcut exists and how it was verified. Use before computer_open_app for friendly product names.",
     parameters: schema({
-      backend: textProperty("Optional backend: privora_windows_native or cua_driver."),
+      backend: textProperty("Optional backend. The current backend is privora_windows_native."),
       query: textProperty("Friendly app name or partial name, for example Antigravity IDE, Chrome, VS Code, or Calculator."),
       limit: numberProperty("Maximum candidates to return. Default 10, max 30."),
     }, []),

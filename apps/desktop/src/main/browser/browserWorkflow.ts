@@ -14,7 +14,6 @@ import type {
   BrowserWorkflowStep,
   BrowserWorkflowStepResult,
   BrowserWorkflowTargetStrategy,
-  DesktopToolCall,
   ToolResult,
 } from "../../shared/types";
 import { compactUrl, redactSensitiveText } from "./browserSecurity";
