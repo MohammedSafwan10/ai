@@ -50,6 +50,22 @@ describe("provider usage normalization", () => {
     });
   });
 
+  it("normalizes Gemini Interactions snake-case totals", () => {
+    expect(normalizeProviderUsage({
+      total_input_tokens: 210,
+      total_cached_tokens: 40,
+      total_output_tokens: 55,
+      total_thought_tokens: 13,
+      total_tokens: 278,
+    })).toEqual({
+      inputTokens: 210,
+      cachedInputTokens: 40,
+      outputTokens: 55,
+      reasoningOutputTokens: 13,
+      totalTokens: 278,
+    });
+  });
+
   it("ignores empty or unknown usage payloads", () => {
     expect(normalizeProviderUsage(null)).toBeNull();
     expect(normalizeProviderUsage({ nope: true })).toBeNull();

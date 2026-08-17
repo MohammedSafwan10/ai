@@ -144,6 +144,21 @@ describe("provider output budgets", () => {
     expect(onThoughtDelta).toHaveBeenCalledTimes(3);
   });
 
+  it("reconciles an authoritative reasoning summary when a delta was dropped", async () => {
+    const onThoughtDelta = vi.fn();
+    const onThoughtReplace = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([
+      "event: response.reasoning_summary_text.delta\n",
+      "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Plan then\"}\n\n",
+      "event: response.reasoning_summary_text.done\n",
+      "data: {\"type\":\"response.reasoning_summary_text.done\",\"text\":\"Plan carefully then edit.\"}\n\n",
+    ])));
+
+    await new CliproxyAdapter().stream(baseOptions({ onThoughtDelta, onThoughtReplace }));
+
+    expect(onThoughtReplace).toHaveBeenCalledWith("Plan carefully then edit.");
+  });
+
   it("does not show loose chat-style or malformed CLIProxy chunks as visible text", async () => {
     const onTextDelta = vi.fn();
     const onThoughtDelta = vi.fn();

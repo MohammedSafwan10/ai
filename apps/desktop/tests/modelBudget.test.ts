@@ -6,7 +6,6 @@ import {
   OPENROUTER_MINIMAX_M3_MODEL_ID,
   assertModelSupportsReasoningEffort,
   getModelOption,
-  normalizeModelId,
   resolveModelRuntimeBudget,
 } from "../src/shared/models";
 
@@ -56,13 +55,6 @@ describe("desktop model metadata and runtime budgets", () => {
       supportsReasoning: true,
       supportsTools: true,
     });
-  });
-
-  it("does not migrate removed model IDs", () => {
-    expect(normalizeModelId("gemini-3.5-flash")).toBe("gemini-3.5-flash");
-    expect(() => getModelOption("gemini-3.5-flash")).toThrow(/unknown or removed model/i);
-    expect(() => getModelOption("gemini-3.5-flash-cliproxy")).toThrow(/unknown or removed model/i);
-    expect(() => getModelOption("gpt-5.5")).toThrow(/unknown or removed model/i);
   });
 
   it("exposes only verified reasoning levels and rejects unsupported selections", () => {

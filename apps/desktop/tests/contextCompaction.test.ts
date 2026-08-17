@@ -144,4 +144,29 @@ describe("provider history compaction", () => {
     }]);
     expect(tokens).toBeGreaterThanOrEqual(2_048);
   });
+
+  it("does not count duplicated content and text parts twice", () => {
+    const content = "x".repeat(4_000);
+    const duplicated = estimateProviderHistoryTokens([{
+      role: "user",
+      content,
+      parts: [{ type: "text", text: content }],
+    }]);
+    const single = estimateProviderHistoryTokens([{ role: "user", content }]);
+    expect(duplicated).toBe(single);
+  });
+
+  it("includes structured function response data in context estimates", () => {
+    const tokens = estimateProviderHistoryTokens([{
+      role: "user",
+      content: "",
+      parts: [{
+        type: "function_response",
+        id: "call-1",
+        name: "read_data",
+        response: { success: true, data: { blob: "x".repeat(40_000) } },
+      }],
+    }]);
+    expect(tokens).toBeGreaterThan(9_000);
+  });
 });

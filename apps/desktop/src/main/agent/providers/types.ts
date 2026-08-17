@@ -44,6 +44,7 @@ export interface ProviderStreamOptions {
   geminiApiKey: string;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
+  onThoughtReplace?: (text: string) => void;
   onToolDraft: (draft: { id?: string; name: string; arguments: Record<string, unknown> }) => void;
   onToolCall: (call: DesktopToolCall) => void;
   onProviderContextPart?: (part: Extract<ProviderPart, { type: "server_tool_call" | "server_tool_response" }>) => void;

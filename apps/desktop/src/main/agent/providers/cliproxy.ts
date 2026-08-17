@@ -277,11 +277,18 @@ export class CliproxyAdapter implements ProviderAdapter {
           options.onThoughtDelta(thought);
         }
         if (eventType.includes("reasoning_summary_text.done") && typeof data?.text === "string") {
-          const remainder = data.text.startsWith(currentReasoningSummary)
-            ? data.text.slice(currentReasoningSummary.length)
+          const reconciled = data.text;
+          const isCompatiblePrefix = reconciled.startsWith(currentReasoningSummary);
+          if (!isCompatiblePrefix && currentReasoningSummary.trim()) {
+            options.onThoughtReplace?.(reconciled);
+            currentReasoningSummary = reconciled;
+            hasReasoningSummary = true;
+          }
+          const remainder = isCompatiblePrefix
+            ? reconciled.slice(currentReasoningSummary.length)
             : currentReasoningSummary.trim()
               ? ""
-              : data.text;
+              : reconciled;
           if (remainder) {
             currentReasoningSummary += remainder;
             hasReasoningSummary = true;

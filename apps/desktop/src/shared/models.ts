@@ -59,7 +59,7 @@ const geminiLongContext = {
   maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
 } satisfies Partial<ModelOption>;
 
-export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
+const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   {
     id: "gemini",
     label: "Gemini",
@@ -82,7 +82,7 @@ export const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   },
 ];
 
-export const modelOptions: ModelOption[] = [
+const modelOptions: ModelOption[] = [
   {
     id: GEMINI_36_FLASH_MODEL_ID,
     label: "Gemini 3.6 Flash",
@@ -241,9 +241,6 @@ export const getModelOption = (modelId: string) => {
 
 export const getProviderForModel = (modelId: string): ProviderId =>
   getModelOption(modelId).provider;
-
-export const modelSupportsReasoningEffort = (modelId: string, effort: ReasoningEffort) =>
-  getModelOption(modelId).reasoningEfforts.includes(effort);
 
 export const assertModelSupportsReasoningEffort = (modelId: string, effort: ReasoningEffort) => {
   const model = getModelOption(modelId);

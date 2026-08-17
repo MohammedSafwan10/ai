@@ -1,29 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   applyGeminiGroundingCitations,
-  geminiToolConfigForModel,
-  geminiToolsForModel,
+  geminiToolConfig,
+  geminiTools,
   normalizeGeminiError,
-  supportsGeminiGoogleSearch,
   toGeminiContents,
   toGeminiInteractionInput,
 } from "../src/main/agent/providers/gemini";
 
 describe("Gemini native Google Search", () => {
   it("adds Google Search for current Gemini models while keeping function tools", () => {
-    const tools = geminiToolsForModel("gemini-3.6-flash", "default");
+    const tools = geminiTools("default");
 
     expect(tools.some((tool) => "functionDeclarations" in tool)).toBe(true);
     expect(tools).toContainEqual({ googleSearch: {} });
   });
 
   it("enables server-side tool context and validated function calling when combining Search with desktop tools", () => {
-    expect(geminiToolConfigForModel("gemini-3.6-flash")).toEqual({
+    expect(geminiToolConfig()).toEqual({
       functionCallingConfig: { mode: "VALIDATED" },
       includeServerSideToolInvocations: true,
-    });
-    expect(geminiToolConfigForModel("gemini-1.5-flash")).toEqual({
-      functionCallingConfig: { mode: "AUTO" },
     });
   });
 
@@ -85,11 +81,6 @@ describe("Gemini native Google Search", () => {
       },
     }));
     expect(normalizeGeminiError(error)).toContain("Replace it in Settings > Providers");
-  });
-
-  it("does not add Google Search for older legacy Gemini models", () => {
-    expect(supportsGeminiGoogleSearch("gemini-1.5-flash")).toBe(false);
-    expect(geminiToolsForModel("gemini-1.5-flash", "default")).not.toContainEqual({ googleSearch: {} });
   });
 
   it("inserts grounding citations at supported text offsets", () => {

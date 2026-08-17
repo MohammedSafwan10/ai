@@ -101,7 +101,7 @@ export const messagesToProviderHistory = (
     };
   });
 
-export const expandInlineSteers = (messages: ChatMessageRecord[]): ChatMessageRecord[] => {
+const expandInlineSteers = (messages: ChatMessageRecord[]): ChatMessageRecord[] => {
   const messageIds = new Set(messages.map((message) => message.id));
   const steersByTurn = new Map<string, ChatMessageRecord[]>();
   messages.forEach((message) => {
@@ -217,11 +217,16 @@ const buildGeneratedImageRuntimeHint = (tools: ToolEventRecord[]) => {
 export const compactToolResultForModel = <T extends { output?: string; error?: string }>(
   result: T,
   budget?: Pick<ModelRuntimeBudget, "toolResultCharLimit" | "toolErrorCharLimit">,
-): T => ({
-  ...result,
-  output: compactTextForModel(result.output, budget?.toolResultCharLimit ?? 20_000),
-  error: compactTextForModel(result.error, budget?.toolErrorCharLimit ?? 6_000),
-});
+): T => {
+  const data = (result as T & { data?: unknown }).data;
+  const dataBudget = budget?.toolResultCharLimit ?? 20_000;
+  return {
+    ...result,
+    output: compactTextForModel(result.output, dataBudget),
+    error: compactTextForModel(result.error, budget?.toolErrorCharLimit ?? 6_000),
+    ...(data === undefined ? {} : { data: compactStructuredValue(data, { remaining: dataBudget }) }),
+  } as T;
+};
 
 export const compactProviderHistory = (history: ProviderMessage[], maxTokens = MAX_PROVIDER_HISTORY_TOKENS): ProviderMessage[] => {
   if (estimatedTokens(history) <= maxTokens || history.length <= MIN_RECENT_PROVIDER_MESSAGES) {
@@ -468,19 +473,50 @@ const textProviderMessage = (content: string): ProviderMessage => ({
 });
 
 const estimateMessageTokens = (message: ProviderMessage) => {
+  const partTexts = (message.parts || []).flatMap((part) => part.type === "text" ? [part.text] : []);
+  const content = partTexts.includes(message.content) ? "" : message.content;
   const text = [
-    message.content,
+    content,
     ...(message.parts || []).map((part) => {
       if (part.type === "text") return part.text;
       if (part.type === "function_call") return `${part.name} ${JSON.stringify(part.arguments)}`;
-      if (part.type === "function_response") return `${part.name} ${part.response.output || part.response.error || ""}`;
+      if (part.type === "function_response") return `${part.name} ${JSON.stringify(part.response)}`;
       if (part.type === "image") return `${"x".repeat(ESTIMATED_IMAGE_TOKENS * 4)}[image ${part.name} ${part.mimeType}]`;
       if (part.type === "server_tool_call") return `${part.toolType || "server_tool"} ${JSON.stringify(part.arguments || {})}`;
       if (part.type === "server_tool_response") return `${part.toolType || "server_tool"} ${JSON.stringify(part.response || {})}`;
       return "";
     }),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   return Math.ceil(text.length / 4) + 12;
+};
+
+const compactStructuredValue = (value: unknown, budget: { remaining: number }, depth = 0): unknown => {
+  if (budget.remaining <= 0) return "[truncated]";
+  if (value === null || typeof value === "number" || typeof value === "boolean") {
+    budget.remaining -= String(value).length;
+    return value;
+  }
+  if (typeof value === "string") {
+    const allowance = Math.max(0, Math.min(4_000, budget.remaining));
+    budget.remaining -= Math.min(value.length, allowance);
+    return value.length <= allowance ? value : `${value.slice(0, Math.max(0, allowance - 15))}... [truncated]`;
+  }
+  if (depth >= 8) return "[max depth]";
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 100).map((item) => compactStructuredValue(item, budget, depth + 1));
+    if (value.length > items.length) items.push(`[${value.length - items.length} more items]`);
+    return items;
+  }
+  if (typeof value === "object") {
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+      budget.remaining -= key.length;
+      output[key] = compactStructuredValue(item, budget, depth + 1);
+      if (budget.remaining <= 0) break;
+    }
+    return output;
+  }
+  return String(value);
 };
 
 const summaryMessage = (messages: ProviderMessage[]): ProviderMessage => {

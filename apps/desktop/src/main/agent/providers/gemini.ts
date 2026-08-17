@@ -69,11 +69,7 @@ export const toGeminiContents = (messages: ProviderMessage[]) =>
     };
   });
 
-export const supportsGeminiGoogleSearch = (model: string) =>
-  /^gemini-(?:2|3)(?:\.|-)/.test(model);
-
-export const geminiToolsForModel = (
-  model: string,
+export const geminiTools = (
   collaborationMode: ProviderStreamOptions["collaborationMode"],
   disableTools = false,
 ) => {
@@ -81,19 +77,14 @@ export const geminiToolsForModel = (
   const tools: Array<Record<string, unknown>> = [
     { functionDeclarations: geminiDesktopFunctionDeclarations(collaborationMode) as any },
   ];
-  if (supportsGeminiGoogleSearch(model)) {
-    tools.push({ googleSearch: {} });
-  }
+  tools.push({ googleSearch: {} });
   return tools;
 };
 
-export const geminiToolConfigForModel = (model: string): ToolConfig => {
-  const combinesBuiltInAndFunctionTools = supportsGeminiGoogleSearch(model);
-  return {
-    functionCallingConfig: { mode: combinesBuiltInAndFunctionTools ? "VALIDATED" : "AUTO" },
-    ...(combinesBuiltInAndFunctionTools ? { includeServerSideToolInvocations: true } : {}),
-  } as ToolConfig;
-};
+export const geminiToolConfig = (): ToolConfig => ({
+  functionCallingConfig: { mode: "VALIDATED" },
+  includeServerSideToolInvocations: true,
+} as ToolConfig);
 
 export const toGeminiInteractionInput = (messages: ProviderMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
@@ -133,7 +124,6 @@ export const toGeminiInteractionInput = (messages: ProviderMessage[]) => {
 };
 
 const geminiInteractionTools = (
-  model: string,
   collaborationMode: ProviderStreamOptions["collaborationMode"],
 ) => [
   ...geminiDesktopFunctionDeclarations(collaborationMode).map((tool) => ({
@@ -142,7 +132,7 @@ const geminiInteractionTools = (
     description: tool.description,
     parameters: tool.parametersJsonSchema,
   })),
-  ...(supportsGeminiGoogleSearch(model) ? [{ type: "google_search" }] : []),
+  { type: "google_search" },
 ];
 
 const parseNestedProviderMessage = (value: unknown): string => {
@@ -236,9 +226,9 @@ export class GeminiAdapter implements ProviderAdapter {
         thinking_level: geminiThinkingLevel(options.reasoning) as any,
         thinking_summaries: "auto",
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
-        ...(!options.disableTools ? { tool_choice: supportsGeminiGoogleSearch(options.model) ? "validated" : "auto" } : {}),
+        ...(!options.disableTools ? { tool_choice: "validated" } : {}),
       },
-      ...(!options.disableTools ? { tools: geminiInteractionTools(options.model, options.collaborationMode) as any } : {}),
+      ...(!options.disableTools ? { tools: geminiInteractionTools(options.collaborationMode) as any } : {}),
     } as any, { abortSignal: options.signal } as any);
 
     const activeSteps = new Map<number, {
@@ -252,17 +242,28 @@ export class GeminiAdapter implements ProviderAdapter {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
       options.onStreamProgress?.();
       const event = rawEvent as Record<string, any>;
+      if (event.event_type === "error") {
+        throw new Error(String(event.error?.message || event.message || "Gemini stream failed."));
+      }
+      if (event.event_type === "interaction.status_update") {
+        const status = String(event.status || event.interaction?.status || event.status_update?.status || "").toLowerCase();
+        if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(status)) {
+          throw new Error(String(event.error?.message || event.interaction?.error?.message || `Gemini stream ended with status ${status}.`));
+        }
+      }
       const usage = normalizeProviderUsage(event.metadata?.total_usage || event.interaction?.usage || event.usage);
       if (usage) options.onUsage?.(usage);
       if (event.event_type === "step.start") {
         const step = event.step || {};
+        const initialText = geminiStepStartText(step);
+        if (initialText && ["text", "model_output", "output_text"].includes(String(step.type))) options.onTextDelta(initialText);
+        if (initialText && ["thought", "thought_summary"].includes(String(step.type))) options.onThoughtDelta(initialText);
         if (step.type === "function_call" && step.name) {
+          const initialArguments = initialGeminiFunctionArguments(step.arguments);
           activeSteps.set(event.index, {
             id: step.id || createToolCallId(),
             name: step.name,
-            argumentsText: typeof step.arguments === "string"
-              ? step.arguments
-              : step.arguments ? JSON.stringify(step.arguments) : "",
+            argumentsText: initialArguments,
           });
         } else if (step.type === "google_search_call") {
           const queries = Array.isArray(step.arguments?.queries) ? step.arguments.queries : [];
@@ -329,3 +330,16 @@ export class GeminiAdapter implements ProviderAdapter {
     }
   }
 }
+
+export const geminiStepStartText = (step: Record<string, any>) =>
+  typeof step.text === "string"
+    ? step.text
+    : typeof step.content?.text === "string"
+      ? step.content.text
+      : "";
+
+export const initialGeminiFunctionArguments = (value: unknown) => {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Object.keys(value as Record<string, unknown>).length === 0) return "";
+  return JSON.stringify(value);
+};
