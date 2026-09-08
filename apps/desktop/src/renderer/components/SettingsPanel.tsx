@@ -218,6 +218,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
   const [billingRefreshing, setBillingRefreshing] = useState(false);
   const [billingMessage, setBillingMessage] = useState("");
@@ -438,6 +439,36 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                       )}
                     </div>
                   </label>
+                  <label>
+                    <span className="settings-secret-label">
+                      DeepSeek API key
+                      <small>{settings.deepseekApiKeyStored ? "Saved securely" : "Not saved"}</small>
+                    </span>
+                    <div className="settings-secret-row">
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={settings.deepseekApiKeyStored ? "New key replaces saved key" : "Paste DeepSeek key (sk-...)"}
+                        value={deepseekApiKey}
+                        onChange={(event) => setDeepseekApiKey(event.target.value)}
+                      />
+                      {settings.deepseekApiKeyStored && (
+                        <button
+                          type="button"
+                          className="secret-clear-button"
+                          title="Clear saved DeepSeek key"
+                          onClick={() => {
+                            setDeepseekApiKey("");
+                            void saveProviderSettings({ deepseekApiKey: "" });
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                    <small>Direct api.deepseek.com key for V4.1 Flash Temp (expires 09-10) + Vision Exp. Same pricing as v4-flash.</small>
+                  </label>
                   <button
                     className="settings-primary-button"
                     disabled={saving}
@@ -446,10 +477,12 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                         cliproxyBaseUrl,
                         ...(geminiApiKey ? { geminiApiKey } : {}),
                         ...(openRouterApiKey ? { openRouterApiKey } : {}),
+                        ...(deepseekApiKey ? { deepseekApiKey } : {}),
                       });
                       if (!saved) return;
                       setGeminiApiKey("");
                       setOpenRouterApiKey("");
+                      setDeepseekApiKey("");
                     }}
                   >
                     {saving ? "Saving..." : status === "saved" ? (

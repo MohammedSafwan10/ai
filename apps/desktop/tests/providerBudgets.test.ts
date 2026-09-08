@@ -36,6 +36,7 @@ const baseOptions = (overrides: Partial<ProviderStreamOptions> = {}): ProviderSt
   privoraUserJwt: "",
   openRouterApiKey: "openrouter-key",
   geminiApiKey: "gemini-key",
+  deepseekApiKey: "deepseek-key",
   onTextDelta: vi.fn(),
   onThoughtDelta: vi.fn(),
   onToolDraft: vi.fn(),

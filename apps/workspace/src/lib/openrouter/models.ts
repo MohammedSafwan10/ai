@@ -69,6 +69,31 @@ export const openRouterModelCapabilities: OpenRouterModelCapabilities[] = [
     ],
     notes: "Text-only. Strongest advertised capability mix here: reasoning, tools, structured output, and long output.",
   },
+  {
+    id: "stealth/ox-alpha",
+    label: "Ox Alpha",
+    description: "Free OpenRouter 1M context reasoning model for coding, sustained agentic work, and multimodal tasks.",
+    contextLength: 1048576,
+    maxCompletionTokens: 131072,
+    inputModalities: ["text", "image", "video"],
+    supportsReasoning: true,
+    reasoningEffort: "high",
+    supportsTools: true,
+    supportsToolChoice: true,
+    supportsStructuredOutputs: true,
+    supportedParameters: [
+      "include_reasoning",
+      "max_tokens",
+      "reasoning",
+      "response_format",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p",
+    ],
+    notes: "Multimodal (text/image/video) free stealth model with 1M context, 131k output, tools, and reasoning.",
+  },
 ];
 
 export const getOpenRouterModelCapabilities = (modelId: string) =>

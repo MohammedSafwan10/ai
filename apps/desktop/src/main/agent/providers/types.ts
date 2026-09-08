@@ -42,6 +42,7 @@ export interface ProviderStreamOptions {
   privoraUserJwt: string;
   openRouterApiKey: string;
   geminiApiKey: string;
+  deepseekApiKey: string;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
   onThoughtReplace?: (text: string) => void;

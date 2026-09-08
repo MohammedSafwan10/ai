@@ -7,7 +7,7 @@ import { redactSecrets } from "../../security/redact";
 import { resolveRipgrepExecutablePath } from "../../resources";
 import { TerminalSessionManager, type TerminalManagerEventListener } from "../../terminal/sessionManager";
 import { DiagnosticsEngine } from "../diagnostics";
-import { FileOperationService, hashBuffer, isStaleFileError, recordFileObservation, recordFileObservationData } from "./fileOperationService";
+import { clearFileObservation, FileOperationService, hashBuffer, isPathNotFound, isStaleFileError, recordFileObservation, recordFileObservationData } from "./fileOperationService";
 import { FileMutationCoordinator } from "./mutationCoordinator";
 import { BrowserToolExecutor } from "../../browser/browserTools";
 import type { BrowserSessionManager } from "../../browser/BrowserSessionManager";
@@ -223,17 +223,24 @@ export class DesktopToolExecutor {
   }
 
   private async readFile(call: DesktopToolCall, context: ToolExecutionContext) {
-    const target = this.files.resolveExisting(context.workspaceRoot, String(call.arguments.path || ""));
-    context.onCommandOutput(call.id, `Reading ${target.relativePath}\n`);
-    const result = await this.files.readText(context.workspaceRoot, target.relativePath, {
-      maxBytes: Number(call.arguments.maxBytes) || undefined,
-      startLine: Number(call.arguments.startLine || call.arguments.start_line) || undefined,
-      endLine: Number(call.arguments.endLine || call.arguments.end_line) || undefined,
-      withLineNumbers: call.arguments.withLineNumbers === true || call.arguments.with_line_numbers === true,
-      encoding: call.arguments.encoding === "base64" ? "base64" : "utf8",
-    });
-    recordFileObservation(context.workspaceRoot, result.snapshot);
-    return { success: true, output: result.output, data: result.data };
+    try {
+      const target = this.files.resolveExisting(context.workspaceRoot, String(call.arguments.path || ""));
+      context.onCommandOutput(call.id, `Reading ${target.relativePath}\n`);
+      const result = await this.files.readText(context.workspaceRoot, target.relativePath, {
+        maxBytes: Number(call.arguments.maxBytes) || undefined,
+        startLine: Number(call.arguments.startLine || call.arguments.start_line) || undefined,
+        endLine: Number(call.arguments.endLine || call.arguments.end_line) || undefined,
+        withLineNumbers: call.arguments.withLineNumbers === true || call.arguments.with_line_numbers === true,
+        encoding: call.arguments.encoding === "base64" ? "base64" : "utf8",
+      });
+      recordFileObservation(context.workspaceRoot, result.snapshot);
+      return { success: true, output: result.output, data: result.data };
+    } catch (error) {
+      if (isPathNotFound(error)) {
+        clearFileObservation(context.workspaceRoot, String(call.arguments.path || ""));
+      }
+      throw error;
+    }
   }
 
   private requireNotes() {

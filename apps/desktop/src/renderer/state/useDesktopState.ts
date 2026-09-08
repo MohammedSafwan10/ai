@@ -30,6 +30,7 @@ const emptySettings: SettingsRecord = {
   privoraGatewayFunctionId: "model-gateway",
   openRouterApiKeyStored: false,
   geminiApiKeyStored: false,
+  deepseekApiKeyStored: false,
   privoraAccountConnected: false,
 };
 

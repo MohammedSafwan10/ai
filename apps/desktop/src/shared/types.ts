@@ -869,6 +869,7 @@ export interface SettingsRecord {
   privoraGatewayFunctionId: string;
   openRouterApiKeyStored: boolean;
   geminiApiKeyStored: boolean;
+  deepseekApiKeyStored: boolean;
   privoraAccountConnected: boolean;
   privoraAccountEmail?: string;
   privoraAccountName?: string;
@@ -1668,6 +1669,7 @@ export interface SaveSettingsInput {
   cliproxyBaseUrl?: string;
   openRouterApiKey?: string;
   geminiApiKey?: string;
+  deepseekApiKey?: string;
 }
 
 export interface SaveThreadSettingsInput {

@@ -30,6 +30,7 @@ import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
 type SecretName =
   | "openrouter_api_key"
   | "gemini_api_key"
+  | "deepseek_api_key"
   | "privora_session_cookie"
   | "privora_user_jwt"
   | "privora_pending_auth"
@@ -69,7 +70,7 @@ const TOOL_PAGE_LIMIT = 2_000;
 const PLACEHOLDER_THREAD_TITLE = "New chat";
 const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(app?.isPackaged);
 
-const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "privoraAccountConnected"> => ({
+const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "privoraAccountConnected"> => ({
   id: "default",
   model: GEMINI_37_FLASH_MODEL_ID,
   reasoningEffort: "medium",
@@ -147,13 +148,14 @@ export class DesktopStore {
       model: normalizeModelId(stored.model),
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
+      deepseekApiKeyStored: Boolean(this.getSecret("deepseek_api_key")),
       privoraAccountConnected: Boolean(this.getSecret("privora_session_cookie") || this.getPrivoraUserJwt()),
       privoraAccountEmail: profile.email,
       privoraAccountName: profile.name,
     };
   }
 
-  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string }): SettingsRecord {
+  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string }): SettingsRecord {
     const current = this.getSettings();
     const next = {
       ...defaultSettings(),
@@ -184,6 +186,11 @@ export class DesktopStore {
       name: "gemini_api_key",
       value: input.geminiApiKey,
       envelope: input.geminiApiKey.trim() ? this.encryptSecret(input.geminiApiKey.trim()) : undefined,
+    });
+    if (input.deepseekApiKey !== undefined) pendingSecrets.push({
+      name: "deepseek_api_key",
+      value: input.deepseekApiKey,
+      envelope: input.deepseekApiKey.trim() ? this.encryptSecret(input.deepseekApiKey.trim()) : undefined,
     });
     this.run("BEGIN IMMEDIATE");
     try {

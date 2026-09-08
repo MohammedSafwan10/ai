@@ -252,6 +252,10 @@ export const recordFileObservationData = (
   });
 };
 
+export const clearFileObservation = (workspaceRoot: string, relativePath: string) => {
+  observedFiles.delete(observationKey(workspaceRoot, normalizePath(relativePath)));
+};
+
 export const assertFreshFileState = (
   workspaceRoot: string,
   relativePath: string,
@@ -269,7 +273,8 @@ export const assertFreshFileState = (
     );
   }
 
-  const observed = observedFiles.get(observationKey(workspaceRoot, snapshot?.target.relativePath || normalizedPath));
+  const key = observationKey(workspaceRoot, snapshot?.target.relativePath || normalizedPath);
+  const observed = observedFiles.get(key);
   if (!snapshot) {
     if (observed) {
       throw new StaleFileError(
@@ -404,7 +409,7 @@ const normalizePath = (value: string) => value.replace(/\\/g, "/");
 const observationKey = (workspaceRoot: string, relativePath: string) =>
   `${workspaceRoot}::${normalizePath(relativePath)}`;
 
-const isPathNotFound = (error: unknown) =>
+export const isPathNotFound = (error: unknown) =>
   typeof error === "object" &&
   error !== null &&
   "code" in error &&

@@ -1047,6 +1047,7 @@ const saveSettingsInputSchema = z.object({
   cliproxyBaseUrl: z.string().max(500).optional(),
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
+  deepseekApiKey: z.string().max(10_000).optional(),
 });
 
 const saveThreadSettingsInputSchema = z.object({

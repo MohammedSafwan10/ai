@@ -407,6 +407,17 @@ describe("file tools v2", () => {
     expect(result.success).toBe(false);
     expect(result.data).toMatchObject({ code: "STALE_FILE", path: "app.ts", actualHash: null });
     expect(fs.existsSync(filePath)).toBe(false);
+
+    const readDeleted = await execute({ id: "read-deleted", name: "desktop_read_file", arguments: { path: "app.ts" } });
+    expect(readDeleted.success).toBe(false);
+
+    const writeRetry = await execute({
+      id: "write-retry",
+      name: "desktop_write_file",
+      arguments: { path: "app.ts", content: "const value = 2;\n" },
+    });
+    expect(writeRetry.success).toBe(true);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("const value = 2;\n");
   });
 
   it("rejects patch updates with stale expected hashes", async () => {

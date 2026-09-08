@@ -1,4 +1,4 @@
-export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud";
+export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud" | "deepseek";
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -36,8 +36,11 @@ export interface ModelProviderGroup {
 export const GEMINI_37_FLASH_MODEL_ID = "gemini-3.7-flash";
 export const OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID = "deepseek/deepseek-v4-flash";
 export const OPENROUTER_MINIMAX_M3_MODEL_ID = "minimax/minimax-m3";
+export const OPENROUTER_OX_ALPHA_MODEL_ID = "stealth/ox-alpha";
 export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
 export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
+export const DEEPSEEK_V41_FLASH_EXP_MODEL_ID = "deepseek-v4.1-flash-expires-on-0910";
+export const DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID = "deepseek-v4-flash-vision-exp";
 export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
 export const GPT_56_SOL_MODEL_ID = "gpt-5.6-sol";
 export const GPT_56_TERRA_MODEL_ID = "gpt-5.6-terra";
@@ -66,6 +69,11 @@ const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
     description: "Native Google models with coding and function calling.",
   },
   {
+    id: "deepseek",
+    label: "DeepSeek BYOK",
+    description: "Direct DeepSeek API (api.deepseek.com) using your saved key.",
+  },
+  {
     id: "cliproxy",
     label: "GPT / CLIProxy",
     description: "Local OpenAI-compatible routing through CLIProxy.",
@@ -91,6 +99,34 @@ const modelOptions: ModelOption[] = [
     ...geminiLongContext,
     defaultOutputTokens: 32_000,
     description: "Latest stable Gemini Flash model for agentic, coding, and multimodal tasks.",
+  },
+  {
+    id: DEEPSEEK_V41_FLASH_EXP_MODEL_ID,
+    label: "DeepSeek V4.1 Flash (Temp, expires 09-10)",
+    provider: "deepseek",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 393_216,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    description: "Short-lived internal test, new arch, faster, natively multimodal. Direct DeepSeek BYOK. Expires Sept 10, 2026. Pricing same as v4-flash.",
+  },
+  {
+    id: DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID,
+    label: "DeepSeek V4 Flash Vision Exp",
+    provider: "deepseek",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 393_216,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    description: "Experimental multimodal vision version. Direct DeepSeek BYOK, image input billed as input tokens.",
   },
   {
     id: GPT_56_SOL_MODEL_ID,
@@ -176,6 +212,20 @@ const modelOptions: ModelOption[] = [
     maxOutputTokens: 512_000,
     defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
     description: "Multimodal long-context MiniMax model through your OpenRouter key.",
+  },
+  {
+    id: OPENROUTER_OX_ALPHA_MODEL_ID,
+    label: "Ox Alpha",
+    provider: "openrouter",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "high", "max"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    description: "Free OpenRouter 1M context reasoning model for coding, agentic workflows, and multimodal tasks.",
   },
   {
     id: PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID,

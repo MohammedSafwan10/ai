@@ -20,6 +20,7 @@ const baseSnapshot = () => ({
     privoraGatewayFunctionId: "model-gateway",
     openRouterApiKeyStored: false,
     geminiApiKeyStored: false,
+    deepseekApiKeyStored: false,
     privoraAccountConnected: false,
   },
   workspaces: [],

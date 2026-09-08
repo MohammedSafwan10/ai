@@ -1001,6 +1001,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             privoraUserJwt: this.store.getPrivoraUserJwt(),
             openRouterApiKey: this.store.getSecret("openrouter_api_key"),
             geminiApiKey: this.store.getSecret("gemini_api_key"),
+            deepseekApiKey: this.store.getSecret("deepseek_api_key"),
             maxOutputTokens: runtimeBudget.outputTokens,
             onStreamProgress: () => {
               providerProducedProgress = true;
@@ -1789,6 +1790,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       privoraUserJwt: this.store.getPrivoraUserJwt(),
       openRouterApiKey: this.store.getSecret("openrouter_api_key"),
       geminiApiKey: this.store.getSecret("gemini_api_key"),
+      deepseekApiKey: this.store.getSecret("deepseek_api_key"),
       maxOutputTokens: 4096,
       onTextDelta: (delta) => { summary += delta; },
       onThoughtDelta: () => undefined,
