@@ -7,7 +7,10 @@ export const OPENCODE_GO_MESSAGES_URL = `${OPENCODE_GO_BASE_URL}/v1/messages`;
 export const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/v1/models`;
 export const OPENCODE_GO_ID_PREFIX = "opencode-go/";
 export const OPENCODE_GO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-export const OPENCODE_GO_DEFAULT_OUTPUT_TOKENS = 4_096;
+// Reasoning + answer share one output budget, and heavy thinkers burn several
+// thousand tokens on thought alone. 16K keeps answers intact; unused budget
+// is not billed and Go caps are dollar-based, so this costs nothing extra.
+export const OPENCODE_GO_DEFAULT_OUTPUT_TOKENS = 16_384;
 export const OPENCODE_GO_USER_AGENT = "Privora-Desktop";
 
 export type OpenCodeGoRoute = "chat" | "responses" | "messages";
@@ -199,8 +202,17 @@ export const synthesizeGoModelOption = (modelId: string): ModelOption | null => 
   };
 };
 
-export const normalizeGoError = (value: string, status?: number) => {
-  const trimmed = value.trim();
+// Raised when the gateway stops a stream at the output-token limit (chat
+// finish_reason "length", Responses "incomplete", Messages "max_tokens").
+// Reasoning shares the budget with the answer, so heavy thinkers can exhaust
+// it on thought alone. The coordinator checkpoints streamed thought/text, so
+// Continue resumes from here instead of starting over.
+export const truncatedOutputError = (maxOutputTokens?: number, hadThought = false) =>
+  new Error(
+    `Go stopped this response at the ${maxOutputTokens ? `${maxOutputTokens.toLocaleString()}-token ` : ""}output limit${hadThought ? " (reasoning used most of it)" : ""}. The thought was kept — press Continue to resume, or lower reasoning effort.`,
+  );
+
+export const normalizeGoError = (value: string, status?: number) => {  const trimmed = value.trim();
   let message = trimmed;
   try {
     const parsed = JSON.parse(trimmed);

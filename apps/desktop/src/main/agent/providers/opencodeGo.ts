@@ -24,6 +24,7 @@ import {
   goSessionId,
   normalizeGoError,
   stripGoPrefix,
+  truncatedOutputError,
 } from "../../../shared/opencodeGo";
 import { getModelOption, type ReasoningEffort } from "../../../shared/models";
 
@@ -168,6 +169,8 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
     const emitted = new Set<string>();
+    let thoughtChars = 0;
+    let truncated = false;
     const flush = () => {
       for (const value of buffers.values()) {
         const key = value.id || `${value.name}:${value.argumentsText}`;
@@ -190,7 +193,10 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       if (typeof delta.content === "string") options.onTextDelta(delta.content);
       if (typeof choice.message?.content === "string") options.onTextDelta(choice.message.content);
       const thought = delta.reasoning || delta.reasoning_content || delta.thought;
-      if (typeof thought === "string") options.onThoughtDelta(thought);
+      if (typeof thought === "string") {
+        thoughtChars += thought.length;
+        options.onThoughtDelta(thought);
+      }
 
       const toolCalls = Array.isArray(delta.tool_calls)
         ? delta.tool_calls
@@ -199,10 +205,12 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           : [];
       emitChatToolCalls(options, buffers, emitted, toolCalls);
 
+      if (choice.finish_reason === "length") truncated = true;
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
     }, options.onStreamProgress);
 
     if (buffers.size > 0) flush();
+    if (truncated) throw truncatedOutputError(options.maxOutputTokens, thoughtChars > 0);
   }
 
   private async streamResponses(options: ProviderStreamOptions): Promise<void> {
@@ -237,6 +245,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
     const emitted = new Set<string>();
     let currentReasoningSummary = "";
     let hasReasoningSummary = false;
+    let incomplete = false;
     const emit = (name: string, args: string, id?: string) => {
       const key = id || `${name}:${args}`;
       if (emitted.has(key)) return;
@@ -261,6 +270,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       }
       const usage = normalizeProviderUsage(data?.usage || data?.response?.usage);
       if (usage) options.onUsage?.(usage);
+      if (data?.type === "response.completed" && data?.response?.status === "incomplete") incomplete = true;
       const webSearch = webSearchEventFromResponse(event, data);
       if (webSearch) options.onWebSearch?.(webSearch);
       const key = keyFor(data);
@@ -331,6 +341,8 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         }
       }
     }, options.onStreamProgress);
+
+    if (incomplete) throw truncatedOutputError(options.maxOutputTokens, hasReasoningSummary);
   }
 
   private async streamMessages(options: ProviderStreamOptions): Promise<void> {
@@ -339,6 +351,9 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       method: "POST",
       headers: {
         ...authHeaders(options.opencodeGoApiKey, options.threadId),
+        // The Anthropic-protocol endpoint authenticates like Anthropic:
+        // x-api-key, not (only) Authorization: Bearer. Send both.
+        "x-api-key": options.opencodeGoApiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -367,6 +382,8 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean }>();
     let inputTokens = 0;
+    let thoughtChars = 0;
+    let hitMaxTokens = false;
 
     const flushBlock = (index: number) => {
       const block = blocks.get(index);
@@ -408,6 +425,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         if (delta.type === "text_delta" && typeof delta.text === "string") {
           options.onTextDelta(delta.text);
         } else if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+          thoughtChars += delta.thinking.length;
           options.onThoughtDelta(delta.thinking);
         } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
           block.json += delta.partial_json;
@@ -423,6 +441,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         return;
       }
       if (data?.type === "message_delta" && data?.usage) {
+        if (data?.delta?.stop_reason === "max_tokens") hitMaxTokens = true;
         const usage = normalizeProviderUsage({
           input_tokens: inputTokens,
           output_tokens: data.usage.output_tokens,
@@ -438,6 +457,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     for (const index of blocks.keys()) flushBlock(index);
     blocks.clear();
+    if (hitMaxTokens) throw truncatedOutputError(options.maxOutputTokens || model.maxOutputTokens, thoughtChars > 0);
   }
 };
 

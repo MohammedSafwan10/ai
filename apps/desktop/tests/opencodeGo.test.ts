@@ -203,8 +203,7 @@ describe("opencode go model discovery", () => {
     }
   });
 
-  it("never sends temperature on any go route", async () => {
-    const fetchMock = vi.fn(async () => sseResponseWith([]));
+  it("never sends temperature on any go route", async () => {    const fetchMock = vi.fn(async () => sseResponseWith([]));
     vi.stubGlobal("fetch", fetchMock);
     try {
       await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/deepseek-v4-flash" }));
@@ -266,6 +265,7 @@ describe("opencode go model discovery", () => {
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       expect(url).toBe("https://opencode.ai/zen/go/v1/messages");
       expect((init.headers as Record<string, string>)["anthropic-version"]).toBe("2023-06-01");
+      expect((init.headers as Record<string, string>)["x-api-key"]).toBe("go-key");
       expect((init.headers as Record<string, string>)["x-opencode-session"]).toMatch(/^[a-z0-9-]+$/);
       const body = JSON.parse(String(init.body));
       expect(body.model).toBe("minimax-m3");
@@ -277,6 +277,48 @@ describe("opencode go model discovery", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("fails loudly when thought alone exhausts the chat output budget", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([
+      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"long thought\"},\"finish_reason\":null}]}\n\n",
+      "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+    ])));
+    try {
+      const onThoughtDelta = vi.fn();
+      await expect(new OpenCodeGoAdapter().stream(goOptions({
+        model: "opencode-go/kimi-k3",
+        maxOutputTokens: 4_096,
+        onThoughtDelta,
+      }))).rejects.toThrow(/4,096-token output limit.*Continue/);
+      expect(onThoughtDelta).toHaveBeenCalledWith("long thought");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("fails loudly on messages max_tokens stops", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([
+      "event: message_start\n",
+      "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n",
+      "event: message_delta\n",
+      "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":9}}\n\n",
+    ])));
+    try {
+      await expect(new OpenCodeGoAdapter().stream(goOptions({
+        model: "opencode-go/minimax-m3",
+        maxOutputTokens: 4_096,
+      }))).rejects.toThrow(/output limit/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("gives go thinkers room with a 16k default output budget", async () => {
+    const { resolveModelRuntimeBudget } = await import("../src/shared/models");
+    expect(getModelOption("opencode-go/kimi-k3").defaultOutputTokens).toBe(16_384);
+    expect(resolveModelRuntimeBudget("opencode-go/kimi-k3", "normal").outputTokens).toBe(16_384);
+    expect(resolveModelRuntimeBudget("opencode-go/gpt-5.6-luna", "normal").outputTokens).toBe(16_384);
   });
 });
 
