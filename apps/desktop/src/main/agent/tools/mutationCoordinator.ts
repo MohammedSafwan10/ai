@@ -688,9 +688,7 @@ const applyEditOperation = (content: string, operation: EditOperation) => {
 };
 
 const replaceText = (content: string, match: string, replacement: string, occurrence: "first" | "all", caseSensitive: boolean) => {
-  const pattern = escapedPattern(match, caseSensitive, occurrence);
-  if (!pattern.test(content)) throw new Error(`Text match not found: ${preview(match)}.`);
-  pattern.lastIndex = 0;
+  const { pattern } = matchOrFuzzy(content, match, occurrence, caseSensitive);
   return content.replace(pattern, replacement);
 };
 
@@ -702,10 +700,77 @@ const insertText = (
   occurrence: "first" | "all",
   caseSensitive: boolean,
 ) => {
-  const pattern = escapedPattern(match, caseSensitive, occurrence);
-  if (!pattern.test(content)) throw new Error(`Text match not found: ${preview(match)}.`);
-  pattern.lastIndex = 0;
+  const { pattern } = matchOrFuzzy(content, match, occurrence, caseSensitive);
   return content.replace(pattern, (found) => position === "before" ? `${insertion}${found}` : `${found}${insertion}`);
+};
+
+const matchOrFuzzy = (content: string, match: string, occurrence: "first" | "all", caseSensitive: boolean) => {
+  const exact = escapedPattern(match, caseSensitive, occurrence);
+  if (exact.test(content)) {
+    exact.lastIndex = 0;
+    return { pattern: exact };
+  }
+  // Whitespace-insensitive fallback: the #1 cause of "Text match not found"
+  // loops is the model reproducing spacing it cannot see exactly. Auto-apply
+  // only when unambiguous for single replacements.
+  const fuzzy = fuzzyPattern(match, caseSensitive, occurrence);
+  if (fuzzy) {
+    const hits = countMatches(content, fuzzy);
+    if (hits === 1 || (occurrence === "all" && hits > 1)) {
+      fuzzy.lastIndex = 0;
+      return { pattern: fuzzy };
+    }
+  }
+  throw noMatchError(content, match);
+};
+
+// Same literal match, but every whitespace run in the model's match string
+// tolerates any spacing in the file (the #1 cause of "Text match not found"
+// loops: the model reproduces spacing it cannot see exactly).
+const fuzzyPattern = (match: string, caseSensitive: boolean, occurrence: "first" | "all") => {
+  if (!/\s/.test(match)) return null;
+  const fuzzySource = escapeRegExp(match).replace(/\s+/g, "\\s+");
+  if (fuzzySource === escapeRegExp(match)) return null;
+  return new RegExp(fuzzySource, `${caseSensitive ? "" : "i"}${occurrence === "all" ? "g" : ""}`);
+};
+
+const countMatches = (content: string, pattern: RegExp) => {
+  pattern.lastIndex = 0;
+  let count = 0;
+  let guard = 0;
+  while (pattern.exec(content) !== null) {
+    count += 1;
+    guard += 1;
+    if (guard > 10_000 || (!pattern.global && count >= 1)) break;
+    if (pattern.lastIndex === 0) break;
+  }
+  pattern.lastIndex = 0;
+  return count;
+};
+
+// Failed matches now show the model what the file ACTUALLY contains near its
+// target (whitespace made visible), plus the robust recovery path, so one
+// retry with corrected text succeeds instead of looping the same guess.
+const noMatchError = (content: string, match: string) => {
+  const candidates = nearestMatchLines(content, match);
+  const hint = candidates.length > 0
+    ? ` Closest file content:${candidates.map((line) => `\nline ${line.number}: ${JSON.stringify(line.text)}`).join("")}`
+    : " The match text appears nowhere in the file.";
+  return new Error(
+    `Text match not found: ${preview(match)}.${hint} Reread the exact lines and either copy the match exactly (whitespace matters) or use replace_range with line numbers.`,
+  );
+};
+
+const nearestMatchLines = (content: string, match: string, limit = 3) => {
+  const tokens = match.split(/\s+/).filter((token) => token.replace(/[^a-z0-9]/gi, "").length >= 4);
+  if (tokens.length === 0) return [];
+  const scored = content.split("\n").map((text, index) => ({
+    number: index + 1,
+    text,
+    score: tokens.reduce((sum, token) => sum + (text.toLowerCase().includes(token.toLowerCase()) ? token.length : 0), 0),
+  })).filter((line) => line.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
 };
 
 const escapedPattern = (match: string, caseSensitive: boolean, occurrence: "first" | "all") =>

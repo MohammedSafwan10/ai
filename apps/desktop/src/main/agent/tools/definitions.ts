@@ -161,7 +161,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "desktop_edit_file",
-    description: "Apply ordered, precise UTF-8 edits to one existing file. Returns a diff and rejects stale input; reread before retrying.",
+    description: "Apply ordered, precise UTF-8 edits to one existing file. Returns a diff and rejects stale input; reread before retrying. Spacing differences in replace_text matches are tolerated; if a match still fails, reread the exact lines and use replace_range with line numbers instead of guessing again.",
     parameters: schema({
       path: textProperty("Workspace-relative UTF-8 text file path."),
       operations: editOperationsProperty("Ordered edit operations to apply."),

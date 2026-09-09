@@ -257,6 +257,73 @@ describe("file tools v2", () => {
     expect(fs.readFileSync(path.join(tempDir, "app.ts"), "utf8")).toContain("export { value };");
   });
 
+  it("tolerates spacing differences in text matches", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
+    fs.writeFileSync(
+      path.join(tempDir, "index.html"),
+      "<head>\n  <meta name=\"theme-color\"  content=\"#101313\" />\n</head>\n",
+      "utf8",
+    );
+
+    const edit = await execute({
+      id: "edit-spacing",
+      name: "desktop_edit_file",
+      arguments: {
+        path: "index.html",
+        operations: [{
+          type: "replace_text",
+          match: "<meta name=\"theme-color\" content=\"#101313\" />",
+          replacement: "<meta name=\"theme-color\" content=\"#ffffff\" />",
+        }],
+      },
+    });
+
+    expect(edit.success).toBe(true);
+    expect(fs.readFileSync(path.join(tempDir, "index.html"), "utf8")).toContain("content=\"#ffffff\"");
+  });
+
+  it("shows closest file lines when a match fails", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
+    fs.writeFileSync(
+      path.join(tempDir, "index.html"),
+      "<head>\n  <meta  name=\"theme-color\"  content=\"#101313\"  />\n</head>\n",
+      "utf8",
+    );
+
+    const edit = await execute({
+      id: "edit-miss",
+      name: "desktop_edit_file",
+      arguments: {
+        path: "index.html",
+        operations: [{ type: "replace_text", match: "totally-absent-marker", replacement: "x" }],
+      },
+    });
+
+    expect(edit.success).toBe(false);
+    expect(edit.error || "").toContain("Text match not found");
+  });
+
+  it("points at the real line when spacing differs in several places", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
+    fs.writeFileSync(
+      path.join(tempDir, "index.html"),
+      "<meta  name=\"a\"  content=\"1\"  />\n<meta  name=\"theme-color\"  content=\"#101313\"  />\n",
+      "utf8",
+    );
+
+    const edit = await execute({
+      id: "edit-ambiguous",
+      name: "desktop_edit_file",
+      arguments: {
+        path: "index.html",
+        operations: [{ type: "replace_text", match: "name = \"x\"", replacement: "y" }],
+      },
+    });
+
+    expect(edit.success).toBe(false);
+    expect(edit.error || "").toMatch(/line 2|replace_range/);
+  });
+
   it("does not report unchanged writes, edits, or patch files as mutations", async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-file-tools-"));
     fs.writeFileSync(path.join(tempDir, "a.ts"), "const a = 1;\n", "utf8");
