@@ -158,10 +158,14 @@ export default function App() {
     }
     if (!latestBrowserToolKey || browserToolAutoOpenRef.current.key === latestBrowserToolKey) return;
     browserToolAutoOpenRef.current.key = latestBrowserToolKey;
-    if (!activeWorkspace || settingsOpen || ideCollapsedByUser) return;
+    // Only auto-open for live browser activity during an active turn. Without
+    // the running gate, the initial snapshot load (which restores persisted
+    // browser_* tool events) looks like a brand-new browser action and pops
+    // the panel open on every app launch.
+    if (!activeWorkspace || settingsOpen || ideCollapsedByUser || !running) return;
     setIdeCollapsed(false);
     setWorkspacePanelRequest({ mode: "browser", key: Date.now() });
-  }, [activeWorkspace?.id, ideCollapsedByUser, latestBrowserToolKey, settingsOpen]);
+  }, [activeWorkspace?.id, ideCollapsedByUser, latestBrowserToolKey, running, settingsOpen]);
 
 
   useEffect(() => {
