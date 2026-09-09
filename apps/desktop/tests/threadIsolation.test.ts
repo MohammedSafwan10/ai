@@ -21,6 +21,7 @@ const baseSnapshot = () => ({
     openRouterApiKeyStored: false,
     geminiApiKeyStored: false,
     deepseekApiKeyStored: false,
+    opencodeGoApiKeyStored: false,
     privoraAccountConnected: false,
   },
   workspaces: [],

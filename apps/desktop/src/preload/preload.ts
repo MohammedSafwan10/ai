@@ -86,6 +86,7 @@ const api: PrivoraDesktopApi = {
   revealNote: (input: NotesOpenInput) => ipcRenderer.invoke(channels.revealNote, input),
   saveSettings: (input: SaveSettingsInput) => ipcRenderer.invoke(channels.saveSettings, input),
   saveThreadSettings: (input: SaveThreadSettingsInput) => ipcRenderer.invoke(channels.saveThreadSettings, input),
+  listOpencodeGoModels: (input?: { refresh?: boolean }) => ipcRenderer.invoke(channels.listOpencodeGoModels, input),
   startPrivoraBrowserAuth: () => ipcRenderer.invoke(channels.startPrivoraBrowserAuth),
   signInPrivora: (input: PrivoraAuthInput) => ipcRenderer.invoke(channels.signInPrivora, input),
   signUpPrivora: (input: PrivoraAuthInput) => ipcRenderer.invoke(channels.signUpPrivora, input),

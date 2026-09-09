@@ -31,6 +31,7 @@ const emptySettings: SettingsRecord = {
   openRouterApiKeyStored: false,
   geminiApiKeyStored: false,
   deepseekApiKeyStored: false,
+  opencodeGoApiKeyStored: false,
   privoraAccountConnected: false,
 };
 

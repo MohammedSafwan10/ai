@@ -63,6 +63,7 @@ import type {
   PrivoraAuthInput,
 } from "../../shared/types";
 import { envelopePrivoraEvent } from "../agent/harness/eventBus";
+import { OPENCODE_GO_CACHE_TTL_MS, fetchGoModelIds } from "../../shared/opencodeGo";
 
 export interface IpcState {
   activeThreadId: string | null;
@@ -375,6 +376,26 @@ export const registerIpc = (
     if (typeof input.computerUseEnabled === "boolean") computerUseManager?.setEnabled(input.computerUseEnabled);
     options?.onSettingsChanged?.();
     return settings;
+  });
+
+  handle(channels.listOpencodeGoModels, z.tuple([z.object({ refresh: z.boolean().optional() }).optional()]), async (_event, input) => {
+    const apiKey = store.getSecret("opencode_go_api_key");
+    if (!apiKey) throw new Error("OpenCode Go API key is not configured in desktop settings.");
+    const cached = store.getOpencodeGoModelCache();
+    if (!input?.refresh && cached && Date.now() - cached.fetchedAt < OPENCODE_GO_CACHE_TTL_MS && cached.ids.length > 0) {
+      return { ids: cached.ids, unsupported: cached.unsupported, fetchedAt: cached.fetchedAt, source: "cache" as const };
+    }
+    try {
+      const { ids, unsupported } = await fetchGoModelIds(apiKey);
+      const record = { ids, unsupported, fetchedAt: Date.now() };
+      store.setOpencodeGoModelCache(record);
+      return { ...record, source: "live" as const };
+    } catch (error) {
+      if (cached && cached.ids.length > 0) {
+        return { ids: cached.ids, unsupported: cached.unsupported, fetchedAt: cached.fetchedAt, source: "cache" as const };
+      }
+      throw error;
+    }
   });
 
   handle(channels.startPrivoraBrowserAuth, z.tuple([]), async () => {
@@ -1048,6 +1069,7 @@ const saveSettingsInputSchema = z.object({
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
   deepseekApiKey: z.string().max(10_000).optional(),
+  opencodeGoApiKey: z.string().max(10_000).optional(),
 });
 
 const saveThreadSettingsInputSchema = z.object({

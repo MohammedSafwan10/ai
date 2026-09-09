@@ -1,4 +1,6 @@
-export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud" | "deepseek";
+export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud" | "deepseek" | "opencode-go";
+
+import { OPENCODE_GO_ID_PREFIX, isGoModelId, synthesizeGoModelOption } from "./opencodeGo";
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -41,6 +43,16 @@ export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
 export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
 export const DEEPSEEK_V41_FLASH_EXP_MODEL_ID = "deepseek-v4.1-flash-expires-on-0910";
 export const DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID = "deepseek-v4-flash-vision-exp";
+export const OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID = "opencode-go/deepseek-v4-flash";
+export const OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID = "opencode-go/deepseek-v4-pro";
+export const OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID = "opencode-go/deepseek-v4-flash-vision-exp";
+export const OPENCODE_GO_KIMI_K27_CODE_MODEL_ID = "opencode-go/kimi-k2.7-code";
+export const OPENCODE_GO_KIMI_K3_MODEL_ID = "opencode-go/kimi-k3";
+export const OPENCODE_GO_GLM_52_MODEL_ID = "opencode-go/glm-5.2";
+export const OPENCODE_GO_GPT_56_LUNA_MODEL_ID = "opencode-go/gpt-5.6-luna";
+export const OPENCODE_GO_MINIMAX_M3_MODEL_ID = "opencode-go/minimax-m3";
+export const OPENCODE_GO_GROK_46_MODEL_ID = "opencode-go/grok-4.6";
+export const OPENCODE_GO_MUSE_SPK_13_MODEL_ID = "opencode-go/muse-spark-1.3-contributor";
 export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
 export const GPT_56_SOL_MODEL_ID = "gpt-5.6-sol";
 export const GPT_56_TERRA_MODEL_ID = "gpt-5.6-terra";
@@ -72,6 +84,11 @@ const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
     id: "deepseek",
     label: "DeepSeek BYOK",
     description: "Direct DeepSeek API (api.deepseek.com) using your saved key.",
+  },
+  {
+    id: "opencode-go",
+    label: "OpenCode Go",
+    description: "$10/mo subscription gateway. Billed to Go caps, not Privora credits.",
   },
   {
     id: "cliproxy",
@@ -127,6 +144,156 @@ const modelOptions: ModelOption[] = [
     maxOutputTokens: 393_216,
     defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
     description: "Experimental multimodal vision version. Direct DeepSeek BYOK, image input billed as input tokens.",
+  },
+  {
+    id: OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID,
+    label: "DeepSeek V4 Flash (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "deepseek-v4-flash",
+    description: "Go subscription workhorse. Billed to Go caps ($12/5h, $30/wk, $60/mo).",
+  },
+  {
+    id: OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID,
+    label: "DeepSeek V4 Pro (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "deepseek-v4-pro",
+    description: "Stronger Go reasoning model. Billed to Go caps, not Privora credits.",
+  },
+  {
+    id: OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID,
+    label: "DeepSeek V4 Flash Vision (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high", "xhigh"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 131_072,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "deepseek-v4-flash-vision-exp",
+    description: "Vision-capable Go model. Image input billed as input tokens.",
+  },
+  {
+    id: OPENCODE_GO_KIMI_K27_CODE_MODEL_ID,
+    label: "Kimi K2.7 Code (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 32_768,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "kimi-k2.7-code",
+    description: "Native-vision agentic coding model through your Go subscription.",
+  },
+  {
+    id: OPENCODE_GO_KIMI_K3_MODEL_ID,
+    label: "Kimi K3 (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 32_768,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "kimi-k3",
+    description: "Native-vision premium agentic coding model through your Go subscription.",
+  },
+  {
+    id: OPENCODE_GO_GLM_52_MODEL_ID,
+    label: "GLM-5.2 (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: false,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 65_536,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "glm-5.2",
+    description: "Long-context reasoning model through your Go subscription.",
+  },
+  {
+    id: OPENCODE_GO_GPT_56_LUNA_MODEL_ID,
+    label: "GPT-5.6 Luna (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "medium", "high"],
+    defaultReasoningEffort: "medium",
+    contextWindowTokens: GPT_56_SOL_TERRA_CONTEXT_TOKENS,
+    maxOutputTokens: GPT_56_MAX_OUTPUT_TOKENS,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "gpt-5.6-luna",
+    description: "Frontier coding model via the Go Responses route. Billed to Go caps.",
+  },
+  {
+    id: OPENCODE_GO_MINIMAX_M3_MODEL_ID,
+    label: "MiniMax M3 (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "medium"],
+    defaultReasoningEffort: "medium",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 32_768,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "minimax-m3",
+    description: "Native-multimodal long-context model via the Go Messages route. Billed to Go caps.",
+  },
+  {
+    id: OPENCODE_GO_GROK_46_MODEL_ID,
+    label: "Grok 4.6 (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["none", "high"],
+    defaultReasoningEffort: "high",
+    contextWindowTokens: 500_000,
+    maxOutputTokens: 32_768,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "grok-4.6",
+    description: "Frontier reasoning model via the Go Responses route. Billed to Go caps.",
+  },
+  {
+    id: OPENCODE_GO_MUSE_SPK_13_MODEL_ID,
+    label: "Muse Spark 1.3 Contributor (Go)",
+    provider: "opencode-go",
+    supportsTools: true,
+    supportsImageInput: true,
+    supportsReasoning: true,
+    reasoningEfforts: ["minimal", "low", "medium", "high", "xhigh"],
+    defaultReasoningEffort: "medium",
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 32_768,
+    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "muse-spark-1.3-contributor",
+    description: "Native-multimodal ultra-low-cost model via the Go Responses route. Prompts may train future Meta models.",
   },
   {
     id: GPT_56_SOL_MODEL_ID,
@@ -280,8 +447,14 @@ export const normalizeModelId = (modelId: string | undefined) => {
   return normalizedId || GEMINI_37_FLASH_MODEL_ID;
 };
 
-export const findModelOption = (modelId: string | undefined) =>
-  modelOptions.find((option) => option.id === normalizeModelId(modelId));
+export const findModelOption = (modelId: string | undefined) => {
+  const normalizedId = normalizeModelId(modelId);
+  return modelOptions.find((option) => option.id === normalizedId)
+    // Auto-discovered Go models resolve with safe family defaults so new
+    // roster entries work without a client update.
+    || (isGoModelId(normalizedId) ? synthesizeGoModelOption(normalizedId) : null)
+    || undefined;
+};
 
 export const getModelOption = (modelId: string) => {
   const model = findModelOption(modelId);
@@ -350,3 +523,22 @@ export const getModelProviderGroups = (): ModelProviderGroup[] =>
       models: modelOptions.filter((option) => option.provider === provider.id),
     }))
     .filter((group) => group.models.length > 0);
+
+// Merges live-discovered Go model ids into the picker groups. Static entries
+// win; unknown ids synthesize safe defaults; unsupported routes are dropped.
+export const withDiscoveredGoModels = (groups: ModelProviderGroup[], goIds: string[]): ModelProviderGroup[] => {
+  const fresh = goIds
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+    .map((id) => (id.startsWith(OPENCODE_GO_ID_PREFIX) ? id : `${OPENCODE_GO_ID_PREFIX}${id}`));
+  if (fresh.length === 0) return groups;
+  return groups.map((group) => {
+    if (group.id !== "opencode-go") return group;
+    const known = new Set(group.models.map((model) => model.id));
+    const discovered = fresh
+      .filter((id) => !known.has(id))
+      .map((id) => synthesizeGoModelOption(id))
+      .filter((option): option is ModelOption => option !== null);
+    return discovered.length > 0 ? { ...group, models: [...group.models, ...discovered] } : group;
+  });
+};

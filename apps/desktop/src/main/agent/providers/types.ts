@@ -43,6 +43,7 @@ export interface ProviderStreamOptions {
   openRouterApiKey: string;
   geminiApiKey: string;
   deepseekApiKey: string;
+  opencodeGoApiKey: string;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
   onThoughtReplace?: (text: string) => void;

@@ -56,7 +56,8 @@ export const cliproxyToolsForModel = (
   },
 ];
 
-const toInput = (messages: ProviderMessage[]) => {
+// Shared Responses-API helpers, also used by the OpenCode Go /responses route.
+export const toResponsesInput = (messages: ProviderMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
   messages.forEach((message) => {
     const parts = message.parts || [];
@@ -111,14 +112,14 @@ const toInput = (messages: ProviderMessage[]) => {
 
 const dataUrl = (mimeType: string, base64: string) => `data:${mimeType};base64,${base64}`;
 
-const textDelta = (event: string | undefined, data: any) => {
+export const responsesTextDelta = (event: string | undefined, data: any) => {
   if (event === "response.output_text.delta" && data?.type === "response.output_text.delta" && typeof data?.delta === "string") {
     return data.delta;
   }
   return "";
 };
 
-const thoughtDelta = (event: string | undefined, data: any) => {
+export const responsesThoughtDelta = (event: string | undefined, data: any) => {
   const type = data?.type;
   if (
     typeof data?.delta === "string" &&
@@ -130,7 +131,7 @@ const thoughtDelta = (event: string | undefined, data: any) => {
   return "";
 };
 
-const completedFunctionCall = (event: string | undefined, data: any) => {
+export const completedResponsesFunctionCall = (event: string | undefined, data: any) => {
   const type = `${event || ""} ${data?.type || ""}`;
   const candidates = [
     data?.item,
@@ -206,7 +207,7 @@ export class CliproxyAdapter implements ProviderAdapter {
       body: JSON.stringify({
         model: resolveCliproxyModelId(options.model),
         instructions: options.systemInstruction,
-        input: toInput(options.messages),
+        input: toResponsesInput(options.messages),
         ...(!options.disableTools ? {
           tools: cliproxyToolsForModel(options.model, options.collaborationMode),
           parallel_tool_calls: true,
@@ -263,9 +264,9 @@ export class CliproxyAdapter implements ProviderAdapter {
           buffers.set(key, { ...previous, name, id });
         }
 
-        const text = textDelta(event, data);
+        const text = responsesTextDelta(event, data);
         if (text) options.onTextDelta(text);
-        const thought = thoughtDelta(event, data);
+        const thought = responsesThoughtDelta(event, data);
         const eventType = `${event || ""} ${data?.type || ""}`;
         if (eventType.includes("reasoning_summary_part.added")) {
           if (hasReasoningSummary && currentReasoningSummary.trim()) options.onThoughtDelta("\n\n");
@@ -307,7 +308,7 @@ export class CliproxyAdapter implements ProviderAdapter {
           const draft = parsePartialDesktopToolCall(next.name, next.argumentsText);
           if (draft) options.onToolDraft({ ...draft, id: next.id });
         }
-        const completed = completedFunctionCall(event, data);
+        const completed = completedResponsesFunctionCall(event, data);
         if (completed) {
           emit(completed.name, completed.argumentsText, completed.id);
           buffers.delete(key);

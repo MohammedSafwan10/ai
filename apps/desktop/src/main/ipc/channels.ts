@@ -35,6 +35,7 @@ export const channels = {
   revealNote: "desktop:revealNote",
   saveSettings: "desktop:saveSettings",
   saveThreadSettings: "desktop:saveThreadSettings",
+  listOpencodeGoModels: "desktop:listOpencodeGoModels",
   startPrivoraBrowserAuth: "desktop:startPrivoraBrowserAuth",
   signInPrivora: "desktop:signInPrivora",
   signUpPrivora: "desktop:signUpPrivora",

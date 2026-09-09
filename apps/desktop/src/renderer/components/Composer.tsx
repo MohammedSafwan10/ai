@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronLeft
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { findModelOption, getModelProviderGroups, type ModelOption, type PermissionMode, type ReasoningEffort } from "../../shared/models";
+import { findModelOption, getModelProviderGroups, withDiscoveredGoModels, type ModelOption, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 import { ContextMeter } from "./ContextMeter";
 
@@ -77,6 +77,8 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
+  const [goModelIds, setGoModelIds] = useState<string[]>([]);
+  const goFetchedRef = useRef(false);
   const [confirmFullAccessOpen, setConfirmFullAccessOpen] = useState(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -84,7 +86,17 @@ export function Composer({
   const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = findModelOption(settings.model) ?? unavailableModel(settings.model);
   const activeReasoningOptions = reasoningOptions.filter((option) => activeModel.reasoningEfforts.includes(option.id));
-  const modelProviderGroups = getModelProviderGroups();
+  const modelProviderGroups = useMemo(
+    () => withDiscoveredGoModels(getModelProviderGroups(), goModelIds),
+    [goModelIds],
+  );
+  useEffect(() => {
+    if (activeMenu !== "model" || !settings.opencodeGoApiKeyStored || goFetchedRef.current) return;
+    goFetchedRef.current = true;
+    void window.privoraDesktop.listOpencodeGoModels()
+      .then((list) => setGoModelIds(list.ids))
+      .catch(() => setGoModelIds([]));
+  }, [activeMenu, settings.opencodeGoApiKeyStored]);
   const firstVisionModel = useMemo(
     () => modelProviderGroups.flatMap((group) => group.models).find((model) => model.supportsImageInput),
     [modelProviderGroups],

@@ -870,6 +870,7 @@ export interface SettingsRecord {
   openRouterApiKeyStored: boolean;
   geminiApiKeyStored: boolean;
   deepseekApiKeyStored: boolean;
+  opencodeGoApiKeyStored: boolean;
   privoraAccountConnected: boolean;
   privoraAccountEmail?: string;
   privoraAccountName?: string;
@@ -1670,6 +1671,7 @@ export interface SaveSettingsInput {
   openRouterApiKey?: string;
   geminiApiKey?: string;
   deepseekApiKey?: string;
+  opencodeGoApiKey?: string;
 }
 
 export interface SaveThreadSettingsInput {
@@ -1678,6 +1680,17 @@ export interface SaveThreadSettingsInput {
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;
+}
+
+export interface ListOpencodeGoModelsInput {
+  refresh?: boolean;
+}
+
+export interface OpencodeGoModelListRecord {
+  ids: string[];
+  unsupported: string[];
+  fetchedAt: number;
+  source: "live" | "cache" | "static";
 }
 
 export interface PrivoraAuthInput {
@@ -1729,6 +1742,7 @@ export interface PrivoraDesktopApi {
   revealNote(input: NotesOpenInput): Promise<void>;
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   saveThreadSettings(input: SaveThreadSettingsInput): Promise<ThreadRecord | null>;
+  listOpencodeGoModels(input?: ListOpencodeGoModelsInput): Promise<OpencodeGoModelListRecord>;
   startPrivoraBrowserAuth(): Promise<PrivoraBrowserAuthStartRecord>;
   signInPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
   signUpPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;

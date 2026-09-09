@@ -23,6 +23,7 @@ import type {
   TurnUndoRecord,
   WorkspaceRecord,
 } from "../../shared/types";
+import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
 import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
@@ -31,6 +32,7 @@ type SecretName =
   | "openrouter_api_key"
   | "gemini_api_key"
   | "deepseek_api_key"
+  | "opencode_go_api_key"
   | "privora_session_cookie"
   | "privora_user_jwt"
   | "privora_pending_auth"
@@ -70,7 +72,7 @@ const TOOL_PAGE_LIMIT = 2_000;
 const PLACEHOLDER_THREAD_TITLE = "New chat";
 const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(app?.isPackaged);
 
-const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "privoraAccountConnected"> => ({
+const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "opencodeGoApiKeyStored" | "privoraAccountConnected"> => ({
   id: "default",
   model: GEMINI_37_FLASH_MODEL_ID,
   reasoningEffort: "medium",
@@ -149,13 +151,14 @@ export class DesktopStore {
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
       deepseekApiKeyStored: Boolean(this.getSecret("deepseek_api_key")),
+      opencodeGoApiKeyStored: Boolean(this.getSecret("opencode_go_api_key")),
       privoraAccountConnected: Boolean(this.getSecret("privora_session_cookie") || this.getPrivoraUserJwt()),
       privoraAccountEmail: profile.email,
       privoraAccountName: profile.name,
     };
   }
 
-  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string }): SettingsRecord {
+  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string; opencodeGoApiKey?: string }): SettingsRecord {
     const current = this.getSettings();
     const next = {
       ...defaultSettings(),
@@ -191,6 +194,11 @@ export class DesktopStore {
       name: "deepseek_api_key",
       value: input.deepseekApiKey,
       envelope: input.deepseekApiKey.trim() ? this.encryptSecret(input.deepseekApiKey.trim()) : undefined,
+    });
+    if (input.opencodeGoApiKey !== undefined) pendingSecrets.push({
+      name: "opencode_go_api_key",
+      value: input.opencodeGoApiKey,
+      envelope: input.opencodeGoApiKey.trim() ? this.encryptSecret(input.opencodeGoApiKey.trim()) : undefined,
     });
     this.run("BEGIN IMMEDIATE");
     try {
@@ -258,6 +266,12 @@ export class DesktopStore {
     const stored = this.getKv<StoredSecretEnvelope>("secrets", name);
     if (!stored) return "";
     try { return this.decryptSecret(stored); } catch { return ""; }
+  }
+  getOpencodeGoModelCache(): OpenCodeGoModelCache | null {
+    return this.getKv<OpenCodeGoModelCache>("opencode_go", "models");
+  }
+  setOpencodeGoModelCache(cache: OpenCodeGoModelCache) {
+    this.putKv("opencode_go", "models", cache);
   }
 
   upsertWorkspace(workspacePath: string): WorkspaceRecord {

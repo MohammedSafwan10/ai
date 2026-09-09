@@ -219,6 +219,8 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
+  const [opencodeGoApiKey, setOpencodeGoApiKey] = useState("");
+  const [goModelsStatus, setGoModelsStatus] = useState("");
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
   const [billingRefreshing, setBillingRefreshing] = useState(false);
   const [billingMessage, setBillingMessage] = useState("");
@@ -469,6 +471,59 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                     </div>
                     <small>Direct api.deepseek.com key for V4.1 Flash Temp (expires 09-10) + Vision Exp. Same pricing as v4-flash.</small>
                   </label>
+                  <label>
+                    <span className="settings-secret-label">
+                      OpenCode Go API key
+                      <small>{settings.opencodeGoApiKeyStored ? "Saved securely" : "Not saved"}</small>
+                    </span>
+                    <div className="settings-secret-row">
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={settings.opencodeGoApiKeyStored ? "New key replaces saved key" : "Paste Go key from Zen console"}
+                        value={opencodeGoApiKey}
+                        onChange={(event) => setOpencodeGoApiKey(event.target.value)}
+                      />
+                      {settings.opencodeGoApiKeyStored && (
+                        <button
+                          type="button"
+                          className="secret-clear-button"
+                          title="Clear saved Go key"
+                          onClick={() => {
+                            setOpencodeGoApiKey("");
+                            void saveProviderSettings({ opencodeGoApiKey: "" });
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                    <small>$10/mo subscription gateway. Billed to Go caps, not Privora credits.</small>
+                  </label>
+                  {settings.opencodeGoApiKeyStored && (
+                    <div className="settings-button-row">
+                      <button
+                        type="button"
+                        className="settings-row-button"
+                        disabled={saving}
+                        onClick={async () => {
+                          setGoModelsStatus("Refreshing Go model list...");
+                          try {
+                            const list = await window.privoraDesktop.listOpencodeGoModels({ refresh: true });
+                            const updated = list.fetchedAt ? new Date(list.fetchedAt).toLocaleString() : "just now";
+                            setGoModelsStatus(`${list.ids.length} Go models available (${list.source}, ${updated})${list.unsupported.length ? `. ${list.unsupported.length} need responses/messages route.` : ""}`);
+                          } catch (error) {
+                            setGoModelsStatus(error instanceof Error ? error.message : "Could not refresh Go models.");
+                          }
+                        }}
+                      >
+                        <RefreshCw size={15} />
+                        <span>Refresh Go models</span>
+                      </button>
+                    </div>
+                  )}
+                  {goModelsStatus && <p className="settings-storage-message">{goModelsStatus}</p>}
                   <button
                     className="settings-primary-button"
                     disabled={saving}
@@ -478,11 +533,13 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                         ...(geminiApiKey ? { geminiApiKey } : {}),
                         ...(openRouterApiKey ? { openRouterApiKey } : {}),
                         ...(deepseekApiKey ? { deepseekApiKey } : {}),
+                        ...(opencodeGoApiKey ? { opencodeGoApiKey } : {}),
                       });
                       if (!saved) return;
                       setGeminiApiKey("");
                       setOpenRouterApiKey("");
                       setDeepseekApiKey("");
+                      setOpencodeGoApiKey("");
                     }}
                   >
                     {saving ? "Saving..." : status === "saved" ? (
