@@ -1,6 +1,10 @@
 # Kali tool operations and expert workflow
 
-Status: planning guidance. No VM, packages or runner have been installed.
+Status: the operator's Kali ARM64 VM is reachable by verified key-based SSH.
+The Python job runner has been deployed and tested. Security workspace/model tool
+integration, findings, and evidence UI are implemented in source; packaged
+assessment acceptance is in progress. Task-specific packages are installed only
+when needed, not as a full-suite prerequisite.
 
 ## Where the agent lives
 
@@ -83,9 +87,10 @@ known lab cases, false-positive checks and reproducibility before making claims.
 
 ## Terminal, browser and device behavior
 
-Ordinary CLI tools use captured stdout/stderr. Interactive tools need managed PTY
-sessions, bounded retained output, stdin interaction and process-group cancellation.
-Do not treat printed text as interactive program state without checking it.
+Current remote CLI jobs use captured stdout/stderr, bounded retained output,
+timeouts, and process-group cancellation. Managed remote PTY/stdin interaction is
+not implemented. Interactive tools require a future adapter; do not pretend a
+noninteractive job supplies terminal interaction or desktop control.
 
 GUI applications require a distinct remote desktop/browser adapter. SSH execution
 does not provide computer vision or mouse control. Device, USB and wireless tools

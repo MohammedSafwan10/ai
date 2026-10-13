@@ -1,14 +1,10 @@
 # Privora Desktop
 
-Proposed extension: [Security workspace plan](docs/security-workspace/README.md)
-(planning only; not implemented).
+Privora Desktop is an Electron agent app for local development and connected security work. Normal projects give the agent access to workspace files, search, git, terminals, diagnostics, approvals, and reviewable changes. Security projects use the same chat interface while executing tools in an assigned Kali environment over pinned SSH.
 
-See [docs/LONG_CHAT_ARCHITECTURE.md](docs/LONG_CHAT_ARCHITECTURE.md) for the
-SQLite-backed paginated chat architecture and long-session performance rules.
+The current Security implementation has passed live Muse Spark/Kali fixture checks, confirmed Stop and follow-up messages, evidence previews, and native file saving. The portable Windows build is verified. Existing installed releases need a new installer before these features are available through their normal update flow; source pushes alone do not publish releases.
 
-Privora Desktop is a local-first Electron coding-agent app for working inside real project folders. It gives an AI agent controlled access to workspace files, search, git, terminal processes, diagnostics, approvals, and reviewable file changes from a desktop UI.
-
-The app is inspired by Codex-style local agent workflows, but is built as a desktop application with persistent workspaces, project chats, visual tool timelines, approvals, undo metadata, Plan Mode, Reviewer Swarm, and provider settings.
+See the [Security workspace documentation](docs/security-workspace/README.md) for implementation and limits, and [long-chat architecture](docs/LONG_CHAT_ARCHITECTURE.md) for paginated SQLite history and performance rules.
 
 ## What It Does
 
@@ -20,6 +16,8 @@ The app is inspired by Codex-style local agent workflows, but is built as a desk
 - Provides Plan Mode for research/planning without mutating the workspace.
 - Provides Reviewer Swarm mode for automatic read-only review by two model-inheriting subagents before the final answer.
 - Stores settings, threads, workspaces, secrets, and recovery metadata locally.
+- Creates explicit Security projects whose agent tools run in an assigned Kali
+  environment, with live output, cancellation, job reconciliation, and evidence.
 
 ## Agent Tools
 
@@ -39,6 +37,42 @@ Current desktop tools include:
 - `request_user_input` - Plan Mode questions with user-selected answers.
 - `browser_*` - built-in browser tools for tabs, screenshots, extraction, search, PDF evidence, form workflows, workflow replay, assertions, evidence vault records, and failure diagnosis.
 - `computer_*` - optional native Computer Use tools for Windows app/window inspection, desktop snapshots, guarded actions, traces, screenshots, and failure diagnosis.
+
+Security projects expose `kali_capabilities`, `kali_exec`, `kali_job_status`,
+`kali_job_output`, `kali_job_cancel`, `kali_artifact`, `security_finding_list`, and
+`security_finding_save` instead of host file, terminal, browser, or computer tools.
+Normal projects retain their existing tool selection. Kali execution uses the
+existing Ask risky / Full access permissions and provider loop; connection loss
+does not redirect execution to the host.
+
+## Using a Security Project
+
+1. Start the Kali VM and ensure SSH is reachable. The VM needs Python 3 and a deployed copy of `resources/kali/runner.py`.
+2. Click the sidebar shield button to create a Security project. Import a private connection profile once, then reuse the saved environment for future projects. The profile references your local SSH key, pinned host key, remote runner path, and job directory; it contains no private-key contents.
+3. Enter a project name, objective, and authorized scope. Choose **Check connection** to verify the environment.
+4. Select your model and reasoning level in the normal composer, then describe the task. Open the Security header to inspect remote jobs, copy output, view findings, preview evidence, or save evidence through the native Save dialog.
+
+A reusable project objective:
+
+```text
+Assist with user-authorized security investigations across applications, networks,
+code, files, and local labs. Inspect available tools, execute useful checks in Kali,
+stream progress, validate results, and save evidence. Explain findings and fixes.
+```
+
+A reusable scope:
+
+```text
+Work on systems I own or explicitly authorize for each task. I will provide targets
+and task-specific constraints in chat. Execute tools in the assigned Kali VM.
+Ask when required authorization or a decision is unclear; confirm destructive changes.
+```
+
+**Ask risky** requests approval before remote commands. **Full access** runs them without those prompts; Kali's operating-system permissions still apply. It does not grant root, bypass sudo authentication, or authorize additional targets.
+
+Stop waits for confirmed remote cancellation. If SSH is lost, the job remains unconfirmed until reconciliation; it is not automatically replayed. Quit and updates drain active work and report jobs whose termination cannot be confirmed.
+
+This first version supports remote command execution and evidence, not remote GUI/browser control or interactive PTY sessions. Tool availability depends on architecture, privileges, and hardware. A 4 GB VM is a starting point for CLI workloads; measure heavier work before increasing RAM. See [Kali operations](docs/security-workspace/KALI_OPERATIONS.md) and [verification status](docs/security-workspace/DELIVERY.md).
 
 ## Plan Mode
 
@@ -80,6 +114,9 @@ The renderer includes:
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
 - Clear recovery/error notices if local SQLite storage cannot be opened safely.
+- Security project creation with objective, scope, private connection-profile
+  import, and connection checks. A compact chat header opens job/output details,
+  Stop controls, findings, and evidence-file previews/downloads on demand.
 
 ## Architecture
 
@@ -92,6 +129,7 @@ src/
     db/             SQLite store, artifacts, workspaces, threads, settings, secrets
     imageGeneration Native image generation providers, file storage, previews, workspace export
     ipc/            Main-process IPC channels and validation
+    kali/           Pinned SSH transport, remote jobs, tools and evidence
     security/       Workspace path checks and redaction helpers
     terminal/       PTY/process session manager
     main.ts         Electron lifecycle and BrowserWindow setup
@@ -106,6 +144,8 @@ tests/              Vitest coverage for runtime/tool/storage behavior
 Supported provider paths are configured in the app settings and shared model catalog:
 
 - CLIProxy API, defaulting to `http://127.0.0.1:8317`
+- OpenCode Go through its existing hosted-model adapter
+- DeepSeek API for BYOK
 - Gemini API
 - OpenRouter API for BYOK
 - Privora Cloud hosted models through the Appwrite model gateway
@@ -125,7 +165,7 @@ Local development sends the token through a loopback callback. Production sends 
 
 ## Requirements
 
-- Node.js 18+ recommended
+- Node.js 22.12 or later; Node.js 24 LTS is a suitable choice for development and packaging
 - npm
 - Git
 - Windows is the primary development target right now
@@ -197,6 +237,11 @@ The native desktop-control surface is documented in [docs/computer-use.md](docs/
 
 ## Production Updates
 
+Automatic updates require a Squirrel-installed Windows build and its `Update.exe`.
+Portable packages report updates as unsupported. `npm run build` creates a local
+portable package; `npm run make` creates distributables. Neither command publishes
+the update feed. Publishing is a separate action through the release command below.
+
 Windows x64 builds use the Appwrite-hosted update feed at:
 
 ```text
@@ -231,6 +276,20 @@ npm test
 
 The tests cover SQLite storage, storage cleanup, tool execution, file reads/writes/patches/edits, diagnostics, terminal sessions, thread isolation, browser tools, browser workflows, Computer Use safety/tool contracts, composer settings persistence, Reviewer Swarm behavior, and runtime behavior.
 
+Security coverage includes environment routing, durable jobs, uncertain delivery,
+cancellation, findings, evidence access/saving, shutdown, and Responses call-ID
+deduplication. Live Kali tests are opt-in and need a private profile referencing a
+verified SSH host and deployed runner:
+
+```powershell
+$env:PRIVORA_KALI_TEST_PROFILE = 'C:\private\privora-kali-test-profile.json'
+npm test -- --maxWorkers=1
+```
+
+The 13 October 2026 verification passed 482 tests including real SSH checks,
+TypeScript, the Windows package, and the production dependency audit. This is a
+fixture verification baseline, not a guarantee that every assessment or tool works.
+
 For a quick compile check:
 
 ```bash
@@ -257,3 +316,7 @@ npm test
 ```
 
 Do not include local runtime folders such as `.antigravitycli/` unless intentionally needed.
+
+The root `.gitignore` excludes dependencies, build output, logs, Python caches,
+local `privora-kali*.json` profiles, dedicated Kali SSH keys/host pins, and SQLite
+runtime databases. Keep real machine profiles and credentials outside the repo.

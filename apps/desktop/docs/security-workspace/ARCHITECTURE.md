@@ -1,6 +1,8 @@
 # Security workspace architecture
 
-Status: proposed. This document defines intended contracts, not implemented APIs.
+Status: SSH connector/runner, explicit Security workspaces, agent tool routing,
+durable jobs/findings, and chat evidence UI are implemented in source. Packaged
+end-to-end acceptance verification is in progress.
 
 ## Existing foundation
 
@@ -14,7 +16,7 @@ The first implementation keeps those boundaries. No separate provider loop is
 introduced for Security workspaces. Rust is optional future work for a measured
 bottleneck or a specific native capability.
 
-## Proposed topology
+## Implemented topology
 
 ```mermaid
 flowchart TB
@@ -25,7 +27,7 @@ flowchart TB
     Runtime --> Model[OpenCode Go model adapter]
     Model --> Runtime
     Runtime --> Policy[Tool routing and execution policy]
-    Policy --> Local[Trusted local workspace adapter]
+    Policy --> Local[Host tools for normal projects only]
     Policy --> Connector[Remote environment connector]
     Connector --> SSH[Authenticated SSH transport]
     SSH --> Runner[Job runner inside Kali VM]
@@ -55,11 +57,10 @@ instructions, current environment capabilities and optional specialist roles.
 The model proposes actions; execution policy enforces their allowed environment
 and permissions. Plan Mode remains non-mutating.
 
-The user selects the main model. Proposed specialist defaults are DeepSeek
-V4.1 Flash for coordination/research, GLM 5.3 Flash for security analysis and
-Muse Spark 1.3 Contributor for coding. Roles remain configurable; delegation is
-optional and does not require all models on every turn. Privora's existing
-Reviewer Swarm is a distinct feature, not silently repurposed as security delegation.
+The user selects the main model and reasoning level through existing controls.
+Specialists use the existing delegation mechanism; no automatic three-model
+routing policy is introduced. Delegation is optional. Privora's existing Reviewer
+Swarm remains a distinct feature, not a new security-specific agent mode.
 
 Reuse the existing OpenCode Go adapter. Verify exact model IDs, tool support,
 routes and reasoning levels before exposing defaults. Never infer every model's
@@ -91,9 +92,20 @@ before logs and model context; keep API credentials on Privora's side.
 
 ## Runner and connector contracts
 
-The runner can initially use TypeScript/Node. Deploy a versioned runner explicitly;
-do not pretend the VM has zero dependencies. Define a version handshake and an
-environment capability inventory before submitting jobs.
+The desktop connector uses TypeScript and the system OpenSSH client. The first
+runner uses Python 3 standard-library modules already available in the supplied
+Kali VM; Node installation is not required. Deploy it into a content-hashed
+version directory so running workers retain the code version they started with.
+Protocol v1 uses JSON over SSH stdin/stdout, with an explicit version handshake.
+No additional network listener or model credentials are installed on Kali.
+
+Implemented interfaces are in src/shared/kali.ts and src/main/kali/connector.ts.
+KaliEnvironment is main-process configuration containing endpoint, key-file and
+single-host pin-file references, expected ED25519 fingerprint, runner path and job
+root. It contains no private key material. No user-specific profile is committed.
+Main-process configuration persistence and renderer IPC are implemented.
+Renderer summaries exclude identity-file paths, pin-file paths, and private
+configuration. Profile import and connection checks are explicit user actions.
 
 Minimum operations:
 
@@ -103,7 +115,9 @@ Minimum operations:
 - Cancel the process group and report confirmed termination.
 - Transfer and retrieve bounded artifacts within the project directory.
 
-Prefer structured argv; explicit shell jobs require their own policy. Validate
+The first runner executes argv without implicit shell wrapping. An explicitly
+requested shell executable is still a shell operation and must receive the
+appropriate permission checks through Security tool routing. Validate
 paths against traversal and symlink escape. An SSH disconnect is not proof that
 a process stopped. Retain job IDs and reconnect for state reconciliation. Decide
 per job whether it survives transport loss; show unknown state until confirmed.
@@ -113,24 +127,39 @@ Job states: queued, running, stop_requested, succeeded, failed, cancelled,
 timed_out. Environment connectivity and unknown job state are separate fields.
 Persist ordered events for reconnect; live delivery alone is not the source of truth.
 
-## Proposed data model
+The runner persists job metadata and bounded output in a private SQLite database
+under jobRoot/.privora. Project working directories are jobRoot/workspaces/<id>.
+Limits are four concurrent jobs, one-hour maximum job duration, 8 MiB retained
+output per job, 1 MiB per artifact transfer and 128 KiB control requests. Output
+events carry sequenced base64 bytes for incremental per-stream UTF-8 decoding.
+Artifact reads reject traversal, symlinks, special files and oversized transfers.
+
+Cancellation terminates the supervised process group and escalates to SIGKILL.
+This is process supervision, not a per-job OS sandbox: a hostile process may
+escape its process group, and argv execution has the remote user's OS access.
+The VM remains the host-isolation boundary. Disk quotas, cgroup containment,
+network scope enforcement and privilege policies are not implemented in v1.
+
+## Persisted integration records
 
 | Record | Core fields |
 | --- | --- |
 | Workspace | id, type: development/security, name |
-| Project context | workspaceId, objective, scope, allowedEnvironmentIds |
-| Environment | id, name, OS, architecture, transport, credentialRef, capabilities, connectionState |
-| Run | id, threadId, project context snapshot, model, plan, status, budget, timestamps |
-| Job | id, runId, environmentId, idempotencyKey, argv/shell specification, cwd, timeout, state, exitCode |
-| Event | id, sequence, runId/jobId, type, timestamp, payload or artifactRef |
-| Artifact | id, jobId, relative storage path, mediaType, size, hash, redaction status |
-| Finding | id, workspaceId, claim, affected asset, severity rationale, state, evidenceRefs, reproduction, retestRefs |
-| Secret reference | id pointing to protected secret storage; no plaintext secret in ordinary records |
+| Project context | environmentId, objective, scope in the Security workspace configuration |
+| Environment | id, name, endpoint, connection state, checked time, capabilities; private SSH configuration stays in main |
+| Run | Existing thread, assistant message, provider settings, checkpoint and tool-event records |
+| Job | local/remote IDs, workspace/thread/message, environment, idempotency key, state, exit code, redacted bounded previews |
+| Output | Runner-persisted sequenced output; desktop cursor and bounded preview |
+| Artifact | Existing DesktopAttachmentRecord identity, MIME type, size, app-owned URL; referenced by job |
+| Finding | workspaceId, title, description, severity, state, evidenceJobIds, reproduction, remediation |
 
-Use additive migrations after inspecting existing tables. Reuse thread, run, tool
-and artifact identifiers where their meaning matches; avoid duplicate chat/event
-stores. Keep large output outside SQLite payloads and renderer IPC snapshots.
+Workspace type is optional for backward compatibility: existing projects remain
+Development. Security metadata reuses existing SQLite/artifact storage. Large
+output stays bounded in renderer snapshots; jobs survive app-side reconnect and
+are reconciled by their persisted identity rather than automatically resubmitted.
 
-Finding states: candidate → observed → verified → reportable, plus rejected/stale.
-Verification records the actual environment, procedure, result and limitations.
-Tool exit success or an AI assertion alone does not establish a vulnerability.
+Implemented finding states: candidate, observed, verified, rejected, stale.
+Verified findings require reproduction and completed evidence jobs from this
+workspace. This validates evidence references, not the truth of an AI assertion;
+tool exit success alone does not establish a vulnerability. Independent retest,
+report generation, and stronger verification workflows remain future work.

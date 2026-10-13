@@ -1,5 +1,10 @@
 # Interface and streaming contract
 
+Status: setup, compact environment header, existing chat/tool rows, and on-demand
+jobs/findings/evidence dialogs are implemented and exercised in the Windows
+package, including text preview and native evidence saving. Remote desktop/browser
+views are future adapters.
+
 ## Preserve the familiar chat
 
 Use Privora's normal chat layout, composer, typography, tool rows and side panels.
@@ -13,11 +18,14 @@ workspace/thread relationship.
 
 ## Small additions
 
-- Header: `Security · Kali Mac · Connected`, with an environment selector.
+- Header: `Security · Kali Mac · Connected`, opening environment and evidence
+  details. Environment selection happens during project creation.
 - Existing attachment control: files, repositories or target context.
 - Compact tool rows: environment, current action, duration and expandable output.
-- Existing side panel: findings/evidence on demand, not permanently open.
-- Workspace settings: scope, environment connection and permitted actions.
+- On-demand dialog: findings/evidence, job output previews and Copy, Stop,
+  attachment preview/download, and connection checks.
+- Project context: objective, scope, and assigned environment captured on
+  creation. Existing permission controls remain in the composer.
 
 Model selection, reasoning, Plan Mode and Agents remain separate controls.
 Reuse the existing `Ask risky` / `Full access` permission selector. Do not add
@@ -30,8 +38,10 @@ Reviewer Swarm. Hide unsupported actions rather than show misleading placeholder
 
 ## Creation flow
 
-Choose Development or Security → name project and objective → attach context →
-select/configure environment → define scope and permissions → enter normal chat.
+Open a Development folder with the existing folder button, or choose the sidebar
+shield button for a separate Security project. Enter name, objective and scope,
+select/import an environment, optionally check its connection, and create the
+project. Continue in the normal chat and use its existing access selector.
 Missing environment access is actionable setup, not a false ready state.
 
 ## Live behavior
@@ -66,7 +76,8 @@ Windows host. Bound output previews and fetch complete details on demand.
 
 Verify keyboard interaction, accessible labels, long filenames, narrow windows,
 expanded logs, large text and scrolling during streaming. Preserve code-block copy
-and normal chat behavior. No production UI change is authorized by this document.
+and normal chat behavior. Implementation was authorized by the operator after
+the original planning stage; this document records current behavior and goals.
 
 ## Existing output defect confirmed during review
 

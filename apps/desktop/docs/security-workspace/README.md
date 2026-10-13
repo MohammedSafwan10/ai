@@ -1,6 +1,10 @@
-# Privora Security workspace plan
+# Privora Security workspace
 
-Status: proposed design; implementation has not started.
+Status: Security workspace, agent routing, remote jobs, findings, and evidence UI
+implemented and verified through the chat loop and live Muse Spark/Kali fixtures.
+Packaged connection checks, evidence previews and native file saving passed.
+The usable Windows portable build is verified; installer distribution and
+representative assessment acceptance remain separate.
 Date: 13 October 2026.
 
 Privora Security extends the existing desktop app into a security research
@@ -16,7 +20,8 @@ repository review, application analysis, network assessment and investigation.
 - Add environment connectors, security task context and findings with evidence.
 - No mandatory Docker, Rust rewrite, second agent runtime or standalone Dex app.
 - First testing environment: Kali ARM64 VM on the user's M4 MacBook Air with 16 GB RAM.
-- Do not install or configure the VM as part of writing this plan.
+- The operator supplied a running VM and authorized runner deployment and
+  workspace integration. Models remain in Privora; Kali runs remote tools.
 
 ## Documents
 
@@ -48,8 +53,17 @@ code. Review licenses before copying implementation. Rewrite security prompts
 for real environment capabilities; do not copy blanket preauthorization or
 Docker assumptions.
 
-## Next step
+## Current behavior and next checks
 
-Review this plan, then implement the connection/job vertical slice described in
-DELIVERY.md when authorized. No model probes, package installs, schema migrations,
-VM setup or deployment are authorized by this document itself.
+Create a separate Security project from the sidebar shield button, import a
+private connection profile, check access, and set its objective and scope.
+Existing chats, model selection, reasoning, Plan Mode, and access controls are
+reused. The chat header opens jobs, output, Stop, findings, and evidence on demand.
+Host filesystem/terminal/browser/computer tools are blocked in Security projects;
+the SSH connector is registered only for their assigned environment.
+
+Verify the packaged chat-to-Kali loop and representative lab assessments before
+claiming full product readiness. Physical network loss, Mac sleep, VM restart,
+remote GUI/browser control, interactive PTY sessions, and hardware-dependent tools
+remain separate acceptance work or future capabilities. See DELIVERY.md for the
+tested foundation and outstanding checks.
