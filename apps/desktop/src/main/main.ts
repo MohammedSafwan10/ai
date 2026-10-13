@@ -18,6 +18,9 @@ import { createTokenSession, getAppwriteAccount } from "./billing/appwriteAuth";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "./billing/creditService";
 import { BrowserSessionManager } from "./browser/BrowserSessionManager";
 import { ComputerUseManager } from "./computer/ComputerUseManager";
+import { SecurityWorkspaceService } from "./kali/service";
+import { attachmentProtocolResponse } from "./attachments/protocol";
+import { stopWorkForShutdown, unfinishedSecurityJobs } from "./lifecycle";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -28,9 +31,12 @@ let notesStore: NotesStore | null = null;
 let harnessService: AgentService | null = null;
 let browserManager: BrowserSessionManager | null = null;
 let computerUseManager: ComputerUseManager | null = null;
+let securityService: SecurityWorkspaceService | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let isInstallingUpdate = false;
+let shutdownPreparation: Promise<boolean> | null = null;
+let resourcesClosed = false;
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 1.7;
 const ZOOM_STEP = 0.1;
@@ -49,7 +55,7 @@ if (squirrelStartup) app.quit();
 
 protocol.registerSchemesAsPrivileged([{
   scheme: PRIVORA_ATTACHMENT_PROTOCOL,
-  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false },
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
 }]);
 
 if (isDevMode) {
@@ -183,17 +189,19 @@ const shouldKeepRunningInTray = () =>
 const runningTaskCount = () => {
   const activeRuns = harnessService?.listActiveRuns().length || 0;
   const runningTerminals = harnessService?.getTerminalState().sessions.filter((session) => session.running).length || 0;
-  return activeRuns + runningTerminals;
+  return activeRuns + runningTerminals + unfinishedSecurityJobs(listRemoteJobs()).length;
 };
 
-const stopActiveWork = () => {
+const listRemoteJobs = () => store?.listWorkspaces().filter((workspace) => workspace.type === "security").flatMap((workspace) => store!.listSecurityJobs(workspace.id)) || [];
+
+const stopActiveWork = async () => {
   for (const run of harnessService?.listActiveRuns() || []) {
     harnessService?.stopTurn(run.threadId);
   }
   for (const session of harnessService?.getTerminalState().sessions || []) {
     if (session.running) harnessService?.stopTerminalSession(session.sessionId);
   }
-  computerUseManager?.stop();
+  await computerUseManager?.stop();
 };
 
 const trayStatusLabel = () => {
@@ -231,9 +239,7 @@ const rebuildTrayMenu = () => {
       enabled: update.supported !== false && update.state !== "checking" && update.state !== "downloading" && update.state !== "installing",
       click: () => {
         if (update.state === "ready") {
-          isInstallingUpdate = true;
-          isQuitting = true;
-          installDownloadedUpdate();
+          void installDownloadedUpdate();
           return;
         }
         checkForUpdates();
@@ -259,22 +265,60 @@ const createTray = () => {
   rebuildTrayMenu();
 };
 
-const requestQuit = async (_reason: "tray" | "menu" | "update") => {
+const prepareShutdown = (reason: "tray" | "menu" | "update"): Promise<boolean> => {
+  if (shutdownPreparation) return shutdownPreparation;
+  shutdownPreparation = (async () => {
   const tasks = runningTaskCount();
-  if (tasks > 0 && !isInstallingUpdate) {
+  if (tasks > 0) {
     const options: MessageBoxOptions = {
       type: "warning",
-      buttons: ["Stop tasks and quit", "Cancel"],
+      buttons: [reason === "update" ? "Stop tasks and restart" : "Stop tasks and quit", "Cancel"],
       defaultId: 1,
       cancelId: 1,
       title: "Quit Privora?",
-      message: `Privora is running ${tasks} task(s). Stop tasks and quit?`,
+      message: `Privora has ${tasks} active or unconfirmed task(s). Stop tasks before ${reason === "update" ? "installing the update" : "quitting"}?`,
     };
     const response = mainWindow
       ? await dialog.showMessageBox(mainWindow, options)
       : await dialog.showMessageBox(options);
-    if (response.response !== 0) return;
+    if (response.response !== 0) return false;
   }
+  securityService?.beginShutdown();
+  await stopWorkForShutdown({
+    stopLocal: stopActiveWork,
+    waitForLocalIdle: async () => { await harnessService?.waitForIdle(); },
+    listRemoteJobs,
+    cancelRemoteJob: async (id) => {
+      if (!securityService) throw new Error("Kali connection service is unavailable.");
+      await securityService.cancelJob(id);
+    },
+  });
+  await securityService?.waitForIdle();
+  const unconfirmed = unfinishedSecurityJobs(listRemoteJobs());
+  if (unconfirmed.length) {
+    const options: MessageBoxOptions = {
+      type: "warning", title: "Kali jobs may still be running",
+      buttons: [reason === "update" ? "Restart anyway" : "Quit anyway", "Keep Privora open"], defaultId: 1, cancelId: 1,
+      message: `Could not confirm that ${unconfirmed.length} remote job(s) stopped.`,
+      detail: "These jobs may continue in Kali. Their saved identities will be checked when Privora reopens.\n\n" + unconfirmed.slice(0, 8).map((job) => `${job.remoteJobId || job.id}: ${job.state}`).join("\n"),
+    };
+    const response = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+    if (response.response !== 0) return false;
+  }
+  return true;
+  })().then((proceed) => {
+    if (!proceed) securityService?.cancelShutdown();
+    return proceed;
+  }).catch(() => {
+    securityService?.cancelShutdown();
+    emitPrivoraEvent({ type: "notification.created", tone: "error", message: "Privora could not finish stopping its work. The app remains open; try again after active work settles." });
+    return false;
+  }).finally(() => { shutdownPreparation = null; });
+  return shutdownPreparation;
+};
+
+const requestQuit = async (reason: "tray" | "menu" | "update") => {
+  if (!await prepareShutdown(reason)) return;
   isQuitting = true;
   app.quit();
 };
@@ -478,25 +522,9 @@ if (!singleInstanceLock) {
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
     store = new DesktopStore();
     protocol.handle(PRIVORA_ATTACHMENT_PROTOCOL, (request) => {
-      if (!store || request.method !== "GET") return new Response(null, { status: 404 });
-      try {
-        const url = new URL(request.url);
-        if (url.hostname !== "artifact") return new Response(null, { status: 404 });
-        const artifactId = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-        if (!/^[a-f0-9]{64}\.bin$/.test(artifactId)) return new Response(null, { status: 400 });
-        const mimeType = url.searchParams.get("mime") || "application/octet-stream";
-        if (!/^image\/(?:png|jpeg|webp|gif)$/.test(mimeType)) return new Response(null, { status: 415 });
-        return new Response(store.loadAttachment(artifactId), {
-          status: 200,
-          headers: {
-            "Content-Type": mimeType,
-            "Cache-Control": "private, max-age=31536000, immutable",
-            "X-Content-Type-Options": "nosniff",
-          },
-        });
-      } catch {
-        return new Response(null, { status: 404 });
-      }
+      const attachmentStore = store;
+      if (!attachmentStore) return new Response(null, { status: 404 });
+      return attachmentProtocolResponse(request, (artifactId) => attachmentStore.loadAttachment(artifactId), MAIN_WINDOW_VITE_DEV_SERVER_URL);
     });
     notesStore = new NotesStore(app.getPath("userData"));
     computerUseManager = new ComputerUseManager(app.getPath("userData"), (computerState) => {
@@ -524,14 +552,20 @@ if (!singleInstanceLock) {
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
     computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
+    securityService = new SecurityWorkspaceService(store, () => emitSnapshot());
     harnessService = new InProcessAgentService(new AgentHarness(
-      new TurnCoordinator(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager),
+      new TurnCoordinator(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager, securityService),
     ));
     registerIpc(store, harnessService, state, browserManager, notesStore, computerUseManager, {
       onSettingsChanged: () => rebuildTrayMenu(),
+      securityService,
     });
     installUpdateService({
-      onStatusChanged: () => rebuildTrayMenu(),
+      onStatusChanged: (status) => {
+        if (status.state === "error" && isInstallingUpdate) { isInstallingUpdate = false; isQuitting = false; }
+        rebuildTrayMenu();
+      },
+      onRequestInstall: () => prepareShutdown("update"),
       onBeforeInstall: () => {
         isInstallingUpdate = true;
         isQuitting = true;
@@ -539,6 +573,10 @@ if (!singleInstanceLock) {
     });
     createTray();
     await createWindow();
+    void securityService.recover().catch((error) => emitPrivoraEvent({
+      type: "notification.created", tone: "error",
+      message: "Kali recovery is incomplete: " + String(error),
+    }));
     handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));
 
     app.on("activate", () => {
@@ -552,13 +590,16 @@ if (!singleInstanceLock) {
 }
 
 app.on("before-quit", (event) => {
-  if (!isQuitting && !isInstallingUpdate && runningTaskCount() > 0) {
+  if (!isQuitting && store) {
     event.preventDefault();
     void requestQuit("menu");
     return;
   }
   isQuitting = true;
-  stopActiveWork();
+  if (resourcesClosed) return;
+  resourcesClosed = true;
   browserManager?.destroyAll();
-  store?.close();
+  const closingStore = store;
+  store = null;
+  closingStore?.close();
 });

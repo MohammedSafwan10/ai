@@ -68,6 +68,28 @@ describe("thread title metadata filtering", () => {
       throw new Error("title callback should not run");
     })).toBe("<thread_title>Keep visible</thread_title>");
   });
+  it("handles Muse title closing tags split into separate streamed fragments", () => {
+    const state = createThreadTitleFilterState(true);
+    const titles: string[] = [];
+    const chunks = ["<thread_title>", "Local runner fixture check", "</", "thread", "_title", ">", "I will inspect the local fixture."];
+    const visible = chunks.map((chunk) => filterThreadTitleDelta(chunk, state, (title) => titles.push(title))).join("");
+    expect(titles).toEqual(["Local runner fixture check"]);
+    expect(visible).toBe("I will inspect the local fixture.");
+  });
+  it("filters metadata correctly at every possible token boundary", () => {
+    const tagged = "Before <thread_title>Check Kali runner</thread_title>After.";
+    for (let split = 1; split < tagged.length; split += 1) {
+      const state = createThreadTitleFilterState(true);
+      const titles: string[] = [];
+      const visible = [tagged.slice(0, split), tagged.slice(split)].map((chunk) => filterThreadTitleDelta(chunk, state, (title) => titles.push(title))).join("");
+      expect(titles, `split ${split}`).toEqual(["Check Kali runner"]);
+      expect(visible, `split ${split}`).toBe("Before After.");
+    }
+    const state = createThreadTitleFilterState(true);
+    const titles: string[] = [];
+    expect([...tagged].map((chunk) => filterThreadTitleDelta(chunk, state, (title) => titles.push(title))).join("")).toBe("Before After.");
+    expect(titles).toEqual(["Check Kali runner"]);
+  });
 });
 
 describe("thread title normalization", () => {
@@ -77,5 +99,10 @@ describe("thread title normalization", () => {
     expect(isPlaceholderThreadTitle({ title: "New local agent chat" })).toBe(false);
     expect(isPlaceholderThreadTitle({ title: "New chat", titleSource: "placeholder" })).toBe(true);
     expect(isPlaceholderThreadTitle({ title: "Manual title", titleSource: "user" })).toBe(false);
+  });
+  it("never saves provider title protocol markers in a heading", () => {
+    expect(normalizeThreadTitle("Local runner fixture check</thread_title>")).toBe("Local runner fixture check");
+    expect(normalizeThreadTitle("<thread_title>Local fixture validation</thread_title>")).toBe("Local fixture validation");
+    expect(normalizeThreadTitle("Title <other-tag> example")).toBe("Title <other-tag> example");
   });
 });

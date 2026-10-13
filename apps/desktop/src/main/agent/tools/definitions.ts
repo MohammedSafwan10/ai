@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { CollaborationMode } from "../../../shared/models";
 import type { DesktopToolCall, DesktopToolName } from "../../../shared/types";
+import { isSecurityToolName, isSecurityWorkspaceToolAllowed, kaliToolDefinitions, securityPlanToolAllowed } from "../../kali/definitions";
 
 const textProperty = (description: string) => ({ type: "string", description });
 const boolProperty = (description: string) => ({ type: "boolean", description });
@@ -928,17 +929,22 @@ export const desktopToolDefinitions = [
       tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },
+  ...kaliToolDefinitions,
 ] as const;
 
-export const desktopToolDefinitionsForMode = (mode: CollaborationMode = "default") =>
+export const desktopToolDefinitionsForMode = (mode: CollaborationMode = "default", environment: "development" | "security" = "development") =>
   desktopToolDefinitions
+    .filter((tool) => environment === "security"
+      ? isSecurityWorkspaceToolAllowed(tool.name)
+      : !isSecurityToolName(tool.name))
+    .filter((tool) => mode !== "plan" || !isSecurityToolName(tool.name) || securityPlanToolAllowed(tool.name))
     .filter((tool) => mode === "plan" || !("planOnly" in tool && tool.planOnly))
     .map((tool) => {
       const { planOnly: _planOnly, ...rest } = tool as typeof tool & { planOnly?: boolean };
       return rest;
     });
 
-export const openRouterDesktopTools = (mode: CollaborationMode = "default") => desktopToolDefinitionsForMode(mode).map((tool) => ({
+export const openRouterDesktopTools = (mode: CollaborationMode = "default", environment: "development" | "security" = "development") => desktopToolDefinitionsForMode(mode, environment).map((tool) => ({
   type: "function",
   function: {
     name: tool.name,
@@ -947,7 +953,7 @@ export const openRouterDesktopTools = (mode: CollaborationMode = "default") => d
   },
 }));
 
-export const geminiDesktopFunctionDeclarations = (mode: CollaborationMode = "default") => desktopToolDefinitionsForMode(mode).map((tool) => ({
+export const geminiDesktopFunctionDeclarations = (mode: CollaborationMode = "default", environment: "development" | "security" = "development") => desktopToolDefinitionsForMode(mode, environment).map((tool) => ({
   name: tool.name,
   description: tool.description,
   parametersJsonSchema: tool.parameters,

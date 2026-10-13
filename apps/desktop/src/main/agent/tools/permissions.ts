@@ -17,6 +17,12 @@ interface PermissionContext {
 }
 
 export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, context: PermissionContext = {}): PermissionDecision => {
+  if (call.name === "kali_exec") {
+    return {
+      risk: "risky", requiresApproval: mode !== "yolo",
+      reason: "This command runs in the assigned Kali environment.",
+    };
+  }
   if (call.name === "desktop_delete_path") {
     return {
       risk: "risky",

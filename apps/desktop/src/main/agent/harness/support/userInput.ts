@@ -3,6 +3,7 @@ import type {
   RequestUserInputQuestionRecord,
   RequestUserInputResponseInput,
 } from "../../../../shared/types";
+import { securityPlanToolAllowed } from "../../../kali/definitions";
 
 export const planModeBlockReason = (
   call: DesktopToolCall,
@@ -13,6 +14,7 @@ export const planModeBlockReason = (
     return call.name === "request_user_input" ? "request_user_input is only available in Plan Mode." : null;
   }
   if (call.name === "request_user_input") return null;
+  if (securityPlanToolAllowed(call.name)) return null;
   if (["desktop_read_file", "desktop_list_dir", "desktop_search", "desktop_git_status", "desktop_git_diff", "desktop_run_diagnostics"].includes(call.name)) return null;
   if ((call.name === "desktop_apply_patch" || call.name === "desktop_edit_file") && call.arguments.dryRun === true) return null;
   if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list"].includes(call.name)) {

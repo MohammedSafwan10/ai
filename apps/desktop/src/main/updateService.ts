@@ -1,12 +1,26 @@
 import { app, autoUpdater, BrowserWindow, ipcMain } from "electron";
+import fs from "node:fs";
+import path from "node:path";
 import { channels } from "./ipc/channels";
 import type { UpdateStatus } from "../shared/types";
 
 const UPDATE_FEED_URL = "https://updates.nexdark.com/win32/x64/stable";
+const hasInstalledWindowsUpdater = () => {
+  if (process.platform !== "win32" || !app.isPackaged) return false;
+  const executableDirectory = path.dirname(app.getPath("exe"));
+  return [path.join(executableDirectory, "Update.exe"), path.join(executableDirectory, "..", "Update.exe")].some((filename) => {
+    try { return fs.statSync(filename).isFile(); } catch { return false; }
+  });
+};
+const unsupportedUpdateMessage = () => !app.isPackaged
+  ? "Updates run in installed builds."
+  : process.platform !== "win32"
+    ? "Updates are only configured for Windows."
+    : "Automatic updates require the installed Windows build. This portable build has no Squirrel updater.";
 
 let status: UpdateStatus = {
   state: "idle",
-  supported: process.platform === "win32" && app.isPackaged,
+  supported: hasInstalledWindowsUpdater(),
   feedUrl: UPDATE_FEED_URL,
   currentVersion: app.getVersion(),
 };
@@ -15,6 +29,8 @@ let checking = false;
 let lastMetadataFetch = 0;
 let onStatusChanged: ((status: UpdateStatus) => void) | undefined;
 let onBeforeInstall: (() => void) | undefined;
+let onRequestInstall: (() => Promise<boolean>) | undefined;
+let installRequest: Promise<UpdateStatus> | undefined;
 
 const emitStatus = () => {
   BrowserWindow.getAllWindows().forEach((window) => {
@@ -33,7 +49,7 @@ export const checkForUpdates = () => {
   if (!status.supported) {
     setStatus({
       state: "unsupported",
-      message: app.isPackaged ? "Updates are only configured for Windows." : "Updates run in packaged builds.",
+      message: unsupportedUpdateMessage(),
     });
     return status;
   }
@@ -71,27 +87,37 @@ const refreshLatestReleaseMetadata = async () => {
 
 export const getUpdateServiceStatus = () => status;
 
-export const installDownloadedUpdate = () => {
-  if (status.state !== "ready") return status;
-  onBeforeInstall?.();
-  setStatus({ state: "installing", message: "Installing update..." });
-  autoUpdater.quitAndInstall();
-  return status;
+export const installDownloadedUpdate = (): Promise<UpdateStatus> => {
+  if (installRequest) return installRequest;
+  if (status.state !== "ready") return Promise.resolve(status);
+  installRequest = (async () => {
+    if (onRequestInstall && !await onRequestInstall()) return status;
+    onBeforeInstall?.();
+    setStatus({ state: "installing", message: "Installing update..." });
+    autoUpdater.quitAndInstall();
+    return status;
+  })().catch((error) => {
+    setStatus({ state: "error", error: error instanceof Error ? error.message : String(error) });
+    return status;
+  }).finally(() => { installRequest = undefined; });
+  return installRequest;
 };
 
 export const installUpdateService = (options?: {
   onStatusChanged?: (status: UpdateStatus) => void;
   onBeforeInstall?: () => void;
+  onRequestInstall?: () => Promise<boolean>;
 }) => {
   onStatusChanged = options?.onStatusChanged;
   onBeforeInstall = options?.onBeforeInstall;
+  onRequestInstall = options?.onRequestInstall;
   if (status.supported) {
     autoUpdater.setFeedURL({ url: UPDATE_FEED_URL });
   } else {
     status = {
       ...status,
       state: "unsupported",
-      message: app.isPackaged ? "Updates are only configured for Windows." : "Updates run in packaged builds.",
+      message: unsupportedUpdateMessage(),
     };
   }
 
@@ -128,7 +154,6 @@ export const installUpdateService = (options?: {
   });
 
   autoUpdater.on("before-quit-for-update", () => {
-    onBeforeInstall?.();
     setStatus({ state: "installing", message: "Installing update..." });
   });
 

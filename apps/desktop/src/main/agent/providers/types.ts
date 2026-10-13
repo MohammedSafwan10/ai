@@ -34,6 +34,7 @@ export interface ProviderStreamOptions {
   threadId?: string;
   maxOutputTokens?: number;
   disableTools?: boolean;
+  toolEnvironment?: "development" | "security";
   cliproxyBaseUrl: string;
   appwriteEndpoint: string;
   appwriteProjectId: string;

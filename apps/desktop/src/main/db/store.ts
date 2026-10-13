@@ -27,6 +27,8 @@ import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
 import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
+import type { KaliEnvironment } from "../../shared/kali";
+import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityFindingRecord, SecurityJobRecord } from "../../shared/securityWorkspace";
 
 type SecretName =
   | "openrouter_api_key"
@@ -277,12 +279,68 @@ export class DesktopStore {
   upsertWorkspace(workspacePath: string): WorkspaceRecord {
     const resolvedPath = path.resolve(workspacePath);
     const existing = this.all<WorkspaceRecord>("SELECT payload FROM workspaces WHERE path = ?", resolvedPath)[0];
-    const workspace = { id: existing?.id || crypto.randomUUID(), path: resolvedPath, name: path.basename(resolvedPath) || resolvedPath, lastOpenedAt: now() };
+    const workspace: WorkspaceRecord = { ...existing, id: existing?.id || crypto.randomUUID(), path: resolvedPath, name: existing?.name || path.basename(resolvedPath) || resolvedPath, type: existing?.type || "development", lastOpenedAt: now() };
     this.putRecord("workspaces", workspace.id, workspace, { path: workspace.path, updatedAt: workspace.lastOpenedAt });
     return workspace;
   }
-  listWorkspaces() { return this.all<WorkspaceRecord>("SELECT payload FROM workspaces ORDER BY updated_at DESC"); }
-  getWorkspace(id: string | null | undefined) { return id ? this.one<WorkspaceRecord>("SELECT payload FROM workspaces WHERE id = ?", id) : null; }
+  listWorkspaces() { return this.all<WorkspaceRecord>("SELECT payload FROM workspaces ORDER BY updated_at DESC").map((item) => ({ ...item, type: item.type || "development" as const })); }
+  getWorkspace(id: string | null | undefined): WorkspaceRecord | null { const item = id ? this.one<WorkspaceRecord>("SELECT payload FROM workspaces WHERE id = ?", id) : null; return item ? { ...item, type: item.type || "development" } : null; }
+  createSecurityWorkspace(input: CreateSecurityWorkspaceInput): WorkspaceRecord {
+    if (!this.getSecurityEnvironment(input.environmentId)) throw new Error("Security environment not found.");
+    if (!input.name.trim() || !input.objective.trim() || !input.scope.trim()) throw new Error("Name, objective, and scope are required.");
+    const id = crypto.randomUUID();
+    const workspacePath = path.join(path.dirname(this.dbPath), "security-workspaces", id);
+    fs.mkdirSync(path.join(workspacePath, "evidence"), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(workspacePath, "attachments"), { recursive: true, mode: 0o700 });
+    const workspace: WorkspaceRecord = { id, path: workspacePath, name: input.name.trim(), type: "security", lastOpenedAt: now(), security: { environmentId: input.environmentId, objective: input.objective.trim(), scope: input.scope.trim() } };
+    this.putRecord("workspaces", id, workspace, { path: workspace.path, updatedAt: workspace.lastOpenedAt });
+    return workspace;
+  }
+  saveSecurityEnvironment(record: SecurityEnvironmentRecord, config?: KaliEnvironment): SecurityEnvironmentRecord {
+    if (config && config.id !== record.id) throw new Error("Environment identities must match.");
+    const publicRecord: SecurityEnvironmentRecord = { id: record.id, name: record.name, host: record.host, port: record.port, username: record.username, status: record.status, lastCheckedAt: record.lastCheckedAt, capabilities: record.capabilities, error: record.error };
+    const envelope = config ? this.encryptSecret(JSON.stringify(config)) : undefined;
+    this.transaction(() => {
+      this.putKv("security_environments", record.id, publicRecord);
+      if (envelope) this.putKv("security_environment_configs", record.id, envelope);
+    });
+    return publicRecord;
+  }
+  getSecurityEnvironment(id: string) { return this.getKv<SecurityEnvironmentRecord>("security_environments", id); }
+  listSecurityEnvironments() { return this.all<SecurityEnvironmentRecord>("SELECT payload FROM kv WHERE scope = 'security_environments' ORDER BY key"); }
+  getSecurityEnvironmentConfig(id: string): KaliEnvironment | null {
+    const envelope = this.getKv<StoredSecretEnvelope>("security_environment_configs", id);
+    if (!envelope) return null;
+    const decrypted = this.decryptSecret(envelope);
+    return decrypted ? JSON.parse(decrypted) as KaliEnvironment : null;
+  }
+  upsertSecurityJob(record: SecurityJobRecord): SecurityJobRecord {
+    const workspace = this.getWorkspace(record.workspaceId);
+    const thread = this.getThread(record.threadId);
+    const existing = this.getSecurityJob(record.id);
+    const retainedEvidence = !thread && existing?.threadId === record.threadId && existing.workspaceId === record.workspaceId;
+    if (existing && (existing.workspaceId !== record.workspaceId || existing.threadId !== record.threadId || existing.environmentId !== record.environmentId || existing.idempotencyKey !== record.idempotencyKey)) throw new Error("Persisted job identity cannot change.");
+    if (workspace?.type !== "security" || (!retainedEvidence && thread?.workspaceId !== workspace.id) || workspace.security?.environmentId !== record.environmentId) throw new Error("Job must belong to its security workspace, thread, and environment.");
+    const item: SecurityJobRecord = {
+      id: record.id, remoteJobId: record.remoteJobId, workspaceId: record.workspaceId, threadId: record.threadId, messageId: record.messageId, toolCallId: record.toolCallId,
+      environmentId: record.environmentId, idempotencyKey: record.idempotencyKey, projectId: record.projectId, state: record.state, sequence: record.sequence,
+      outputPreview: boundedSecurityText(record.outputPreview, 16_384), commandPreview: boundedSecurityText(record.commandPreview, 2_048), exitCode: record.exitCode,
+      error: record.error === null ? null : boundedSecurityText(record.error, 2_048), createdAt: record.createdAt, updatedAt: record.updatedAt,
+      artifacts: record.artifacts?.map(({ base64: _base64, ...attachment }) => attachment),
+    };
+    this.putRecord("security_jobs", item.id, item, { workspaceId: item.workspaceId, threadId: item.threadId, updatedAt: item.updatedAt });
+    return item;
+  }
+  getSecurityJob(id: string) { return this.one<SecurityJobRecord>("SELECT payload FROM security_jobs WHERE id = ?", id); }
+  listSecurityJobs(workspaceId: string, threadId?: string) { return threadId ? this.all<SecurityJobRecord>("SELECT payload FROM security_jobs WHERE workspace_id = ? AND thread_id = ? ORDER BY updated_at DESC, id", workspaceId, threadId) : this.all<SecurityJobRecord>("SELECT payload FROM security_jobs WHERE workspace_id = ? ORDER BY updated_at DESC, id", workspaceId); }
+  upsertSecurityFinding(record: SecurityFindingRecord) {
+    if (this.getWorkspace(record.workspaceId)?.type !== "security") throw new Error("Finding requires a security workspace.");
+    if (record.evidenceJobIds.some((id) => this.getSecurityJob(id)?.workspaceId !== record.workspaceId)) throw new Error("Finding evidence must belong to the same workspace.");
+    this.putRecord("security_findings", record.id, record, { workspaceId: record.workspaceId, updatedAt: record.updatedAt });
+    return record;
+  }
+  getSecurityFinding(id: string) { return this.one<SecurityFindingRecord>("SELECT payload FROM security_findings WHERE id = ?", id); }
+  listSecurityFindings(workspaceId: string) { return this.all<SecurityFindingRecord>("SELECT payload FROM security_findings WHERE workspace_id = ? ORDER BY updated_at DESC, id", workspaceId); }
   removeWorkspace(workspaceId: string) {
     const workspace = this.getWorkspace(workspaceId);
     if (!workspace) return null;
@@ -328,8 +386,8 @@ export class DesktopStore {
     this.putThread({ ...thread, starred: !thread.starred, updatedAt: now() }); return this.getThread(threadId);
   }
   deleteThread(threadId: string) { this.transaction(() => this.removeThreadRecords(threadId)); this.pruneArtifacts(); }
-  listThreads() { return this.all<ThreadRecord>("SELECT payload FROM threads WHERE hidden = 0 ORDER BY starred DESC, updated_at DESC"); }
-  getThread(threadId: string) { return this.one<ThreadRecord>("SELECT payload FROM threads WHERE id = ?", threadId); }
+  listThreads() { return this.all<ThreadRecord>("SELECT payload FROM threads WHERE hidden = 0 ORDER BY starred DESC, updated_at DESC").map(normalizeLoadedThreadTitle); }
+  getThread(threadId: string) { const thread = this.one<ThreadRecord>("SELECT payload FROM threads WHERE id = ?", threadId); return thread ? normalizeLoadedThreadTitle(thread) : null; }
 
   getMessage(messageId: string) { const stored = this.one<StoredMessage>("SELECT payload FROM messages WHERE id = ?", messageId); return stored ? this.hydrateMessage(stored) : null; }
   getMessagePreview(messageId: string) { const stored = this.one<StoredMessage>("SELECT payload FROM messages WHERE id = ?", messageId); return stored ? this.previewMessage(stored) : null; }
@@ -548,6 +606,9 @@ export class DesktopStore {
   private createSchema() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS kv (scope TEXT NOT NULL, key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(scope,key)) STRICT;
+      CREATE TABLE IF NOT EXISTS security_jobs (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, thread_id TEXT NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE) STRICT;
+      CREATE INDEX IF NOT EXISTS security_jobs_workspace_updated ON security_jobs(workspace_id, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS security_findings (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE) STRICT;
       CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, workspace_id TEXT, hidden INTEGER NOT NULL, starred INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE) STRICT;
       CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
@@ -666,11 +727,13 @@ export class DesktopStore {
     const refs = new Set<string>();
     this.all<StoredToolEvent>("SELECT payload FROM tool_events").forEach((tool) => [tool.output, tool.diff].forEach((value) => { if (value && typeof value !== "string") refs.add(value.artifactId); }));
     this.all<StoredMessage>("SELECT payload FROM messages").forEach((message) => message.attachments?.forEach((attachment) => refs.add(attachment.artifactId)));
+    this.all<SecurityJobRecord>("SELECT payload FROM security_jobs").forEach((job) => job.artifacts?.forEach((attachment) => { if (attachment.artifactId) refs.add(attachment.artifactId); }));
     this.artifacts.deleteUnreferenced(refs);
   }
 }
 
 const emptyPage = (): ThreadHistoryPage => ({ threadId: "", messages: [], toolEvents: [], turnUndos: [], hasOlder: false });
+const boundedSecurityText = (value: string, limit: number) => { const result = value.slice(-limit); return /^[\uDC00-\uDFFF]/.test(result) ? result.slice(1) : result; };
 const placeholders = (count: number) => Array.from({ length: count }, () => "?").join(",");
 const sqlColumn = (value: string) => value.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
 const encodeCursor = (message: Pick<ChatMessageRecord, "id" | "createdAt">) => Buffer.from(JSON.stringify({ id: message.id, createdAt: message.createdAt }), "utf8").toString("base64url");
@@ -678,7 +741,7 @@ const decodeCursor = (cursor?: string) => { try { const value = JSON.parse(Buffe
 const attachmentUrl = (artifactId: string, mimeType: string) =>
   `privora-attachment://artifact/${encodeURIComponent(artifactId)}?mime=${encodeURIComponent(mimeType)}`;
 
-export const normalizeThreadTitle = (title: string) => (title.replace(/\r/g, "\n").split("\n")[0] || "").replace(/\s+/g, " ").trim().slice(0, 48);
+export const normalizeThreadTitle = (title: string) => (title.replace(/<\/?thread_title>/g, "").replace(/\r/g, "\n").split("\n")[0] || "").replace(/\s+/g, " ").trim().slice(0, 48);
 
 const normalizeCliproxyBaseUrl = (value: string) => {
   try {
@@ -697,6 +760,12 @@ const safeCliproxyBaseUrl = (value: string | undefined) => {
   }
 };
 export const isPlaceholderThreadTitle = (thread: Pick<ThreadRecord, "title" | "titleSource">) => thread.titleSource === "placeholder";
+const normalizeLoadedThreadTitle = (thread: ThreadRecord): ThreadRecord => {
+  if ((thread.titleSource === "agent" || thread.titleSource === "fallback") && /<\/?thread_title>/.test(thread.title)) {
+    return { ...thread, title: normalizeThreadTitle(thread.title) || PLACEHOLDER_THREAD_TITLE };
+  }
+  return thread;
+};
 const normalizeStoredThread = (thread: ThreadRecord): ThreadRecord => {
   const title = thread.title?.trim() || PLACEHOLDER_THREAD_TITLE; const titleSource = thread.titleSource || "user";
   return { ...thread, title: titleSource === "placeholder" ? PLACEHOLDER_THREAD_TITLE : normalizeThreadTitle(title) || PLACEHOLDER_THREAD_TITLE, titleSource, titleUpdatedAt: thread.titleUpdatedAt || thread.updatedAt || thread.createdAt || now(), hidden: thread.hidden === true, model: thread.model ? normalizeModelId(thread.model) : undefined, agentHarnessMode: thread.agentHarnessMode === "review_swarm" ? "review_swarm" : "standard" };

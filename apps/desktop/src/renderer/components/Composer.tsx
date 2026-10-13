@@ -10,6 +10,7 @@ interface ComposerProps {
   settings: SettingsRecord;
   disabled: boolean;
   inputDisabledReason?: string;
+  remoteEnvironment?: boolean;
   running: boolean;
   stopping?: boolean;
   activeThreadId: string | null;
@@ -52,6 +53,7 @@ export function Composer({
   settings,
   disabled,
   inputDisabledReason,
+  remoteEnvironment = false,
   running,
   stopping = false,
   activeThreadId,
@@ -173,7 +175,7 @@ export function Composer({
   }, [activeThreadId]);
 
   useEffect(() => {
-    if (!activeThreadId || !mentionToken) {
+    if (remoteEnvironment || !activeThreadId || !mentionToken) {
       setMentionSuggestions([]);
       return;
     }
@@ -191,7 +193,7 @@ export function Composer({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activeThreadId, mentionToken]);
+  }, [activeThreadId, mentionToken, remoteEnvironment]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -249,6 +251,7 @@ export function Composer({
   };
 
   const detectMentionToken = (nextValue: string, cursor: number) => {
+    if (remoteEnvironment) { setMentionToken(null); return; }
     setHistoryCursor(null);
     lastHistoryTextRef.current = null;
     const beforeCursor = nextValue.slice(0, cursor);
@@ -568,7 +571,7 @@ export function Composer({
             </button>
             <h2 id="full-access-title">Enable full access?</h2>
             <p>
-              Full access lets Privora run commands, use the network, edit files, use the browser, and control desktop apps without asking before ordinary risky actions.
+              {remoteEnvironment ? "Full access lets Privora run commands, use the network, and retrieve evidence in the selected Kali environment without asking before ordinary risky actions." : "Full access lets Privora run commands, use the network, edit files, use the browser, and control desktop apps without asking before ordinary risky actions."}
               This can move faster, but it also increases the chance of unintended changes or unsafe tool output.
             </p>
             <div className="full-access-dialog-actions">
@@ -640,7 +643,7 @@ export function Composer({
                   <span><ClipboardList size={18} /> Plan mode</span>
                   <ToggleSwitch checked={settings.collaborationMode === "plan"} />
                 </button>
-                <button
+                {!remoteEnvironment && <button
                   type="button"
                   className="composer-menu-row"
                   onClick={() => {
@@ -649,7 +652,7 @@ export function Composer({
                 >
                   <span><MousePointer2 size={18} /> Computer Use</span>
                   <ToggleSwitch checked={settings.computerUseEnabled} />
-                </button>
+                </button>}
                 <button
                   type="button"
                   className="composer-menu-row"
@@ -712,7 +715,7 @@ export function Composer({
               <X className="composer-mode-dismiss" size={13} />
             </button>
             )}
-            {settings.computerUseEnabled && (
+            {!remoteEnvironment && settings.computerUseEnabled && (
             <button
               type="button"
               className="composer-mode-status computer-use-status"

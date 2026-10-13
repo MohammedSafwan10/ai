@@ -47,8 +47,9 @@ export const normalizeCliproxyError = (value: string) => {
 export const cliproxyToolsForModel = (
   _model: string,
   collaborationMode: ProviderStreamOptions["collaborationMode"],
+  environment: ProviderStreamOptions["toolEnvironment"] = "development",
 ) => [
-  ...desktopToolDefinitionsForMode(collaborationMode),
+  ...desktopToolDefinitionsForMode(collaborationMode, environment),
   {
     type: "web_search",
     external_web_access: true,
@@ -145,12 +146,83 @@ export const completedResponsesFunctionCall = (event: string | undefined, data: 
     (isDesktopToolName(candidate?.name) || candidate?.type === "function_call")
   );
   const name = item?.name || data?.name;
-  const argumentsText = item?.arguments || data?.arguments;
+  const argumentsText = item?.arguments ?? data?.arguments;
   if (!type.includes("function_call") && item?.type !== "function_call") return null;
   if (!isDesktopToolName(name)) return null;
   if (typeof argumentsText !== "string") return null;
-  return { id: item?.call_id || data?.call_id || item?.id || data?.id, name, argumentsText };
+  return { id: item?.call_id || data?.call_id, name, argumentsText };
 };
+
+interface ResponsesCallBuffer {
+  id?: string;
+  name?: string;
+  argumentsText: string;
+  completed: boolean;
+}
+
+/** Item IDs and output indexes are aliases; only call_id identifies execution. */
+export class ResponsesToolCallTracker {
+  private readonly buffers = new Map<string, ResponsesCallBuffer>();
+  private readonly emitted = new Set<string>();
+
+  constructor(private readonly options: Pick<ProviderStreamOptions, "onToolCall" | "onToolDraft">) {}
+
+  consume(event: string | undefined, data: any) {
+    const type = `${event || ""} ${data?.type || ""}`;
+    if (type.includes("response.completed") && Array.isArray(data?.response?.output)) {
+      data.response.output.forEach((item: any, output_index: number) => {
+        if (item?.type === "function_call") this.consume("response.output_item.done", { item, output_index });
+      });
+      return;
+    }
+    const item = data?.item || data?.output_item;
+    if (!type.includes("function_call") && item?.type !== "function_call") return;
+    const callId = item?.call_id || data?.call_id;
+    const itemId = data?.item_id || item?.id || data?.id;
+    const aliases: string[] = [];
+    if (typeof callId === "string" && callId) aliases.push(`call:${callId}`);
+    if (typeof itemId === "string" && itemId) aliases.push(`item:${itemId}`);
+    if (Number.isInteger(data?.output_index) && data.output_index >= 0) aliases.push(`output:${data.output_index}`);
+    // Missing all identity fields cannot safely identify a mutating call.
+    if (!aliases.length) return;
+    const matches = aliases.map((alias) => this.buffers.get(alias)).filter((buffer): buffer is ResponsesCallBuffer => Boolean(buffer));
+    const buffer = matches[0] ?? { argumentsText: "", completed: false };
+    const knownIds = new Set(matches.map((value) => value.id).filter(Boolean));
+    if (typeof callId === "string" && callId) knownIds.add(callId);
+    if (knownIds.size > 1) return; // Conflicting aliases are malformed, not new calls.
+    for (const match of matches) {
+      buffer.id ??= match.id;
+      buffer.name ??= match.name;
+      if (!buffer.argumentsText) buffer.argumentsText = match.argumentsText;
+      buffer.completed ||= match.completed;
+    }
+    if (typeof callId === "string" && callId) buffer.id = callId;
+    const name = item?.name || data?.name;
+    if (isDesktopToolName(name)) buffer.name = name;
+    for (const [alias, value] of this.buffers) {
+      if (matches.includes(value)) this.buffers.set(alias, buffer);
+    }
+    for (const alias of aliases) this.buffers.set(alias, buffer);
+    if (buffer.id) this.buffers.set(`call:${buffer.id}`, buffer);
+
+    if (type.includes("function_call_arguments.delta") && typeof data?.delta === "string" && !buffer.completed) {
+      buffer.argumentsText += data.delta;
+      const draft = parsePartialDesktopToolCall(buffer.name, buffer.argumentsText);
+      if (draft && buffer.id) this.options.onToolDraft({ ...draft, id: buffer.id });
+    }
+    if (type.includes("function_call_arguments.done") || type.includes("output_item.done")) {
+      const completed = completedResponsesFunctionCall(event, data);
+      const argumentsText = completed?.argumentsText ?? item?.arguments ?? data?.arguments;
+      if (typeof argumentsText === "string") buffer.argumentsText = argumentsText;
+      buffer.completed = true;
+    }
+    if (!buffer.completed || !buffer.id || !buffer.name || this.emitted.has(buffer.id)) return;
+    const call = parseDesktopToolCall(buffer.name, buffer.argumentsText, buffer.id);
+    if (!call) return;
+    this.emitted.add(buffer.id);
+    this.options.onToolCall(call);
+  }
+}
 
 export const webSearchEventFromResponse = (event: string | undefined, data: any) => {
   const item = data?.item || data?.output_item || data;
@@ -209,7 +281,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         instructions: options.systemInstruction,
         input: toResponsesInput(options.messages),
         ...(!options.disableTools ? {
-          tools: cliproxyToolsForModel(options.model, options.collaborationMode),
+          tools: cliproxyToolsForModel(options.model, options.collaborationMode, options.toolEnvironment),
           parallel_tool_calls: true,
         } : {}),
         ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
@@ -226,24 +298,9 @@ export class CliproxyAdapter implements ProviderAdapter {
       throw new Error(normalizeCliproxyError(errorText || `CLIProxy request failed with ${response.status}`));
     }
 
-    const buffers = new Map<string, { id?: string; name?: string; argumentsText: string }>();
-    const emitted = new Set<string>();
+    const toolCalls = new ResponsesToolCallTracker(options);
     let currentReasoningSummary = "";
     let hasReasoningSummary = false;
-    const emit = (name: string, args: string, id?: string) => {
-      const key = id || `${name}:${args}`;
-      if (emitted.has(key)) return;
-      const call = parseDesktopToolCall(name, args, id);
-      if (!call) return;
-      emitted.add(key);
-      options.onToolCall(call);
-    };
-    const keyFor = (data: any) => {
-      const id = data?.item_id || data?.output_item?.id || data?.item?.id || data?.call_id || data?.id;
-      if (typeof id === "string" && id) return id;
-      if (data?.output_index !== undefined && data?.output_index !== null) return `output:${data.output_index}`;
-      return "default";
-    };
 
     await readSse(response, (event, dataLine) => {
       try {
@@ -252,17 +309,6 @@ export class CliproxyAdapter implements ProviderAdapter {
         if (usage) options.onUsage?.(usage);
         const webSearch = webSearchEventFromResponse(event, data);
         if (webSearch) options.onWebSearch?.(webSearch);
-        const key = keyFor(data);
-        const previous = buffers.get(key) || { argumentsText: "" };
-        const itemName = data?.item?.name || data?.output_item?.name || data?.name;
-        const name = typeof itemName === "string" && isDesktopToolName(itemName)
-          ? itemName
-          : previous.name;
-        const itemId = data?.item?.call_id || data?.output_item?.call_id || data?.call_id || data?.item?.id || data?.output_item?.id || data?.id;
-        const id = typeof itemId === "string" ? itemId : previous.id;
-        if (name || id || previous.argumentsText) {
-          buffers.set(key, { ...previous, name, id });
-        }
 
         const text = responsesTextDelta(event, data);
         if (text) options.onTextDelta(text);
@@ -297,28 +343,7 @@ export class CliproxyAdapter implements ProviderAdapter {
           }
         }
 
-        const type = eventType;
-        if (type.includes("function_call_arguments.delta") && typeof data?.delta === "string") {
-          const next = {
-            id,
-            name,
-            argumentsText: previous.argumentsText + data.delta,
-          };
-          buffers.set(key, next);
-          const draft = parsePartialDesktopToolCall(next.name, next.argumentsText);
-          if (draft) options.onToolDraft({ ...draft, id: next.id });
-        }
-        const completed = completedResponsesFunctionCall(event, data);
-        if (completed) {
-          emit(completed.name, completed.argumentsText, completed.id);
-          buffers.delete(key);
-        } else if (type.includes("function_call_arguments.done")) {
-          const buffered = buffers.get(key);
-          if (buffered?.name && buffered.argumentsText) {
-            emit(buffered.name, buffered.argumentsText, buffered.id);
-            buffers.delete(key);
-          }
-        }
+        toolCalls.consume(event, data);
       } catch {
         // Ignore malformed or non-JSON SSE payloads. CLIProxy Responses streams use
         // typed events, and unknown payloads must not leak into visible assistant text.

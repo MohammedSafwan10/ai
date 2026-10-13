@@ -10,6 +10,7 @@ import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
 import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
+import { CreateSecurityWorkspaceDialog, SecurityWorkspaceBadge, SecurityWorkspaceDetails, useSecurityWorkspace } from "./features/security/SecurityWorkspace";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue, type QueuedPrompt } from "./features/chat/usePromptQueue";
 import { splitComposerSettingsForPersistence } from "./features/chat/settingsPersistence";
@@ -35,6 +36,10 @@ export default function App() {
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [createSecurityOpen, setCreateSecurityOpen] = useState(false);
+  const [securityDetailsOpen, setSecurityDetailsOpen] = useState(false);
+  const isSecurityWorkspace = activeWorkspace?.type === "security";
+  const securityWorkspace = useSecurityWorkspace(activeWorkspace, securityDetailsOpen, !settingsOpen);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsDestination>("general");
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideCollapsedByUser, setIdeCollapsedByUser] = useState(false);
@@ -151,6 +156,8 @@ export default function App() {
     setReviewSession(null);
   }, [activeThread?.id]);
 
+  useEffect(() => { setSecurityDetailsOpen(false); }, [activeWorkspace?.id]);
+
   useEffect(() => {
     if (!browserToolAutoOpenRef.current.initialized) {
       browserToolAutoOpenRef.current = { initialized: true, key: latestBrowserToolKey };
@@ -162,7 +169,7 @@ export default function App() {
     // the running gate, the initial snapshot load (which restores persisted
     // browser_* tool events) looks like a brand-new browser action and pops
     // the panel open on every app launch.
-    if (!activeWorkspace || settingsOpen || ideCollapsedByUser || !running) return;
+    if (!activeWorkspace || activeWorkspace.type === "security" || settingsOpen || ideCollapsedByUser || !running) return;
     setIdeCollapsed(false);
     setWorkspacePanelRequest({ mode: "browser", key: Date.now() });
   }, [activeWorkspace?.id, ideCollapsedByUser, latestBrowserToolKey, running, settingsOpen]);
@@ -298,6 +305,7 @@ export default function App() {
   }, []);
 
   const openReviewInIde = (messageId: string) => {
+    if (isSecurityWorkspace) { setSecurityDetailsOpen(true); return; }
     const tools = toolsByMessage.get(messageId) || [];
     setReviewSession(buildReviewSession({
       messageId,
@@ -392,6 +400,7 @@ export default function App() {
           await window.privoraDesktop.selectWorkspace();
           await refresh();
         }}
+        onCreateSecurityWorkspace={() => setCreateSecurityOpen(true)}
         onNewThread={async () => {
           await window.privoraDesktop.createThread(activeWorkspace?.id ?? null);
           await refresh();
@@ -433,7 +442,7 @@ export default function App() {
         ref={mainWorkspaceRef}
         className={clsx(
           "main-workspace",
-          ideCollapsed && "ide-collapsed",
+          (ideCollapsed || isSecurityWorkspace) && "ide-collapsed",
           workspaceWidth > 0 && workspaceWidth < IDE_COMPACT_WIDTH && "ide-compact",
           ideResizing && "is-resizing",
         )}
@@ -443,10 +452,11 @@ export default function App() {
         title={activeThread?.title || "New chat"}
         settingsOpen={settingsOpen}
         toast={toast}
+        topbarSecondary={isSecurityWorkspace ? <SecurityWorkspaceBadge environment={securityWorkspace.state?.environment} checking={securityWorkspace.checking} onOpen={() => setSecurityDetailsOpen(true)} /> : undefined}
         topbarTrailing={(
           <>
             <UpdateControl status={updateStatus} />
-            <AppLauncher disabled={!activeWorkspace} />
+            {!isSecurityWorkspace && <AppLauncher disabled={!activeWorkspace} />}
           </>
         )}
         messageList={(
@@ -472,7 +482,10 @@ export default function App() {
               Earlier tool steps are compacted for performance.
             </div>
           )}
-          {messages.length === 0 && (
+          {messages.length === 0 && isSecurityWorkspace && (
+            <div className="empty-state security-empty-state"><div className="empty-state-header"><span className="empty-state-kicker">{activeWorkspace.name}</span><h2>What should Privora investigate?</h2><p>{activeWorkspace.security?.objective}</p></div><button type="button" className="security-empty-details" onClick={() => setSecurityDetailsOpen(true)}>View environment & scope <ChevronRight size={14} /></button></div>
+          )}
+          {messages.length === 0 && !isSecurityWorkspace && (
             <EmptyThreadState
               workspaceName={activeWorkspace?.name || null}
               workspacePath={activeWorkspace?.path || null}
@@ -691,6 +704,7 @@ export default function App() {
             />
           )}
           <Composer
+            remoteEnvironment={isSecurityWorkspace}
             settings={activeThreadSettings}
             disabled={!activeThread || !activeWorkspace}
             inputDisabledReason={snapshot.pendingUserInput ? "Answer the question to continue" : undefined}
@@ -726,7 +740,7 @@ export default function App() {
           />
         )}
       />
-      <button
+      {!isSecurityWorkspace && <button
         type="button"
         className="ide-resizer"
         aria-label="Resize workspace editor"
@@ -739,8 +753,8 @@ export default function App() {
           setIdeWidth(clampIdeWidth(width * 0.5, width));
         }}
         disabled={ideCollapsed}
-      />
-      <WorkspaceIdeShell
+      />}
+      {!isSecurityWorkspace && <WorkspaceIdeShell
         workspace={activeWorkspace}
         reviewSession={reviewSession}
         hidden={ideCollapsed || settingsOpen}
@@ -754,8 +768,8 @@ export default function App() {
             return next;
           });
         }}
-      />
-      {ideCollapsed && (
+      />}
+      {ideCollapsed && !isSecurityWorkspace && (
         <button
           type="button"
           className="ide-restore-button"
@@ -770,6 +784,8 @@ export default function App() {
         </button>
       )}
       </div>
+      {createSecurityOpen && <CreateSecurityWorkspaceDialog onClose={() => setCreateSecurityOpen(false)} onCreated={refresh} />}
+      {securityDetailsOpen && isSecurityWorkspace && <SecurityWorkspaceDetails workspace={activeWorkspace} state={securityWorkspace.state} error={securityWorkspace.error} checking={securityWorkspace.checking} onCheck={securityWorkspace.check} onRefresh={securityWorkspace.refresh} onClose={() => setSecurityDetailsOpen(false)} />}
     </div>
   );
 }

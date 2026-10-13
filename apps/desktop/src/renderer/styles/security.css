@@ -1,0 +1,68 @@
+.project-heading > span { flex: 1; }
+.security-workspace-badge { display: flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 5px; padding: 0; border: 0; background: transparent; color: var(--privora-muted); font-size: 11px; text-align: left; }
+.security-workspace-badge:hover { color: var(--privora-text); }
+.security-badge-environment { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.security-badge-separator { opacity: .6; }
+.security-connection-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--privora-muted); flex: 0 0 auto; margin-left: 3px; }
+.security-connection-dot.connected { background: var(--ok); }
+.security-dialog { width: min(500px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 0; border: 1px solid var(--privora-border); border-radius: 14px; background: var(--privora-bg); color: var(--privora-text); box-shadow: var(--privora-shadow); }
+.security-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+.security-dialog > header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; background: var(--privora-bg); border-bottom: 1px solid var(--privora-border); }
+.security-dialog h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.security-dialog h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.security-dialog h4 { font-size: 12px; font-weight: 600; margin: 14px 0 6px; }
+.security-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--privora-text); border: 1px solid var(--privora-border); border-radius: 7px; padding: 7px 10px; font-size: 12px; }
+.security-dialog button:hover:not(:disabled) { background: var(--privora-surface-faint); }
+.security-dialog > header button { border: 0; padding: 4px; color: var(--privora-muted); }
+.security-dialog button:disabled { opacity: .45; cursor: default; }
+.security-dialog button:focus-visible, .security-dialog summary:focus-visible, .security-workspace-badge:focus-visible { outline: 2px solid var(--privora-muted); outline-offset: 3px; }
+.security-project-form { display: grid; gap: 16px; padding: 22px; }
+.security-project-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 500; }
+.security-project-form input, .security-project-form textarea, .security-project-form select { width: 100%; border: 1px solid var(--privora-border); border-radius: 7px; background: var(--privora-surface-faint); color: var(--privora-text); font: inherit; font-size: 13px; padding: 9px 10px; }
+.security-project-form textarea { resize: vertical; min-height: 66px; max-height: 160px; }
+.security-project-form input:focus, .security-project-form textarea:focus, .security-project-form select:focus { outline: 1px solid var(--privora-muted); }
+.security-project-form footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.security-dialog .security-primary { background: var(--privora-accent); color: var(--privora-accent-fg); border-color: transparent; }
+.security-dialog .security-primary:hover:not(:disabled) { background: var(--privora-accent-hover); }
+.security-environment-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: -5px; }
+.security-environment-summary { display: grid; gap: 5px; font-size: 11px; color: var(--privora-muted); overflow-wrap: anywhere; }
+.security-environment-summary > span:last-child { display: flex; align-items: center; gap: 5px; }
+.security-form-note, .security-quiet { margin: 0; color: var(--privora-muted); font-size: 12px; line-height: 1.6; }
+.security-error { margin: 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; line-height: 1.5; }
+.security-details-dialog { width: min(680px, calc(100vw - 32px)); }
+.security-details-content { padding: 22px; display: grid; gap: 26px; }
+.security-details-content section > .security-quiet { margin-top: 9px; }
+.security-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 9px; }
+.security-project-context { display: grid; grid-template-columns: 70px minmax(0, 1fr); font-size: 12px; gap: 9px; line-height: 1.6; margin: 16px 0 0; }
+.security-project-context dt { color: var(--privora-muted); }
+.security-project-context dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.security-job, .security-finding { border-top: 1px solid var(--privora-border); padding: 10px 0; }
+.security-job:first-of-type, .security-finding:first-of-type { margin-top: 9px; }
+.security-job summary, .security-finding summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; font-size: 12px; }
+.security-job summary::before, .security-finding summary::before { content: '›'; font-size: 17px; color: var(--privora-muted); }
+.security-job[open] summary::before, .security-finding[open] summary::before { transform: rotate(90deg); }
+.security-job-command, .security-finding summary > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.security-job-state, .security-finding summary > span:last-child { font-size: 11px; white-space: nowrap; color: var(--privora-muted); }
+.security-job-state.state-running, .security-job-state.state-stop_requested, .security-job-state.state-unknown { color: var(--pending); }
+.security-job-state.state-succeeded { color: var(--ok); }
+.security-job-state.state-failed { color: var(--danger); }
+.security-job-body { margin-top: 12px; }
+.security-job-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 10px; color: var(--privora-muted); margin-bottom: 9px; }
+.security-job-actions { display: flex; gap: 6px; }
+.security-finding-evidence { display: grid; gap: 6px; }
+.security-finding-evidence button { justify-content: flex-start; overflow-wrap: anywhere; text-align: left; }
+.security-artifacts { display: grid; gap: 6px; margin-top: 10px; }
+.security-artifact { display: flex; gap: 5px; }
+.security-artifact > button:first-child { flex: 1; min-width: 0; justify-content: flex-start; }
+.security-artifact > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.security-artifact small { margin-left: auto; flex-shrink: 0; color: var(--privora-muted); font-size: 10px; }
+.security-artifact-preview { padding-top: 15px; border-top: 1px solid var(--privora-border); }
+.security-artifact-preview img { display: block; max-width: 100%; max-height: 400px; object-fit: contain; margin: 12px 0; }
+.security-artifact-preview > button { margin-top: 12px; }
+.security-dialog pre { margin: 10px 0 0; padding: 12px; border-radius: 7px; background: var(--privora-surface-faint); font-size: 11px; line-height: 1.65; overflow: auto; max-height: 230px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.security-finding p { font-size: 12px; line-height: 1.6; margin-bottom: 0; white-space: pre-wrap; }
+.security-empty-state { max-width: 640px; }
+.security-empty-state .empty-state-header p { white-space: pre-wrap; }
+.security-empty-details { display: inline-flex; align-items: center; gap: 4px; margin-top: 20px; color: var(--privora-muted); font-size: 12px; background: none; border: 0; }
+.security-empty-details:hover { color: var(--privora-text); }
+@media (max-width: 620px) { .security-badge-separator, .security-badge-environment { display: none; } .security-dialog > header, .security-project-form, .security-details-content { padding: 16px; } .security-project-context { grid-template-columns: 1fr; gap: 4px; } .security-project-context dd + dt { margin-top: 7px; } }

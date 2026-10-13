@@ -9,5 +9,6 @@ describe("attachment preview CSP", () => {
 
     expect(csp).toContain("img-src");
     expect(csp).toContain("privora-attachment:");
+    expect(csp.match(/connect-src[^;]+/)?.[0]).toContain("privora-attachment:");
   });
 });

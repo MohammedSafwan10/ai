@@ -9,7 +9,7 @@ import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./
 import { readSse } from "./sse";
 import { normalizeProviderUsage } from "./usage";
 import {
-  completedResponsesFunctionCall,
+  ResponsesToolCallTracker,
   responsesTextDelta,
   responsesThoughtDelta,
   toResponsesInput,
@@ -148,7 +148,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         model: stripGoPrefix(options.model),
         messages: toMessages(options.systemInstruction, options.messages),
         ...(!options.disableTools ? {
-          tools: openRouterDesktopTools(options.collaborationMode),
+          tools: openRouterDesktopTools(options.collaborationMode, options.toolEnvironment),
           tool_choice: "auto",
           parallel_tool_calls: true,
         } : {}),
@@ -222,7 +222,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         instructions: options.systemInstruction,
         input: toResponsesInput(options.messages),
         ...(!options.disableTools ? {
-          tools: desktopToolDefinitionsForMode(options.collaborationMode),
+          tools: desktopToolDefinitionsForMode(options.collaborationMode, options.toolEnvironment),
           parallel_tool_calls: true,
         } : {}),
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
@@ -241,25 +241,10 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       throw new Error(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status));
     }
 
-    const buffers = new Map<string, { id?: string; name?: string; argumentsText: string }>();
-    const emitted = new Set<string>();
+    const toolCalls = new ResponsesToolCallTracker(options);
     let currentReasoningSummary = "";
     let hasReasoningSummary = false;
     let incomplete = false;
-    const emit = (name: string, args: string, id?: string) => {
-      const key = id || `${name}:${args}`;
-      if (emitted.has(key)) return;
-      const call = parseDesktopToolCall(name, args, id);
-      if (!call) return;
-      emitted.add(key);
-      options.onToolCall(call);
-    };
-    const keyFor = (data: any) => {
-      const id = data?.item_id || data?.output_item?.id || data?.item?.id || data?.call_id || data?.id;
-      if (typeof id === "string" && id) return id;
-      if (data?.output_index !== undefined && data?.output_index !== null) return `output:${data.output_index}`;
-      return "default";
-    };
 
     await readSse(response, (event, dataLine) => {
       let data: any;
@@ -273,17 +258,6 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       if (data?.type === "response.completed" && data?.response?.status === "incomplete") incomplete = true;
       const webSearch = webSearchEventFromResponse(event, data);
       if (webSearch) options.onWebSearch?.(webSearch);
-      const key = keyFor(data);
-      const previous = buffers.get(key) || { argumentsText: "" };
-      const itemName = data?.item?.name || data?.output_item?.name || data?.name;
-      const name = typeof itemName === "string" && isDesktopToolName(itemName)
-        ? itemName
-        : previous.name;
-      const itemId = data?.item?.call_id || data?.output_item?.call_id || data?.call_id || data?.item?.id || data?.output_item?.id || data?.id;
-      const id = typeof itemId === "string" ? itemId : previous.id;
-      if (name || id || previous.argumentsText) {
-        buffers.set(key, { ...previous, name, id });
-      }
 
       const text = responsesTextDelta(event, data);
       if (text) options.onTextDelta(text);
@@ -318,28 +292,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         }
       }
 
-      const type = eventType;
-      if (type.includes("function_call_arguments.delta") && typeof data?.delta === "string") {
-        const next = {
-          id,
-          name,
-          argumentsText: previous.argumentsText + data.delta,
-        };
-        buffers.set(key, next);
-        const draft = parsePartialDesktopToolCall(next.name, next.argumentsText);
-        if (draft) options.onToolDraft({ ...draft, id: next.id });
-      }
-      const completed = completedResponsesFunctionCall(event, data);
-      if (completed) {
-        emit(completed.name, completed.argumentsText, completed.id);
-        buffers.delete(key);
-      } else if (type.includes("function_call_arguments.done")) {
-        const buffered = buffers.get(key);
-        if (buffered?.name && buffered.argumentsText) {
-          emit(buffered.name, buffered.argumentsText, buffered.id);
-          buffers.delete(key);
-        }
-      }
+      toolCalls.consume(event, data);
     }, options.onStreamProgress);
 
     if (incomplete) throw truncatedOutputError(options.maxOutputTokens, hasReasoningSummary);
@@ -361,7 +314,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         ...(options.systemInstruction ? { system: options.systemInstruction } : {}),
         messages: toAnthropicMessages(options.messages),
         ...(!options.disableTools ? {
-          tools: desktopToolDefinitionsForMode(options.collaborationMode).map((tool) => ({
+          tools: desktopToolDefinitionsForMode(options.collaborationMode, options.toolEnvironment).map((tool) => ({
             name: tool.name,
             description: tool.description,
             input_schema: tool.parameters,

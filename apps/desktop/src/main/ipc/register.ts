@@ -11,6 +11,7 @@ import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
 import { StorageCleanupService } from "../storage/cleanup";
 import { channels } from "./channels";
+import { securityEvidenceForSave } from "../attachments/securityEvidence";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
 import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
 import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
@@ -64,6 +65,7 @@ import type {
 } from "../../shared/types";
 import { envelopePrivoraEvent } from "../agent/harness/eventBus";
 import { OPENCODE_GO_CACHE_TTL_MS, fetchGoModelIds } from "../../shared/opencodeGo";
+import type { SecurityWorkspaceService, CreateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
 
 export interface IpcState {
   activeThreadId: string | null;
@@ -77,7 +79,7 @@ export const registerIpc = (
   browserManager: BrowserSessionManager,
   notesStore: NotesStore,
   computerUseManager?: ComputerUseManager,
-  options?: { onSettingsChanged?: () => void },
+  options?: { onSettingsChanged?: () => void; securityService?: SecurityWorkspaceService },
 ) => {
   let browserOverlayWindow: BrowserWindow | null = null;
   const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
@@ -191,6 +193,7 @@ export const registerIpc = (
   handle(channels.deleteThread, z.tuple([idSchema]), (_event, threadId: string) => {
     if (hasBlockingRun(threadId)) throw new Error("Stop this chat before deleting it.");
     const deletedThread = store.getThread(threadId);
+    if (deletedThread?.workspaceId && store.listSecurityJobs(deletedThread.workspaceId, threadId).some((job) => ["submitting", "queued", "running", "stop_requested", "unknown"].includes(job.state))) throw new Error("Stop or reconcile remote jobs before deleting this chat.");
     store.deleteThread(threadId);
     if (state.activeThreadId === threadId) {
       const workspaceId = deletedThread?.workspaceId ?? state.activeWorkspaceId;
@@ -221,12 +224,62 @@ export const registerIpc = (
     return workspace;
   });
 
+  const requireSecurityService = () => {
+    if (!options?.securityService) throw new Error("Security environment service is unavailable.");
+    return options.securityService;
+  };
+  handle(channels.importKaliEnvironmentProfile, z.tuple([]), async () => {
+    const service = requireSecurityService();
+    const result = await dialog.showOpenDialog({ title: "Import Kali connection profile", properties: ["openFile"], filters: [{ name: "Kali connection profile", extensions: ["json"] }] });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const filename = result.filePaths[0];
+    const stat = await fs.promises.stat(filename);
+    if (!stat.isFile() || stat.size > 65_536) throw new Error("Connection profile must be a JSON file smaller than 64 KB.");
+    const profile = JSON.parse(await fs.promises.readFile(filename, "utf8")) as unknown;
+    return service.importEnvironmentProfile(profile);
+  });
+  handle(channels.listSecurityEnvironments, z.tuple([]), () => store.listSecurityEnvironments());
+  handle(channels.checkSecurityEnvironment, z.tuple([idSchema]), (_event, id: string) => requireSecurityService().checkEnvironment(id));
+  handle(channels.createSecurityWorkspace, z.tuple([z.object({
+    name: z.string().trim().min(1).max(120), environmentId: idSchema,
+    objective: z.string().trim().min(1).max(8_000), scope: z.string().trim().min(1).max(8_000),
+  }).strict()]), (_event, input: CreateSecurityWorkspaceInput) => {
+    const workspace = store.createSecurityWorkspace(input);
+    const thread = store.createThread(workspace.id);
+    state.activeWorkspaceId = workspace.id;
+    state.activeThreadId = thread.id;
+    emitSnapshot();
+    return workspace;
+  });
+  handle(channels.getSecurityWorkspaceState, z.tuple([idSchema]), async (_event, workspaceId: string) => {
+    const workspace = store.getWorkspace(workspaceId);
+    if (workspace?.type !== "security" || !workspace.security) throw new Error("Security workspace not found.");
+    if (options?.securityService?.getWorkspaceState) return options.securityService.getWorkspaceState(workspaceId);
+    return { environment: store.getSecurityEnvironment(workspace.security.environmentId), jobs: store.listSecurityJobs(workspaceId), findings: store.listSecurityFindings(workspaceId) };
+  });
+  handle(channels.cancelSecurityJob, z.tuple([idSchema]), (_event, id: string) => {
+    if (!store.getSecurityJob(id)) throw new Error("Security job not found.");
+    return requireSecurityService().cancelJob(id);
+  });
+  handle(channels.saveSecurityArtifact, z.tuple([idSchema, idSchema]), async (event, jobId: string, artifactId: string) => {
+    const workspace = store.getWorkspace(state.activeWorkspaceId);
+    if (workspace?.type !== "security") throw new Error("Choose a Security workspace first.");
+    const evidence = securityEvidenceForSave(store.getSecurityJob(jobId), workspace.id, artifactId, (id) => store.loadAttachment(id));
+    const options = { title: "Save evidence file", defaultPath: path.join(app.getPath("downloads"), evidence.name), buttonLabel: "Save evidence" };
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { saved: false };
+    await fs.promises.writeFile(result.filePath, evidence.bytes);
+    return { saved: true, path: result.filePath };
+  });
+
   handle(channels.removeWorkspace, z.tuple([idSchema]), async (_event, workspaceId: string) => {
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) throw new Error("Workspace not found.");
     const workspaceThreadIds = new Set(threadsForWorkspace(workspaceId).map((thread) => thread.id));
     const hasActiveRun = runtime.listActiveRuns().some((run) => workspaceThreadIds.has(run.threadId));
     if (hasActiveRun) throw new Error("Stop running chats in this project before removing it.");
+    if (store.listSecurityJobs(workspaceId).some((job) => ["submitting", "queued", "running", "stop_requested", "unknown"].includes(job.state))) throw new Error("Stop or reconcile remote jobs before removing this security workspace.");
 
     await browserManager.clearWorkspaceProfileData(workspaceId);
     const removed = store.removeWorkspace(workspaceId);

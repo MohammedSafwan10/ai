@@ -174,12 +174,16 @@ export const filterThreadTitleDelta = (
     if (state.mode === "title") {
       const closeIndex = state.buffer.indexOf(THREAD_TITLE_CLOSE);
       if (closeIndex === -1) {
-        state.titleBuffer += state.buffer;
-        state.buffer = "";
+        // Providers may split the closing tag at any token boundary. Keep its
+        // unfinished prefix in the scan buffer instead of treating it as title.
+        const keep = partialTagPrefixLength(state.buffer, THREAD_TITLE_CLOSE);
+        state.titleBuffer += state.buffer.slice(0, state.buffer.length - keep);
+        state.buffer = state.buffer.slice(state.buffer.length - keep);
         if (state.titleBuffer.length > MAX_THREAD_TITLE_TAG_CONTENT) {
           state.done = true;
           state.mode = "normal";
           state.titleBuffer = "";
+          state.buffer = "";
         }
         break;
       }

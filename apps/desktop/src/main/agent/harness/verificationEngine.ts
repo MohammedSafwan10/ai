@@ -24,6 +24,7 @@ const REVIEWER_LENSES = [
 ] as const;
 
 const REVIEWER_READ_ONLY_TOOLS = new Set([
+  "kali_capabilities", "kali_job_status", "kali_job_output", "kali_artifact", "security_finding_list",
   "desktop_read_file", "desktop_list_dir", "desktop_search", "desktop_git_status", "desktop_git_diff",
   "terminal_list", "terminal_read", "list_agents", "wait_agent", "notes_list", "notes_read",
   "list_generated_images", "computer_capabilities", "computer_list_windows", "computer_find_apps",

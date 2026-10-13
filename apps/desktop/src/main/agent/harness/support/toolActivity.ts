@@ -4,6 +4,8 @@ import type {
   ToolEventRecord,
 } from "../../../../shared/types";
 import { normalizeStreamingPatchText, streamingPatchActivities } from "../../tools/streamingPatchProgress";
+import { kaliCommandPreview } from "../../../kali/tools";
+import { redactSecrets } from "../../../security/redact";
 import {
   activityItemsFromDiffFiles,
   diffStatsFromFiles,
@@ -120,6 +122,9 @@ export const diffStats = (diff?: string) => {
 
 export const previewForTool = (call: DesktopToolCall, output?: string, diff?: string) => {
   if (diff) return diff.slice(0, 12_000);
+  if (["kali_exec", "kali_job_status", "kali_job_output", "kali_job_cancel", "kali_capabilities", "kali_artifact", "security_finding_list", "security_finding_save"].includes(call.name)) {
+    return output ? redactSecrets(output).slice(-12_000) : undefined;
+  }
   if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics"].includes(call.name)) {
     return output?.slice(-12_000);
   }
@@ -165,6 +170,22 @@ export const summarizeArgs = (args: Record<string, unknown>) =>
 export const titleForTool = (call: DesktopToolCall) => {
   const args = call.arguments;
   switch (call.name) {
+    case "kali_capabilities":
+      return "Kali · Check environment";
+    case "kali_exec":
+      return `Kali · Run ${Array.isArray(args.argv) ? kaliCommandPreview(args.argv) : "command"}`;
+    case "kali_job_status":
+      return "Kali · Check job status";
+    case "kali_job_output":
+      return "Kali · Read job output";
+    case "kali_job_cancel":
+      return "Kali · Stop job";
+    case "kali_artifact":
+      return `Kali · Collect ${compactToolLabel(redactSecrets(String(args.path || "evidence")), "evidence")}`;
+    case "security_finding_list":
+      return "Security · Read findings";
+    case "security_finding_save":
+      return `Security · Save ${compactToolLabel(redactSecrets(String(args.title || "finding")), "finding")}`;
     case "context_compaction":
       return "Compact context";
     case "web_search":
@@ -321,6 +342,9 @@ export const titleForTool = (call: DesktopToolCall) => {
 };
 
 export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["category"] => {
+  if (["kali_exec", "kali_job_status", "kali_job_output", "kali_job_cancel"].includes(call.name)) return "terminal";
+  if (call.name === "kali_capabilities") return "diagnostic";
+  if (["kali_artifact", "security_finding_list"].includes(call.name)) return "read";
   if (isSubagentToolName(call.name)) return "agent";
   if (call.name.startsWith("browser_")) return "other";
   if (call.name.startsWith("notes_")) return "other";
@@ -386,6 +410,14 @@ export const liveStatusForTool = (call: DesktopToolCall, status: ToolEventRecord
   if (status === "done") return undefined;
   if (status === "awaiting_approval") return "Waiting for approval";
   if (status === "running") {
+    if (call.name === "kali_exec") return "Running in Kali";
+    if (call.name === "kali_capabilities") return "Checking Kali environment";
+    if (call.name === "kali_job_status") return "Checking remote job";
+    if (call.name === "kali_job_output") return "Reading remote output";
+    if (call.name === "kali_job_cancel") return "Requesting remote stop";
+    if (call.name === "kali_artifact") return "Retrieving evidence";
+    if (call.name === "security_finding_list") return "Reading findings";
+    if (call.name === "security_finding_save") return "Saving finding";
     if (call.name === "context_compaction") return "Compacting context";
     if (call.name === "exec_command") return "Running command";
     if (call.name === "write_stdin") return "Writing terminal input";

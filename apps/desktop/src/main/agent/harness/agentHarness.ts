@@ -18,6 +18,9 @@ export class AgentHarness implements AgentHarnessApi {
   stopTurn(threadId: string) {
     return this.coordinator.stopTurn(threadId);
   }
+  waitForIdle() {
+    return this.coordinator.waitForIdle();
+  }
 
   answerRequestUserInput(input: Parameters<AgentHarnessApi["answerRequestUserInput"]>[0]) {
     return this.coordinator.answerRequestUserInput(input);

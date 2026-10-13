@@ -123,7 +123,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
         model: options.model,
         messages: toMessages(options.systemInstruction, options.messages),
         ...(!options.disableTools ? {
-          tools: openRouterDesktopTools(options.collaborationMode),
+          tools: openRouterDesktopTools(options.collaborationMode, options.toolEnvironment),
           tool_choice: "auto",
           parallel_tool_calls: true,
         } : {}),

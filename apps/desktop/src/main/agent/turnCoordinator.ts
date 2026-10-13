@@ -24,6 +24,9 @@ import type {
   ToolResult,
 } from "../../shared/types";
 import { buildDesktopSystemPrompt } from "./systemPrompt";
+import type { SecurityWorkspaceService } from "../kali/service";
+import { buildSecuritySystemPrompt } from "../kali/systemPrompt";
+import { isSecurityToolName, securityWorkspaceBlockReason } from "../kali/definitions";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage, type ProviderPart } from "./providers/types";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../computer/ComputerUseManager";
@@ -310,6 +313,17 @@ export class TurnCoordinator implements AgentHarnessApi {
   private modelLoop = new ModelLoop();
   private subagents: SubagentManager;
   private activeRuns = new Map<string, AgentRunTracker>();
+  private pendingExecution = new Set<Promise<unknown>>();
+
+  private trackExecution<T>(promise: Promise<T>): Promise<T> {
+    this.pendingExecution.add(promise);
+    void promise.finally(() => this.pendingExecution.delete(promise)).catch(() => undefined);
+    return promise;
+  }
+
+  async waitForIdle() {
+    while (this.pendingExecution.size) await Promise.allSettled([...this.pendingExecution]);
+  }
   private pendingSteers = new Map<string, PendingSteer[]>();
   private samplingRequests = new Map<string, ActiveSamplingRequest>();
   private approvals: ApprovalCoordinator;
@@ -339,6 +353,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     browserManager?: BrowserSessionManager,
     notesStore?: NotesStore,
     computerUseManager?: ComputerUseManager,
+    private security?: SecurityWorkspaceService,
   ) {
     this.contextManager = new ContextManager(store);
     this.recovery = new RunRecoveryService(store);
@@ -447,7 +462,11 @@ export class TurnCoordinator implements AgentHarnessApi {
     return Array.from(runs.values());
   }
 
-  async startTurn(input: StartTurnInput) {
+  startTurn(input: StartTurnInput) {
+    return this.trackExecution(this.startTurnImpl(input));
+  }
+
+  private async startTurnImpl(input: StartTurnInput) {
     const releaseStart = this.turnRegistry.begin(input.threadId, () => this.isThreadBusy(input.threadId));
     this.discardResumableRun(input.threadId);
     const thread = this.store.getThread(input.threadId);
@@ -667,6 +686,16 @@ export class TurnCoordinator implements AgentHarnessApi {
         lastPreview: childRun ? "Stopped with parent run." : agent.lastPreview,
       });
     });
+    const workspace = this.store.getWorkspace(this.store.getThread(threadId)?.workspaceId);
+    if (run && workspace?.type === "security") {
+      // Keep the run visible while its remote tool acknowledges cancellation.
+      // continueLoop finalizes the turn after the executor has reconciled it.
+      transitionRun(run, "draining", { reason: "Stop requested. Waiting for Kali job state.", resumable: false });
+      this.emitRun(run);
+      this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
+      this.userInput.cancelThread(threadId);
+      return;
+    }
     if (run) transitionRun(run, "stopped", {
       reason: "Stop requested. Cleaning up active work.",
       resumable: true,
@@ -760,7 +789,11 @@ export class TurnCoordinator implements AgentHarnessApi {
     ];
   }
 
-  private async continueLoop(options: ContinueOptions) {
+  private continueLoop(options: ContinueOptions): Promise<void> {
+    return this.trackExecution(this.continueLoopImpl(options));
+  }
+
+  private async continueLoopImpl(options: ContinueOptions) {
     if (options.controller.signal.aborted) {
       this.finalizeStoppedRun(options);
       return;
@@ -768,6 +801,8 @@ export class TurnCoordinator implements AgentHarnessApi {
     const settings = this.store.getSettings();
     this.tools.setComputerUseEnabled(settings.computerUseEnabled);
     const thread = this.store.getThread(options.threadId);
+    const workspace = this.store.getWorkspace(thread?.workspaceId);
+    const isSecurityWorkspace = workspace?.type === "security";
     const effectiveModel = getModelOption(options.model || thread?.model || settings.model).id;
     const effectiveReasoning = options.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort;
     assertModelSupportsReasoningEffort(effectiveModel, effectiveReasoning);
@@ -896,11 +931,13 @@ export class TurnCoordinator implements AgentHarnessApi {
                 settings.permissionMode,
                 settings.computerUseEnabled,
               );
-              const finalResult = controller.signal.aborted
+              const finalResult = controller.signal.aborted && !isSecurityToolName(scheduledCall.name)
                 ? { success: false, error: "Stopped before this tool completed." }
                 : result;
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
-                status: controller.signal.aborted ? "stopped" : finalResult.success ? "done" : "failed",
+                status: isSecurityToolName(scheduledCall.name)
+                  ? finalResult.data?.state === "cancelled" ? "stopped" : finalResult.success ? "done" : "failed"
+                  : controller.signal.aborted ? "stopped" : finalResult.success ? "done" : "failed",
                 result: finalResult,
                 output: finalResult.output || finalResult.error,
                 diff: controller.signal.aborted ? undefined : (result as ToolResult & { diff?: string }).diff,
@@ -912,10 +949,12 @@ export class TurnCoordinator implements AgentHarnessApi {
             } catch (error) {
               const result: ToolResult = {
                 success: false,
-                error: controller.signal.aborted ? "Stopped before this tool completed." : errorMessage(error),
+                error: isSecurityToolName(scheduledCall.name)
+                  ? errorMessage(error)
+                  : controller.signal.aborted ? "Stopped before this tool completed." : errorMessage(error),
               };
               const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
-                status: controller.signal.aborted ? "stopped" : "failed",
+                status: controller.signal.aborted && !isSecurityToolName(scheduledCall.name) ? "stopped" : "failed",
                 result,
                 output: result.error,
                 endedAt: now(),
@@ -926,11 +965,14 @@ export class TurnCoordinator implements AgentHarnessApi {
           });
         };
         const scheduleBlockedTool = (call: DesktopToolCall, error: string) => {
-          scheduler.schedule(call, false, async (scheduledCall) => ({
-            call: scheduledCall,
-            result: { success: false, error, data: { blockedByPlanMode: true } },
-            response: { success: false, error, data: { blockedByPlanMode: true } },
-          }));
+          scheduler.schedule(call, false, async (scheduledCall) => {
+            const result = { success: false, error, data: { blockedByPlanMode: true } };
+            const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, scheduledCall, {
+              status: "failed", risk: "blocked", result, output: error, endedAt: now(),
+            });
+            this.emit({ type: "tool.upserted", tool: event });
+            return { call: scheduledCall, result, response: result };
+          });
         };
         const textStart = assistantText.length;
         const thoughtStart = assistantThought.length;
@@ -979,7 +1021,16 @@ export class TurnCoordinator implements AgentHarnessApi {
           await this.modelLoop.stream({
             provider: getProviderForModel(effectiveModel),
             model: effectiveModel,
-            systemInstruction: buildDesktopSystemPrompt(
+            systemInstruction: isSecurityWorkspace && workspace.security
+              ? buildSecuritySystemPrompt(
+                workspace.security,
+                this.store.getSecurityEnvironment(workspace.security.environmentId),
+                [buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+                  subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
+                ].filter(Boolean).join("\n\n"),
+                effectiveCollaborationMode,
+              )
+              : buildDesktopSystemPrompt(
               options.workspaceRoot,
               [
                 buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
@@ -991,6 +1042,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             messages: history,
             reasoning: effectiveReasoning,
             collaborationMode: effectiveCollaborationMode,
+            toolEnvironment: isSecurityWorkspace ? "security" : "development",
             signal: samplingController.signal,
             threadId: options.threadId,
             cliproxyBaseUrl: settings.cliproxyBaseUrl,
@@ -1090,7 +1142,8 @@ export class TurnCoordinator implements AgentHarnessApi {
               calls.push(call);
               const decision = this.tools.assess(call, settings.permissionMode, thread?.workspaceId);
               const readOnlyBlock = reviewerReadOnlyBlockReason(call, options.readOnlyTools);
-              const planBlock = readOnlyBlock || planModeBlockReason(call, effectiveCollaborationMode, decision);
+              const planBlock = securityWorkspaceBlockReason(call, isSecurityWorkspace) ||
+                readOnlyBlock || planModeBlockReason(call, effectiveCollaborationMode, decision);
               const scope = decision.requiresApproval
                 ? this.approvals.reusableScope(options.threadId, call)
                 : null;
@@ -1477,7 +1530,11 @@ export class TurnCoordinator implements AgentHarnessApi {
     }
   }
 
-  private async resolveApprovalBundle(bundle: ApprovalBundle) {
+  private resolveApprovalBundle(bundle: ApprovalBundle): Promise<void> {
+    return this.trackExecution(this.resolveApprovalBundleImpl(bundle));
+  }
+
+  private async resolveApprovalBundleImpl(bundle: ApprovalBundle) {
     if (!this.approvals.claim(bundle)) return;
     const assistantMessage = this.store.getMessage(bundle.assistantMessageId);
     if (!assistantMessage) {
@@ -1532,9 +1589,10 @@ export class TurnCoordinator implements AgentHarnessApi {
           });
           result = { success: false, error: "User cancelled this action." };
         }
-        if (bundle.run.controller.signal.aborted) break;
+        if (bundle.run.controller.signal.aborted && !isSecurityToolName(call.name)) break;
         const finalToolEvent = this.updateToolEvent(bundle.threadId, bundle.assistantMessageId, call, {
-          status: result.success ? "done" : approved ? "failed" : "cancelled",
+          status: isSecurityToolName(call.name) && result.data?.state === "cancelled"
+            ? "stopped" : result.success ? "done" : approved ? "failed" : "cancelled",
           result,
           output: result.output || result.error,
           diff: (result as ToolResult & { diff?: string }).diff,
@@ -1845,6 +1903,24 @@ export class TurnCoordinator implements AgentHarnessApi {
     permissionMode = this.store.getSettings().permissionMode,
     computerUseEnabled = this.store.getSettings().computerUseEnabled,
   ) {
+    const workspace = this.store.getWorkspace(this.store.getThread(threadId)?.workspaceId);
+    const blocked = securityWorkspaceBlockReason(call, workspace?.type === "security");
+    if (blocked) return { success: false, error: blocked, data: { blockedByEnvironment: true } };
+    if (isSecurityToolName(call.name)) {
+      if (!this.security || !workspace) {
+        return { success: false, error: "The Security workspace service is unavailable." };
+      }
+      const result = await this.security.execute(call, {
+        workspaceId: workspace.id, threadId, messageId, signal: controller.signal,
+        onOutput: (delta) => {
+          markRunProgress(run);
+          this.queueToolOutput(threadId, messageId, call, call.id, delta);
+        },
+      });
+      this.flushToolOutput(call.id);
+      this.emitRun(run);
+      return result;
+    }
     if (isSubagentTool(call.name)) {
       return await this.executeSubagentTool(call, workspaceRoot, controller, run, threadId, messageId);
     }
@@ -1938,6 +2014,15 @@ export class TurnCoordinator implements AgentHarnessApi {
 
   private stopThreadProcesses(threadId: string) {
     this.tools.stopThreadProcesses(threadId);
+    void this.security?.stopThreadJobs(threadId).then((unconfirmed) => {
+      if (unconfirmed.length) this.emit({
+        type: "notification.created", tone: "error",
+        message: "Some Kali jobs could not be confirmed stopped. Their state remains visible in Security details.",
+      });
+    }).catch((error) => this.emit({
+      type: "notification.created", tone: "error",
+      message: "Kali cancellation is unconfirmed: " + errorMessage(error),
+    }));
   }
 
   private cancelPendingApprovalsForThread(threadId: string, reason: string) {

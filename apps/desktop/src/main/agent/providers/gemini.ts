@@ -71,10 +71,11 @@ export const toGeminiContents = (messages: ProviderMessage[]) =>
 export const geminiTools = (
   collaborationMode: ProviderStreamOptions["collaborationMode"],
   disableTools = false,
+  environment: ProviderStreamOptions["toolEnvironment"] = "development",
 ) => {
   if (disableTools) return [];
   const tools: Array<Record<string, unknown>> = [
-    { functionDeclarations: geminiDesktopFunctionDeclarations(collaborationMode) as any },
+    { functionDeclarations: geminiDesktopFunctionDeclarations(collaborationMode, environment) as any },
   ];
   tools.push({ googleSearch: {} });
   return tools;
@@ -124,8 +125,9 @@ export const toGeminiInteractionInput = (messages: ProviderMessage[]) => {
 
 const geminiInteractionTools = (
   collaborationMode: ProviderStreamOptions["collaborationMode"],
+  environment: ProviderStreamOptions["toolEnvironment"] = "development",
 ) => [
-  ...geminiDesktopFunctionDeclarations(collaborationMode).map((tool) => ({
+  ...geminiDesktopFunctionDeclarations(collaborationMode, environment).map((tool) => ({
     type: "function",
     name: tool.name,
     description: tool.description,
@@ -227,7 +229,7 @@ export class GeminiAdapter implements ProviderAdapter {
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
         ...(!options.disableTools ? { tool_choice: "validated" } : {}),
       },
-      ...(!options.disableTools ? { tools: geminiInteractionTools(options.collaborationMode) as any } : {}),
+      ...(!options.disableTools ? { tools: geminiInteractionTools(options.collaborationMode, options.toolEnvironment) as any } : {}),
     } as any, { abortSignal: options.signal } as any);
 
     const activeSteps = new Map<number, {

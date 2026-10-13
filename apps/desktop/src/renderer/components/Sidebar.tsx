@@ -1,4 +1,4 @@
-import { ChevronRight, Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Star, Trash2 } from "lucide-react";
+import { ChevronRight, Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Shield, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -13,6 +13,7 @@ interface SidebarProps {
   activeRunsByThread?: Record<string, ActiveRunState>;
   activeWorkspace: WorkspaceRecord | null;
   onSelectWorkspace: () => void;
+  onCreateSecurityWorkspace?: () => void;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
   onRenameThread: (threadId: string, title: string) => void;
@@ -29,6 +30,7 @@ export function Sidebar({
   activeRunsByThread = {},
   activeWorkspace,
   onSelectWorkspace,
+  onCreateSecurityWorkspace,
   onNewThread,
   onSelectThread,
   onRenameThread,
@@ -82,6 +84,7 @@ export function Sidebar({
 
       <div className="project-heading">
         <span>Projects</span>
+        {onCreateSecurityWorkspace && <button type="button" onClick={onCreateSecurityWorkspace} title="New security project" aria-label="New security project"><Shield size={15} /></button>}
         <button onClick={onSelectWorkspace} title="Use an existing folder">
           <FolderOpen size={15} />
         </button>
@@ -109,7 +112,7 @@ export function Sidebar({
                     onToggle={toggleGroup}
                     onRemove={onRemoveWorkspace}
                     icon={
-                      row.workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
+                      row.workspace.type === "security" ? <Shield size={15} /> : row.workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
                     }
                   />
                 ) : row.type === "empty-project" ? (

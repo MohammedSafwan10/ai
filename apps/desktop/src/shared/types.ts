@@ -1,4 +1,6 @@
 import type { AgentHarnessMode, CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
+import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
+export type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityFindingRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 
 export type MessageRole = "user" | "assistant";
 
@@ -68,6 +70,8 @@ export interface WorkspaceRecord {
   path: string;
   name: string;
   lastOpenedAt: number;
+  type?: "development" | "security";
+  security?: SecurityWorkspaceConfig;
 }
 
 export interface WorkspaceDirectoryEntry {
@@ -1447,6 +1451,14 @@ export interface ActiveRunState {
 }
 
 export type DesktopToolName =
+  | "kali_capabilities"
+  | "kali_exec"
+  | "kali_job_status"
+  | "kali_job_output"
+  | "kali_job_cancel"
+  | "kali_artifact"
+  | "security_finding_list"
+  | "security_finding_save"
   | "context_compaction"
   | "request_user_input"
   | "spawn_agent"
@@ -1705,6 +1717,13 @@ export interface PrivoraBrowserAuthStartRecord {
 }
 
 export interface PrivoraDesktopApi {
+  importKaliEnvironmentProfile(): Promise<SecurityEnvironmentRecord | null>;
+  listSecurityEnvironments(): Promise<SecurityEnvironmentRecord[]>;
+  checkSecurityEnvironment(id: string): Promise<SecurityEnvironmentRecord>;
+  createSecurityWorkspace(input: CreateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
+  getSecurityWorkspaceState(workspaceId: string): Promise<SecurityWorkspaceState>;
+  cancelSecurityJob(jobRecordId: string): Promise<SecurityJobRecord>;
+  saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;
   debugEnabled: boolean;
   getSnapshot(): Promise<AppSnapshot>;
   getThreadHistoryPage(input: ThreadHistoryPageInput): Promise<ThreadHistoryPage>;
