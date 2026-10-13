@@ -171,6 +171,60 @@ class RunnerTests(unittest.TestCase):
         finally:
             os.killpg(int(pid_file.read_text()), signal.SIGKILL)
 
+    def test_worker_exit_after_snapshot_uses_committed_terminal_state(self):
+        with patch.object(runner.os, "posix_spawn", return_value=os.getpid()):
+            job = self.submit("print('fixture')")
+        stale = runner.get_job(self.db, job["id"])
+        self.db.execute("UPDATE jobs SET state='succeeded',exit_code=0 WHERE id=?", (job["id"],))
+        self.db.commit()
+        with patch.object(runner, "identity", return_value=None):
+            value = runner.public_job(stale, self.db)
+        self.assertEqual(value["state"], "succeeded")
+        self.assertEqual(value["exitCode"], 0)
+
+    def test_missing_worker_remains_unknown_when_no_terminal_commit_exists(self):
+        with patch.object(runner.os, "posix_spawn", return_value=os.getpid()):
+            job = self.submit("print('fixture')")
+        self.db.execute("UPDATE jobs SET state='running' WHERE id=?", (job["id"],))
+        self.db.commit()
+        with patch.object(runner, "identity", return_value=None):
+            value = runner.public_job(runner.get_job(self.db, job["id"]), self.db)
+        self.assertEqual(value["state"], "unknown")
+
+    def test_queued_dead_worker_fails_without_replaying_or_consuming_a_slot(self):
+        with patch.object(runner.os, "posix_spawn", return_value=os.getpid()):
+            job = self.submit("open('must-not-exist','w').write('bad')")
+        with patch.object(runner, "identity", return_value=None):
+            value = runner.public_job(runner.get_job(self.db, job["id"]), self.db)
+        self.assertEqual(value["state"], "failed")
+        self.assertIn("not executed", value["error"])
+        self.assertEqual(runner.get_job(self.db, job["id"])["state"], "failed")
+        self.assertFalse((self.root / "workspaces/test/must-not-exist").exists())
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running','stop_requested')").fetchone()[0], 0)
+
+    def test_queued_worker_from_a_previous_boot_remains_unknown(self):
+        with patch.object(runner.os, "posix_spawn", return_value=os.getpid()):
+            job = self.submit("print('fixture')")
+        self.db.execute("UPDATE jobs SET worker_identity='previous-boot:123' WHERE id=?", (job["id"],))
+        self.db.commit()
+        with patch.object(runner, "identity", return_value=None):
+            value = runner.public_job(runner.get_job(self.db, job["id"]), self.db)
+        self.assertEqual(value["state"], "unknown")
+        self.assertEqual(runner.get_job(self.db, job["id"])["state"], "queued")
+
+    def test_completion_refresh_keeps_final_output_in_same_snapshot(self):
+        with patch.object(runner.os, "posix_spawn", return_value=os.getpid()):
+            job = self.submit("print('fixture')")
+        def exited(_pid):
+            self.db.execute("INSERT OR IGNORE INTO output VALUES (?,?,?,?)", (job["id"], 1, "stdout", b"final bytes"))
+            self.db.execute("UPDATE jobs SET state='succeeded',exit_code=0,output_bytes=11 WHERE id=?", (job["id"],))
+            self.db.commit()
+            return None
+        with patch.object(runner, "identity", side_effect=exited):
+            page = runner.dispatch(self.root, self.db, {"version": 1, "operation": "output", "jobId": job["id"]})
+        self.assertEqual(page["job"]["state"], "succeeded")
+        self.assertEqual(base64.b64decode(page["events"][0]["data"]), b"final bytes")
+
 
 if __name__ == "__main__":
     unittest.main()

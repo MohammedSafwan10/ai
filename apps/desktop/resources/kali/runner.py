@@ -84,11 +84,41 @@ def get_job(db, job_id):
     return job
 
 
-def public_job(job):
+def public_job(job, db=None):
     state = job["state"]
     if state in ACTIVE and job["worker_pid"]:
         if not job["worker_identity"] or identity(job["worker_pid"]) != job["worker_identity"]:
-            state = "unknown"
+            # A worker can commit completion and exit between the caller's
+            # snapshot and this process check. Prefer its freshly committed
+            # terminal record before declaring an orphan.
+            if db is not None:
+                job = get_job(db, job["id"])
+                state = job["state"]
+            if state in ACTIVE and (not job["worker_identity"] or
+                                    identity(job["worker_pid"]) != job["worker_identity"]):
+                if state == "queued" and db is not None:
+                    # The worker commits 'running' before launching argv. A
+                    # freshly queued record with a dead worker proves that the
+                    # command never started; do not consume a slot forever.
+                    db.execute("BEGIN IMMEDIATE")
+                    try:
+                        fresh = get_job(db, job["id"])
+                        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+                        if (fresh["state"] == "queued" and fresh["worker_identity"] and
+                                fresh["worker_identity"].startswith(boot + ":") and
+                                identity(fresh["worker_pid"]) != fresh["worker_identity"]):
+                            db.execute("UPDATE jobs SET state='failed',error=? WHERE id=? AND state='queued'",
+                                       ("Runner worker exited before command startup. The command was not executed.", job["id"]))
+                        db.commit()
+                    except BaseException:
+                        db.rollback()
+                        raise
+                    job = get_job(db, job["id"])
+                    state = job["state"]
+                    if state in ACTIVE:
+                        state = "unknown"
+                else:
+                    state = "unknown"
     return {
         "id": job["id"], "projectId": job["project"], "state": state,
         "exitCode": job["exit_code"], "error": job["error"],
@@ -140,7 +170,7 @@ def submit(root, db, request):
             if previous["request_hash"] != digest:
                 raise ValueError("Idempotency key already belongs to a different request")
             db.commit()
-            return public_job(previous)
+            return public_job(previous, db)
         active = db.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running','stop_requested')").fetchone()[0]
         if active >= 4:
             raise ValueError("Maximum concurrent jobs reached")
@@ -166,7 +196,7 @@ def submit(root, db, request):
         db.execute("UPDATE jobs SET worker_pid=?, worker_identity=? WHERE id=?",
                    (worker_pid, identity(worker_pid), job_id))
         db.commit()
-        return public_job(get_job(db, job_id))
+        return public_job(get_job(db, job_id), db)
     except BaseException:
         db.rollback()
         raise
@@ -314,15 +344,15 @@ def dispatch(root, db, request):
         if not isinstance(key, str) or not 1 <= len(key) <= 128:
             raise ValueError("Invalid idempotency key")
         job = db.execute("SELECT * FROM jobs WHERE request_key=?", (key,)).fetchone()
-        return public_job(job) if job else None
+        return public_job(job, db) if job else None
     job = get_job(db, request.get("jobId"))
     if operation == "inspect":
-        return public_job(job)
+        return public_job(job, db)
     if operation == "cancel":
         db.execute("UPDATE jobs SET state='stop_requested' WHERE id=? AND state IN ('queued','running')",
                    (job["id"],))
         db.commit()
-        return public_job(get_job(db, job["id"]))
+        return public_job(get_job(db, job["id"]), db)
     if operation == "output":
         after = request.get("afterSequence", 0)
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:
@@ -336,7 +366,12 @@ def dispatch(root, db, request):
         db.commit()
         events = [{"sequence": row["sequence"], "stream": row["stream"],
                    "data": base64.b64encode(row["data"]).decode("ascii")} for row in rows[:64]]
-        return {"job": public_job(job), "events": events,
+        visible = public_job(job, db)
+        if job["state"] in ACTIVE and visible["state"] in TERMINAL:
+            # Refresh the output snapshot too: completion may have added the
+            # final bytes after the old page was read.
+            return dispatch(root, db, request)
+        return {"job": visible, "events": events,
                 "nextSequence": events[-1]["sequence"] if events else after, "hasMore": len(rows) > 64}
     if operation == "artifact":
         return artifact(root, db, request)

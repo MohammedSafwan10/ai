@@ -54,10 +54,23 @@ to `kali-linux-everything` on a 16 GB laptop.
 Sources: [Kali metapackages](https://www.kali.org/docs/general-use/metapackages/),
 [Kali tool documentation](https://www.kali.org/tools/).
 
-Prefer official repositories and upstream documentation. Installation is an
-environment change: show the proposed packages, source, expected storage impact
-and permission requirement. Handle it separately from the assessment command.
-Never silently install an unfamiliar binary or grant broad passwordless sudo.
+Prefer official repositories and upstream documentation. When the operator has
+authorized autonomous VM maintenance, install task-relevant packages without
+repeated approval prompts, after checking dependencies and storage impact. Verify
+actual sudo privileges; Privora Full access alone does not grant root. The operator
+may explicitly enable passwordless sudo inside the isolated guest. Authentication
+passwords and model credentials must not be embedded in chat or job commands.
+
+Use `pipx` or dedicated virtual environments for Python applications on Kali;
+`pip --user` can be rejected by externally managed system Python. Check ARM64
+support before downloading binaries. Go can also be installed in a user-local
+directory when system packages are unavailable. Confirm each real installation
+using executable/version checks: `apt-get -s` only simulates package changes.
+
+For HTTP JSON sources, check status and content type and preserve a bounded
+error-body/stderr preview before parsing. Empty or malformed responses are tool
+failures, not proof that no results exist. Reconcile an uncertain runner job before
+repeating its command.
 
 Refresh and test the environment before a run, then record versions. Avoid
 upgrading the rolling distribution mid-assessment. Snapshot after verified setup
@@ -91,6 +104,12 @@ Current remote CLI jobs use captured stdout/stderr, bounded retained output,
 timeouts, and process-group cancellation. Managed remote PTY/stdin interaction is
 not implemented. Interactive tools require a future adapter; do not pretend a
 noninteractive job supplies terminal interaction or desktop control.
+
+Security chats expose `kali_exec` and the other `kali_*` tools. The ordinary local
+terminal documentation describes `exec_command`; that host tool is not exposed
+in Security projects. Windows workspace paths do not exist in the guest. File
+upload/transfer and remote GUI connectors remain separate work; only files already
+in the Kali project can currently be retrieved as evidence.
 
 GUI applications require a distinct remote desktop/browser adapter. SSH execution
 does not provide computer vision or mouse control. Device, USB and wireless tools
