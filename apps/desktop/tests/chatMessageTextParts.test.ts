@@ -115,6 +115,29 @@ describe("assistant text part rendering", () => {
     expect(html.indexOf("Working...")).toBeLessThan(html.indexOf("inline-steer-message"));
     expect(html.indexOf("inline-steer-message")).toBeLessThan(html.indexOf("Done."));
   });
+
+  it("does not describe plain thinking as continuing after tools", () => {
+    const assistant = { ...message("", []), thought: "Considering the request", status: "running" as const };
+    const html = renderToStaticMarkup(createElement(ChatMessage, {
+      message: assistant, tools: [], subagents: [], activeRunStatus: "running",
+      onApprove: () => {}, onApproveAll: () => {}, onOpenReview: () => {}, turnUndo: null,
+      onPrepareTurnUndo: async () => null, onUndoTurnChanges: async () => null,
+    }));
+    expect(html).toContain("Working for");
+    expect(html).not.toContain("Continuing after tools");
+  });
+
+  it("allows completed commentary to be reopened even without thoughts or tools", () => {
+    const assistant = message("Checking...Done.", [part("progress", "commentary", 0, 11, 1), part("answer", "final_answer", 11, 16, 2)]);
+    const html = renderToStaticMarkup(createElement(ChatMessage, {
+      message: assistant, tools: [], subagents: [], activeRunStatus: null,
+      onApprove: () => {}, onApproveAll: () => {}, onOpenReview: () => {}, turnUndo: null,
+      onPrepareTurnUndo: async () => null, onUndoTurnChanges: async () => null,
+    }));
+    expect(html).toContain("assistant-run-toggle");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("Done.");
+  });
 });
 
 const steeringMessage = (assistant: ChatMessageRecord, offset: number): ChatMessageRecord => ({

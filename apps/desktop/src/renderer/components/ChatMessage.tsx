@@ -18,6 +18,7 @@ import type {
 import { ToolTimeline } from "./ToolTimeline";
 import { TurnReviewCard } from "./TurnReviewCard";
 import { describeActiveTurnStatus, isActiveTurnStatus } from "../../shared/runStatus";
+import { splitProposedPlan } from "../features/chat/proposedPlan";
 
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
@@ -76,7 +77,8 @@ function ChatMessageComponent({
     () => splitAssistantActivityAndFinalText(renderParts),
     [renderParts],
   );
-  const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
+  const hasAssistantActivity = renderParts.some((part) => part.type === "thought" || part.type === "tools" || (part.type === "text" && part.phase === "commentary"));
+  const hasCompletedTools = tools.some((tool) => ["done", "failed", "cancelled", "stopped"].includes(tool.status));
   const activityNeedsAttention = renderParts.some((part) =>
     part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval")
   );
@@ -131,6 +133,7 @@ function ChatMessageComponent({
                 active={runActive}
                 activeRunStatus={activeRunStatus}
                 hasActivity={hasAssistantActivity}
+                hasCompletedTools={hasCompletedTools}
                 activityOpen={activityOpen}
                 onToggleActivity={() => setActivityOpen((value) => !value)}
               />
@@ -536,6 +539,7 @@ function AssistantRunMeta({
   active,
   activeRunStatus,
   hasActivity,
+  hasCompletedTools,
   activityOpen,
   onToggleActivity,
 }: {
@@ -543,11 +547,12 @@ function AssistantRunMeta({
   active: boolean;
   activeRunStatus: string | null;
   hasActivity: boolean;
+  hasCompletedTools: boolean;
   activityOpen: boolean;
   onToggleActivity: () => void;
 }) {
   const elapsed = useElapsedTime(message.createdAt, active ? undefined : message.updatedAt);
-  const activeLabel = describeActiveTurnStatus(activeRunStatus || message.status, hasActivity);
+  const activeLabel = describeActiveTurnStatus(activeRunStatus || message.status, hasCompletedTools);
   const runLabel = active ? `${activeLabel} for ${elapsed}` : `Worked for ${elapsed}`;
   return (
     <div className="assistant-run-meta">
@@ -762,20 +767,6 @@ const isExternalHttpUrl = (value: string) => {
   } catch {
     return false;
   }
-};
-
-const splitProposedPlan = (text: string): Array<{ type: "text" | "plan"; text: string }> => {
-  const open = "<proposed_plan>";
-  const close = "</proposed_plan>";
-  const start = text.indexOf(open);
-  if (start === -1) return [{ type: "text", text }];
-  const end = text.indexOf(close, start + open.length);
-  if (end === -1) return [{ type: "text", text }];
-  return [
-    { type: "text" as const, text: text.slice(0, start) },
-    { type: "plan" as const, text: text.slice(start + open.length, end).trim() },
-    { type: "text" as const, text: text.slice(end + close.length) },
-  ].filter((part) => part.text.length > 0);
 };
 
 export function visibleSteeredAssistantParts(parts: AssistantRenderPart[], activityOpen: boolean) {

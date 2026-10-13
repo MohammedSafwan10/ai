@@ -31,6 +31,7 @@ export const useMessageAutoScroll = ({
   const programmaticClearTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const loadOlderRequestedRef = useRef(false);
+  const previousThreadRef = useRef(activeThreadId);
   const messageVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollerRef.current,
@@ -103,6 +104,16 @@ export const useMessageAutoScroll = ({
   }, [latestActivityKey, messageVirtualizer, messages.length, settingsOpen]);
 
   useEffect(() => {
+    if (previousThreadRef.current !== activeThreadId) {
+      // A reader's scroll lock belongs to one chat, not to every subsequent chat.
+      previousThreadRef.current = activeThreadId;
+      userScrollLockRef.current = false;
+      followBottomRef.current = true;
+      manualScrollHoldUntilRef.current = 0;
+      programmaticScrollRef.current = false;
+      if (scrollFrameRef.current) window.cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
     if (settingsOpen) return;
     if (userScrollLockRef.current) return;
     scrollToLatestMessage();

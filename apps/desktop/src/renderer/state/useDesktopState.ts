@@ -58,6 +58,8 @@ type DesktopUiSnapshot = AppSnapshot & {
   activeRunsByThread: Record<string, ActiveRunState>;
   pendingUserInputsByThread: Record<string, RequestUserInputRequestRecord>;
   pendingUserInput: RequestUserInputRequestRecord | null;
+  runEventSequences?: Record<string, number>;
+  selectionEventSequence?: number;
 };
 
 const emptyUiSnapshot: DesktopUiSnapshot = {
@@ -77,29 +79,45 @@ export const useDesktopState = () => {
   const toastTimerRef = useRef<number | null>(null);
   const eventStatsRef = useRef({ startedAt: performance.now(), events: 0, bytes: 0, flushes: 0 });
   const lastEventSequenceRef = useRef(0);
+  const refreshRequestRef = useRef(0);
+  const historyRequestRef = useRef<{ threadId: string; before: string } | null>(null);
+  const activeThreadRef = useRef(snapshot.activeThreadId);
+  activeThreadRef.current = snapshot.activeThreadId;
 
   const refresh = useCallback(async () => {
+    const request = ++refreshRequestRef.current;
+    const sequenceAtRequest = lastEventSequenceRef.current;
     const next = await window.privoraDesktop.getSnapshot();
-    setSnapshot((current) => applySnapshot(current, next));
+    if (request !== refreshRequestRef.current) return;
+    setSnapshot((current) => applyRefreshSnapshot(current, next, sequenceAtRequest));
   }, []);
 
   const loadOlderMessages = useCallback(async () => {
     const threadId = snapshot.activeThreadId;
     const before = snapshot.historyPage?.beforeCursor;
-    if (!threadId || !snapshot.historyPage?.hasOlder || !before || historyLoading) return false;
+    if (!threadId || !snapshot.historyPage?.hasOlder || !before || historyRequestRef.current?.threadId === threadId) return false;
+    const request = { threadId, before };
+    historyRequestRef.current = request;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
       const page = await window.privoraDesktop.getThreadHistoryPage({ threadId, before, limit: 50 });
+      if (historyRequestRef.current !== request || activeThreadRef.current !== threadId) return false;
       setSnapshot((current) => current.activeThreadId === threadId ? prependHistoryPage(current, page) : current);
       return true;
     } catch (error) {
-      setHistoryError(error instanceof Error ? error.message : String(error));
+      if (historyRequestRef.current === request && activeThreadRef.current === threadId) setHistoryError(error instanceof Error ? error.message : String(error));
       return false;
     } finally {
-      setHistoryLoading(false);
+      if (historyRequestRef.current === request) { historyRequestRef.current = null; setHistoryLoading(false); }
     }
-  }, [historyLoading, snapshot.activeThreadId, snapshot.historyPage?.beforeCursor, snapshot.historyPage?.hasOlder]);
+  }, [snapshot.activeThreadId, snapshot.historyPage?.beforeCursor, snapshot.historyPage?.hasOlder]);
+
+  useEffect(() => {
+    if (historyRequestRef.current?.threadId !== snapshot.activeThreadId) historyRequestRef.current = null;
+    setHistoryLoading(false);
+    setHistoryError(null);
+  }, [snapshot.activeThreadId]);
 
   const flushEvents = useCallback(() => {
     frameRef.current = null;
@@ -132,6 +150,8 @@ export const useDesktopState = () => {
     void refresh();
     const unsubscribe = window.privoraDesktop.onPrivoraEvent(enqueueEvent);
     return () => {
+      refreshRequestRef.current += 1;
+      historyRequestRef.current = null;
       unsubscribe();
       if (frameRef.current !== null) {
         window.cancelAnimationFrame(frameRef.current);
@@ -172,7 +192,7 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
   for (const envelope of events) {
     const event = envelope.payload;
     if (event.type === "snapshot.updated") {
-      next = applySnapshot(next, event.snapshot);
+      next = { ...applySnapshot(next, event.snapshot, true), selectionEventSequence: envelope.sequence };
       continue;
     }
     if (event.type === "message.upserted") {
@@ -207,7 +227,20 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
       else delete activeRunsByThread[event.threadId];
       const activeRuns = Object.values(activeRunsByThread);
       const activeRun = next.activeThreadId ? activeRunsByThread[next.activeThreadId] || null : null;
-      next = { ...next, activeRunsByThread, activeRuns, activeRun };
+      next = { ...next, activeRunsByThread, activeRuns, activeRun, runEventSequences: { ...next.runEventSequences, [event.threadId]: envelope.sequence } };
+      continue;
+    }
+    if (event.type === "turn.completed" || event.type === "turn.stopped" || event.type === "turn.failed") {
+      const activeRunsByThread = { ...next.activeRunsByThread };
+      const pendingUserInputsByThread = { ...next.pendingUserInputsByThread };
+      if (pendingUserInputsByThread[event.threadId]?.assistantMessageId === event.turnId) delete pendingUserInputsByThread[event.threadId];
+      if (next.activeRun) activeRunsByThread[next.activeRun.threadId] = next.activeRun;
+      if (activeRunsByThread[event.threadId]?.assistantMessageId === event.turnId) delete activeRunsByThread[event.threadId];
+      next = { ...next, activeRunsByThread, activeRuns: Object.values(activeRunsByThread), activeRun: next.activeThreadId ? activeRunsByThread[next.activeThreadId] || null : null,
+        messages: event.message?.threadId === next.activeThreadId ? upsertById(next.messages, event.message) : next.messages,
+        runEventSequences: { ...next.runEventSequences, [event.threadId]: envelope.sequence },
+        pendingUserInputsByThread, pendingUserInput: next.activeThreadId ? pendingUserInputsByThread[next.activeThreadId] || null : null,
+      };
       continue;
     }
     if (event.type === "user_input.requested") {
@@ -260,14 +293,16 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
   return next;
 };
 
-const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): DesktopUiSnapshot => {
+const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot, authoritative = false): DesktopUiSnapshot => {
   const activeThreadId = snapshot.activeThreadId;
   const sameThread = Boolean(activeThreadId && activeThreadId === current.activeThreadId);
   // A direct IPC refresh is not sequenced with pushed events. Never let an
   // older snapshot roll a streamed message/tool back to an earlier state.
-  const messages = sameThread ? mergeUnique(current.messages, snapshot.messages, false) : snapshot.messages;
-  const toolEvents = sameThread ? mergeUnique(current.toolEvents, snapshot.toolEvents, false) : snapshot.toolEvents;
-  const turnUndos = sameThread ? mergeUnique(current.turnUndos, snapshot.turnUndos, false) : snapshot.turnUndos;
+  const loadedOlderMessages = authoritative ? current.messages.filter((message) => snapshot.historyPage?.hasOlder && message.createdAt < (snapshot.messages[0]?.createdAt ?? 0)) : current.messages;
+  const retainedMessageIds = new Set(loadedOlderMessages.map((message) => message.id));
+  const messages = sameThread ? mergeUnique(loadedOlderMessages, snapshot.messages, false) : snapshot.messages;
+  const toolEvents = sameThread ? mergeUnique(authoritative ? current.toolEvents.filter((tool) => retainedMessageIds.has(tool.messageId)) : current.toolEvents, snapshot.toolEvents, false) : snapshot.toolEvents;
+  const turnUndos = sameThread ? mergeUnique(authoritative ? current.turnUndos.filter((undo) => retainedMessageIds.has(undo.messageId)) : current.turnUndos, snapshot.turnUndos, false) : snapshot.turnUndos;
   const activeRunsByThread = Object.fromEntries((snapshot.activeRuns || []).map((run) => [run.threadId, run]));
   if (snapshot.activeRun) activeRunsByThread[snapshot.activeRun.threadId] = snapshot.activeRun;
 
@@ -276,7 +311,7 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): Deskt
     messages,
     toolEvents,
     turnUndos,
-    historyPage: sameThread && current.historyPage
+    historyPage: sameThread && current.historyPage && (!authoritative || loadedOlderMessages.length > 0)
       ? { ...current.historyPage, messages, toolEvents, turnUndos }
       : snapshot.historyPage,
     contextUsage: snapshot.contextUsage || (
@@ -288,10 +323,25 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot): Deskt
     activeRunsByThread,
     pendingUserInputsByThread: current.pendingUserInputsByThread,
     pendingUserInput: activeThreadId ? current.pendingUserInputsByThread[activeThreadId] || null : null,
+    runEventSequences: current.runEventSequences,
+    selectionEventSequence: current.selectionEventSequence,
   };
 };
 
+export const applyRefreshSnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot, sequenceAtRequest: number): DesktopUiSnapshot => {
+  if ((current.selectionEventSequence || 0) > sequenceAtRequest) return current;
+  const next = applySnapshot(current, snapshot);
+  const activeRunsByThread = { ...next.activeRunsByThread };
+  for (const [threadId, sequence] of Object.entries(current.runEventSequences || {})) {
+    if (sequence <= sequenceAtRequest) continue;
+    if (current.activeRunsByThread[threadId]) activeRunsByThread[threadId] = current.activeRunsByThread[threadId];
+    else delete activeRunsByThread[threadId];
+  }
+  return { ...next, activeRunsByThread, activeRuns: Object.values(activeRunsByThread), activeRun: next.activeThreadId ? activeRunsByThread[next.activeThreadId] || null : null };
+};
+
 export const prependHistoryPage = (current: DesktopUiSnapshot, page: ThreadHistoryPage): DesktopUiSnapshot => {
+  if (page.threadId !== current.activeThreadId) return current;
   const messages = mergeUnique(page.messages, current.messages);
   const toolEvents = mergeUnique(page.toolEvents, current.toolEvents);
   const turnUndos = mergeUnique(page.turnUndos, current.turnUndos);
@@ -337,7 +387,7 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
   let messages = new Map<string, PrivoraEventEnvelope>();
   let tools = new Map<string, PrivoraEventEnvelope>();
   let undos = new Map<string, PrivoraEventEnvelope>();
-  let contextUsage: PrivoraEventEnvelope | null = null;
+  let contextUsage = new Map<string, PrivoraEventEnvelope>();
   let runStates = new Map<string, PrivoraEventEnvelope>();
   const commandDeltas = new Map<string, PrivoraEventEnvelope>();
 
@@ -346,7 +396,7 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
     messages.forEach((event) => batch.push(event));
     tools.forEach((event) => batch.push(event));
     undos.forEach((event) => batch.push(event));
-    if (contextUsage) batch.push(contextUsage);
+    contextUsage.forEach((event) => batch.push(event));
     commandDeltas.forEach((event) => batch.push(event));
     runStates.forEach((event) => batch.push(event));
     batch.sort((a, b) => a.sequence - b.sequence);
@@ -354,7 +404,7 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
     messages = new Map();
     tools = new Map();
     undos = new Map();
-    contextUsage = null;
+    contextUsage = new Map();
     runStates = new Map();
     commandDeltas.clear();
   };
@@ -371,6 +421,9 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
       continue;
     }
     if (event.type === "tool.upserted") {
+      // The full replacement may already contain prior output deltas. Do not
+      // combine deltas across this boundary and append them a second time.
+      flush();
       tools.set(event.tool.id, envelope);
       continue;
     }
@@ -379,7 +432,7 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
       continue;
     }
     if (event.type === "context.usage_updated") {
-      contextUsage = envelope;
+      contextUsage.set(event.usage.threadId, envelope);
       continue;
     }
     if (event.type === "turn.status_changed") {

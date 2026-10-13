@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput, SteerTurnInput, SteerTurnResult } from "../../../shared/types";
+import { beginPromptSubmission } from "./promptSubmission";
 
 type TurnSettings = Pick<StartTurnInput, "model" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">;
 
@@ -58,26 +59,28 @@ export const usePromptQueue = ({
       return { ...current, [activeThreadId]: next };
     });
   }, [activeThreadId]);
-  const [queuePaused, setQueuePaused] = useState(false);
+  const [pausedThreads, setPausedThreads] = useState<Record<string, boolean>>({});
+  const queuePaused = Boolean(activeThreadId && pausedThreads[activeThreadId]);
+  const setQueuePaused = useCallback((paused: boolean) => {
+    if (activeThreadId) setPausedThreads((current) => ({ ...current, [activeThreadId]: paused }));
+  }, [activeThreadId]);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [stoppingThreadId, setStoppingThreadId] = useState<string | null>(null);
   const [steeringPromptId, setSteeringPromptId] = useState<string | null>(null);
   const [steerError, setSteerError] = useState<string | null>(null);
-  const directSubmitInFlightRef = useRef(false);
-  const queuedSubmitInFlightRef = useRef(false);
-  const steeringInFlightRef = useRef<string | null>(null);
+  const pendingSubmissionsRef = useRef(new Set<string>());
+  const pendingSteersRef = useRef(new Set<string>());
+  const currentThreadRef = useRef(activeThreadId);
+  currentThreadRef.current = activeThreadId;
+  const [submissionVersion, setSubmissionVersion] = useState(0);
 
   const stopping = Boolean(activeThreadId && stoppingThreadId === activeThreadId && running);
 
   useEffect(() => {
-    setQueuePaused(false);
     setQueueExpanded(false);
     setStoppingThreadId(null);
     setSteeringPromptId(null);
     setSteerError(null);
-    directSubmitInFlightRef.current = false;
-    queuedSubmitInFlightRef.current = false;
-    steeringInFlightRef.current = null;
   }, [activeThreadId]);
 
   useEffect(() => {
@@ -90,14 +93,7 @@ export const usePromptQueue = ({
 
   useEffect(() => {
     if (resumableBlocked && queuedPrompts.length > 0) setQueuePaused(true);
-  }, [queuedPrompts.length, resumableBlocked]);
-
-  useEffect(() => {
-    if (running) {
-      directSubmitInFlightRef.current = false;
-      queuedSubmitInFlightRef.current = false;
-    }
-  }, [running]);
+  }, [queuedPrompts.length, resumableBlocked, setQueuePaused]);
 
   const enqueuePrompt = useCallback((
     prompt: string,
@@ -114,7 +110,7 @@ export const usePromptQueue = ({
         turnSettings,
       },
     ]);
-  }, [turnSettings]);
+  }, [setQueuedPrompts, turnSettings]);
 
   const startPrompt = useCallback(async (
     prompt: string,
@@ -122,69 +118,66 @@ export const usePromptQueue = ({
     contextMentions?: ContextMentionRecord[],
   ) => {
     if (!activeThreadId) return false;
-    if (running || directSubmitInFlightRef.current) {
+    if (running || pendingSubmissionsRef.current.has(activeThreadId)) {
       enqueuePrompt(prompt, attachments, contextMentions);
       return true;
     }
-    directSubmitInFlightRef.current = true;
-    void startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions, ...turnSettings })
+    const submission = beginPromptSubmission(pendingSubmissionsRef.current, activeThreadId, () =>
+      startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions, ...turnSettings }));
+    if (!submission) return false;
+    void submission
       .catch((error) => {
         console.error(error);
-        onDraft({
-          id: Date.now(),
-          text: prompt,
-          attachments,
-          contextMentions,
-        });
+        setQueuedPrompts((current) => [{ id: crypto.randomUUID(), prompt, attachments, contextMentions, turnSettings }, ...current]);
+        setQueuePaused(true);
+        if (currentThreadRef.current === activeThreadId) setSteerError("Could not send the message. It remains in the paused queue.");
       })
       .finally(() => {
-        directSubmitInFlightRef.current = false;
+        setSubmissionVersion((version) => version + 1);
       });
     return true;
-  }, [activeThreadId, enqueuePrompt, onDraft, running, startTurn, turnSettings]);
+  }, [activeThreadId, enqueuePrompt, running, setQueuedPrompts, setQueuePaused, startTurn, turnSettings]);
 
   useEffect(() => {
-    if (running) queuedSubmitInFlightRef.current = false;
-    if (!activeThreadId || running || resumableBlocked || queuePaused || queuedSubmitInFlightRef.current || queuedPrompts.length === 0) return;
+    if (!activeThreadId || running || resumableBlocked || queuePaused || pendingSubmissionsRef.current.has(activeThreadId) || queuedPrompts.length === 0) return;
     const [next, ...rest] = queuedPrompts;
-    queuedSubmitInFlightRef.current = true;
+    const submission = beginPromptSubmission(pendingSubmissionsRef.current, activeThreadId, () => startTurn({
+      threadId: activeThreadId, prompt: next.prompt, attachments: next.attachments,
+      contextMentions: next.contextMentions, ...next.turnSettings,
+    }));
+    if (!submission) return;
     setQueuedPrompts(rest);
-    void startTurn({
-      threadId: activeThreadId,
-      prompt: next.prompt,
-      attachments: next.attachments,
-      contextMentions: next.contextMentions,
-      ...next.turnSettings,
-    }).catch(() => {
-      queuedSubmitInFlightRef.current = false;
+    void submission.catch(() => {
       setQueuedPrompts((current) => [next, ...current]);
-    });
-  }, [activeThreadId, queuePaused, queuedPrompts, resumableBlocked, running, startTurn]);
+      setQueuePaused(true);
+      if (currentThreadRef.current === activeThreadId) setSteerError("Could not send the queued message. The queue is paused.");
+    }).finally(() => setSubmissionVersion((version) => version + 1));
+  }, [activeThreadId, queuePaused, queuedPrompts, resumableBlocked, running, setQueuedPrompts, setQueuePaused, startTurn, submissionVersion]);
 
   const runQueuedPrompt = useCallback((item: QueuedPrompt) => {
-    if (!activeThreadId || running || queuedSubmitInFlightRef.current) return;
-    queuedSubmitInFlightRef.current = true;
+    if (!activeThreadId || running) return;
+    const submission = beginPromptSubmission(pendingSubmissionsRef.current, activeThreadId, () => startTurn({
+      threadId: activeThreadId, prompt: item.prompt, attachments: item.attachments,
+      contextMentions: item.contextMentions, ...item.turnSettings,
+    }));
+    if (!submission) return;
     setQueuePaused(false);
     setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-    void startTurn({
-      threadId: activeThreadId,
-      prompt: item.prompt,
-      attachments: item.attachments,
-      contextMentions: item.contextMentions,
-      ...item.turnSettings,
-    }).catch(() => {
-      queuedSubmitInFlightRef.current = false;
+    void submission.catch(() => {
       setQueuedPrompts((current) => [item, ...current]);
       setQueuePaused(true);
-    });
-  }, [activeThreadId, running, startTurn]);
+    }).finally(() => setSubmissionVersion((version) => version + 1));
+  }, [activeThreadId, running, setQueuedPrompts, setQueuePaused, startTurn]);
 
   const stopActiveTurn = useCallback(() => {
     if (!activeThreadId || stoppingThreadId === activeThreadId) return;
     setStoppingThreadId(activeThreadId);
     if (queuedPrompts.length > 0) setQueuePaused(true);
-    void stopTurn(activeThreadId);
-  }, [activeThreadId, queuedPrompts.length, stoppingThreadId, stopTurn]);
+    void stopTurn(activeThreadId).catch((error) => {
+      setStoppingThreadId((current) => current === activeThreadId ? null : current);
+      if (currentThreadRef.current === activeThreadId) setSteerError(error instanceof Error ? error.message : "Could not stop this turn.");
+    });
+  }, [activeThreadId, queuedPrompts.length, setQueuePaused, stoppingThreadId, stopTurn]);
 
   const editQueuedPrompt = useCallback((item: QueuedPrompt) => {
     onDraft({
@@ -194,15 +187,15 @@ export const usePromptQueue = ({
       contextMentions: item.contextMentions,
     });
     setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-  }, [onDraft]);
+  }, [onDraft, setQueuedPrompts]);
 
   const removeQueuedPrompt = useCallback((item: QueuedPrompt) => {
     setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-  }, []);
+  }, [setQueuedPrompts]);
 
   const steerQueuedPrompt = useCallback(async (item: QueuedPrompt) => {
-    if (!activeThreadId || !activeTurnId || !running || steeringInFlightRef.current) return;
-    steeringInFlightRef.current = item.id;
+    if (!activeThreadId || !activeTurnId || !running || pendingSteersRef.current.has(activeThreadId)) return;
+    pendingSteersRef.current.add(activeThreadId);
     setSteeringPromptId(item.id);
     setSteerError(null);
     try {
@@ -216,12 +209,12 @@ export const usePromptQueue = ({
       if (result.turnId !== activeTurnId) throw new Error("The active turn changed before steering completed.");
       setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
     } catch (error) {
-      setSteerError(error instanceof Error ? error.message : "Could not steer the active turn.");
+      if (currentThreadRef.current === activeThreadId) setSteerError(error instanceof Error ? error.message : "Could not steer the active turn.");
     } finally {
-      steeringInFlightRef.current = null;
-      setSteeringPromptId(null);
+      pendingSteersRef.current.delete(activeThreadId);
+      if (currentThreadRef.current === activeThreadId) setSteeringPromptId(null);
     }
-  }, [activeThreadId, activeTurnId, running, steerTurn, steeringPromptId]);
+  }, [activeThreadId, activeTurnId, running, setQueuedPrompts, steerTurn]);
 
   const queuedHead = queuedPrompts[0] || null;
   const queuedRest = useMemo(() => queuedPrompts.slice(1), [queuedPrompts]);
