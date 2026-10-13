@@ -13,3 +13,13 @@ apps/desktop/build-resources/
 .env*
 !.env.example
 .playwright-mcp/
+__pycache__/
+*.pyc
+
+# Local Kali connection profiles, SSH material, and runtime state.
+privora-kali*.json
+id_privora_kali*
+privora_kali_known_hosts
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

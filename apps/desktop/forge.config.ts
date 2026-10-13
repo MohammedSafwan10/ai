@@ -21,6 +21,7 @@ const config: ForgeConfig = {
     },
     extraResource: [
       "assets",
+      "resources/kali",
       "build-resources/node-pty",
       ...existingOptionalResources(
         optionalResource(ripgrepResourcePackage),
