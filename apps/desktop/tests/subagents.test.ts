@@ -304,7 +304,8 @@ describe("reviewer swarm harness", () => {
     expect(reviewers.map((agent) => agent.reasoningEffort)).toEqual(["high", "high"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.agentHarnessMode)).toEqual(["standard", "standard"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.collaborationMode)).toEqual(["default", "default"]);
-    expect(reviewers.map((agent) => agent.agentNickname)).toEqual(["Correctness Reviewer", "Risk Reviewer"]);
+    // Store ordering uses timestamps and ID tie-breaks, not reviewer role order.
+    expect(reviewers.map((agent) => agent.agentNickname).sort()).toEqual(["Correctness Reviewer", "Risk Reviewer"]);
     expect(starts.map((start) => start.forkTurns)).toEqual(["8", "8"]);
     expect(starts[0].prompt).toContain("Request satisfaction, functional correctness");
     expect(starts[1].prompt).toContain("Regressions, security and privacy");

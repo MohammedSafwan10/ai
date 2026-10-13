@@ -2,6 +2,34 @@ import { describe, expect, it } from "vitest";
 import { HeadTailOutputBuffer, compactTextForModel } from "../src/main/terminal/outputBuffer";
 
 describe("terminal output buffer", () => {
+  it("preserves UTF-8 across the internal head/tail boundary without truncation", () => {
+    const buffer = new HeadTailOutputBuffer(8);
+    buffer.push("€€");
+    expect(buffer.toString()).toBe("€€");
+    expect(buffer.stats()).toEqual({ retainedBytes: 6, omittedBytes: 0 });
+  });
+
+  it("waits for a complete UTF-8 character across streamed byte chunks", () => {
+    const bytes = Buffer.from("A😀€漢Z");
+    const buffer = new HeadTailOutputBuffer(30);
+    for (let index = 0; index < bytes.length; index += 1) {
+      buffer.push(bytes.subarray(index, index + 1));
+      expect(buffer.toString()).not.toContain("\uFFFD");
+    }
+    expect(buffer.toString()).toBe("A😀€漢Z");
+  });
+
+  it("does not manufacture replacement characters at truncated UTF-8 boundaries", () => {
+    const bytes = Buffer.from("€😀漢".repeat(10));
+    for (let budget = 1; budget < 25; budget += 1) {
+      const buffer = new HeadTailOutputBuffer(budget);
+      for (const byte of bytes) buffer.push(Buffer.from([byte]));
+      expect(buffer.toString()).not.toContain("\uFFFD");
+      expect(buffer.toString()).toContain("omitted");
+      expect(buffer.stats().retainedBytes).toBeLessThanOrEqual(budget);
+    }
+  });
+
   it("keeps head and tail when output exceeds the byte cap", () => {
     const buffer = new HeadTailOutputBuffer(10);
     buffer.push("hello");

@@ -1,5 +1,8 @@
 # Privora Desktop
 
+Proposed extension: [Security workspace plan](docs/security-workspace/README.md)
+(planning only; not implemented).
+
 See [docs/LONG_CHAT_ARCHITECTURE.md](docs/LONG_CHAT_ARCHITECTURE.md) for the
 SQLite-backed paginated chat architecture and long-session performance rules.
 

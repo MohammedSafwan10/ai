@@ -166,6 +166,7 @@ export class TerminalSessionManager {
   }
 
   async execCommand(options: ExecCommandOptions): Promise<TerminalSessionResult> {
+    options.signal.throwIfAborted();
     if (this.sessions.size >= MAX_PROCESSES) {
       throw new Error("Too many background terminal sessions are already running.");
     }
@@ -217,6 +218,7 @@ export class TerminalSessionManager {
       backend.terminate();
     };
     options.signal.addEventListener("abort", abort, { once: true });
+    if (options.signal.aborted) abort();
 
     await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, false), options.signal);
     if (shouldWaitForShortCommandClose(session, options.yieldTimeMs)) {
@@ -227,6 +229,7 @@ export class TerminalSessionManager {
   }
 
   async writeStdin(options: WriteStdinOptions): Promise<TerminalSessionResult> {
+    options.signal.throwIfAborted();
     const operationStartedAt = Date.now();
     const session = this.sessions.get(options.processId);
     if (!session) {
@@ -243,6 +246,7 @@ export class TerminalSessionManager {
     }
     if (options.closeStdin) {
       if (options.input) await delay(WINDOWS_STDIN_CLOSE_DELAY_MS);
+      options.signal.throwIfAborted();
       session.backend.closeStdin();
     }
 
@@ -251,6 +255,7 @@ export class TerminalSessionManager {
       session.backend.terminate();
     };
     options.signal.addEventListener("abort", abort, { once: true });
+    if (options.signal.aborted) abort();
     await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, !options.input), options.signal);
     options.signal.removeEventListener("abort", abort);
     return this.resultForSession(session, operationStartedAt);
@@ -404,7 +409,7 @@ export class TerminalSessionManager {
   }
 
   private waitForBoundary(session: TerminalSession, ms: number, signal?: AbortSignal) {
-    if (session.closed) return Promise.resolve();
+    if (session.closed || signal?.aborted) return Promise.resolve();
     return new Promise<void>((resolve) => {
       let done = false;
       const close = () => {

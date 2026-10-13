@@ -1,13 +1,35 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TerminalSessionManager } from "../src/main/terminal/sessionManager";
 
 const tempWorkspace = async () =>
   fs.mkdtemp(path.join(os.tmpdir(), "privora-terminal-"));
 
 describe("TerminalSessionManager", () => {
+  it("does not spawn commands after their request has already been cancelled", async () => {
+    const spawn = vi.fn(() => { throw new Error("must not spawn"); });
+    const terminal = new TerminalSessionManager({ kind: "process", spawn });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(terminal.execCommand({
+      cwd: process.cwd(), argv: [process.execPath, "-v"], signal: controller.signal,
+      onOutput: () => undefined,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-cancelled stdin request before accessing a session", async () => {
+    const terminal = new TerminalSessionManager();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(terminal.writeStdin({
+      processId: 987654, input: "should not execute", signal: controller.signal,
+      onOutput: () => undefined,
+    })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("runs a short command and returns completed output", async () => {
     const cwd = await tempWorkspace();
     const terminal = new TerminalSessionManager();

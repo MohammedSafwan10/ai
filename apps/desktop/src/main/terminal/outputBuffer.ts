@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder";
+
 const DEFAULT_MAX_BYTES = 220_000;
 
 export class HeadTailOutputBuffer {
@@ -38,9 +40,17 @@ export class HeadTailOutputBuffer {
   }
 
   toString() {
-    const head = Buffer.concat(this.head).toString("utf8");
-    const tail = Buffer.concat(this.tail).toString("utf8");
-    if (this.omittedBytes === 0) return `${head}${tail}`;
+    // Decode contiguous bytes together. During streaming, withhold an incomplete
+    // trailing code point until its remaining bytes arrive.
+    if (this.omittedBytes === 0) {
+      return new StringDecoder("utf8").write(Buffer.concat([...this.head, ...this.tail]));
+    }
+    const head = new StringDecoder("utf8").write(Buffer.concat(this.head));
+    const tailBytes = Buffer.concat(this.tail);
+    let start = 0;
+    // Truncation can leave the tail starting inside a UTF-8 character.
+    while (start < tailBytes.length && (tailBytes[start] & 0xc0) === 0x80) start += 1;
+    const tail = new StringDecoder("utf8").write(tailBytes.subarray(start));
     const lineSafe = lineSafeHeadTail(head, tail);
     return `${lineSafe.head}\n\n[... ${this.omittedBytes} bytes omitted from the middle ...]\n\n${lineSafe.tail}`;
   }
