@@ -477,6 +477,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       const settings = this.store.getSettings();
       const effectiveModel = getModelOption(input.model || thread.model || settings.model).id;
       const effectiveReasoning = input.reasoningEffort || thread.reasoningEffort || settings.reasoningEffort;
+      assertModelSupportsReasoningEffort(effectiveModel, effectiveReasoning);
       const effectiveCollaborationMode = input.collaborationMode || thread.collaborationMode || settings.collaborationMode;
       const effectiveAgentHarnessMode = input.agentHarnessMode || thread.agentHarnessMode || settings.agentHarnessMode;
       const selectedModel = getModelOption(effectiveModel);
@@ -516,17 +517,27 @@ export class TurnCoordinator implements AgentHarnessApi {
       this.store.upsertMessage(assistantMessage);
       this.emitSnapshot();
 
-      const priorMessages = this.contextManager.buildHistoryWithCompaction(input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
-      const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
-      const history = mentionContext
-        ? [...priorMessages, textProviderMessage(mentionContext)]
-        : priorMessages;
-
       const controller = new AbortController();
       const run = this.createRun(input.threadId, assistantMessage.id, controller);
       this.activeRuns.set(input.threadId, run);
       this.emitRun(run);
       this.emit({ type: "turn.started", threadId: input.threadId, turnId: assistantMessage.id });
+
+      const priorMessages = this.contextManager.buildHistoryWithCompaction(input.threadId, assistantMessage.id, runtimeBudget.messageCharLimit);
+      let mentionContext: string;
+      try {
+        mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
+      } catch (error) {
+        this.activeRuns.delete(input.threadId);
+        this.pendingSteers.delete(input.threadId);
+        this.updateAssistant(assistantMessage, controller.signal.aborted ? "Stopped." : errorMessage(error), "", controller.signal.aborted ? "stopped" : "failed");
+        this.emit({ type: "turn.status_changed", threadId: input.threadId, run: null });
+        if (!controller.signal.aborted) throw error;
+        return;
+      }
+      const history = mentionContext
+        ? [...priorMessages, textProviderMessage(mentionContext)]
+        : priorMessages;
 
       await this.continueLoop({
         threadId: input.threadId,
@@ -557,6 +568,7 @@ export class TurnCoordinator implements AgentHarnessApi {
 
     const run = this.activeRuns.get(input.threadId);
     if (!run) throw new Error("There is no active turn to steer.");
+    if (run.controller.signal.aborted) throw new Error("The active turn is stopping. This message remains queued.");
     if (run.assistantMessageId !== input.expectedTurnId) {
       throw new Error("The active turn changed before this message could be steered. It remains queued.");
     }
@@ -573,6 +585,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     const mentionContext = await buildMentionContext(this.store, input.threadId, workspace.path, input.contextMentions || []);
     const currentRun = this.activeRuns.get(input.threadId);
     if (!currentRun) throw new Error("The turn finished before this message could be steered. It remains queued.");
+    if (currentRun.controller.signal.aborted) throw new Error("The active turn is stopping. This message remains queued.");
     if (currentRun.assistantMessageId !== input.expectedTurnId) {
       throw new Error("The active turn changed before this message could be steered. It remains queued.");
     }
@@ -819,6 +832,11 @@ export class TurnCoordinator implements AgentHarnessApi {
     let lastProviderUsage: TokenUsageRecord | null = null;
     let totalProviderUsage: TokenUsageRecord | null = null;
     const agentsMdContext = await buildAgentsMdContext(options.workspaceRoot);
+    if (options.controller.signal.aborted) {
+      this.pendingSteers.delete(options.threadId);
+      this.finalizeStoppedRun(options);
+      return;
+    }
     const visibleFingerprints = buildVisibleFingerprints(assistantText);
     let handoff = false;
     let controller = options.controller;
@@ -1057,6 +1075,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             opencodeGoApiKey: this.store.getSecret("opencode_go_api_key"),
             maxOutputTokens: runtimeBudget.outputTokens,
             onStreamProgress: () => {
+              if (samplingController.signal.aborted) return;
               providerProducedProgress = true;
               markRunProgress(run);
               if (Date.now() - lastStreamProgressEmitAt >= 1000) {
@@ -1065,6 +1084,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               }
             },
             onTextDelta: (delta) => {
+              if (samplingController.signal.aborted) return;
               providerProducedProgress = true;
               markRunProgress(run);
               const titleFiltered = filterThreadTitleDelta(delta, titleFilter, (title) => {
@@ -1097,6 +1117,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.emitRun(run);
             },
             onThoughtDelta: (delta) => {
+              if (samplingController.signal.aborted) return;
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               const thoughtPart = ensureThoughtPart();
@@ -1107,6 +1128,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.emitRun(run);
             },
             onThoughtReplace: (text) => {
+              if (samplingController.signal.aborted) return;
               const thoughtPart = ensureThoughtPart();
               const previous = assistantThought.slice(thoughtPart.thoughtOffset);
               if (previous === text) return;
@@ -1119,6 +1141,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.emitRun(run);
             },
             onToolDraft: (draft) => {
+              if (samplingController.signal.aborted) return;
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
               endThoughtPart();
@@ -1132,6 +1155,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.queueToolDraft(options.threadId, options.assistantMessage.id, call, assistantText.length);
             },
             onToolCall: (call) => {
+              if (samplingController.signal.aborted) return;
               samplingRequest.interruptible = false;
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
@@ -1179,6 +1203,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               }
             },
             onProviderContextPart: (part) => {
+              if (samplingController.signal.aborted) return;
               samplingRequest.interruptible = part.type === "server_tool_response";
               providerContextParts.push(part);
             },
@@ -1214,6 +1239,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.emit({ type: "tool.upserted", tool: event });
             },
             onTextReplace: (text) => {
+              if (samplingController.signal.aborted) return;
               endThoughtPart();
               const previousIterationText = assistantText.slice(textStart);
               if (text === previousIterationText) return;
@@ -1228,6 +1254,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               this.emitRun(run);
             },
             onWebSearch: (search) => {
+              if (samplingController.signal.aborted) return;
               samplingRequest.interruptible = search.status !== "running";
               providerProducedProgress = true;
               successfulImageAwaitingFollowup = false;
@@ -1259,6 +1286,23 @@ export class TurnCoordinator implements AgentHarnessApi {
             },
           });
         } catch (error) {
+          if (!(samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) && calls.length > 0) {
+            // Tool delivery can precede the stream's failure. Keep its execution
+            // owned by this turn until it settles and retain the completed result
+            // so recovery cannot repeat an already-applied mutation.
+            history = appendAssistantToolCalls(history, assistantText.slice(textStart), calls, providerContextParts);
+            const delivered = await scheduler.drainOrdered();
+            toolCount += delivered.length;
+            run.toolCount = toolCount;
+            const results = delivered.map(({ id, name, response }) => ({ id, name, response }));
+            for (const call of approvalCalls) {
+              const result = { success: false, error: "The model stream ended before this action could be approved. This action was not executed." };
+              const event = this.updateToolEvent(options.threadId, options.assistantMessage.id, call, { status: "cancelled", result, endedAt: now() });
+              this.emit({ type: "tool.upserted", tool: event });
+              results.push({ id: call.id, name: call.name, response: result });
+            }
+            history = appendToolResults(history, results);
+          }
           if (stalledAbortReason) throw new StreamStalledError(stalledAbortReason);
           if (samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) {
             steeredDuringSample = true;
@@ -1275,6 +1319,15 @@ export class TurnCoordinator implements AgentHarnessApi {
 
         if (samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) {
           steeredDuringSample = true;
+        }
+        if (controller.signal.aborted) {
+          if (calls.length > 0) {
+            history = appendAssistantToolCalls(history, assistantText.slice(textStart), calls, providerContextParts);
+            const delivered = await scheduler.drainOrdered();
+            toolCount += delivered.length;
+            history = appendToolResults(history, delivered.map(({ id, name, response }) => ({ id, name, response })));
+          }
+          throw new Error("Stopped.");
         }
 
         this.closeDanglingDraftTools(options.threadId, options.assistantMessage.id, new Set(calls.map((call) => call.id)));
@@ -1373,7 +1426,11 @@ export class TurnCoordinator implements AgentHarnessApi {
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
 
         const scheduledResults = await scheduler.drainOrdered();
-        if (controller.signal.aborted) throw new Error("Stopped.");
+        if (controller.signal.aborted) {
+          toolCount += scheduledResults.length;
+          history = appendToolResults(history, scheduledResults.map(({ id, name, response }) => ({ id, name, response })));
+          throw new Error("Stopped.");
+        }
         for (let index = 0; index < scheduledResults.length; index += 1) {
           toolCount += 1;
           run.toolCount = toolCount;
@@ -1487,6 +1544,9 @@ export class TurnCoordinator implements AgentHarnessApi {
       }
 
       const aborted = controller.signal.aborted;
+      // Persist accepted steers in this turn's checkpoint; the next independent
+      // turn reconstructs them from messages and must not receive them again.
+      history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
       const hasVisibleWork = Boolean(
         assistantText.trim() ||
         assistantThought.trim() ||
