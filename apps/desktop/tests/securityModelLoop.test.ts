@@ -41,6 +41,35 @@ const fixture = () => {
 };
 
 describe("Security model loop", () => {
+  it("finishes a steered response with a final-answer range and releases the running state", async () => {
+    const { thread, coordinator } = fixture();
+    let round = 0;
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      if (round++ === 0) {
+        options.onTextDelta("I am checking the original request.\n");
+        await new Promise<void>((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(new Error("Sampling interrupted")), { once: true });
+        });
+      } else {
+        expect(JSON.stringify(options.messages)).toContain("Change the direction");
+        options.onTextDelta("Here is the final answer after your steer.");
+      }
+    });
+    const turn = coordinator.startTurn({ threadId: thread.id, prompt: "Start the check" });
+    await vi.waitFor(() => expect(store.listMessages(thread.id).at(-1)?.content).toContain("original request"));
+    const assistantId = store.listMessages(thread.id).at(-1)!.id;
+    await coordinator.steerTurn({ threadId: thread.id, expectedTurnId: assistantId, prompt: "Change the direction" });
+    await turn;
+    await coordinator.waitForIdle();
+    const assistant = store.getMessage(assistantId)!;
+    expect(assistant.status).toBe("completed");
+    expect(coordinator.listActiveRuns()).toHaveLength(0);
+    const finalParts = assistant.textParts!.filter((part) => part.phase === "final_answer");
+    expect(finalParts.map((part) => assistant.content.slice(part.startOffset, part.endOffset)).join(""))
+      .toBe("Here is the final answer after your steer.");
+    expect(store.listMessages(thread.id).find((message) => message.steeredTurnId === assistantId)?.content).toBe("Change the direction");
+  });
+
   it("advertises only environment tools and keeps Plan read only", () => {
     const security = desktopToolDefinitionsForMode("default", "security").map((tool) => tool.name);
     expect(security).toContain("kali_exec");

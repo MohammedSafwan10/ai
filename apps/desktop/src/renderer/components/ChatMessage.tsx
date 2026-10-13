@@ -73,12 +73,12 @@ function ChatMessageComponent({
     [inlineSteers, isUser, message, runActive, tools],
   );
   const { activityParts, finalTextParts } = useMemo(
-    () => splitAssistantActivityAndFinalText(renderParts, inlineSteers.length > 0),
-    [inlineSteers.length, renderParts],
+    () => splitAssistantActivityAndFinalText(renderParts),
+    [renderParts],
   );
   const hasAssistantActivity = renderParts.some((part) => part.type !== "text");
   const activityNeedsAttention = renderParts.some((part) =>
-    part.type === "steer" || (part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval"))
+    part.type === "tools" && part.tools.some((tool) => tool.status === "awaiting_approval")
   );
   const [activityOpen, setActivityOpen] = useState(runActive || activityNeedsAttention);
   useEffect(() => {
@@ -89,10 +89,13 @@ function ChatMessageComponent({
     setActivityOpen(false);
   }, [activityNeedsAttention, runActive]);
   useEffect(() => {
+    // An earlier answer remains in the content after steering. It must not
+    // immediately close the activity for the resumed, still-running turn.
+    if (runActive && inlineSteers.length > 0) return;
     if (finalTextParts.length > 0 && !activityNeedsAttention) {
       setActivityOpen(false);
     }
-  }, [activityNeedsAttention, finalTextParts.length]);
+  }, [activityNeedsAttention, finalTextParts.length, inlineSteers.length, runActive]);
   const [copied, setCopied] = useState(false);
   const showCopyFeedback = () => {
     setCopied(true);
@@ -103,6 +106,15 @@ function ChatMessageComponent({
     showCopyFeedback();
   };
   const showMessageActions = (message.content || hasAttachments) && (isUser || !runActive);
+  const renderAssistantPart = (part: AssistantRenderPart) => {
+    if (part.type === "thought") return <ThoughtPanel key={part.key} thought={part.thought} active={part.active} />;
+    if (part.type === "tools") return <ToolTimeline key={part.key} tools={part.tools} subagents={subagents} messageStatus={message.status} defaultOpen={part.defaultOpen} onApprove={onApprove} onApproveAll={onApproveAll} />;
+    if (part.type === "steer") return <InlineSteerMessage key={part.key} message={part.message} />;
+    const final = part.phase === "final_answer";
+    return <div key={part.key} className={clsx(final ? "assistant-flow-text" : "assistant-activity-text", !final && runActive && message.status !== "failed" && "is-streaming", final && message.status === "failed" && "is-error", "markdown-body")}>
+      <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} showPlanActions={showPlanActions} onImplementPlan={onImplementPlan} onSuggestPlanChanges={onSuggestPlanChanges} />
+    </div>;
+  };
   return (
     <article className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
       <div className="message-stack">
@@ -123,7 +135,11 @@ function ChatMessageComponent({
                 onToggleActivity={() => setActivityOpen((value) => !value)}
               />
               <div className="assistant-flow">
-                {renderParts.length > 0 ? (
+                {inlineSteers.length > 0 ? (
+                  // Keep steering messages and final answers in chronological order.
+                  // Collapsing worked activity must not hide or mute either one.
+                  visibleSteeredAssistantParts(renderParts, activityOpen).map(renderAssistantPart)
+                ) : renderParts.length > 0 ? (
                   <>
                     {activityOpen && activityParts.length > 0 && (
                       <div className="assistant-activity-block">
@@ -762,8 +778,11 @@ const splitProposedPlan = (text: string): Array<{ type: "text" | "plan"; text: s
   ].filter((part) => part.text.length > 0);
 };
 
-function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[], preserveTimeline = false) {
-  if (preserveTimeline) return { activityParts: parts, finalTextParts: [] as AssistantTextRenderPart[] };
+export function visibleSteeredAssistantParts(parts: AssistantRenderPart[], activityOpen: boolean) {
+  return activityOpen ? parts : parts.filter((part) => part.type === "steer" || (part.type === "text" && part.phase === "final_answer"));
+}
+
+function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[]) {
   return {
     activityParts: parts.filter((part) => part.type !== "text" || part.phase === "commentary"),
     finalTextParts: parts.filter((part): part is AssistantTextRenderPart =>

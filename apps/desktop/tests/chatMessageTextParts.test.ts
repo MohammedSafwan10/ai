@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildAssistantRenderParts, normalizeTextParts, splitTextByPhaseForTest } from "../src/renderer/components/ChatMessage";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ChatMessage, buildAssistantRenderParts, normalizeTextParts, splitTextByPhaseForTest, visibleSteeredAssistantParts } from "../src/renderer/components/ChatMessage";
 import type { ChatMessageRecord } from "../src/shared/types";
 
 const message = (content: string, textParts: ChatMessageRecord["textParts"]): ChatMessageRecord => ({
@@ -73,6 +75,51 @@ describe("assistant text part rendering", () => {
       "text",
     ]);
   });
+
+  it("keeps final answers and inline steering chronological when worked activity is collapsed", () => {
+    const assistant = message("BeforeAfter", [part("answer", "final_answer", 0, 11, 1)]);
+    const steer = steeringMessage(assistant, 6);
+    const parts = buildAssistantRenderParts(assistant, [], false, [steer]);
+    expect(visibleSteeredAssistantParts(parts, false).map((item) => item.type === "text" ? item.text : item.type)).toEqual(["Before", "steer", "After"]);
+  });
+
+  it("renders a completed steered answer as normal text and collapses only worked activity", () => {
+    const assistant = message("Working...Done.", [part("progress", "commentary", 0, 10, 1), part("answer", "final_answer", 10, 15, 3)]);
+    const steer = steeringMessage(assistant, 10);
+    const html = renderToStaticMarkup(createElement(ChatMessage, {
+      message: assistant, inlineSteers: [steer], tools: [], subagents: [], activeRunStatus: null,
+      onApprove: () => {}, onApproveAll: () => {}, onOpenReview: () => {}, turnUndo: null,
+      onPrepareTurnUndo: async () => null, onUndoTurnChanges: async () => null,
+    }));
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("Worked for");
+    expect(html).toContain("inline-steer-message");
+    expect(html).toContain("assistant-flow-text markdown-body");
+    expect(html).toContain("Done.");
+    expect(html).not.toContain("Working...");
+    expect(html).not.toContain("assistant-activity-text");
+    const parts = buildAssistantRenderParts(assistant, [], false, [steer]);
+    expect(visibleSteeredAssistantParts(parts, true)).toEqual(parts);
+  });
+
+  it("keeps final text bright while the steered activity timeline is open", () => {
+    const assistant = { ...message("Working...Done.", [part("progress", "commentary", 0, 10, 1), part("answer", "final_answer", 10, 15, 3)]), status: "running" as const };
+    const html = renderToStaticMarkup(createElement(ChatMessage, {
+      message: assistant, inlineSteers: [steeringMessage(assistant, 10)], tools: [], subagents: [], activeRunStatus: "running",
+      onApprove: () => {}, onApproveAll: () => {}, onOpenReview: () => {}, turnUndo: null,
+      onPrepareTurnUndo: async () => null, onUndoTurnChanges: async () => null,
+    }));
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("assistant-activity-text is-streaming markdown-body");
+    expect(html).toContain("assistant-flow-text markdown-body");
+    expect(html.indexOf("Working...")).toBeLessThan(html.indexOf("inline-steer-message"));
+    expect(html.indexOf("inline-steer-message")).toBeLessThan(html.indexOf("Done."));
+  });
+});
+
+const steeringMessage = (assistant: ChatMessageRecord, offset: number): ChatMessageRecord => ({
+  ...message("Change direction", []), id: "steer", role: "user", steeredTurnId: assistant.id,
+  steerTextOffset: offset, steerStreamOrder: 2, createdAt: 2, updatedAt: 2,
 });
 
 const part = (
