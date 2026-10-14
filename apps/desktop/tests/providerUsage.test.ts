@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { normalizeProviderUsage } from "../src/main/agent/providers/usage";
 
 describe("provider usage normalization", () => {
+  it("includes Anthropic cache reads and writes in full prompt size", () => {
+    expect(normalizeProviderUsage({ input_tokens: 10, cache_read_input_tokens: 200, cache_creation_input_tokens: 50, output_tokens: 20 })).toEqual({
+      inputTokens: 260, cachedInputTokens: 200, outputTokens: 20, reasoningOutputTokens: 0, totalTokens: 280,
+    });
+  });
+  it("recognizes plural Responses details and DeepSeek cache-hit fields", () => {
+    expect(normalizeProviderUsage({ input_tokens: 100, output_tokens: 30, input_tokens_details: { cached_tokens: 80 }, output_tokens_details: { reasoning_tokens: 10 } })).toMatchObject({ cachedInputTokens: 80, reasoningOutputTokens: 10, totalTokens: 130 });
+    expect(normalizeProviderUsage({ prompt_tokens: 100, completion_tokens: 20, prompt_cache_hit_tokens: 75 })).toMatchObject({ inputTokens: 100, cachedInputTokens: 75 });
+  });
   it("normalizes OpenAI/CLIProxy Responses-style usage", () => {
     expect(normalizeProviderUsage({
       input_tokens: 100,

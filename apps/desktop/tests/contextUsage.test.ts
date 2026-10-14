@@ -30,6 +30,10 @@ const repeatedHistory = (count: number, chars: number): ProviderMessage[] =>
   }));
 
 describe("desktop context usage", () => {
+  it("marks newer history estimates honestly when they exceed the previous request", () => {
+    const result = calculateContextUsage({ threadId: "thread", modelId: "gpt-5.6-sol", history: historyWithChars(40_000), budget: resolveModelRuntimeBudget("gpt-5.6-sol"), lastUsage: usage(100, 20) });
+    expect(result.estimated).toBe(true);
+  });
   it("calculates remaining context against the model's usable input budget", () => {
     const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
     const result = calculateContextUsage({

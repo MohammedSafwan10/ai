@@ -358,6 +358,19 @@ describe("opencode go model discovery", () => {
       vi.unstubAllGlobals();
     }
   });
+  it("retains cache accounting across Anthropic streaming usage updates", async () => {
+    const events = [
+      { type: "message_start", message: { usage: { input_tokens: 10, cache_read_input_tokens: 200, cache_creation_input_tokens: 50 } } },
+      { type: "message_delta", usage: { output_tokens: 20 } },
+      { type: "message_stop" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith(events.map((event) => `data: ${JSON.stringify(event)}\n\n`))));
+    const onUsage = vi.fn();
+    try {
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", onUsage }));
+      expect(onUsage).toHaveBeenLastCalledWith(expect.objectContaining({ inputTokens: 260, cachedInputTokens: 200, outputTokens: 20 }));
+    } finally { vi.unstubAllGlobals(); }
+  });
 
   it("fails loudly when thought alone exhausts the chat output budget", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([

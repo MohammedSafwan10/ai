@@ -29,6 +29,36 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it("counts cumulative usage updates once per provider request", async () => {
+    const { thread, coordinator } = fixture();
+    const reports: any[] = [];
+    vi.spyOn(coordinator as any, "emitContextUsage").mockImplementation((...args: unknown[]) => { reports.push(args[5]); });
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      options.onUsage?.({ inputTokens: 100, cachedInputTokens: 50, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 105 });
+      options.onUsage?.({ inputTokens: 100, cachedInputTokens: 50, outputTokens: 20, reasoningOutputTokens: 0, totalTokens: 120 });
+      options.onUsage?.({ inputTokens: 100, cachedInputTokens: 50, outputTokens: 20, reasoningOutputTokens: 0, totalTokens: 120 });
+      options.onTextDelta("Complete.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Count usage" });
+    expect(reports.at(-1)).toMatchObject({ inputTokens: 100, outputTokens: 20, totalTokens: 120 });
+  });
+  it("keeps messages arriving during compaction outside its saved boundary", async () => {
+    const { thread, coordinator } = fixture();
+    store.upsertMessage({ id: "before", threadId: thread.id, role: "user", content: "Original goal", status: "completed", createdAt: 1, updatedAt: 1 });
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      store.upsertMessage({ id: "during", threadId: thread.id, role: "user", content: "New instruction during summary", status: "completed", createdAt: 2, updatedAt: 2 });
+      options.onTextDelta("Original goal summarized.");
+    });
+    await (coordinator as any).compactHistoryForRuntime({
+      threadId: thread.id, assistantMessageId: "summary-turn", workspaceRoot: folder,
+      history: [{ role: "user", content: "Original goal" }], model: OPENCODE_GO_MUSE_SPK_13_MODEL_ID,
+      reasoningEffort: "high", collaborationMode: "default", controller: new AbortController(),
+      trigger: "pre_turn", reason: "context_limit", textOffset: 0,
+    });
+    expect(store.getLatestCompactionCheckpoint(thread.id)?.compactedThroughMessageId).toBe("before");
+    const history = (coordinator as any).contextManager.buildHistoryWithCompaction(thread.id, "next");
+    expect(JSON.stringify(history)).toContain("New instruction during summary");
+  });
   it("keeps a resumed turn busy until its stopped provider has settled", async () => {
     const { thread, coordinator } = fixture();
     hooks.stream.mockImplementationOnce(async (options: ProviderStreamOptions) => {

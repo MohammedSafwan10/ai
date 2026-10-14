@@ -11,15 +11,19 @@ export const emptyTokenUsage = (): TokenUsageRecord => ({
 export const normalizeProviderUsage = (value: unknown): TokenUsageRecord | null => {
   if (!value || typeof value !== "object") return null;
   const usage = value as Record<string, unknown>;
+  const anthropicCache = "cache_read_input_tokens" in usage || "cache_creation_input_tokens" in usage;
   const inputTokens = numberFrom(
     usage.input_tokens,
     usage.prompt_tokens,
     usage.promptTokenCount,
     usage.totalInputTokens,
     usage.total_input_tokens,
-  );
+  ) + (anthropicCache ? numberFrom(usage.cache_read_input_tokens) + numberFrom(usage.cache_creation_input_tokens) : 0);
   const cachedInputTokens = numberFrom(
     usage.cached_input_tokens,
+    usage.cache_read_input_tokens,
+    usage.prompt_cache_hit_tokens,
+    (usage.input_tokens_details as Record<string, unknown> | undefined)?.cached_tokens,
     (usage.input_token_details as Record<string, unknown> | undefined)?.cached_tokens,
     (usage.prompt_tokens_details as Record<string, unknown> | undefined)?.cached_tokens,
     usage.cachedContentTokenCount,
@@ -34,6 +38,7 @@ export const normalizeProviderUsage = (value: unknown): TokenUsageRecord | null 
   );
   const reasoningOutputTokens = numberFrom(
     usage.reasoning_output_tokens,
+    (usage.output_tokens_details as Record<string, unknown> | undefined)?.reasoning_tokens,
     (usage.output_token_details as Record<string, unknown> | undefined)?.reasoning_tokens,
     (usage.completion_tokens_details as Record<string, unknown> | undefined)?.reasoning_tokens,
     usage.thoughtsTokenCount,
@@ -43,7 +48,7 @@ export const normalizeProviderUsage = (value: unknown): TokenUsageRecord | null 
     usage.total_tokens,
     usage.totalTokenCount,
     usage.totalTokens,
-  ) || inputTokens + outputTokens;
+  ) || inputTokens + outputTokens + (("thoughtsTokenCount" in usage || "total_thought_tokens" in usage) ? reasoningOutputTokens : 0);
 
   if (inputTokens === 0 && outputTokens === 0 && totalTokens === 0) return null;
   return {

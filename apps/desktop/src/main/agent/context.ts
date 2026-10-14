@@ -453,6 +453,7 @@ const validateProviderPart = (part: unknown): ProviderPart | null => {
       id: typeof part.id === "string" ? part.id : undefined,
       toolType: typeof part.toolType === "string" ? part.toolType : undefined,
       arguments: isRecord(part.arguments) ? part.arguments : undefined,
+      interactionStep: isRecord(part.interactionStep) ? part.interactionStep : undefined,
     };
   }
   if (part.type === "server_tool_response") {
@@ -461,6 +462,7 @@ const validateProviderPart = (part: unknown): ProviderPart | null => {
       id: typeof part.id === "string" ? part.id : undefined,
       toolType: typeof part.toolType === "string" ? part.toolType : undefined,
       response: isRecord(part.response) ? part.response : undefined,
+      interactionStep: isRecord(part.interactionStep) ? part.interactionStep : undefined,
     };
   }
   return null;
@@ -482,6 +484,7 @@ const estimateMessageTokens = (message: ProviderMessage) => {
     content,
     ...(message.parts || []).map((part) => {
       if (part.type === "text") return part.text;
+      if (part.type === "reasoning") return part.text;
       if (part.type === "function_call") return `${part.name} ${JSON.stringify(part.arguments)}`;
       if (part.type === "function_response") return `${part.name} ${JSON.stringify(part.response)}`;
       if (part.type === "image") return `${"x".repeat(ESTIMATED_IMAGE_TOKENS * 4)}[image ${part.name} ${part.mimeType}]`;

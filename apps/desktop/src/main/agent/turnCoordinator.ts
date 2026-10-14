@@ -983,6 +983,7 @@ export class TurnCoordinator implements AgentHarnessApi {
           });
         };
         const textStart = assistantText.length;
+        const usageBeforeSample = totalProviderUsage;
         const thoughtStart = assistantThought.length;
         const streamTextPhase = options.reviewerSwarmCompleted ? "final_answer" : "commentary";
         const routeProcessNarrationToThought = getProviderForModel(effectiveModel) === "cliproxy" && /gemini/i.test(effectiveModel);
@@ -1209,7 +1210,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             },
             onUsage: (usage) => {
               lastProviderUsage = usage;
-              totalProviderUsage = addTokenUsage(totalProviderUsage, usage);
+              totalProviderUsage = addTokenUsage(usageBeforeSample, usage);
               this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
             },
             onAiCredits: (creditEvent) => {
@@ -1808,6 +1809,11 @@ export class TurnCoordinator implements AgentHarnessApi {
     textOffset: number;
   }) {
     const beforeTokens = estimateProviderHistoryTokens(input.history);
+    // Capture the boundary before asynchronous summarization. New steers or
+    // agent messages must not be marked as already included in this summary.
+    const compactedThrough = this.store.listRecentMessages(input.threadId, 50)
+      .filter((message) => message.id !== input.assistantMessageId && (!message.agentMessage || message.agentMessage.outgoing || message.agentMessage.delivery !== "queued"))
+      .at(-1);
     const call: DesktopToolCall = {
       id: `context_compaction_${input.assistantMessageId}_${Date.now()}`,
       name: "context_compaction" as DesktopToolCall["name"],
@@ -1857,10 +1863,6 @@ export class TurnCoordinator implements AgentHarnessApi {
     }
 
     const afterTokens = estimateProviderHistoryTokens(replacementHistory);
-    const compactedThrough = this.store
-      .listRecentMessages(input.threadId, 50)
-      .filter((message) => message.id !== input.assistantMessageId)
-      .at(-1);
     const checkpoint: CompactionCheckpointRecord = {
       id: crypto.randomUUID(),
       threadId: input.threadId,

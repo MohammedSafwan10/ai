@@ -59,7 +59,7 @@ export const calculateContextUsage = (input: {
     safetyReserveTokens: input.budget.safetyReserveTokens,
     autoCompactAtTokens: autoCompactThresholdTokens(input.budget),
     budgetMode: input.budget.mode,
-    estimated: !input.lastUsage,
+    estimated: !input.lastUsage || estimatedTokens > lastUsage.inputTokens + lastUsage.outputTokens,
     lastTokenUsage: lastUsage,
     totalTokenUsage: totalUsage,
     updatedAt: Date.now(),

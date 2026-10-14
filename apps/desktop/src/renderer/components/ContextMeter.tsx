@@ -52,8 +52,12 @@ export function ContextMeter({
             <dd>{currentUsage?.remainingTokens === undefined ? "Not measured yet" : formatTokenCount(currentUsage.remainingTokens)}</dd>
           </div>
           <div>
-            <dt>Last turn</dt>
+            <dt>Last request</dt>
             <dd>{formatTokenCount(currentUsage?.lastTokenUsage.inputTokens || 0)} in · {formatTokenCount(currentUsage?.lastTokenUsage.outputTokens || 0)} out</dd>
+          </div>
+          <div>
+            <dt>Cached input</dt>
+            <dd>{currentUsage ? formatTokenCount(currentUsage.lastTokenUsage.cachedInputTokens) : "Not measured yet"}</dd>
           </div>
           <div>
             <dt>Reasoning</dt>
@@ -76,6 +80,7 @@ export function ContextMeter({
             <dd>{attachedContextCount}</dd>
           </div>
         </dl>
+        <p>Context capacity is separate from your provider allowance. Cache reads still occupy context; this meter does not measure subscription limits.</p>
       </div>
     </div>
   );

@@ -340,7 +340,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
     }
 
     const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean; thinking?: string; signature?: string }>();
-    let inputTokens = 0;
+    let messageUsage: Record<string, unknown> = {};
     let thoughtChars = 0;
     let hitMaxTokens = false;
 
@@ -364,7 +364,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         throw new Error(normalizeGoError(JSON.stringify(data.error || data), undefined));
       }
       if (data?.type === "message_start" && data?.message?.usage) {
-        inputTokens = Number(data.message.usage.input_tokens) || 0;
+        messageUsage = { ...data.message.usage };
         return;
       }
       if (data?.type === "content_block_start") {
@@ -409,10 +409,8 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       if (data?.type === "message_delta" && data?.delta?.stop_reason === "refusal") options.onResponseDisposition?.("model_refusal");
       if (data?.type === "message_delta" && data?.usage) {
         if (data?.delta?.stop_reason === "max_tokens") hitMaxTokens = true;
-        const usage = normalizeProviderUsage({
-          input_tokens: inputTokens,
-          output_tokens: data.usage.output_tokens,
-        });
+        messageUsage = { ...messageUsage, ...data.usage };
+        const usage = normalizeProviderUsage(messageUsage);
         if (usage) options.onUsage?.(usage);
         return;
       }
