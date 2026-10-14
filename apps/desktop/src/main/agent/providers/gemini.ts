@@ -101,6 +101,15 @@ export const toGeminiInteractionInput = (messages: ProviderMessage[]) => {
         content.push({ type: "text", text: part.text });
         continue;
       }
+      if (part.type === "server_tool_call" || part.type === "server_tool_response") {
+        if (part.interactionStep) {
+          flushContent();
+          input.push(part.interactionStep);
+        } else {
+          content.push({ type: "text", text: `Prior server tool ${part.toolType || "unknown"} ${part.type === "server_tool_call" ? "call" : "result"}: ${JSON.stringify(part.type === "server_tool_call" ? part.arguments : part.response)}` });
+        }
+        continue;
+      }
       if (part.type === "image") {
         content.push({ type: "image", data: part.data, mime_type: part.mimeType });
         continue;
@@ -238,6 +247,7 @@ export class GeminiAdapter implements ProviderAdapter {
       argumentsText: string;
     }>();
     const citationSources = new Map<string, string>();
+    const serverSteps = new Map<number, Record<string, any>>();
     let webSearchEventId = "";
     for await (const rawEvent of responseStream as any) {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -256,6 +266,7 @@ export class GeminiAdapter implements ProviderAdapter {
       if (usage) options.onUsage?.(usage);
       if (event.event_type === "step.start") {
         const step = event.step || {};
+        if (["google_search_call", "google_search_result"].includes(step.type)) serverSteps.set(event.index, { ...step });
         const initialText = geminiStepStartText(step);
         if (initialText && ["text", "model_output", "output_text"].includes(String(step.type))) options.onTextDelta(initialText);
         if (initialText && ["thought", "thought_summary"].includes(String(step.type))) options.onThoughtDelta(initialText);
@@ -281,6 +292,13 @@ export class GeminiAdapter implements ProviderAdapter {
       }
       if (event.event_type === "step.delta") {
         const delta = event.delta || {};
+        const serverStep = serverSteps.get(event.index);
+        if (serverStep && ["google_search_call", "google_search_result"].includes(delta.type)) {
+          serverSteps.set(event.index, { ...serverStep, ...delta,
+            ...(delta.arguments ? { arguments: { ...serverStep.arguments, ...delta.arguments, queries: [...new Set([...(serverStep.arguments?.queries || []), ...(delta.arguments.queries || [])])] } } : {}),
+            ...(delta.result ? { result: [...(serverStep.result || []), ...delta.result] } : {}),
+          });
+        }
         if (delta.type === "text" && typeof delta.text === "string") options.onTextDelta(delta.text);
         if ((delta.type === "thought" && typeof delta.text === "string") || delta.type === "thought_summary") {
           const thought = typeof delta.text === "string" ? delta.text : delta.content?.text;
@@ -307,6 +325,14 @@ export class GeminiAdapter implements ProviderAdapter {
         continue;
       }
       if (event.event_type === "step.stop") {
+        const serverStep = serverSteps.get(event.index);
+        if (serverStep) {
+          const isCall = serverStep.type === "google_search_call";
+          options.onProviderContextPart?.(isCall
+            ? { type: "server_tool_call", id: serverStep.id, toolType: "GOOGLE_SEARCH_WEB", arguments: serverStep.arguments, interactionStep: serverStep }
+            : { type: "server_tool_response", id: serverStep.call_id, toolType: "GOOGLE_SEARCH_WEB", response: { result: serverStep.result }, interactionStep: serverStep });
+          serverSteps.delete(event.index);
+        }
         const active = activeSteps.get(event.index);
         if (active) {
           const rawArguments = active.argumentsText || "{}";

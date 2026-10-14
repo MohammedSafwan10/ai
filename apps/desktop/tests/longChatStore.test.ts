@@ -147,6 +147,18 @@ describe("long chat SQLite repository", () => {
     expect(providerAttachment?.base64).toBe(Buffer.from([137, 80, 78, 71]).toString("base64"));
   });
 
+  it("keeps a chat usable when attachment bytes have gone missing", () => {
+    const db = createStore();
+    const thread = db.createThread(null);
+    const attachment = db.importAttachment({ id: "lost", name: "missing.png", mimeType: "image/png", bytes: new Uint8Array([1, 2]), createdAt: 1 });
+    db.upsertMessage({ ...message("lost-image", thread.id, 1), role: "user", content: "Inspect this", attachments: [attachment] });
+    fs.unlinkSync(path.join(tempDir, "chat-artifacts", attachment.artifactId));
+    expect(db.listRecentMessages(thread.id, 50)[0].content).toBe("Inspect this");
+    const history = buildProviderHistoryWithCompaction(db, thread.id, "next-assistant");
+    expect(history[0].content).toContain("Attachment bytes unavailable: missing.png");
+    expect(history[0].parts?.some((part) => part.type === "image")).toBe(false);
+  });
+
   it("hydrates image attachments for provider history without bloating the history page", () => {
     const db = createStore();
     const thread = db.createThread(null);

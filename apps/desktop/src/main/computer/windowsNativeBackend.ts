@@ -639,12 +639,17 @@ $oldClipboardData = $null
 try { $oldClipboardData = [System.Windows.Forms.Clipboard]::GetDataObject() } catch {}
 $injectedSequence = 0
 try {
-  [System.Windows.Forms.Clipboard]::SetText('${text}')
+  $textToPaste = '${text}'
+  if ($textToPaste.Length -eq 0) {
+    ${action === "set_value" ? '[System.Windows.Forms.SendKeys]::SendWait("^a{BACKSPACE}")' : ""}
+  } else {
+  [System.Windows.Forms.Clipboard]::SetText($textToPaste)
   $injectedSequence = [PrivoraWin32]::GetClipboardSequenceNumber()
   ${action === "set_value" ? `[System.Windows.Forms.SendKeys]::SendWait("^a")
 Start-Sleep -Milliseconds 40` : ""}
   [System.Windows.Forms.SendKeys]::SendWait("^v")
   Start-Sleep -Milliseconds 120
+  }
 } finally {
   if ($injectedSequence -gt 0 -and [PrivoraWin32]::GetClipboardSequenceNumber() -eq $injectedSequence) {
     try {
@@ -1526,7 +1531,7 @@ const actionResult = (action: string, result: PowerShellActionResult, startedAt:
 const escapePowerShellString = (value: string) =>
   value.replace(/'/g, "''");
 
-const sendKeysToken = (key: string) => {
+export const sendKeysToken = (key: string) => {
   const normalized = key.trim().toLowerCase();
   const map: Record<string, string> = {
     enter: "{ENTER}",
@@ -1546,7 +1551,13 @@ const sendKeysToken = (key: string) => {
     space: " ",
     "ctrl+a": "^a",
   };
-  return escapePowerShellString(map[normalized] || key);
+  const literal = (value: string) => value.replace(/[+^%~(){}\[\]]/g, (character) => `{${character}}`);
+  const chord = normalized.match(/^((?:(?:ctrl|control|alt|shift)\+)+)(.+)$/);
+  if (chord) {
+    const modifiers = chord[1].split("+").filter(Boolean).map((modifier) => modifier === "alt" ? "%" : modifier === "shift" ? "+" : "^").join("");
+    return escapePowerShellString(modifiers + (map[chord[2]] || literal(chord[2])));
+  }
+  return escapePowerShellString(map[normalized] || (/^f(?:[1-9]|1[0-9]|2[0-4])$/.test(normalized) ? `{${normalized.toUpperCase()}}` : literal(key)));
 };
 
 const isComputerCapability = (value: unknown): value is ComputerUseCapability =>

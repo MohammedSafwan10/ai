@@ -20,7 +20,7 @@ import { BrowserSessionManager } from "./browser/BrowserSessionManager";
 import { ComputerUseManager } from "./computer/ComputerUseManager";
 import { SecurityWorkspaceService } from "./kali/service";
 import { attachmentProtocolResponse } from "./attachments/protocol";
-import { stopWorkForShutdown, unfinishedSecurityJobs } from "./lifecycle";
+import { interceptWindowClose, stopWorkForShutdown, unfinishedSecurityJobs } from "./lifecycle";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -479,10 +479,12 @@ const createWindow = async () => {
   installExternalNavigationGuards(mainWindow, MAIN_WINDOW_VITE_DEV_SERVER_URL ? undefined : pathToFileURL(rendererEntryPath).toString());
 
   mainWindow.on("close", (event) => {
-    if (isQuitting || isInstallingUpdate || !shouldKeepRunningInTray()) return;
-    event.preventDefault();
-    mainWindow?.hide();
-    rebuildTrayMenu();
+    interceptWindowClose(event, {
+      exiting: isQuitting || isInstallingUpdate,
+      keepRunningInTray: shouldKeepRunningInTray(),
+      hide: () => { mainWindow?.hide(); rebuildTrayMenu(); },
+      requestQuit: () => requestQuit("menu"),
+    });
   });
 
   mainWindow.on("closed", () => {

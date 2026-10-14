@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
 import { resolveExistingWorkspacePath, resolveWorkspacePath, revalidateResolvedWorkspacePath } from "../../security/pathSandbox";
 import { atomicWriteFile, atomicWriteFileNoOverwrite } from "../../storage/atomicWrite";
@@ -557,18 +558,43 @@ export class FileMutationCoordinator {
   async renamePath(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     const from = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.fromPath || ""));
     const to = resolveWorkspacePath(context.workspaceRoot, String(call.arguments.toPath || ""));
+    const requestedTo = path.resolve(from.workspaceRoot, String(call.arguments.toPath || ""));
+    const requestedCaseChange = requestedTo !== from.absolutePath && requestedTo.toLowerCase() === from.absolutePath.toLowerCase();
+    if (requestedCaseChange) {
+      to.absolutePath = path.join(path.dirname(to.absolutePath), path.basename(requestedTo));
+      to.relativePath = path.relative(to.workspaceRoot, to.absolutePath);
+    }
     context.onCommandOutput(call.id, `Renaming ${from.relativePath} -> ${to.relativePath}\n`);
     const fromStat = await fs.stat(from.absolutePath);
     const snapshot = fromStat.isFile() ? await this.files.snapshot(context.workspaceRoot, from.relativePath) : null;
     if (snapshot) assertFreshFileState(context.workspaceRoot, from.relativePath, snapshot, call.arguments.expectedPreviousHash);
     await fs.mkdir(path.dirname(to.absolutePath), { recursive: true });
     const finalTo = revalidateResolvedWorkspacePath(to);
+    if (requestedCaseChange) {
+      finalTo.absolutePath = path.join(path.dirname(finalTo.absolutePath), path.basename(requestedTo));
+      finalTo.relativePath = path.relative(finalTo.workspaceRoot, finalTo.absolutePath);
+    }
     await this.options.beforeRenameCommit?.();
     if (snapshot) await assertPlannedFileFresh(this.files, context.workspaceRoot, from.relativePath, snapshot.sha256, false, "planned rename snapshot");
-    if (await pathExists(finalTo.absolutePath)) {
+    const destinationExists = await pathExists(finalTo.absolutePath);
+    const caseOnly = from.absolutePath !== finalTo.absolutePath && from.absolutePath.toLowerCase() === finalTo.absolutePath.toLowerCase()
+      && (!destinationExists || await fs.realpath(from.absolutePath) === await fs.realpath(finalTo.absolutePath));
+    if (destinationExists && !caseOnly) {
       throw new Error(`Cannot rename ${from.relativePath} to ${to.relativePath}: destination already exists.`);
     }
-    await fs.rename(from.absolutePath, finalTo.absolutePath);
+    if (caseOnly) {
+      const intermediate = path.join(path.dirname(from.absolutePath), `.privora-rename-${randomUUID()}`);
+      await fs.rename(from.absolutePath, intermediate);
+      try {
+        if (await pathExists(finalTo.absolutePath)) throw new Error("Rename destination appeared while changing case.");
+        await fs.rename(intermediate, finalTo.absolutePath);
+      } catch (error) {
+        if (!await pathExists(from.absolutePath)) await fs.rename(intermediate, from.absolutePath);
+        throw error;
+      }
+    } else {
+      await fs.rename(from.absolutePath, finalTo.absolutePath);
+    }
     const afterSnapshot = fromStat.isFile() ? await this.files.maybeSnapshot(context.workspaceRoot, finalTo.relativePath) : null;
     if (afterSnapshot) recordFileObservation(context.workspaceRoot, afterSnapshot);
     const structured = createRenameDiff(from.relativePath, to.relativePath);

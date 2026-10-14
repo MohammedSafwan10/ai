@@ -24,7 +24,14 @@ export const atomicWriteFileNoOverwrite = async (targetPath: string, content: st
   const tempPath = tempPathFor(targetPath);
   try {
     await fsp.writeFile(tempPath, content, options as fs.WriteFileOptions | undefined);
-    await fsp.link(tempPath, targetPath);
+    try {
+      await fsp.link(tempPath, targetPath);
+    } catch (error) {
+      if (!["EXDEV", "ENOTSUP", "EOPNOTSUPP", "EPERM"].includes((error as NodeJS.ErrnoException).code || "")) throw error;
+      // Link-less filesystems still get exclusive creation. Copy publication
+      // may be visible while writing; only the hard-link path is atomic.
+      await fsp.copyFile(tempPath, targetPath, fs.constants.COPYFILE_EXCL);
+    }
   } finally {
     await fsp.rm(tempPath, { force: true }).catch(() => undefined);
   }

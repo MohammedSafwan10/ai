@@ -66,7 +66,12 @@ export class ArtifactStore {
   }
 
   loadBase64(artifactId: string) {
-    return fs.readFileSync(this.resolve(artifactId)).toString("base64");
+    try {
+      return fs.readFileSync(this.resolve(artifactId)).toString("base64");
+    } catch (error) {
+      console.warn("Attachment bytes unavailable:", artifactId, (error as NodeJS.ErrnoException).code);
+      return undefined;
+    }
   }
 
   loadBuffer(artifactId: string) {

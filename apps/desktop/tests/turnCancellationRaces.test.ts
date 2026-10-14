@@ -29,6 +29,30 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it("keeps a resumed turn busy until its stopped provider has settled", async () => {
+    const { thread, coordinator } = fixture();
+    hooks.stream.mockImplementationOnce(async (options: ProviderStreamOptions) => {
+      options.onTextDelta("Initial work.");
+      await new Promise<void>((resolve) => options.signal.addEventListener("abort", () => resolve(), { once: true }));
+    });
+    const first = coordinator.startTurn({ threadId: thread.id, prompt: "Begin" });
+    await vi.waitFor(() => expect(hooks.stream).toHaveBeenCalledOnce());
+    coordinator.stopTurn(thread.id);
+    await first;
+    let release!: () => void;
+    hooks.stream.mockImplementationOnce(async () => { await new Promise<void>((resolve) => { release = resolve; }); });
+    const resumed = coordinator.continueRun(thread.id);
+    await vi.waitFor(() => expect(hooks.stream).toHaveBeenCalledTimes(2));
+    coordinator.stopTurn(thread.id);
+    expect(coordinator.getActiveRun(thread.id)?.status).toBe("draining");
+    await expect(coordinator.startTurn({ threadId: thread.id, prompt: "Overlap" })).rejects.toThrow("already running");
+    await coordinator.continueRun(thread.id);
+    expect(hooks.stream).toHaveBeenCalledTimes(2);
+    release();
+    await resumed;
+    expect(coordinator.listActiveRuns()).toHaveLength(0);
+    expect(store.getRunCheckpoint(thread.id)?.assistantMessageId).toBe(store.listMessages(thread.id).at(-1)?.id);
+  });
   it("continues after an incomplete draft without executing the unfinished action", async () => {
     const { thread, coordinator } = fixture();
     let round = 0;

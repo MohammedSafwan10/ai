@@ -8,6 +8,19 @@ const tempWorkspace = async () =>
   fs.mkdtemp(path.join(os.tmpdir(), "privora-terminal-"));
 
 describe("TerminalSessionManager", () => {
+  it.skipIf(process.platform !== "win32")("preserves literal percent formats while expanding environment references", async () => {
+    const cwd = await tempWorkspace();
+    const terminal = new TerminalSessionManager();
+    const result = await terminal.execCommand({
+      cwd, command: 'node -e "console.log(\'%H %s %Y-%m-%d %20 %H%n%s\')"',
+      signal: new AbortController().signal, onOutput: () => undefined,
+    });
+    expect(result.output).toContain("%H %s %Y-%m-%d %20 %H%n%s");
+    const environment = await terminal.execCommand({
+      cwd, command: 'echo %OS%', signal: new AbortController().signal, onOutput: () => undefined,
+    });
+    expect(environment.output).toContain(process.env.OS);
+  });
   it("does not spawn commands after their request has already been cancelled", async () => {
     const spawn = vi.fn(() => { throw new Error("must not spawn"); });
     const terminal = new TerminalSessionManager({ kind: "process", spawn });

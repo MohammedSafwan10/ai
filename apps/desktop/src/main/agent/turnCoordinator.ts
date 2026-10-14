@@ -702,33 +702,17 @@ export class TurnCoordinator implements AgentHarnessApi {
       });
     });
     const workspace = this.store.getWorkspace(this.store.getThread(threadId)?.workspaceId);
-    if (run && workspace?.type === "security") {
-      // Keep the run visible while its remote tool acknowledges cancellation.
-      // continueLoop finalizes the turn after the executor has reconciled it.
-      transitionRun(run, "draining", { reason: "Stop requested. Waiting for Kali job state.", resumable: false });
+    if (run) {
+      // Keep this thread busy until provider/tool cancellation has settled.
+      // Resumed turns have no start registry lease to protect them.
+      transitionRun(run, "draining", { reason: workspace?.type === "security" ? "Stop requested. Waiting for Kali job state." : "Stop requested. Cleaning up active work.", resumable: false });
       this.emitRun(run);
       this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
       this.userInput.cancelThread(threadId);
       return;
     }
-    if (run) transitionRun(run, "stopped", {
-      reason: "Stop requested. Cleaning up active work.",
-      resumable: true,
-    });
-    if (run) {
-      const message = this.store.getMessage(run.assistantMessageId);
-      if (message) {
-        const assistantText = message.content || "Stopped. Completed tool changes were kept.";
-        if (!message.content) recordAssistantTextPart(message, "final_answer", 0, assistantText.length);
-        this.updateAssistant(message, assistantText, message.thought || "", "stopped");
-      }
-      this.activeRuns.delete(threadId);
-      this.emit({ type: "turn.stopped", threadId, turnId: run.assistantMessageId, message: this.store.getMessage(run.assistantMessageId) || undefined });
-      this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
-    }
     this.flushThreadToolOutputs(threadId);
     this.discardThreadToolDrafts(threadId);
-    if (run) this.cancelPreparingToolEvents(threadId, run.assistantMessageId, "Stopped before the streamed tool call completed.");
     this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
     if (this.recovery.cancelPendingApproval(threadId, "Stopped before approval.")) this.emitSnapshot();
     this.userInput.cancelThread(threadId);

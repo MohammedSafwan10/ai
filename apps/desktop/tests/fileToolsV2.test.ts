@@ -17,6 +17,17 @@ const execute = (call: DesktopToolCall) =>
   });
 
 describe("file tools v2", () => {
+  it("renames a file by case without clobbering a distinct existing file", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "privora-case-"));
+    fs.writeFileSync(path.join(tempDir, "button.tsx"), "original");
+    const result = await execute({ id: "case", name: "desktop_rename_path", arguments: { fromPath: "button.tsx", toPath: "Button.tsx" } });
+    expect(result.success).toBe(true);
+    expect(fs.readdirSync(tempDir)).toContain("Button.tsx");
+    expect(fs.readdirSync(tempDir)).not.toContain("button.tsx");
+    fs.writeFileSync(path.join(tempDir, "other.tsx"), "other");
+    expect((await execute({ id: "collision", name: "desktop_rename_path", arguments: { fromPath: "Button.tsx", toPath: "other.tsx" } })).success).toBe(false);
+    expect(fs.readFileSync(path.join(tempDir, "other.tsx"), "utf8")).toBe("other");
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });

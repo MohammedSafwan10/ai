@@ -1,5 +1,14 @@
 import type { SecurityJobRecord } from "../shared/securityWorkspace";
 
+export const interceptWindowClose = (event: { preventDefault(): void }, options: {
+  exiting: boolean; keepRunningInTray: boolean; hide(): void; requestQuit(): Promise<unknown>;
+}) => {
+  if (options.exiting) return;
+  event.preventDefault();
+  if (options.keepRunningInTray) options.hide();
+  else void options.requestQuit();
+};
+
 export const unfinishedSecurityJobs = (jobs: SecurityJobRecord[]) =>
   jobs.filter((job) => !["succeeded", "failed", "cancelled", "timed_out"].includes(job.state));
 

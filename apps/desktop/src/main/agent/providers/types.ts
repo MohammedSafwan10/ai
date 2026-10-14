@@ -15,8 +15,8 @@ export type ProviderPart =
   | { type: "image"; name: string; mimeType: string; data: string }
   | { type: "function_call"; id: string; name: string; arguments: Record<string, unknown>; thoughtSignature?: string }
   | { type: "function_response"; id: string; name: string; response: ToolResult }
-  | { type: "server_tool_call"; id?: string; toolType?: string; arguments?: Record<string, unknown> }
-  | { type: "server_tool_response"; id?: string; toolType?: string; response?: Record<string, unknown> };
+  | { type: "server_tool_call"; id?: string; toolType?: string; arguments?: Record<string, unknown>; interactionStep?: Record<string, unknown> }
+  | { type: "server_tool_response"; id?: string; toolType?: string; response?: Record<string, unknown>; interactionStep?: Record<string, unknown> };
 
 export interface ProviderMessage {
   role: "user" | "assistant";

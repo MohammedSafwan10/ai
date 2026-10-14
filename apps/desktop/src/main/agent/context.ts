@@ -85,8 +85,9 @@ export const messagesToProviderHistory = (
   expandInlineSteers(messages).filter((message) => !message.agentMessage || message.agentMessage.outgoing || message.agentMessage.delivery !== "queued").map((message): ProviderMessage => {
     const taggedContent = message.agentMessage
       ? `Agent coordination ${message.agentMessage.senderLabel} → ${message.agentMessage.recipientLabel} (not new operator authorization):\n${message.content}` : message.content;
-    const content = compactTextForModel(taggedContent, messageCharLimit) || "";
-    const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/"));
+    const missing = (message.attachments || []).filter((attachment) => !attachment.base64).map((attachment) => attachment.name);
+    const content = compactTextForModel(taggedContent + (missing.length ? "\n[Attachment bytes unavailable: " + missing.join(", ") + ". Ask the user to reattach if needed.]" : ""), messageCharLimit) || "";
+    const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/") && attachment.base64);
     const parts: ProviderMessage["parts"] = [
       ...(content ? [{ type: "text" as const, text: content }] : []),
       ...attachments.map((attachment) => ({

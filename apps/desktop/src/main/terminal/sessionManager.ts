@@ -929,7 +929,7 @@ function tryLoadNativePty(): typeof NodePty | null {
 
 const getShellArgs = (command: string) => {
   if (process.platform === "win32") {
-    return ["/d", "/c", "call", command];
+    return ["/d", "/c", command];
   }
   return ["-lc", command];
 };
@@ -938,7 +938,13 @@ const writeWindowsCommandScript = (command: string) => {
   const dir = path.join(os.tmpdir(), "privora-terminal");
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `cmd-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.cmd`);
-  fs.writeFileSync(file, `@echo off\r\n${command}\r\n`, "utf8");
+  // Convert prompt-style literal percents to batch literals, while retaining
+  // environment references and already escaped batch tokens.
+  const variables = new Set([...Object.keys(process.env), "CD", "DATE", "TIME", "RANDOM", "ERRORLEVEL", "CMDEXTVERSION", "CMDCMDLINE", "HIGHESTNUMANODENUMBER"].map((key) => key.toUpperCase()));
+  for (const match of command.matchAll(/\bset\s+"?([a-zA-Z_][a-zA-Z0-9_()]*)=/gi)) variables.add(match[1].toUpperCase());
+  const batchCommand = command.replace(/%%|%[^%\r\n]*%|%/g, (token) =>
+    token === "%%" || (token.length > 2 && variables.has(token.slice(1, -1).toUpperCase())) ? token : token.replace(/%/g, "%%"));
+  fs.writeFileSync(file, `@echo off\r\n${batchCommand}\r\n`, "utf8");
   return file;
 };
 

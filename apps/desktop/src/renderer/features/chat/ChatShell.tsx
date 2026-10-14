@@ -44,7 +44,7 @@ export function ChatShell({
           {settingsLayer}
         </div>
       )}
-      {toast && <div className="notification.created">{toast}</div>}
+      {toast && <div className="toast" role="status">{toast}</div>}
     </main>
   );
 }
