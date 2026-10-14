@@ -17,6 +17,20 @@ import { OpenCodeGoAdapter } from "../src/main/agent/providers/opencodeGo";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 
 describe("opencode go model discovery", () => {
+  it.each(["opencode-go/glm-5.3-flash", "opencode-go/deepseek-v4.1-flash"])("serializes tool results without unsupported message names for %s", async (model) => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => sseResponseWith([]));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await new OpenCodeGoAdapter().stream(goOptions({ model, messages: [
+        { role: "assistant", content: "", parts: [{ type: "function_call", id: "call-one", name: "kali_exec", arguments: { argv: ["id"] } }] },
+        { role: "user", content: "", parts: [{ type: "function_response", id: "call-one", name: "kali_exec", response: { success: true, output: "fixture" } }] },
+      ] }));
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+      const result = body.messages.find((message: { role: string }) => message.role === "tool");
+      expect(result).toEqual({ role: "tool", tool_call_id: "call-one", content: JSON.stringify({ success: true, output: "fixture" }) });
+      expect(body.messages.find((message: { role: string }) => message.role === "assistant").tool_calls[0].function.name).toBe("kali_exec");
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("offers the requested Luna and Haiku models with correct routes and budgets", () => {
     expect(getModelOption("opencode-go/gpt-6-luna")).toMatchObject({ label: "GPT-6 Luna (Go)", contextWindowTokens: 1_050_000, defaultReasoningEffort: "none" });
     expect(getModelOption("opencode-go/claude-haiku-5-5")).toMatchObject({ label: "Claude Haiku 5.5 (Go)", contextWindowTokens: 1_000_000, maxOutputTokens: 128_000 });

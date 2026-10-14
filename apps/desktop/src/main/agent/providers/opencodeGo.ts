@@ -78,7 +78,6 @@ const toMessages = (systemInstruction: string, messages: ProviderMessage[]) => {
         out.push({
           role: "tool",
           tool_call_id: part.id,
-          name: part.name,
           content: JSON.stringify(part.response || {}),
         });
       });
