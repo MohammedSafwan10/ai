@@ -34,6 +34,30 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("deletes a chat with unknown jobs while retaining project-level recovery records", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const thread = store.createThread(workspace.id);
+    state.activeThreadId = thread.id;
+    state.activeWorkspaceId = workspace.id;
+    const job = { id: "uncertain-job", remoteJobId: null, workspaceId: workspace.id, threadId: thread.id, environmentId: "kali", idempotencyKey: "stable", projectId: "project", state: "unknown" as const, sequence: 0, outputPreview: "", commandPreview: "id", exitCode: null, error: "SSH timeout", createdAt: 1, updatedAt: 1 };
+    store.upsertSecurityJob(job);
+    await invoke(channels.deleteThread, thread.id);
+    expect(store.getThread(thread.id)).toBeNull();
+    expect(store.getSecurityJob(job.id)).toMatchObject({ state: "unknown", idempotencyKey: "stable", threadId: thread.id });
+    expect(state.activeThreadId).not.toBe(thread.id);
+    expect(store.getThread(state.activeThreadId!)?.workspaceId).toBe(workspace.id);
+    expect(service.cancelJob).not.toHaveBeenCalled();
+  });
+
+  it("deletes a finished chat while preserving an independently tracked remote job", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const thread = store.createThread(workspace.id);
+    store.upsertSecurityJob({ id: "running-job", remoteJobId: "remote", workspaceId: workspace.id, threadId: thread.id, environmentId: "kali", idempotencyKey: "stable", projectId: "project", state: "running", sequence: 0, outputPreview: "", commandPreview: "sleep", exitCode: null, error: null, createdAt: 1, updatedAt: 1 });
+    await invoke(channels.deleteThread, thread.id);
+    expect(store.getThread(thread.id)).toBeNull();
+    expect(store.getSecurityJob("running-job")?.state).toBe("running");
+    expect(service.cancelJob).not.toHaveBeenCalled();
+  });
   it("imports profiles through a file picker and returns only the public service result", async () => {
     const filename = path.join(mocked.directory, "profile.json");
     const profile = { identityFile: "main-only/path", id: "kali" };

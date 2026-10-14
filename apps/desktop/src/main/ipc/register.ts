@@ -193,7 +193,8 @@ export const registerIpc = (
   handle(channels.deleteThread, z.tuple([idSchema]), (_event, threadId: string) => {
     if (hasBlockingRun(threadId)) throw new Error("Stop this chat before deleting it.");
     const deletedThread = store.getThread(threadId);
-    if (deletedThread?.workspaceId && store.listSecurityJobs(deletedThread.workspaceId, threadId).some((job) => ["submitting", "queued", "running", "stop_requested", "unknown"].includes(job.state))) throw new Error("Stop or reconcile remote jobs before deleting this chat.");
+    // Jobs/evidence are retained at project level independently of the chat.
+    // Only an active chat run blocks deletion; remote status must not strand it.
     store.deleteThread(threadId);
     if (state.activeThreadId === threadId) {
       const workspaceId = deletedThread?.workspaceId ?? state.activeWorkspaceId;

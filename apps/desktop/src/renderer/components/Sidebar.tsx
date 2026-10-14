@@ -18,7 +18,7 @@ interface SidebarProps {
   onSelectThread: (threadId: string) => void;
   onRenameThread: (threadId: string, title: string) => void;
   onToggleThreadStar: (threadId: string) => void;
-  onDeleteThread: (threadId: string) => void;
+  onDeleteThread: (threadId: string) => void | Promise<void>;
   onRemoveWorkspace: (workspaceId: string) => void;
   footer?: ReactNode;
 }
@@ -245,12 +245,14 @@ function ThreadButton({
   onClick: () => void;
   onRename: (threadId: string, title: string) => void;
   onToggleStar: (threadId: string) => void;
-  onDelete: (threadId: string) => void;
+  onDelete: (threadId: string) => void | Promise<void>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(thread.title);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -279,10 +281,19 @@ function ThreadButton({
     setMenuOpen(false);
   };
 
-  const remove = () => {
-    onDelete(thread.id);
-    setMenuOpen(false);
-    setConfirmDelete(false);
+  const remove = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await onDelete(thread.id);
+      setMenuOpen(false);
+      setConfirmDelete(false);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : "Could not delete this chat. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -333,11 +344,12 @@ function ThreadButton({
         <div className="thread-menu floating-thread-menu" ref={menuRef} style={menuStyle}>
           {confirmDelete ? (
             <>
-              <button type="button" className="danger" onClick={remove}>
+              <button type="button" className="danger" disabled={deleting} onClick={() => void remove()}>
                 <Trash2 size={15} />
-                <span>Delete now</span>
+                <span>{deleting ? "Deleting…" : "Delete now"}</span>
               </button>
-              <button type="button" onClick={() => setConfirmDelete(false)}>
+              {deleteError && <p role="alert">{deleteError}</p>}
+              <button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setDeleteError(""); }}>
                 <span>Cancel</span>
               </button>
             </>
