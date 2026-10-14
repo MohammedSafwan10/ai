@@ -938,6 +938,7 @@ export const desktopToolDefinitionsForMode = (mode: CollaborationMode = "default
       ? isSecurityWorkspaceToolAllowed(tool.name)
       : !isSecurityToolName(tool.name))
     .filter((tool) => mode !== "plan" || !isSecurityToolName(tool.name) || securityPlanToolAllowed(tool.name))
+    .filter((tool) => environment !== "security" || mode !== "plan" || tool.name !== "browser_act")
     .filter((tool) => mode === "plan" || !("planOnly" in tool && tool.planOnly))
     .map((tool) => {
       const { planOnly: _planOnly, ...rest } = tool as typeof tool & { planOnly?: boolean };

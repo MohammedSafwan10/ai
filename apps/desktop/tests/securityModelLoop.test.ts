@@ -76,7 +76,7 @@ describe("Security model loop", () => {
     expect(security).toContain("kali_exec");
     expect(security).toContain("browser_search");
     expect(security).toContain("browser_extract");
-    expect(security).not.toContain("browser_act");
+    expect(security).toContain("browser_act");
     expect(security).not.toContain("browser_form_submit");
     expect(security).not.toContain("exec_command");
     expect(security).not.toContain("desktop_write_file");
@@ -86,6 +86,7 @@ describe("Security model loop", () => {
     const plan = desktopToolDefinitionsForMode("plan", "security").map((tool) => tool.name);
     expect(plan).toContain("kali_job_output");
     expect(plan).toContain("browser_search");
+    expect(plan).not.toContain("browser_act");
     expect(plan).not.toContain("kali_exec");
     expect(plan).not.toContain("security_finding_save");
   });

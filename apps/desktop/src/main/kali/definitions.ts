@@ -42,7 +42,7 @@ const SECURITY_NAMES = new Set(kaliToolDefinitions.map((definition) => definitio
 // Desktop browsing is for public research. Target execution stays in Kali.
 const BROWSER_RESEARCH_NAMES = new Set([
   "browser_search", "browser_open", "browser_open_link", "browser_snapshot",
-  "browser_extract", "browser_inspect", "browser_wait", "browser_tab", "browser_capabilities",
+  "browser_extract", "browser_inspect", "browser_wait", "browser_tab", "browser_capabilities", "browser_act",
 ]);
 const COMMON_NAMES = new Set([
   "request_user_input", "spawn_agent", "send_message", "assign_task",
