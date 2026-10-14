@@ -101,7 +101,7 @@ export class SecurityWorkspaceService {
 
   private connected(environmentId: string) {
     const environment = this.store.getSecurityEnvironment(environmentId);
-    if (environment && environment.status !== "connected") {
+    if (environment) {
       this.store.saveSecurityEnvironment({ ...environment, status: "connected", error: undefined, lastCheckedAt: Date.now() });
       this.changed();
     }
@@ -111,6 +111,14 @@ export class SecurityWorkspaceService {
     const workspace = this.store.getWorkspace(workspaceId);
     if (workspace?.type !== "security" || !workspace.security) throw new Error("Remote tools require a Security workspace.");
     return workspace;
+  }
+
+  private connectionFailed(environmentId: string, error: unknown) {
+    const environment = this.store.getSecurityEnvironment(environmentId);
+    if (environment && error instanceof KaliConnectionError && error.connectionLost) {
+      this.store.saveSecurityEnvironment({ ...environment, status: "disconnected", error: errorText(error), lastCheckedAt: Date.now() });
+      this.changed();
+    }
   }
 
   private scopedJob(id: string, context: SecurityExecutionContext) {
@@ -206,10 +214,7 @@ export class SecurityWorkspaceService {
   }
 
   private unknown(job: SecurityJobRecord, error: unknown) {
-    const environment = this.store.getSecurityEnvironment(job.environmentId);
-    if (environment && error instanceof KaliConnectionError && error.connectionLost) {
-      this.store.saveSecurityEnvironment({ ...environment, status: "disconnected", error: errorText(error), lastCheckedAt: Date.now() });
-    }
+    this.connectionFailed(job.environmentId, error);
     return this.persist({ ...job, state: "unknown", error: errorText(error), updatedAt: Date.now() });
   }
 
@@ -377,7 +382,11 @@ export class SecurityWorkspaceService {
         case "security_finding_save": return this.finding(args, context);
         default: throw new Error("Unsupported Security tool.");
       }
-    } catch (error) { return { success: false, error: errorText(error) }; }
+    } catch (error) {
+      const environmentId = this.store.getWorkspace(context.workspaceId)?.security?.environmentId;
+      if (environmentId) this.connectionFailed(environmentId, error);
+      return { success: false, error: errorText(error) };
+    }
   }
 
   private result(job: SecurityJobRecord, inspection = false): ToolResult {

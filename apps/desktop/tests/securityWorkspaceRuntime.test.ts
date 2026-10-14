@@ -160,6 +160,28 @@ describe("Security workspace runtime", () => {
     expect(request.mock.calls.filter(([, payload]) => payload.operation === "lookup")).toHaveLength(1);
   });
 
+  it("clears a stale connected label when capability checks lose SSH, then recovers it", async () => {
+    let offline = false;
+    const capabilities = { protocolVersion: 1, os: "Linux", architecture: "aarch64", pythonVersion: "3.14", jobRoot: environment.jobRoot, tools: {}, limits: { concurrentJobs: 4, outputBytes: 1_000_000, artifactBytes: 1_000_000 } };
+    const request = vi.fn<KaliRpcTransport["request"]>(async () => {
+      if (offline) throw new KaliConnectionError("Connect timed out");
+      return capabilities;
+    });
+    const test = fixture(request);
+    const service = test.service();
+    const capabilityCall = call("kali_capabilities", { tools: [] });
+    expect((await service.execute(capabilityCall, context)).success).toBe(true);
+    expect(test.store.getSecurityEnvironment().status).toBe("connected");
+    offline = true;
+    expect((await service.execute(capabilityCall, context)).success).toBe(false);
+    expect(test.store.getSecurityEnvironment().status).toBe("disconnected");
+    expect(test.store.getSecurityEnvironment().error).toContain("Connect timed out");
+    offline = false;
+    expect((await service.execute(capabilityCall, context)).success).toBe(true);
+    expect(test.store.getSecurityEnvironment().status).toBe("connected");
+    expect(test.store.getSecurityEnvironment().error).toBeUndefined();
+  });
+
   it("blocks development chats and jobs from another workspace before remote access", async () => {
     const request = completeTransport();
     const test = fixture(request);

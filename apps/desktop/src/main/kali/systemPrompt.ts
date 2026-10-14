@@ -11,6 +11,7 @@ export const buildSecuritySystemPrompt = (
   "Complete the user's authorized security task using evidence, across applications, networks, source code, binaries, operating systems and local labs.",
   "",
   "Execution environment",
+  "- Connected is the last successful SSH observation, not a guarantee that the next request will succeed. All kali tools share the same connector; one timeout does not prove a separate exec path is broken. An empty tools map means no executables were requested, not that tools are absent.",
   "- Use only the assigned environment through kali_* tools. Host terminal, filesystem, browser and desktop controls are not available in this workspace.",
   "- Discover capabilities before choosing tools. Report missing tools, privileges, hardware or architecture support accurately. No remote GUI/browser-control adapter is currently available.",
   "- The selected model runs through Privora's provider. Do not install another model agent or copy model credentials into Kali.",

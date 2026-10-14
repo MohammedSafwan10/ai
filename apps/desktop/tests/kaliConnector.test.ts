@@ -70,6 +70,28 @@ describe("Kali connector", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("retries a lost read-only response once using the same output cursor", async () => {
+    const request = vi.fn().mockRejectedValueOnce(new KaliConnectionError("Temporary timeout"))
+      .mockResolvedValueOnce(page([{ sequence: 1, stream: "stdout", data: "YQ==" }]));
+    const result = await new KaliConnector(environment, { request }).output(job.id);
+    expect(result.nextSequence).toBe(1);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[0][1]).toEqual(request.mock.calls[1][1]);
+  });
+
+  it("bounds read retries and never retries cancellation or protocol errors", async () => {
+    const request = vi.fn().mockRejectedValue(new KaliConnectionError("Offline"));
+    const connector = new KaliConnector(environment, { request });
+    await expect(connector.lookup("stable")).rejects.toThrow("Offline");
+    expect(request).toHaveBeenCalledTimes(2);
+    request.mockClear();
+    await expect(connector.cancel(job.id)).rejects.toThrow("Offline");
+    expect(request).toHaveBeenCalledTimes(1);
+    request.mockClear().mockRejectedValue(new Error("Invalid response"));
+    await expect(connector.inspect(job.id)).rejects.toThrow("Invalid response");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects missing, duplicated, and out-of-order output", async () => {
     const request = vi.fn().mockResolvedValue(page([
       { sequence: 2, stream: "stdout", data: "YQ==" },

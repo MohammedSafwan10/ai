@@ -167,8 +167,18 @@ export class KaliConnector {
     this.environment = { ...environment };
   }
 
-  private call(operation: string, fields: Record<string, unknown> = {}) {
-    return this.transport.request(this.environment, { ...fields, operation, version: KALI_PROTOCOL_VERSION });
+  private async call(operation: string, fields: Record<string, unknown> = {}) {
+    const request = { ...fields, operation, version: KALI_PROTOCOL_VERSION };
+    try {
+      return await this.transport.request(this.environment, request);
+    } catch (error) {
+      // Retry retained-state reads only. Submit/cancel must not be replayed
+      // automatically when their delivery is uncertain.
+      if (!(error instanceof KaliConnectionError) || !error.connectionLost ||
+          !["capabilities", "lookup", "inspect", "output", "artifact"].includes(operation)) throw error;
+      await delay(250);
+      return this.transport.request(this.environment, request);
+    }
   }
 
   async capabilities(tools: string[] = []): Promise<KaliCapabilities> {
