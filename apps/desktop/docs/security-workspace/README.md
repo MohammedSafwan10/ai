@@ -59,8 +59,13 @@ Create a separate Security project from the sidebar shield button, import a
 private connection profile, check access, and set its objective and scope.
 Existing chats, model selection, reasoning, Plan Mode, and access controls are
 reused. The chat header opens jobs, output, Stop, findings, and evidence on demand.
-Host filesystem/terminal/browser/computer tools are blocked in Security projects;
-the SSH connector is registered only for their assigned environment.
+Host filesystem, terminal, computer controls and browser form actions are blocked
+in Security projects. Built-in browser search, navigation and page-reading tools
+are available for public research; their traffic originates on the desktop host.
+Target commands and browser-automation scripts run in the assigned Kali environment.
+The SSH connector is registered only for that environment. The agent may install
+needed tools autonomously under the operator's authorization, verifying
+passwordless sudo and installed versions rather than assuming privileges.
 
 Verify the packaged chat-to-Kali loop and representative lab assessments before
 claiming full product readiness. Physical network loss, Mac sleep, VM restart,

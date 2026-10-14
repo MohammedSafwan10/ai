@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
+import type { BrowserSessionManager } from "../src/main/browser/BrowserSessionManager";
 
 vi.mock("electron", () => ({
   app: { isPackaged: false, getPath: () => os.tmpdir() },
@@ -73,6 +74,10 @@ describe("Security model loop", () => {
   it("advertises only environment tools and keeps Plan read only", () => {
     const security = desktopToolDefinitionsForMode("default", "security").map((tool) => tool.name);
     expect(security).toContain("kali_exec");
+    expect(security).toContain("browser_search");
+    expect(security).toContain("browser_extract");
+    expect(security).not.toContain("browser_act");
+    expect(security).not.toContain("browser_form_submit");
     expect(security).not.toContain("exec_command");
     expect(security).not.toContain("desktop_write_file");
     const development = desktopToolDefinitionsForMode("default", "development").map((tool) => tool.name);
@@ -80,8 +85,33 @@ describe("Security model loop", () => {
     expect(development).not.toContain("kali_exec");
     const plan = desktopToolDefinitionsForMode("plan", "security").map((tool) => tool.name);
     expect(plan).toContain("kali_job_output");
+    expect(plan).toContain("browser_search");
     expect(plan).not.toContain("kali_exec");
     expect(plan).not.toContain("security_finding_save");
+  });
+
+  it("routes browser research in a Security chat and explains authorized Kali installation", async () => {
+    const { workspace, thread } = fixture();
+    const search = vi.fn().mockResolvedValue({ output: "Official docs: https://www.kali.org/docs/", data: { results: [{ text: "Official docs", href: "https://www.kali.org/docs/" }] } });
+    const browser = { search, currentAgentControlRequiresApproval: () => false } as unknown as BrowserSessionManager;
+    const coordinator = new TurnCoordinator(store, () => null, () => ({ activeThreadId: thread.id, activeWorkspaceId: workspace.id }), browser);
+    store.saveSettings({ permissionMode: "yolo" });
+    let round = 0;
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      expect(options.systemInstruction).toContain("browser_search");
+      expect(options.systemInstruction).toContain("sudo -n id -u");
+      expect(options.systemInstruction).toContain("authorizes autonomous installation");
+      expect(options.systemInstruction).toContain("network traffic does not originate from the VM");
+      if (round++ === 0) options.onToolCall({ id: "research", name: "browser_search", arguments: { query: "Kali tool documentation" } });
+      else options.onTextDelta("Found the official documentation.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Find the official tool documentation" });
+    await coordinator.waitForIdle();
+    expect(store.listMessages(thread.id).at(-1)?.content).toBe("Found the official documentation.");
+    expect(store.listToolEvents(thread.id).find((event) => event.callId === "research")?.result).toMatchObject({ success: true });
+    expect(search).toHaveBeenCalled();
+    expect(search.mock.calls[0][0]).toBe(workspace.id);
+    expect(store.listToolEvents(thread.id).find((event) => event.callId === "research")?.result?.success).toBe(true);
   });
 
   it("persists the first user message before model startup and blocks a host tool even with Full access", async () => {

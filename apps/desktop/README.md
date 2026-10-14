@@ -52,6 +52,12 @@ does not redirect execution to the host.
 3. Enter a project name, objective, and authorized scope. Choose **Check connection** to verify the environment.
 4. Select your model and reasoning level in the normal composer, then describe the task. Open the Security header to inspect remote jobs, copy output, view findings, preview evidence, or save evidence through the native Save dialog.
 
+Security chats can also search and read public pages in Privora Browser. This
+research traffic originates on your desktop; commands, tool installations and
+target testing run in Kali. The agent checks passwordless sudo and can install
+task-relevant tools under your existing authorization. Remote graphical browser
+control is not yet included.
+
 A reusable project objective:
 
 ```text

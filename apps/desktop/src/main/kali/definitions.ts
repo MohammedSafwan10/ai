@@ -39,6 +39,11 @@ export const kaliToolDefinitions = [
 ] as const;
 
 const SECURITY_NAMES = new Set(kaliToolDefinitions.map((definition) => definition.name));
+// Desktop browsing is for public research. Target execution stays in Kali.
+const BROWSER_RESEARCH_NAMES = new Set([
+  "browser_search", "browser_open", "browser_open_link", "browser_snapshot",
+  "browser_extract", "browser_inspect", "browser_wait", "browser_tab", "browser_capabilities",
+]);
 const COMMON_NAMES = new Set([
   "request_user_input", "spawn_agent", "send_message", "assign_task",
   "wait_agent", "list_agents", "close_agent",
@@ -49,14 +54,14 @@ const READ_ONLY_NAMES = new Set([
 
 export const isSecurityToolName = (name: string) => SECURITY_NAMES.has(name);
 export const isSecurityWorkspaceToolAllowed = (name: string) =>
-  SECURITY_NAMES.has(name) || COMMON_NAMES.has(name);
+  SECURITY_NAMES.has(name) || COMMON_NAMES.has(name) || BROWSER_RESEARCH_NAMES.has(name);
 export const securityPlanToolAllowed = (name: string) => READ_ONLY_NAMES.has(name);
 export const securityToolDefinitionsForMode = (mode: CollaborationMode) =>
   kaliToolDefinitions.filter((definition) => mode !== "plan" || READ_ONLY_NAMES.has(definition.name));
 
 export const securityWorkspaceBlockReason = (call: DesktopToolCall, isSecurity: boolean) => {
   if (isSecurity && !isSecurityWorkspaceToolAllowed(call.name)) {
-    return "This Security workspace executes in its assigned Kali environment. Host filesystem, terminal, browser and computer tools are unavailable.";
+    return "Security commands execute in the assigned Kali environment. Desktop browser research is available; host filesystem, terminal, computer controls and browser form actions are unavailable.";
   }
   if (!isSecurity && isSecurityToolName(call.name)) {
     return "Kali tools require an explicit Security workspace.";
