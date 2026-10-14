@@ -25,6 +25,9 @@ export class ArtifactStore {
     this.root = path.join(userDataPath, "chat-artifacts");
     fs.mkdirSync(this.root, { recursive: true });
   }
+  hasArtifact(artifactId: string) {
+    try { return fs.statSync(this.resolve(artifactId)).isFile(); } catch { return false; }
+  }
 
   externalizeText(value: string | undefined, preferredId?: string): string | StoredTextArtifact | undefined {
     if (!value || Buffer.byteLength(value, "utf8") <= LARGE_TEXT_THRESHOLD) return value;

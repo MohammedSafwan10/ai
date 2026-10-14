@@ -1295,6 +1295,29 @@ export type ContextCompactionTrigger = "pre_turn" | "mid_turn" | "fallback";
 export type ContextCompactionReason = "context_limit" | "model_compaction_failed";
 export type ContextCompactionStatus = "completed" | "failed";
 
+export interface CompactionPreservedState {
+  version: 1;
+  operatorInstructions: Array<{ sourceMessageId: string; text: string }>;
+  workspace?: { id: string; objective: string; scope: string };
+  summaryClaims: CompactionHandoff;
+  findings: Array<{ id: string; title: string; state: string; evidenceJobIds: string[] }>;
+  jobs: Array<{ id: string; remoteJobId: string | null; environmentId: string; state: string; observedAt: number }>;
+  subagents: Array<{ id: string; threadId: string; status: string; result?: string }>;
+  toolReferences: Array<{ id: string; name: string; status: string; sourceMessageId: string }>;
+  evidence: Array<{ id: string; kind: "job" | "attachment"; availability: "recorded" | "unresolved"; sourceId: string }>;
+}
+
+/** Model-authored claims, never an approval or authoritative tool result. */
+export interface CompactionHandoff {
+  goals: string[];
+  constraints: string[];
+  completedWork: string[];
+  rejectedLeads: string[];
+  unresolvedQuestions: string[];
+  nextActions: string[];
+  sourceMessageIds: string[];
+}
+
 export interface CompactionCheckpointRecord {
   id: string;
   threadId: string;
@@ -1312,6 +1335,15 @@ export interface CompactionCheckpointRecord {
   afterTokens: number;
   error?: string;
   createdAt: number;
+  schemaVersion?: 1;
+  sourceDigest?: string;
+  sourceMessageIds?: string[];
+  excludedMessageId?: string;
+  baseCheckpointId?: string | null;
+  workspaceDigest?: string;
+  assistantTextOffset?: number;
+  preservedState?: CompactionPreservedState;
+  validation?: { method: "structured" | "deterministic"; attempts: number; estimated: true; inputBudgetTokens?: number; overheadTokens: number };
 }
 
 export type SubagentStatus =

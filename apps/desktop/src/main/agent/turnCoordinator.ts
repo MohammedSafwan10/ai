@@ -36,14 +36,15 @@ import { buildAgentsMdContext } from "./agentsMd";
 import {
   COMPACTION_PROMPT,
   COMPACTION_SYSTEM_INSTRUCTION,
-  buildCompactedProviderHistory,
-  buildDeterministicCompactionSummary,
   buildProviderHistory,
   buildRuntimeContext,
   estimateProviderHistoryTokens,
   messagesToProviderHistory,
+  refreshCompactionObservations,
 } from "./context";
 import { buildMentionContext } from "./contextMentions";
+import { runReliableCompaction } from "./reliableCompaction";
+import { desktopToolDefinitionsForMode } from "./tools/definitions";
 import { loadSubagentRoles, type SubagentRoleConfig } from "./subagents";
 import {
   markRunProgress,
@@ -774,6 +775,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     threadId: string,
     history: ProviderMessage[],
     assistantMessage: ChatMessageRecord,
+    coveredMessageIds: string[] = [],
   ) {
     const pending = this.pendingSteers.get(threadId);
     if (!pending?.length) return history;
@@ -784,7 +786,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     this.emit({ type: "message.upserted", message: assistantMessage });
     return [
       ...history,
-      ...pending.flatMap((item) => item.providerMessages),
+      ...pending.flatMap((item) => coveredMessageIds.includes(item.message.id) ? item.providerMessages.slice(1) : item.providerMessages),
     ];
   }
 
@@ -869,6 +871,31 @@ export class TurnCoordinator implements AgentHarnessApi {
       }
     };
 
+    const buildCurrentSystemInstruction = () => {
+          const subagent = this.store.getSubagentByThread(options.threadId);
+          return isSecurityWorkspace && workspace.security
+              ? buildSecuritySystemPrompt(
+                workspace.security,
+                this.store.getSecurityEnvironment(workspace.security.environmentId),
+                [buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+                  subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
+                ].filter(Boolean).join("\n\n"),
+                effectiveCollaborationMode,
+                settings.permissionMode,
+                needsBugBountyGuide(workspace.security.objective, this.store.listUserMessageTexts(subagent?.parentThreadId || options.threadId)),
+              )
+              : buildDesktopSystemPrompt(
+              options.workspaceRoot,
+              [
+                buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+                agentsMdContext,
+                subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
+              ].filter(Boolean).join("\n\n"),
+              effectiveCollaborationMode,
+            );
+    };
+    const requestOverheadTokens = () => Math.ceil(((boundSystemInstruction ?? buildCurrentSystemInstruction()).length + JSON.stringify(desktopToolDefinitionsForMode(effectiveCollaborationMode, isSecurityWorkspace ? "security" : "development")).length) / 4) + 1_024;
+
     let successfulImageAwaitingFollowup = false;
     let providerProducedProgress = false;
     let lastStreamProgressEmitAt = 0;
@@ -876,6 +903,11 @@ export class TurnCoordinator implements AgentHarnessApi {
     try {
       let continuousIterations = 0;
       let lastCompactionAttemptTokens = 0;
+      if (isSecurityWorkspace && workspace && this.security && this.store.getLatestCompactionCheckpoint(options.threadId)?.preservedState?.jobs.some((job) => !["succeeded", "failed", "cancelled", "timed_out"].includes(job.state))) {
+        await this.security.reconcileWorkspace(workspace.id);
+        controller.signal.throwIfAborted();
+        history = refreshCompactionObservations(this.store, options.threadId, history);
+      }
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
         const beforeInbox = history;
         history = this.drainAgentInbox(options.threadId, history, options.assistantMessage);
@@ -885,9 +917,10 @@ export class TurnCoordinator implements AgentHarnessApi {
         iteration += 1;
         providerProducedProgress = false;
         const estimatedHistoryTokens = this.contextManager.estimateTokens(history);
+        const overheadTokens = requestOverheadTokens();
         if (
-          shouldAutoCompactHistory(history, runtimeBudget, lastProviderUsage) &&
-          estimatedHistoryTokens > lastCompactionAttemptTokens + 2_000
+          shouldAutoCompactHistory(history, runtimeBudget, lastProviderUsage, overheadTokens) &&
+          estimatedHistoryTokens + overheadTokens > lastCompactionAttemptTokens + 2_000
         ) {
           const compacted = await this.compactHistoryForRuntime({
             threadId: options.threadId,
@@ -901,12 +934,20 @@ export class TurnCoordinator implements AgentHarnessApi {
             trigger: iteration === 1 && toolCount === 0 ? "pre_turn" : "mid_turn",
             reason: "context_limit",
             textOffset: assistantText.length,
+            budget: runtimeBudget,
+            overheadTokens,
           });
           history = this.contextManager.sanitize(compacted.history, effectiveModel);
+          history = this.drainAgentInbox(options.threadId, history, options.assistantMessage);
+          history = this.drainPendingSteers(options.threadId, history, options.assistantMessage, compacted.checkpoint.sourceMessageIds);
           lastProviderUsage = null;
-          lastCompactionAttemptTokens = compacted.afterTokens;
+          lastCompactionAttemptTokens = compacted.afterTokens + overheadTokens;
+          this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         }
-        this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
+        if (this.contextManager.estimateTokens(history) + requestOverheadTokens() > (runtimeBudget.inputBudgetTokens ?? 28_000)) {
+          throw new Error("Context paused: task state, new messages, instructions and tool schemas exceed the model input budget. Use a larger-context model; no oversized request was sent.");
+        }
+        this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage, requestOverheadTokens());
         run.iteration = iteration;
         run.toolCount = toolCount;
         transitionRun(run, "sampling", { iteration, toolCount, resumable: false, reason: undefined });
@@ -1027,27 +1068,7 @@ export class TurnCoordinator implements AgentHarnessApi {
 
         try {
           delete options.assistantMessage.responseDisposition;
-          const subagent = this.store.getSubagentByThread(options.threadId);
-          const currentSystemInstruction = isSecurityWorkspace && workspace.security
-              ? buildSecuritySystemPrompt(
-                workspace.security,
-                this.store.getSecurityEnvironment(workspace.security.environmentId),
-                [buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
-                  subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
-                ].filter(Boolean).join("\n\n"),
-                effectiveCollaborationMode,
-                settings.permissionMode,
-                needsBugBountyGuide(workspace.security.objective, this.store.listUserMessageTexts(subagent?.parentThreadId || options.threadId)),
-              )
-              : buildDesktopSystemPrompt(
-              options.workspaceRoot,
-              [
-                buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
-                agentsMdContext,
-                subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
-              ].filter(Boolean).join("\n\n"),
-              effectiveCollaborationMode,
-            );
+          const currentSystemInstruction = buildCurrentSystemInstruction();
           if (effectiveModel === "opencode-go/claude-haiku-5-5") boundSystemInstruction ??= currentSystemInstruction;
           await this.modelLoop.stream({
             provider: getProviderForModel(effectiveModel),
@@ -1211,7 +1232,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             onUsage: (usage) => {
               lastProviderUsage = usage;
               totalProviderUsage = addTokenUsage(usageBeforeSample, usage);
-              this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage);
+              this.emitContextUsage(options.threadId, effectiveModel, history, runtimeBudget, lastProviderUsage, totalProviderUsage, requestOverheadTokens());
             },
             onAiCredits: (creditEvent) => {
               if (creditEvent.summary) {
@@ -1796,121 +1817,41 @@ export class TurnCoordinator implements AgentHarnessApi {
   }
 
   private async compactHistoryForRuntime(input: {
-    threadId: string;
-    assistantMessageId: string;
-    workspaceRoot: string;
-    history: ProviderMessage[];
-    model: string;
-    reasoningEffort: ReasoningEffort;
-    collaborationMode: CollaborationMode;
-    controller: AbortController;
-    trigger: ContextCompactionTrigger;
-    reason: ContextCompactionReason;
-    textOffset: number;
+    threadId: string; assistantMessageId: string; workspaceRoot: string; history: ProviderMessage[];
+    model: string; reasoningEffort: ReasoningEffort; collaborationMode: CollaborationMode;
+    controller: AbortController; trigger: ContextCompactionTrigger; reason: ContextCompactionReason; textOffset: number;
+    budget?: ReturnType<typeof resolveModelRuntimeBudget>; overheadTokens?: number;
   }) {
     const beforeTokens = estimateProviderHistoryTokens(input.history);
-    // Capture the boundary before asynchronous summarization. New steers or
-    // agent messages must not be marked as already included in this summary.
-    const compactedThrough = this.store.listRecentMessages(input.threadId, 50)
-      .filter((message) => message.id !== input.assistantMessageId && (!message.agentMessage || message.agentMessage.outgoing || message.agentMessage.delivery !== "queued"))
-      .at(-1);
-    const call: DesktopToolCall = {
-      id: `context_compaction_${input.assistantMessageId}_${Date.now()}`,
-      name: "context_compaction" as DesktopToolCall["name"],
-      arguments: {
-        trigger: input.trigger,
-        reason: input.reason,
-        beforeTokens,
-      },
+    const budget = input.budget ?? resolveModelRuntimeBudget(input.model, runtimeBudgetModeForHistory(input.history));
+    const call: DesktopToolCall = { id: `context_compaction_${input.assistantMessageId}_${Date.now()}`, name: "context_compaction" as DesktopToolCall["name"], arguments: { trigger: input.trigger, reason: input.reason, beforeTokens, estimated: true } };
+    const progress = (liveStatus: string) => {
+      const event = this.updateToolEvent(input.threadId, input.assistantMessageId, call, { title: "Compacting context", category: "other", status: "running", risk: "safe", liveStatus, textOffset: input.textOffset });
+      this.emit({ type: "tool.upserted", tool: event });
     };
-    const startedAt = now();
-    const started = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
-      title: "Compacting context",
-      category: "other",
-      status: "running",
-      risk: "safe",
-      liveStatus: "Building handoff summary",
-      textOffset: input.textOffset,
-      startedAt,
-    });
-    this.emit({ type: "tool.upserted", tool: started });
-
-    let summary = "";
-    let replacementHistory: ProviderMessage[] = [];
-    let error: string | undefined;
     try {
-      summary = await this.generateCompactionSummary(input);
-      replacementHistory = buildCompactedProviderHistory(input.history, summary);
+      const compacted = await runReliableCompaction({ ...input, store: this.store, signal: input.controller.signal, budget,
+        overheadTokens: input.overheadTokens ?? 1_024, progress,
+        summarize: (history, prompt) => this.generateCompactionSummary({ ...input, history, prompt }),
+        rebuildHistory: () => this.contextManager.buildHistoryWithCompaction(input.threadId, input.assistantMessageId, budget.messageCharLimit),
+      });
+      const { checkpoint, afterTokens } = compacted;
+      this.emit({ type: "context.compacted", threadId: input.threadId, turnId: input.assistantMessageId, checkpoint });
+      const completed = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
+        title: checkpoint.validation?.method === "deterministic" ? "Context compacted with fallback" : "Context compacted", category: "other", status: "done", risk: "safe", liveStatus: undefined,
+        result: { success: true, output: checkpoint.summary, data: { beforeTokens, afterTokens, estimated: true, checkpointId: checkpoint.id, validation: checkpoint.validation } },
+        output: checkpoint.error ? `${checkpoint.summary}\n${checkpoint.error}` : checkpoint.summary,
+        preview: `Estimated ${beforeTokens.toLocaleString()} -> ${afterTokens.toLocaleString()} tokens`, endedAt: now(),
+      });
+      this.emit({ type: "tool.upserted", tool: completed });
+      return compacted;
     } catch (candidateError) {
-      if (input.controller.signal.aborted) {
-        const message = "Context compaction stopped by the user.";
-        const stopped = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
-          title: "Context compaction stopped",
-          category: "other",
-          status: "stopped",
-          risk: "safe",
-          liveStatus: undefined,
-          result: { success: false, error: message },
-          output: message,
-          endedAt: now(),
-        });
-        this.emit({ type: "tool.upserted", tool: stopped });
-        throw candidateError;
-      }
-      error = errorMessage(candidateError);
-      summary = buildDeterministicCompactionSummary(input.history);
-      replacementHistory = buildCompactedProviderHistory(input.history, summary);
+      const stopped = input.controller.signal.aborted;
+      const message = stopped ? "Context compaction stopped. Previous checkpoint preserved." : errorMessage(candidateError);
+      const event = this.updateToolEvent(input.threadId, input.assistantMessageId, call, { title: stopped ? "Context compaction stopped" : "Context compaction paused", category: "other", status: stopped ? "stopped" : "failed", risk: "safe", liveStatus: undefined, output: message, result: { success: false, error: message }, endedAt: now() });
+      this.emit({ type: "tool.upserted", tool: event });
+      throw candidateError;
     }
-
-    const afterTokens = estimateProviderHistoryTokens(replacementHistory);
-    const checkpoint: CompactionCheckpointRecord = {
-      id: crypto.randomUUID(),
-      threadId: input.threadId,
-      assistantMessageId: input.assistantMessageId,
-      compactedThroughMessageId: compactedThrough?.id,
-      compactedThroughMessageCreatedAt: compactedThrough?.createdAt,
-      workspaceRoot: input.workspaceRoot,
-      model: input.model,
-      trigger: error ? "fallback" : input.trigger,
-      reason: error ? "model_compaction_failed" : input.reason,
-      status: "completed",
-      summary,
-      replacementHistory,
-      beforeTokens,
-      afterTokens,
-      error,
-      createdAt: now(),
-    };
-    this.store.saveCompactionCheckpoint(checkpoint);
-    this.emit({ type: "context.compacted", threadId: input.threadId, turnId: input.assistantMessageId, checkpoint });
-
-    const output = error
-      ? `Model compaction failed; used deterministic fallback.\n${error}\n\n${summary}`
-      : summary;
-    const completed = this.updateToolEvent(input.threadId, input.assistantMessageId, call, {
-      title: error ? "Context compacted with fallback" : "Context compacted",
-      category: "other",
-      status: "done",
-      risk: "safe",
-      liveStatus: undefined,
-      result: {
-        success: true,
-        output,
-        data: {
-          trigger: checkpoint.trigger,
-          reason: checkpoint.reason,
-          beforeTokens,
-          afterTokens,
-          checkpointId: checkpoint.id,
-        },
-      },
-      output,
-      preview: `${beforeTokens.toLocaleString()} -> ${afterTokens.toLocaleString()} tokens`,
-      endedAt: now(),
-    });
-    this.emit({ type: "tool.upserted", tool: completed });
-
-    return { history: replacementHistory, beforeTokens, afterTokens, checkpoint };
   }
 
   private async generateCompactionSummary(input: {
@@ -1920,6 +1861,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     reasoningEffort: ReasoningEffort;
     collaborationMode: CollaborationMode;
     controller: AbortController;
+    prompt?: string;
   }) {
     const settings = this.store.getSettings();
     let summary = "";
@@ -1929,7 +1871,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       systemInstruction: COMPACTION_SYSTEM_INSTRUCTION,
       messages: [
         ...input.history,
-        textProviderMessage(COMPACTION_PROMPT),
+        textProviderMessage(input.prompt ?? COMPACTION_PROMPT),
       ],
       reasoning: input.reasoningEffort,
       collaborationMode: input.collaborationMode,
@@ -1953,7 +1895,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       onToolCall: () => undefined,
     });
     const trimmed = summary.trim();
-    if (trimmed.length >= 160) return trimmed;
+    if (trimmed.length > 0) return trimmed;
     throw new Error(trimmed
       ? `Compaction model returned an incomplete summary (${trimmed.length} characters).`
       : "Compaction model returned no summary text.");
@@ -2623,6 +2565,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     runtimeBudget: ReturnType<typeof resolveModelRuntimeBudget>,
     lastUsage: TokenUsageRecord | null,
     totalUsage: TokenUsageRecord | null,
+    overheadTokens = 0,
   ) {
     this.emit({
       type: "context.usage_updated",
@@ -2633,6 +2576,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         budget: runtimeBudget,
         lastUsage,
         totalUsage,
+        overheadTokens,
       }),
     });
   }

@@ -313,6 +313,7 @@ function ToolTitleLine({
     return (
       <div className="tool-title-line">
         <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
+        {tool.name === "context_compaction" && tool.preview && <code>{tool.preview}</code>}
       </div>
     );
   }
@@ -668,6 +669,7 @@ const formatBytes = (bytes: number) => {
 };
 
 const primaryToolLabel = (tool: ToolEventRecord) => {
+  if (tool.name === "context_compaction") return tool.status === "running" && tool.liveStatus ? `Compacting context: ${tool.liveStatus}` : cleanTitle(tool.title);
   if (tool.name === "kali_exec") {
     const argv = Array.isArray(tool.args.argv) ? tool.args.argv : [];
     const executable = String(argv[0] || "command").split(/[\\/]/).pop();

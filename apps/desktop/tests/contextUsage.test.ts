@@ -30,6 +30,14 @@ const repeatedHistory = (count: number, chars: number): ProviderMessage[] =>
   }));
 
 describe("desktop context usage", () => {
+  it("triggers compaction before initial sampling when instruction and schema overhead is large", () => {
+    const budget = resolveModelRuntimeBudget("gpt-5.6-sol", "normal");
+    const history = historyWithChars(100);
+    expect(shouldAutoCompactHistory(history, budget, null, 900_000)).toBe(true);
+    const result = calculateContextUsage({ threadId: "thread", modelId: "gpt-5.6-sol", history, budget, overheadTokens: 900_000 });
+    expect(result.usedTokens).toBeGreaterThan(900_000);
+    expect(result.estimated).toBe(true);
+  });
   it("marks newer history estimates honestly when they exceed the previous request", () => {
     const result = calculateContextUsage({ threadId: "thread", modelId: "gpt-5.6-sol", history: historyWithChars(40_000), budget: resolveModelRuntimeBudget("gpt-5.6-sol"), lastUsage: usage(100, 20) });
     expect(result.estimated).toBe(true);

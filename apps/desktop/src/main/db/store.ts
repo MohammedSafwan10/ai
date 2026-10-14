@@ -26,6 +26,8 @@ import type {
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
+import { isCompactionSourceCurrent } from "../agent/compactionState";
+import { messagesToProviderHistory } from "../agent/context";
 import { normalizeLocalServiceBaseUrl } from "../security/serviceUrls";
 import type { KaliEnvironment } from "../../shared/kali";
 import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityFindingRecord, SecurityJobRecord } from "../../shared/securityWorkspace";
@@ -417,6 +419,11 @@ export class DesktopStore {
     this.touchThread(normalized.threadId); return normalized;
   }
   listMessages(threadId: string) { return this.all<StoredMessage>("SELECT payload FROM messages WHERE thread_id = ? ORDER BY created_at, id", threadId).map((message) => this.hydrateMessage(message)); }
+  listCompactionSourceMessages(threadId: string) { return this.all<StoredMessage>("SELECT payload FROM messages WHERE thread_id = ? ORDER BY created_at, id", threadId).map((message) => ({ ...this.previewMessage(message), attachments: message.attachments?.map((attachment) => ({ ...attachment, url: attachmentUrl(attachment.artifactId, attachment.mimeType) })) })); }
+  hasAttachmentArtifact(artifactId: string) { return this.artifacts.hasArtifact(artifactId); }
+  listCompactionToolReferences(threadId: string) {
+    return this.prepare("SELECT id, json_extract(payload, '$.name') name, json_extract(payload, '$.status') status, json_extract(payload, '$.messageId') sourceMessageId, json_extract(payload, '$.args.jobId') jobId, json_extract(payload, '$.result.success') success FROM tool_events WHERE thread_id = ? ORDER BY created_at, id").all(threadId) as Array<{ id: string; name: string; status: string; sourceMessageId: string; jobId: string | null; success: number | null }>;
+  }
   listUserMessageTexts(threadId: string): string[] {
     // Select only operator text; do not hydrate attachments or scan assistant/tool evidence.
     return (this.prepare("SELECT json_extract(payload, '$.content') content FROM messages WHERE thread_id = ? AND json_extract(payload, '$.role') = 'user' AND json_extract(payload, '$.agentMessage') IS NULL ORDER BY created_at, id").all(threadId) as Array<{ content: string }>).map((row) => row.content || "");
@@ -599,6 +606,19 @@ export class DesktopStore {
     });
     this.run("DELETE FROM compaction_checkpoints WHERE id IN (SELECT id FROM compaction_checkpoints WHERE thread_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET 20)", record.threadId);
     return record;
+  }
+  installCompactionCheckpoint(record: CompactionCheckpointRecord) {
+    return this.transaction(() => {
+      if (!isCompactionSourceCurrent(this, record) || (this.getLatestCompactionCheckpoint(record.threadId)?.id ?? null) !== record.baseCheckpointId) return false;
+      this.saveCompactionCheckpoint(record);
+      const run = this.getRunCheckpoint(record.threadId);
+      if (run && run.assistantMessageId === record.assistantMessageId) {
+        const sourceIds = new Set(record.sourceMessageIds);
+        const suffix = this.listMessages(record.threadId).filter((message) => !sourceIds.has(message.id) && message.id !== record.assistantMessageId);
+        this.saveRunCheckpoint({ ...run, history: [...record.replacementHistory, ...messagesToProviderHistory(suffix)] });
+      }
+      return true;
+    });
   }
   getLatestCompactionCheckpoint(threadId: string) {
     return this.one<CompactionCheckpointRecord>("SELECT payload FROM compaction_checkpoints WHERE thread_id = ? AND status = 'completed' ORDER BY created_at DESC, id DESC LIMIT 1", threadId);

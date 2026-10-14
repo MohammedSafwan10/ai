@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ProviderMessage, ProviderPart } from "./providers/types";
 import { compactTextForModel } from "../terminal/outputBuffer";
 import { detectProjectProfileSync } from "./diagnostics";
+import { buildPreservedState, isCompactionSourceCurrent, preservedStateMessage } from "./compactionState";
 import { getModelOption, type ModelRuntimeBudget } from "../../shared/models";
 import type { ChatMessageRecord, ToolEventRecord, ToolResult } from "../../shared/types";
 
@@ -56,10 +57,27 @@ export const buildProviderHistoryWithCompaction = (
   assistantMessageId: string,
   messageCharLimit = MAX_MESSAGE_CHARS,
 ): ProviderMessage[] => {
-  const checkpoint = store.getLatestCompactionCheckpoint(threadId);
+  const candidate = store.getLatestCompactionCheckpoint(threadId);
+  const checkpoint = candidate && isCompactionSourceCurrent(store, candidate) ? candidate : null;
   const replacementHistory = checkpoint ? validateProviderHistory(checkpoint.replacementHistory) : [];
+  if (checkpoint?.preservedState && replacementHistory.length) {
+    // Refresh persisted observations on every resume; no remote commands are replayed.
+    const sourceIds = new Set(checkpoint.sourceMessageIds);
+    const currentState = buildPreservedState(store, threadId, store.listCompactionSourceMessages(threadId).filter((message) => sourceIds.has(message.id)), checkpoint.preservedState.summaryClaims);
+    replacementHistory[0] = preservedStateMessage(currentState);
+  }
   if (!replacementHistory.length) {
     return buildProviderHistory(store, threadId, assistantMessageId, messageCharLimit);
+  }
+  if (checkpoint?.schemaVersion === 1) {
+    const sourceIds = new Set(checkpoint.sourceMessageIds);
+    const offset = checkpoint.assistantTextOffset ?? 0;
+    const suffix = store.listMessages(threadId).filter((message) => message.id !== assistantMessageId && !sourceIds.has(message.id)).map((message) => {
+      if (message.id === checkpoint.assistantMessageId) return { ...message, content: message.content.slice(offset) };
+      if (message.steeredTurnId === checkpoint.assistantMessageId) return { ...message, steerTextOffset: Math.max(0, (message.steerTextOffset ?? offset) - offset) };
+      return message;
+    });
+    return [...replacementHistory, ...messagesToProviderHistory(suffix, messageCharLimit)];
   }
   if (checkpoint?.compactedThroughMessageId) {
     return [
@@ -76,6 +94,14 @@ export const buildProviderHistoryWithCompaction = (
     ...replacementHistory,
     ...buildProviderHistory(store, threadId, assistantMessageId, messageCharLimit),
   ];
+};
+
+export const refreshCompactionObservations = (store: DesktopStore, threadId: string, history: ProviderMessage[]): ProviderMessage[] => {
+  const checkpoint = store.getLatestCompactionCheckpoint(threadId);
+  if (!checkpoint?.preservedState || !isCompactionSourceCurrent(store, checkpoint) || !history[0]?.content.startsWith("Preserved checkpoint state (version 1).")) return history;
+  const sourceIds = new Set(checkpoint.sourceMessageIds);
+  const state = buildPreservedState(store, threadId, store.listCompactionSourceMessages(threadId).filter((message) => sourceIds.has(message.id)), checkpoint.preservedState.summaryClaims);
+  return [preservedStateMessage(state), ...history.slice(1)];
 };
 
 export const messagesToProviderHistory = (

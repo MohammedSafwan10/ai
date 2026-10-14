@@ -21,11 +21,12 @@ export const shouldAutoCompactHistory = (
   history: ProviderMessage[],
   budget: ModelRuntimeBudget,
   lastUsage?: TokenUsageRecord | null,
+  overheadTokens = 0,
 ) => {
   const threshold = autoCompactThresholdTokens(budget);
   if (!threshold) return false;
   const measuredContext = lastUsage ? lastUsage.inputTokens + lastUsage.outputTokens : 0;
-  return Math.max(estimateProviderHistoryTokens(history), measuredContext) > threshold;
+  return Math.max(estimateProviderHistoryTokens(history) + overheadTokens, measuredContext) > threshold;
 };
 
 export const calculateContextUsage = (input: {
@@ -35,8 +36,9 @@ export const calculateContextUsage = (input: {
   budget: ModelRuntimeBudget;
   lastUsage?: TokenUsageRecord | null;
   totalUsage?: TokenUsageRecord | null;
+  overheadTokens?: number;
 }): ContextUsageRecord => {
-  const estimatedTokens = estimateProviderHistoryTokens(input.history);
+  const estimatedTokens = estimateProviderHistoryTokens(input.history) + (input.overheadTokens ?? 0);
   const lastUsage = input.lastUsage || estimatedTokenUsage(estimatedTokens);
   const totalUsage = input.totalUsage || lastUsage;
   const usedTokens = input.lastUsage

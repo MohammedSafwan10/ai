@@ -29,6 +29,26 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it("consumes a steer captured by a stale compaction retry without delivering it twice", async () => {
+    const { thread, coordinator } = fixture();
+    const assistant = { id: "summary-turn", threadId: thread.id, role: "assistant" as const, content: "", status: "running" as const, createdAt: 2, updatedAt: 2 };
+    store.upsertMessage(assistant);
+    store.upsertMessage({ id: "before", threadId: thread.id, role: "user", content: "Original goal", status: "completed", createdAt: 1, updatedAt: 1 });
+    let samples = 0;
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      if (samples++ === 0) {
+        store.upsertMessage({ ...store.getMessage("before")!, content: "Corrected goal" });
+        const steer = { id: "during", threadId: thread.id, role: "user" as const, content: "New instruction during retry", status: "completed" as const, createdAt: 3, updatedAt: 3 };
+        store.upsertMessage(steer);
+        (coordinator as any).pendingSteers.set(thread.id, [{ message: steer, providerMessages: [{ role: "user", content: steer.content }] }]);
+      }
+      options.onTextDelta(JSON.stringify({ goals: ["Corrected goal"], constraints: [], completedWork: [], rejectedLeads: [], unresolvedQuestions: [], nextActions: [], sourceMessageIds: ["before"] }));
+    });
+    const compacted = await (coordinator as any).compactHistoryForRuntime({ threadId: thread.id, assistantMessageId: assistant.id, workspaceRoot: folder, history: [{ role: "user", content: "Original goal" }], model: OPENCODE_GO_MUSE_SPK_13_MODEL_ID, reasoningEffort: "high", collaborationMode: "default", controller: new AbortController(), trigger: "mid_turn", reason: "context_limit", textOffset: 0 });
+    const drained = (coordinator as any).drainPendingSteers(thread.id, compacted.history, assistant, compacted.checkpoint.sourceMessageIds);
+    expect(drained.filter((message: { content: string }) => message.content === "New instruction during retry")).toHaveLength(1);
+    expect((coordinator as any).pendingSteers.has(thread.id)).toBe(false);
+  });
   it("counts cumulative usage updates once per provider request", async () => {
     const { thread, coordinator } = fixture();
     const reports: any[] = [];
