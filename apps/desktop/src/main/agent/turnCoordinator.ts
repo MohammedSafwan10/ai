@@ -26,6 +26,7 @@ import type {
 import { buildDesktopSystemPrompt } from "./systemPrompt";
 import type { SecurityWorkspaceService } from "../kali/service";
 import { buildSecuritySystemPrompt } from "../kali/systemPrompt";
+import { needsBugBountyGuide } from "../kali/bugBountyGuide";
 import { isSecurityToolName, securityWorkspaceBlockReason } from "../kali/definitions";
 import { appendAssistantToolCalls, appendToolResults, type ProviderMessage, type ProviderPart } from "./providers/types";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
@@ -1047,6 +1048,7 @@ export class TurnCoordinator implements AgentHarnessApi {
                 ].filter(Boolean).join("\n\n"),
                 effectiveCollaborationMode,
                 settings.permissionMode,
+                needsBugBountyGuide(workspace.security.objective, this.store.listUserMessageTexts(subagent?.parentThreadId || options.threadId)),
               )
               : buildDesktopSystemPrompt(
               options.workspaceRoot,

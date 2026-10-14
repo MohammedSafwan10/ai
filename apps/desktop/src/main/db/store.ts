@@ -417,6 +417,10 @@ export class DesktopStore {
     this.touchThread(normalized.threadId); return normalized;
   }
   listMessages(threadId: string) { return this.all<StoredMessage>("SELECT payload FROM messages WHERE thread_id = ? ORDER BY created_at, id", threadId).map((message) => this.hydrateMessage(message)); }
+  listUserMessageTexts(threadId: string): string[] {
+    // Select only operator text; do not hydrate attachments or scan assistant/tool evidence.
+    return (this.prepare("SELECT json_extract(payload, '$.content') content FROM messages WHERE thread_id = ? AND json_extract(payload, '$.role') = 'user' ORDER BY created_at, id").all(threadId) as Array<{ content: string }>).map((row) => row.content || "");
+  }
   listRecentMessages(threadId: string, limit: number) {
     return this.all<StoredMessage>("SELECT payload FROM messages WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?", threadId, Math.max(1, Math.min(500, limit))).reverse().map((message) => this.hydrateMessage(message));
   }

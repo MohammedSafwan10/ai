@@ -42,6 +42,19 @@ const fixture = () => {
 };
 
 describe("Security model loop", () => {
+  it("automatically delivers the bounty guide to the provider on an assessment and follow-up", async () => {
+    const { thread, coordinator } = fixture();
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      expect(options.systemInstruction).toContain("# Bug bounty assessment guide");
+      expect(options.systemInstruction).toContain("Only the isolated VM");
+      options.onTextDelta("Assessment complete.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Test this bug bounty program in the local lab" });
+    await coordinator.waitForIdle();
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Continue the report" });
+    await coordinator.waitForIdle();
+    expect(provider.stream).toHaveBeenCalledTimes(2);
+  });
   it("records an explicit refusal without retrying or claiming the task was done", async () => {
     const { thread, coordinator } = fixture();
     provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
