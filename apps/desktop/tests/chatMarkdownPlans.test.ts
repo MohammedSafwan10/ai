@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ChatMessage } from "../src/renderer/components/ChatMessage";
 import { splitProposedPlan } from "../src/renderer/features/chat/proposedPlan";
+import { resolveChatWebLink } from "../src/shared/chatLinks";
 
 const render = (content: string) => renderToStaticMarkup(createElement(ChatMessage, {
   message: { id: "answer", threadId: "thread", role: "assistant", status: "completed", content, createdAt: 1, updatedAt: 2 },
@@ -11,6 +12,18 @@ const render = (content: string) => renderToStaticMarkup(createElement(ChatMessa
 }));
 
 describe("chat Markdown plan boundaries", () => {
+  it("repairs the missing dot in a hostname using its explicit domain label", () => {
+    const html = render("[bugcrowd.com](https://bugcrowdcom) and [hackerone.com](https://hackeronecom/sign_up)");
+    expect(html).toContain('href="https://bugcrowd.com/"');
+    expect(html).toContain('href="https://hackerone.com/sign_up"');
+    expect(html).not.toContain('href="https://bugcrowdcom"');
+  });
+  it("preserves correct URLs and does not guess destinations from prose or a different domain", () => {
+    expect(resolveChatWebLink("https://bugcrowd.com/", "bugcrowdcom")).toBe("https://bugcrowd.com/");
+    expect(resolveChatWebLink("https://different.example/", "bugcrowd.com")).toBe("https://different.example/");
+    expect(resolveChatWebLink("https://internal/", "Open internal dashboard")).toBe("https://internal/");
+    expect(resolveChatWebLink("javascript:alert(1)", "bugcrowd.com")).toBeNull();
+  });
   it("keeps a fenced example of plan tags inside its code block", () => {
     const html = render("Example:\n\n```xml\n<proposed_plan>\nLiteral sample\n</proposed_plan>\n```\n");
     expect(html).not.toContain("proposed-plan-card");

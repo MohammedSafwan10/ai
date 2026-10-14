@@ -19,6 +19,7 @@ import { ToolTimeline } from "./ToolTimeline";
 import { TurnReviewCard } from "./TurnReviewCard";
 import { describeActiveTurnStatus, isActiveTurnStatus } from "../../shared/runStatus";
 import { splitProposedPlan } from "../features/chat/proposedPlan";
+import { resolveChatWebLink } from "../../shared/chatLinks";
 
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
@@ -759,7 +760,7 @@ function MarkdownExternalLink({
   children,
   ...props
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const externalHref = typeof href === "string" && isExternalHttpUrl(href) ? href : "";
+  const externalHref = resolveChatWebLink(href, typeof children === "string" ? children : "");
   if (!externalHref) {
     return <span className="markdown-invalid-link">{children}</span>;
   }
@@ -790,15 +791,6 @@ function MarkdownTable({
     </div>
   );
 }
-
-const isExternalHttpUrl = (value: string) => {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-};
 
 export function visibleSteeredAssistantParts(parts: AssistantRenderPart[], activityOpen: boolean) {
   return activityOpen ? parts : parts.filter((part) => part.type === "steer" || (part.type === "text" && part.phase === "final_answer"));
