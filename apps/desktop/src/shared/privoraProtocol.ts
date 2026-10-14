@@ -36,6 +36,8 @@ const isPrivoraEventPayload = (value: unknown) => {
       return isRecord(value.message) && hasString(value.message, "id") && hasString(value.message, "threadId");
     case "tool.upserted":
       return isRecord(value.tool) && hasString(value.tool, "id") && hasString(value.tool, "threadId");
+    case "thread.rewound":
+      return hasString(value, "threadId") && isStringArray(value.removedMessageIds);
     case "turn_undo.updated":
       return isRecord(value.undo) && hasString(value.undo, "id") && hasString(value.undo, "threadId");
     case "context.usage_updated":

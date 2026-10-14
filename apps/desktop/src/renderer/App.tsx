@@ -56,6 +56,10 @@ export default function App() {
   const creditRefreshStarted = useRef(false);
   const zoomToastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const browserToolAutoOpenRef = useRef<{ initialized: boolean; key: string }>({ initialized: false, key: "" });
+  const [rewinding, setRewinding] = useState(false);
+  const [rewindNotice, setRewindNotice] = useState<{ threadId: string; text: string } | null>(null);
+  const selectedThreadRef = useRef<string | null>(null);
+  selectedThreadRef.current = snapshot.activeThreadId;
   const [composerDraft, setComposerDraft] = useState<{
     id: number;
     text: string;
@@ -281,6 +285,21 @@ export default function App() {
       agentHarnessMode: activeThreadSettings.agentHarnessMode,
     },
   });
+
+  const editMessage = useCallback(async (messageId: string) => {
+    const threadId = activeThread?.id;
+    if (!threadId || running || queuedPrompts.length) throw new Error("Finish the current run and queued prompts before editing.");
+    setRewinding(true);
+    try {
+      const result = await window.privoraDesktop.rewindMessage({ messageId });
+      if (selectedThreadRef.current === threadId) {
+        setComposerDraft({ id: Date.now(), text: result.message.content, attachments: result.message.attachments, contextMentions: result.message.contextMentions });
+        setReviewSession(null);
+        setRewindNotice(result.notice ? { threadId, text: result.notice } : result.gitCommit ? { threadId, text: `Created reversing commit ${result.gitCommit.slice(0, 7)}.` } : null);
+      }
+      await refresh();
+    } finally { setRewinding(false); }
+  }, [activeThread?.id, running, queuedPrompts.length, refresh]);
 
   const implementPlan = useCallback((plan: string) => {
     if (!activeThread) return;
@@ -534,6 +553,8 @@ export default function App() {
                       turnUndo={undoByMessage.get(message.id) || null}
                       onPrepareTurnUndo={(messageId) => window.privoraDesktop.prepareTurnUndo({ messageId })}
                       onUndoTurnChanges={(messageId) => window.privoraDesktop.undoTurnChanges({ messageId })}
+                      onEditMessage={editMessage}
+                      editDisabled={running || rewinding || queuedPrompts.length > 0}
                       showPlanActions={virtualItem.index === messages.length - 1}
                       onImplementPlan={implementPlan}
                       onSuggestPlanChanges={suggestPlanChanges}
@@ -547,6 +568,7 @@ export default function App() {
         )}
         composerStack={(
         <>
+          {rewindNotice?.threadId === activeThread?.id && rewindNotice && <div className="recovery-notice" role="status">{rewindNotice.text}</div>}
           {snapshot.recoveryNotice && (
             <div className="recovery-notice" role="status">
               <strong>Data recovery used</strong>
@@ -708,7 +730,7 @@ export default function App() {
             remoteEnvironment={isSecurityWorkspace}
             settings={activeThreadSettings}
             disabled={!activeThread || !activeWorkspace}
-            inputDisabledReason={snapshot.pendingUserInput ? "Answer the question to continue" : undefined}
+            inputDisabledReason={rewinding ? "Restoring the earlier turn…" : snapshot.pendingUserInput ? "Answer the question to continue" : undefined}
             running={running}
             stopping={stopping}
             activeThreadId={activeThread?.id || null}

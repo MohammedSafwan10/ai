@@ -77,6 +77,7 @@ const api: PrivoraDesktopApi = {
   decideApproval: (input: ApprovalDecisionInput) => ipcRenderer.invoke(channels.decideApproval, input),
   prepareTurnUndo: (input: PrepareTurnUndoInput) => ipcRenderer.invoke(channels.prepareTurnUndo, input),
   undoTurnChanges: (input: UndoTurnChangesInput) => ipcRenderer.invoke(channels.undoTurnChanges, input),
+  rewindMessage: (input: UndoTurnChangesInput) => ipcRenderer.invoke(channels.rewindMessage, input),
   searchContextMentions: (input) => ipcRenderer.invoke(channels.searchContextMentions, input),
   listWorkspaceDirectory: (input) => ipcRenderer.invoke(channels.listWorkspaceDirectory, input),
   readWorkspaceFile: (input) => ipcRenderer.invoke(channels.readWorkspaceFile, input),

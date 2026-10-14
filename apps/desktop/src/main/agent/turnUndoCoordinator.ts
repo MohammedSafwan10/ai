@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
+import { prepareGitReversal, readGitHead } from "./rewindGit";
 import path from "node:path";
 import type {
   ToolEventRecord,
   TurnUndoConflictRecord,
   TurnUndoOperationRecord,
   TurnUndoRecord,
+  RewindMessageResult,
 } from "../../shared/types";
 import type { DesktopStore } from "../db/store";
 import { resolveExistingWorkspacePath, resolveWorkspacePath } from "../security/pathSandbox";
@@ -16,6 +18,72 @@ export class TurnUndoCoordinator {
     private store: DesktopStore,
     private isThreadBusy: (threadId: string) => boolean,
   ) {}
+
+  async rewind(messageId: string): Promise<RewindMessageResult> {
+    const message = this.store.getMessage(messageId);
+    if (!message || message.role !== "user") throw new Error("Choose a user message to edit.");
+    if (message.steeredTurnId) throw new Error("Edit the original prompt for this turn; a steer cannot undo only part of a turn.");
+    const thread = this.store.getThread(message.threadId);
+    if (!thread) throw new Error("Chat is no longer available.");
+    const removed = [message, ...this.store.listMessagesAfter(thread.id, message.id)];
+    const allChildren = this.store.listSubagents(thread.id);
+    const roots = allChildren.filter((agent) => agent.parentThreadId === thread.id && removed.some((item) => item.id === agent.parentMessageId));
+    const children = allChildren.filter((agent) => roots.some((root) => agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`)));
+    if (this.isThreadBusy(thread.id) || children.some((agent) => this.isThreadBusy(agent.threadId))) {
+      throw new Error("Stop the current run before editing an earlier message.");
+    }
+    // A remote command can outlive its chat turn. Never erase its audit record or replay it.
+    if (thread.workspaceId && this.store.listSecurityJobs(thread.workspaceId)
+      .some((job) => [thread.id, ...children.map((agent) => agent.threadId)].includes(job.threadId) && ["submitting", "queued", "running", "unknown", "cancelling"].includes(job.state))) {
+      throw new Error("Finish or reconcile the remaining Kali jobs before rewinding this chat.");
+    }
+    const turns = [...removed, ...children.flatMap((agent) => this.store.listMessages(agent.threadId))].filter((item) => item.role === "assistant");
+    const tools = turns.flatMap((item) => this.store.listToolEventsForMessage(item.threadId, item.id))
+      .sort((a, b) => (a.endedAt || a.updatedAt) - (b.endedAt || b.updatedAt) || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    const records = turns.map((item) => this.prepare(item.id)).filter((item): item is TurnUndoRecord => Boolean(item));
+    if (records.some((record) => ["undoing", "partially_undone"].includes(record.status))) {
+      throw new Error("Resolve the existing partial undo before rewinding this chat.");
+    }
+    const alreadyUndone = new Set(records.filter((record) => record.status === "undone").map((record) => record.messageId));
+    const operations = [...tools].reverse().filter((tool) => !alreadyUndone.has(tool.messageId) && tool.status === "done" && tool.result?.success !== false)
+      .flatMap((tool) => [...normalizeUndoPayload(tool.result?.data?.undo)].reverse());
+    let gitReversal: Awaited<ReturnType<typeof prepareGitReversal>> = null;
+    let notice: string | undefined;
+    if (operations.length) {
+      const workspace = this.store.getWorkspace(thread.workspaceId);
+      if (!workspace) throw new Error("Workspace is no longer available.");
+      if (!tools.some((tool) => typeof tool.result?.data?.gitHeadBefore === "string") && await readGitHead(workspace.path)) {
+        notice = "Recorded files were restored. This older turn has no Git checkpoint, so its commits were kept.";
+      }
+      gitReversal = await prepareGitReversal(workspace.path, tools, operations);
+      await preflightUndo(workspace.path, operations);
+      // Parent and child tools can interleave. Restore their combined mutation
+      // chain by completion order rather than undoing each child independently.
+      try {
+        for (const operation of operations) {
+          const conflict = await applyUndoOperation(workspace.path, operation);
+          if (conflict) throw new Error(`${conflict.path}: ${conflict.reason}`);
+        }
+      } catch (error) {
+        for (const record of records) this.store.upsertTurnUndo({ ...record, status: "partially_undone", updatedAt: now(), error: "File restoration was interrupted. Chat history was kept; review the changes." });
+        throw error;
+      }
+    }
+    for (const record of records) this.store.upsertTurnUndo({ ...record, status: "undone", conflicts: [], error: undefined, updatedAt: now() });
+    let gitCommit: string | undefined;
+    try { gitCommit = await gitReversal?.commit(); }
+    catch (error) {
+      for (const record of records) this.store.upsertTurnUndo({ ...record, status: "partially_undone", updatedAt: now(), error: "Files were restored, but the Git reversal commit failed. Review Git before continuing." });
+      throw error;
+    }
+    // Hydrate attachments before pruning their stored artifacts.
+    message.attachments = message.attachments?.map((attachment) => ({
+      ...attachment,
+      url: attachment.base64 ? `data:${attachment.mimeType};base64,${attachment.base64}` : attachment.url,
+    }));
+    this.store.pruneThreadAfterMessage(thread.id, message.id, true);
+    return { message, removedMessageIds: removed.map((item) => item.id), gitCommit, notice };
+  }
 
   prepare(messageId: string): TurnUndoRecord | null {
     const existing = this.store.getTurnUndo(messageId);
@@ -79,8 +147,13 @@ export class TurnUndoCoordinator {
 
     const conflicts: TurnUndoConflictRecord[] = [];
     for (const operation of [...record.operations].reverse()) {
-      const conflict = await applyUndoOperation(workspace.path, operation);
-      if (conflict) conflicts.push(conflict);
+      try {
+        const conflict = await applyUndoOperation(workspace.path, operation);
+        if (conflict) conflicts.push(conflict);
+      } catch (error) {
+        conflicts.push({ path: operation.type === "restore_file" ? operation.path : operation.fromPath, reason: error instanceof Error ? error.message : "File restoration failed." });
+        break;
+      }
     }
 
     record = this.store.upsertTurnUndo({
@@ -213,5 +286,44 @@ const pathExists = async (filePath: string) => {
     return true;
   } catch {
     return false;
+  }
+};
+
+// Simulate the entire reverse chain before touching files. Later turns may have
+// edited the same file; checking each turn against today's content would be wrong.
+const preflightUndo = async (root: string, operations: TurnUndoOperationRecord[]) => {
+  const contents = new Map<string, Buffer | null>();
+  const read = async (relative: string) => {
+    const target = resolveWorkspacePath(root, relative).absolutePath;
+    if (!contents.has(target)) {
+      try { contents.set(target, await fs.readFile(target)); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        contents.set(target, null);
+      }
+    }
+    return { target, buffer: contents.get(target)! };
+  };
+  for (const operation of operations) {
+    if (operation.type === "rename_path") {
+      const from = await read(operation.fromPath);
+      const to = await read(operation.toPath);
+      if (from.buffer === null || to.buffer !== null) throw new Error(`Cannot restore ${operation.toPath}: its paths changed after the turn.`);
+      contents.set(to.target, from.buffer);
+      contents.set(from.target, null);
+      continue;
+    }
+    const current = await read(operation.path);
+    const encoding = operation.encoding === "base64" ? "base64" : "utf8";
+    if (operation.expectedCurrent !== undefined && (current.buffer?.toString(encoding) ?? null) !== operation.expectedCurrent) {
+      throw new Error(`Cannot restore ${operation.path}: it changed after the agent's turn. Your changes and chat were kept.`);
+    }
+    const restore = resolveWorkspacePath(root, operation.restorePath || operation.path).absolutePath;
+    if (restore !== current.target) {
+      const previous = await read(operation.restorePath!);
+      if (previous.buffer !== null) throw new Error(`Cannot restore ${operation.restorePath}: the original path already exists.`);
+      contents.set(current.target, null);
+    }
+    contents.set(restore, operation.existed ? Buffer.from(operation.previous, encoding) : null);
   }
 };

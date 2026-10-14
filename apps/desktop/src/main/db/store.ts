@@ -588,13 +588,19 @@ export class DesktopStore {
     const timestamp = now(); const compact = { workspaceId: state.workspaceId, activeTabId: state.activeTabId, updatedAt: timestamp, tabs: state.tabs.slice(0, 6).map((tab) => ({ ...tab, loading: false, canGoBack: false, canGoForward: false, createdAt: tab.createdAt || timestamp, updatedAt: tab.updatedAt || timestamp })) };
     this.putRecord("browser_workspaces", state.workspaceId, compact, { workspaceId: state.workspaceId, updatedAt: timestamp }); return compact;
   }
-  pruneThreadAfterMessage(threadId: string, messageId: string) {
-    const removed = this.listMessagesAfter(threadId, messageId); const ids = removed.map((message) => message.id); if (!ids.length) return { removedMessages: 0, removedToolEvents: 0, removedTurnUndos: 0 };
+  pruneThreadAfterMessage(threadId: string, messageId: string, inclusive = false) {
+    const anchor = this.getMessage(messageId);
+    if (!anchor || anchor.threadId !== threadId) throw new Error("Message is no longer available in this chat.");
+    const removed = [...(inclusive ? [anchor] : []), ...this.listMessagesAfter(threadId, messageId)]; const ids = removed.map((message) => message.id); if (!ids.length) return { removedMessages: 0, removedToolEvents: 0, removedTurnUndos: 0 };
     const removedToolEvents = this.count(`SELECT COUNT(*) count FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
     const removedTurnUndos = this.count(`SELECT COUNT(*) count FROM turn_undos WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
     this.transaction(() => {
-      this.run(`DELETE FROM checkpoints WHERE thread_id = ? AND json_extract(payload, '$.assistantMessageId') IN (${placeholders(ids.length)})`, threadId, ...ids);
-      this.run(`DELETE FROM compaction_checkpoints WHERE thread_id = ? AND (assistant_message_id IN (${placeholders(ids.length)}) OR json_extract(payload, '$.compactedThroughMessageId') IN (${placeholders(ids.length)}))`, threadId, ...ids, ...ids);
+      for (const agent of this.listSubagents(threadId).filter((agent) => ids.includes(agent.parentMessageId))) {
+        this.removeThreadRecords(agent.threadId);
+        this.run("DELETE FROM subagents WHERE id = ?", agent.id);
+      }
+      this.clearRunCheckpoint(threadId);
+      this.run("DELETE FROM compaction_checkpoints WHERE thread_id = ?", threadId);
       this.run(`DELETE FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
       this.run(`DELETE FROM turn_undos WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
       this.run(`DELETE FROM messages WHERE id IN (${placeholders(ids.length)})`, ...ids);

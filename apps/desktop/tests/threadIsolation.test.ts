@@ -54,6 +54,13 @@ describe("renderer thread isolation", () => {
     ];
     expect(reducePrivoraEvents(current, coalescePrivoraEvents(events)).toolEvents[0].output).toBe("first second");
   });
+  it("removes rewound history and invalidates its context meter", () => {
+    const current = { ...baseSnapshot(), messages: [...baseSnapshot().messages, message("removed", "old-thread", "gone")], toolEvents: [tool("removed-tool", "old-thread", "removed")] };
+    const next = reducePayloadEvents(current, [{ type: "thread.rewound", threadId: "old-thread", removedMessageIds: ["removed"] }]);
+    expect(next.messages.map((item) => item.id)).toEqual(["old-message"]);
+    expect(next.toolEvents).toEqual([]);
+    expect(next.contextUsage).toBeUndefined();
+  });
   it("removes undone messages from an authoritative same-thread snapshot", () => {
     const current = { ...baseSnapshot(), messages: [...baseSnapshot().messages, message("removed", "old-thread", "undone response")], toolEvents: [tool("removed-tool", "old-thread", "removed")] };
     const next = reducePayloadEvents(current, [{ type: "snapshot.updated", snapshot: { ...baseSnapshot(), historyPage: { threadId: "old-thread", messages: baseSnapshot().messages, toolEvents: [], turnUndos: [], hasOlder: false } } }]);

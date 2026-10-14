@@ -132,6 +132,12 @@ export const useDesktopState = () => {
   const enqueueEvent = useCallback((event: PrivoraEventEnvelope) => {
     if (!isNewPrivoraEventSequence(lastEventSequenceRef.current, event)) return;
     lastEventSequenceRef.current = event.sequence;
+    if (event.payload.type === "thread.rewound") {
+      refreshRequestRef.current += 1;
+      if (historyRequestRef.current?.threadId === event.payload.threadId) {
+        historyRequestRef.current = null; setHistoryLoading(false);
+      }
+    }
     if (event.payload.type === "notification.created") {
       if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
       setToast(event.payload.message);
@@ -193,6 +199,19 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
     const event = envelope.payload;
     if (event.type === "snapshot.updated") {
       next = { ...applySnapshot(next, event.snapshot, true), selectionEventSequence: envelope.sequence };
+      continue;
+    }
+    if (event.type === "thread.rewound") {
+      if (event.threadId === next.activeThreadId) {
+        const removed = new Set(event.removedMessageIds);
+        next = { ...next,
+          messages: next.messages.filter((message) => !removed.has(message.id)),
+          toolEvents: next.toolEvents.filter((tool) => !removed.has(tool.messageId)),
+          turnUndos: next.turnUndos.filter((undo) => !removed.has(undo.messageId)),
+          subagents: next.subagents.filter((agent) => !removed.has(agent.parentMessageId)),
+          contextUsage: undefined, activeRun: null, pendingUserInput: null,
+        };
+      }
       continue;
     }
     if (event.type === "message.upserted") {
@@ -411,7 +430,7 @@ export const coalescePrivoraEvents = (events: PrivoraEventEnvelope[]): PrivoraEv
 
   for (const envelope of events) {
     const event = envelope.payload;
-    if (event.type === "snapshot.updated") {
+    if (event.type === "snapshot.updated" || event.type === "thread.rewound") {
       flush();
       coalesced.push(envelope);
       continue;

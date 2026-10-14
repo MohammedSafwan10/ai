@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readGitHead } from "../rewindGit";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { DesktopToolCall, ToolDiffFileRecord, ToolResult } from "../../../shared/types";
@@ -98,6 +99,14 @@ export class DesktopToolExecutor {
   }
 
   async execute(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
+    const mutating = ["desktop_edit_file", "desktop_write_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name);
+    const head = mutating ? await readGitHead(context.workspaceRoot) : undefined;
+    const result = await this.executeWithoutCheckpoint(call, context);
+    if (head && result.data?.undo) result.data = { ...result.data, gitHeadBefore: head };
+    return result;
+  }
+
+  private async executeWithoutCheckpoint(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     try {
       switch (call.name) {
         case "desktop_read_file":

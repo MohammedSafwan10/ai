@@ -5,6 +5,11 @@ import type { PrivoraEventEnvelope, PrivoraEventPayload } from "../src/shared/ty
 import { isNewPrivoraEventSequence, isPrivoraEventEnvelope } from "../src/shared/privoraProtocol";
 
 describe("Privora event protocol", () => {
+  it("accepts a rewind envelope and keeps it ordered as a stream barrier", () => {
+    const rewind = envelope(2, { type: "thread.rewound", threadId: "thread", removedMessageIds: ["message"] });
+    expect(isPrivoraEventEnvelope(rewind)).toBe(true);
+    expect(coalescePrivoraEvents([envelope(1, { type: "message.upserted", message: message("draft") }), rewind, envelope(3, { type: "message.upserted", message: message("new") })]).map((event) => event.sequence)).toEqual([1, 2, 3]);
+  });
   it("preserves the latest canonical envelope when coalescing replaceable payloads", () => {
     const events = coalescePrivoraEvents([
       envelope(1, { type: "notification.created", tone: "info", message: "barrier" }),

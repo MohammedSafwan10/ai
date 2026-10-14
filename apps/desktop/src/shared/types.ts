@@ -1598,6 +1598,7 @@ export type PrivoraEventPayload =
   | { type: "message.upserted"; message: ChatMessageRecord }
   | { type: "tool.upserted"; tool: ToolEventRecord }
   | { type: "turn_undo.updated"; undo: TurnUndoRecord }
+  | { type: "thread.rewound"; threadId: string; removedMessageIds: string[] }
   | { type: "context.usage_updated"; usage: ContextUsageRecord }
   | { type: "ai_credit.summary_updated"; summary: AiCreditSummaryRecord }
   | { type: "browser.state_updated"; state: BrowserPanelStateRecord }
@@ -1637,6 +1638,13 @@ export interface PrepareTurnUndoInput {
 
 export interface UndoTurnChangesInput {
   messageId: string;
+}
+
+export interface RewindMessageResult {
+  notice?: string;
+  gitCommit?: string;
+  message: ChatMessageRecord;
+  removedMessageIds: string[];
 }
 
 export interface StartTurnInput {
@@ -1745,6 +1753,7 @@ export interface PrivoraDesktopApi {
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
   prepareTurnUndo(input: PrepareTurnUndoInput): Promise<TurnUndoRecord | null>;
   undoTurnChanges(input: UndoTurnChangesInput): Promise<TurnUndoRecord | null>;
+  rewindMessage(input: UndoTurnChangesInput): Promise<RewindMessageResult>;
   searchContextMentions(input: SearchContextMentionsInput): Promise<ContextMentionSuggestion[]>;
   listWorkspaceDirectory(input: { path: string }): Promise<WorkspaceDirectoryListing>;
   readWorkspaceFile(input: { path: string }): Promise<WorkspaceFileReadResult>;

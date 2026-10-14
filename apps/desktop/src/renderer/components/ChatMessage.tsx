@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, Copy, Download, Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Pencil, Download, Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
 import clsx from "clsx";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -45,6 +45,8 @@ interface ChatMessageProps {
   turnUndo: TurnUndoRecord | null;
   onPrepareTurnUndo: (messageId: string) => Promise<TurnUndoRecord | null>;
   onUndoTurnChanges: (messageId: string) => Promise<TurnUndoRecord | null>;
+  onEditMessage?: (messageId: string) => Promise<void>;
+  editDisabled?: boolean;
   showPlanActions?: boolean;
   onImplementPlan?: (plan: string) => void;
   onSuggestPlanChanges?: (plan: string) => void;
@@ -62,6 +64,8 @@ function ChatMessageComponent({
   turnUndo,
   onPrepareTurnUndo,
   onUndoTurnChanges,
+  onEditMessage,
+  editDisabled = false,
   showPlanActions = false,
   onImplementPlan,
   onSuggestPlanChanges,
@@ -98,6 +102,9 @@ function ChatMessageComponent({
       setActivityOpen(false);
     }
   }, [activityNeedsAttention, finalTextParts.length, inlineSteers.length, runActive]);
+  const [editing, setEditing] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const showCopyFeedback = () => {
     setCopied(true);
@@ -214,6 +221,26 @@ function ChatMessageComponent({
             <button type="button" title="Copy" className={copied ? "success" : undefined} onClick={copyMessage}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
+            {isUser && !message.steeredTurnId && onEditMessage && (
+              <button type="button" title={editDisabled ? "Finish the current run and queued prompts before editing" : "Edit message"} disabled={editDisabled || editBusy} onClick={() => { setEditing(true); setEditError(null); }}>
+                <Pencil size={14} />
+              </button>
+            )}
+          </div>
+        )}
+        {editing && (
+          <div className="message-edit-confirm" role="group" aria-label="Edit earlier message">
+            <p>Restore this prompt into the composer and remove this turn and later replies. Recorded file edits will be undone; your other edits are preserved.</p>
+            <p>Newly recorded committed file edits get a reversing Git commit. Untracked shell changes, Kali changes and actions on websites are not rolled back.</p>
+            {editError && <p role="alert">{editError}</p>}
+            <button type="button" disabled={editBusy || editDisabled} onClick={async () => {
+              if (!onEditMessage) return;
+              setEditBusy(true); setEditError(null);
+              try { await onEditMessage(message.id); setEditing(false); }
+              catch (error) { setEditError(error instanceof Error ? error.message : "Could not rewind this message."); }
+              finally { setEditBusy(false); }
+            }}>{editBusy ? "Restoring…" : "Rewind and edit"}</button>
+            <button type="button" disabled={editBusy} onClick={() => setEditing(false)}>Cancel</button>
           </div>
         )}
       </div>
@@ -223,6 +250,8 @@ function ChatMessageComponent({
 
 export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.message === next.message &&
+  previous.onEditMessage === next.onEditMessage &&
+  previous.editDisabled === next.editDisabled &&
   previous.inlineSteers === next.inlineSteers &&
   previous.tools === next.tools &&
   previous.subagents === next.subagents &&

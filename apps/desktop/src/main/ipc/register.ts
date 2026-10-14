@@ -101,6 +101,12 @@ export const registerIpc = (
   const threadsForWorkspace = (workspaceId: string | null) =>
     store.listThreads().filter((thread) => thread.workspaceId === workspaceId);
 
+  const rewindWorkspaces = new Set<string>();
+  const rewindKey = (threadId: string) => store.getThread(threadId)?.workspaceId || threadId;
+  const ensureNotRewinding = (threadId: string) => {
+    if (rewindWorkspaces.has(rewindKey(threadId))) throw new Error("Wait for the edit rewind to finish.");
+  };
+
   const hasBlockingRun = (threadId: string) => {
     const run = runtime.listActiveRuns().find((candidate) => candidate.threadId === threadId);
     return Boolean(run && !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status));
@@ -191,6 +197,7 @@ export const registerIpc = (
   });
 
   handle(channels.deleteThread, z.tuple([idSchema]), (_event, threadId: string) => {
+    ensureNotRewinding(threadId);
     if (hasBlockingRun(threadId)) throw new Error("Stop this chat before deleting it.");
     const deletedThread = store.getThread(threadId);
     // Jobs/evidence are retained at project level independently of the chat.
@@ -275,6 +282,7 @@ export const registerIpc = (
   });
 
   handle(channels.removeWorkspace, z.tuple([idSchema]), async (_event, workspaceId: string) => {
+    if (rewindWorkspaces.has(workspaceId)) throw new Error("Wait for the edit rewind to finish.");
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) throw new Error("Workspace not found.");
     const workspaceThreadIds = new Set(threadsForWorkspace(workspaceId).map((thread) => thread.id));
@@ -293,6 +301,7 @@ export const registerIpc = (
   });
 
   handle(channels.startTurn, z.tuple([startTurnInputSchema]), async (_event, input: StartTurnInput) => {
+    ensureNotRewinding(input.threadId);
     await runtime.startTurn(input);
   });
 
@@ -300,6 +309,7 @@ export const registerIpc = (
     runtime.steerTurn(input));
 
   handle(channels.continueRun, z.tuple([idSchema]), async (_event, threadId: string) => {
+    ensureNotRewinding(threadId);
     await runtime.continueRun(threadId);
   });
 
@@ -322,11 +332,36 @@ export const registerIpc = (
   });
 
   handle(channels.undoTurnChanges, z.tuple([messageIdInputSchema]), async (_event, input: { messageId: string }) => {
+    const target = store.getMessage(input.messageId);
+    if (target) ensureNotRewinding(target.threadId);
     const undoing = undoCoordinator.prepare(input.messageId);
     if (undoing) emit({ type: "turn_undo.updated", undo: { ...undoing, status: "undoing", updatedAt: Date.now() } });
     const undo = await undoCoordinator.undo(input.messageId);
     if (undo) emit({ type: "turn_undo.updated", undo });
     return undo;
+  });
+
+  handle(channels.rewindMessage, z.tuple([messageIdInputSchema]), async (_event, input: { messageId: string }) => {
+    const message = store.getMessage(input.messageId);
+    if (!message) throw new Error("Message is no longer available.");
+    const key = rewindKey(message.threadId);
+    ensureNotRewinding(message.threadId);
+    const workspaceThreads = store.listThreads().filter((thread) => rewindKey(thread.id) === key);
+    if (workspaceThreads.some((thread) => hasBlockingRun(thread.id))) throw new Error("Stop runs in this workspace before rewinding its files.");
+    const workspace = store.getWorkspace(store.getThread(message.threadId)?.workspaceId);
+    if (workspace && runtime.getTerminalState().sessions.some((session) => session.running && (session.cwd === workspace.path || session.cwd.startsWith(workspace.path + path.sep)))) {
+      throw new Error("Stop running workspace terminals before rewinding its files.");
+    }
+    rewindWorkspaces.add(key);
+    try {
+      const result = await undoCoordinator.rewind(input.messageId);
+      emit({ type: "thread.rewound", threadId: message.threadId, removedMessageIds: result.removedMessageIds });
+      emitSnapshot();
+      return result;
+    } finally {
+      rewindWorkspaces.delete(key);
+      emitSnapshot();
+    }
   });
 
   handle(channels.searchContextMentions, z.tuple([searchContextMentionsInputSchema]), async (_event, input: SearchContextMentionsInput) => {

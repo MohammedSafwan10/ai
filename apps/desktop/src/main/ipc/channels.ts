@@ -26,6 +26,7 @@ export const channels = {
   decideApproval: "desktop:decideApproval",
   prepareTurnUndo: "desktop:prepareTurnUndo",
   undoTurnChanges: "desktop:undoTurnChanges",
+  rewindMessage: "desktop:rewindMessage",
   searchContextMentions: "desktop:searchContextMentions",
   listWorkspaceDirectory: "desktop:listWorkspaceDirectory",
   readWorkspaceFile: "desktop:readWorkspaceFile",
