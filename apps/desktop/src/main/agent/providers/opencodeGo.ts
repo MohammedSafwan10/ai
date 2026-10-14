@@ -7,6 +7,7 @@ import {
 } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
+import { emitChatDisposition, emitResponsesDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 import {
   ResponsesToolCallTracker,
@@ -189,6 +190,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       if (usage) options.onUsage?.(usage);
       const choice = data?.choices?.[0] || {};
       const delta = choice.delta || {};
+      emitChatDisposition(options, choice);
       if (typeof delta.content === "string") options.onTextDelta(delta.content);
       if (typeof choice.message?.content === "string") options.onTextDelta(choice.message.content);
       const thought = delta.reasoning || delta.reasoning_content || delta.thought;
@@ -258,6 +260,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       const webSearch = webSearchEventFromResponse(event, data);
       if (webSearch) options.onWebSearch?.(webSearch);
 
+      emitResponsesDisposition(options, event, data);
       const text = responsesTextDelta(event, data);
       if (text) options.onTextDelta(text);
       const thought = responsesThoughtDelta(event, data);
@@ -403,6 +406,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         blocks.delete(data.index);
         return;
       }
+      if (data?.type === "message_delta" && data?.delta?.stop_reason === "refusal") options.onResponseDisposition?.("model_refusal");
       if (data?.type === "message_delta" && data?.usage) {
         if (data?.delta?.stop_reason === "max_tokens") hitMaxTokens = true;
         const usage = normalizeProviderUsage({

@@ -1036,6 +1036,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         }, 1000);
 
         try {
+          delete options.assistantMessage.responseDisposition;
           const subagent = this.store.getSubagentByThread(options.threadId);
           const currentSystemInstruction = isSecurityWorkspace && workspace.security
               ? buildSecuritySystemPrompt(
@@ -1045,6 +1046,7 @@ export class TurnCoordinator implements AgentHarnessApi {
                   subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
                 ].filter(Boolean).join("\n\n"),
                 effectiveCollaborationMode,
+                settings.permissionMode,
               )
               : buildDesktopSystemPrompt(
               options.workspaceRoot,
@@ -1085,6 +1087,11 @@ export class TurnCoordinator implements AgentHarnessApi {
                 lastStreamProgressEmitAt = Date.now();
                 this.emitRun(run);
               }
+            },
+            onResponseDisposition: (disposition) => {
+              if (samplingController.signal.aborted) return;
+              options.assistantMessage.responseDisposition = disposition;
+              flushAssistant("running");
             },
             onTextDelta: (delta) => {
               if (samplingController.signal.aborted) return;
@@ -1363,7 +1370,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
-          if (discardedDrafts > 0) {
+          if (discardedDrafts > 0 && !options.assistantMessage.responseDisposition) {
             if (recoveryAttempts >= MAX_STALL_RECOVERY_ATTEMPTS) {
               const failure = "The model repeatedly ended with an incomplete tool request. That request was not executed. Please retry your message.";
               const start = assistantText.length;
@@ -1378,13 +1385,13 @@ export class TurnCoordinator implements AgentHarnessApi {
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
-          if (noToolOutcome.action === "recover") {
+          if (noToolOutcome.action === "recover" && !options.assistantMessage.responseDisposition) {
             recoveryAttempts += 1;
             history = [...history, textProviderMessage(noToolOutcome.message)];
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
-          const swarmFeedback = await this.maybeRunReviewerSwarm({
+          const swarmFeedback = options.assistantMessage.responseDisposition ? null : await this.maybeRunReviewerSwarm({
             options,
             run,
             assistantText,
@@ -1420,9 +1427,14 @@ export class TurnCoordinator implements AgentHarnessApi {
           }
           transitionRun(run, "draining", { iteration, toolCount });
           transitionRun(run, "completed", { iteration, toolCount });
+          if (options.assistantMessage.responseDisposition && !assistantText.slice(textStart).trim()) {
+            const start = assistantText.length;
+            assistantText += `${assistantText ? "\n\n" : ""}${options.assistantMessage.responseDisposition === "model_refusal" ? "The model declined this request." : "The provider restricted this response."}`;
+            recordAssistantTextPart(options.assistantMessage, "final_answer", start, assistantText.length);
+          }
           if (!assistantText) {
             const startOffset = assistantText.length;
-            assistantText = "Done.";
+            assistantText = options.assistantMessage.responseDisposition === "model_refusal" ? "The model declined this request." : options.assistantMessage.responseDisposition === "provider_restriction" ? "The provider restricted this response." : "Done.";
             recordAssistantTextPart(options.assistantMessage, "final_answer", startOffset, assistantText.length);
           } else {
             markAssistantTextRangePhase(options.assistantMessage, textStart, assistantText.length, "final_answer");

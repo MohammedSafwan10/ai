@@ -1,6 +1,7 @@
 import { openRouterDesktopTools, parseDesktopToolCall, parsePartialDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
+import { emitChatDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 import { getModelOption, type ReasoningEffort } from "../../../shared/models";
 
@@ -169,6 +170,7 @@ export class OpenRouterAdapter implements ProviderAdapter {
       if (usage) options.onUsage?.(usage);
       const choice = data?.choices?.[0] || {};
       const delta = choice.delta || {};
+      emitChatDisposition(options, choice);
       if (typeof delta.content === "string") options.onTextDelta(delta.content);
       if (typeof choice.message?.content === "string") options.onTextDelta(choice.message.content);
       const thought = delta.reasoning || delta.reasoning_content || delta.thought;

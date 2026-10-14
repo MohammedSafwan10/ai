@@ -42,6 +42,20 @@ const fixture = () => {
 };
 
 describe("Security model loop", () => {
+  it("records an explicit refusal without retrying or claiming the task was done", async () => {
+    const { thread, coordinator } = fixture();
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      options.onResponseDisposition?.("model_refusal");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Local fixture" });
+    await coordinator.waitForIdle();
+    expect(provider.stream).toHaveBeenCalledTimes(1);
+    const answer = store.findLatestMessage(thread.id, "assistant");
+    expect(answer?.responseDisposition).toBe("model_refusal");
+    expect(answer?.content).toContain("model declined");
+    expect(coordinator.getActiveRun(thread.id)).toBeNull();
+  });
+
   it("finishes a steered response with a final-answer range and releases the running state", async () => {
     const { thread, coordinator } = fixture();
     let round = 0;

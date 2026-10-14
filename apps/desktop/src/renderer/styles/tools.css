@@ -839,3 +839,5 @@
   color: var(--privora-muted);
 }
 
+
+.tool-failure-source { color: var(--privora-text-muted); font-size: 11px; margin: 4px 0; }

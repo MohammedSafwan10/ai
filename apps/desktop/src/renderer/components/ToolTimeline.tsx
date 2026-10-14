@@ -1,3 +1,4 @@
+import { toolFailureLabel } from "../../shared/toolFailure";
 import { Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -187,6 +188,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                     active={tool.id === currentLiveToolId}
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
+                {toolFailureLabel(tool) && <p className="tool-failure-source">{toolFailureLabel(tool)}</p>}
                 {tool.approvalReason && tool.status === "awaiting_approval" && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
                 {expandedOutputIds.has(tool.id) && detailErrors[tool.id] && <p role="alert">{detailErrors[tool.id]}</p>}
                 {(hasUsefulOutput(displayOutput(tool)) || isTerminalOutputTool(tool) || liveFileDraftOutput(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
@@ -741,7 +743,7 @@ export const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: st
 
   const primary = stdout || stderr || sessionOutput;
   if (!primary && (liveOutput || resultOutput)) sections.push({ label: isLiveOutput(tool) ? "Live output" : "Output", value: liveOutput || resultOutput });
-  if (resultError && resultError !== resultOutput) sections.push({ label: "Error", value: resultError });
+  if (resultError && resultError !== resultOutput) sections.push({ label: toolFailureLabel(tool) || "Error", value: resultError });
 
   if (!sections.some((section) => section.label !== "Command")) sections.push({ label: "Output", value: "" });
   return sections;

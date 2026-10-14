@@ -8,6 +8,7 @@ import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./
 import type { ProviderWebSearchEvent } from "./types";
 import { normalizeLocalServiceBaseUrl } from "../../security/serviceUrls";
 import { readSse } from "./sse";
+import { emitResponsesDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 
 export const resolveCliproxyModelId = (modelId: string) =>
@@ -310,6 +311,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         const webSearch = webSearchEventFromResponse(event, data);
         if (webSearch) options.onWebSearch?.(webSearch);
 
+        emitResponsesDisposition(options, event, data);
         const text = responsesTextDelta(event, data);
         if (text) options.onTextDelta(text);
         const thought = responsesThoughtDelta(event, data);

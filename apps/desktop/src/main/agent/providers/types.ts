@@ -46,6 +46,7 @@ export interface ProviderStreamOptions {
   geminiApiKey: string;
   deepseekApiKey: string;
   opencodeGoApiKey: string;
+  onResponseDisposition?: (disposition: "model_refusal" | "provider_restriction") => void;
   onTextDelta: (delta: string) => void;
   onThoughtDelta: (delta: string) => void;
   onThoughtReplace?: (text: string) => void;

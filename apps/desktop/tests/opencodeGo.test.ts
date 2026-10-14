@@ -17,6 +17,30 @@ import { OpenCodeGoAdapter } from "../src/main/agent/providers/opencodeGo";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 
 describe("opencode go model discovery", () => {
+  it.each([
+    { model: "opencode-go/glm-5.3-flash", event: { choices: [{ delta: { refusal: "Cannot assist with that request." } }] }, expected: "model_refusal" },
+    { model: "opencode-go/gpt-6-luna", event: { type: "response.refusal.delta", delta: "Cannot assist with that request." }, expected: "model_refusal" },
+    { model: "opencode-go/claude-haiku-5-5", event: { type: "message_delta", delta: { stop_reason: "refusal" } }, expected: "model_refusal" },
+    { model: "opencode-go/glm-5.3-flash", event: { choices: [{ finish_reason: "content_filter" }] }, expected: "provider_restriction" },
+  ])("reports explicit response disposition for $model / $expected", async ({ model, event, expected }) => {
+    const onResponseDisposition = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith([`data: ${JSON.stringify(event)}\n\n`])));
+    try {
+      await new OpenCodeGoAdapter().stream(goOptions({ model, onResponseDisposition }));
+      expect(onResponseDisposition).toHaveBeenCalledWith(expected);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("does not label an ordinary connection explanation as a refusal", async () => {
+    const onResponseDisposition = vi.fn();
+    const onTextDelta = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponseWith(['data: {"choices":[{"delta":{"content":"I cannot connect to SSH."}}]}\n\n'])));
+    try {
+      await new OpenCodeGoAdapter().stream(goOptions({ onResponseDisposition, onTextDelta }));
+      expect(onResponseDisposition).not.toHaveBeenCalled();
+      expect(onTextDelta).toHaveBeenCalledWith("I cannot connect to SSH.");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it.each(["opencode-go/glm-5.3-flash", "opencode-go/deepseek-v4.1-flash"])("serializes tool results without unsupported message names for %s", async (model) => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => sseResponseWith([]));
     vi.stubGlobal("fetch", fetchMock);

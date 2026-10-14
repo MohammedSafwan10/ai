@@ -144,6 +144,7 @@ function ChatMessageComponent({
                 activityOpen={activityOpen}
                 onToggleActivity={() => setActivityOpen((value) => !value)}
               />
+              {message.responseDisposition && <p className="response-disposition" role="status">{message.responseDisposition === "model_refusal" ? "Model declined this request" : "Provider restricted this response"}</p>}
               <div className="assistant-flow">
                 {inlineSteers.length > 0 ? (
                   // Keep steering messages and final answers in chronological order.

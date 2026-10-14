@@ -906,6 +906,7 @@ export interface ChatMessageRecord {
   textParts?: AssistantTextPartRecord[];
   thought?: string;
   thoughtParts?: AssistantThoughtPartRecord[];
+  responseDisposition?: "model_refusal" | "provider_restriction";
   steeredTurnId?: string;
   steerTextOffset?: number;
   steerStreamOrder?: number;
