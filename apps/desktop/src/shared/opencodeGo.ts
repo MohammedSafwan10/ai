@@ -49,6 +49,18 @@ interface OpenCodeGoFamily {
 // per model family.
 const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
   {
+    prefixes: ["claude-haiku-5-5"], route: "messages",
+    contextWindowTokens: 1_000_000, maxOutputTokens: 128_000,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "none", vision: true,
+  },
+  {
+    prefixes: ["gpt-6-luna"], route: "responses",
+    contextWindowTokens: 1_050_000, maxOutputTokens: 128_000,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "none", vision: true,
+  },
+  {
     prefixes: ["deepseek-"],
     route: "chat",
     contextWindowTokens: 1_048_576,
@@ -224,7 +236,7 @@ export const normalizeGoError = (value: string, status?: number) => {  const tri
     return "OpenCode Go rejected the saved API key. Replace it in Settings > Providers with a key from your Zen console Go subscription.";
   }
   if (status === 429 || /limit|quota|cap/i.test(message)) {
-    return `OpenCode Go usage cap reached ($12/5h, $30/week, $60/month). Wait for reset or enable Zen-balance fallback. (${message})`;
+    return `OpenCode Go usage cap reached. Limits vary by model and plan; check OpenCode Console for the allowance and reset time. (${message})`;
   }
   if (/x-opencode-session/i.test(message)) {
     return `OpenCode Go rejected the request routing (missing session). Update Privora past the Go session-header support and retry. (${message})`;

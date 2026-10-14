@@ -10,6 +10,7 @@ export interface ProviderWebSearchEvent {
 }
 
 export type ProviderPart =
+  | { type: "reasoning"; text: string; signature?: string }
   | { type: "text"; text: string }
   | { type: "image"; name: string; mimeType: string; data: string }
   | { type: "function_call"; id: string; name: string; arguments: Record<string, unknown>; thoughtSignature?: string }
@@ -50,7 +51,7 @@ export interface ProviderStreamOptions {
   onThoughtReplace?: (text: string) => void;
   onToolDraft: (draft: { id?: string; name: string; arguments: Record<string, unknown> }) => void;
   onToolCall: (call: DesktopToolCall) => void;
-  onProviderContextPart?: (part: Extract<ProviderPart, { type: "server_tool_call" | "server_tool_response" }>) => void;
+  onProviderContextPart?: (part: Extract<ProviderPart, { type: "server_tool_call" | "server_tool_response" | "reasoning" }>) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
   onAiCredits?: (event: { creditsUsed: number; estimatedCredits: number; summary?: AiCreditSummaryRecord }) => void;
   onStreamProgress?: () => void;

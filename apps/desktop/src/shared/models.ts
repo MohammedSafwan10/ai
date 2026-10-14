@@ -53,6 +53,8 @@ export const OPENCODE_GO_GPT_56_LUNA_MODEL_ID = "opencode-go/gpt-5.6-luna";
 export const OPENCODE_GO_MINIMAX_M3_MODEL_ID = "opencode-go/minimax-m3";
 export const OPENCODE_GO_GROK_46_MODEL_ID = "opencode-go/grok-4.6";
 export const OPENCODE_GO_MUSE_SPK_13_MODEL_ID = "opencode-go/muse-spark-1.3-contributor";
+export const OPENCODE_GO_GPT_6_LUNA_MODEL_ID = "opencode-go/gpt-6-luna";
+export const OPENCODE_GO_HAIKU_55_MODEL_ID = "opencode-go/claude-haiku-5-5";
 export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
 export const GPT_56_SOL_MODEL_ID = "gpt-5.6-sol";
 export const GPT_56_TERRA_MODEL_ID = "gpt-5.6-terra";
@@ -279,6 +281,24 @@ const modelOptions: ModelOption[] = [
     defaultOutputTokens: OPENCODE_GO_DEFAULT_OUTPUT_TOKENS,
     upstreamModelId: "grok-4.6",
     description: "Frontier reasoning model via the Go Responses route. Billed to Go caps.",
+  },
+  {
+    id: OPENCODE_GO_GPT_6_LUNA_MODEL_ID,
+    label: "GPT-6 Luna (Go)", provider: "opencode-go",
+    supportsTools: true, supportsImageInput: true, supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultReasoningEffort: "none",
+    contextWindowTokens: 1_050_000, maxOutputTokens: 128_000, defaultOutputTokens: OPENCODE_GO_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "gpt-6-luna",
+    description: "Efficient coding and agent model through Go's Responses route. Go usage limits apply.",
+  },
+  {
+    id: OPENCODE_GO_HAIKU_55_MODEL_ID,
+    label: "Claude Haiku 5.5 (Go)", provider: "opencode-go",
+    supportsTools: true, supportsImageInput: true, supportsReasoning: true,
+    reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultReasoningEffort: "none",
+    contextWindowTokens: 1_000_000, maxOutputTokens: 128_000, defaultOutputTokens: OPENCODE_GO_DEFAULT_OUTPUT_TOKENS,
+    upstreamModelId: "claude-haiku-5-5",
+    description: "Fast multimodal Claude with adaptive thinking through Go's Messages route. Go usage limits apply.",
   },
   {
     id: OPENCODE_GO_MUSE_SPK_13_MODEL_ID,

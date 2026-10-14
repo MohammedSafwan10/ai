@@ -17,6 +17,45 @@ import { OpenCodeGoAdapter } from "../src/main/agent/providers/opencodeGo";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 
 describe("opencode go model discovery", () => {
+  it("offers the requested Luna and Haiku models with correct routes and budgets", () => {
+    expect(getModelOption("opencode-go/gpt-6-luna")).toMatchObject({ label: "GPT-6 Luna (Go)", contextWindowTokens: 1_050_000, defaultReasoningEffort: "none" });
+    expect(getModelOption("opencode-go/claude-haiku-5-5")).toMatchObject({ label: "Claude Haiku 5.5 (Go)", contextWindowTokens: 1_000_000, maxOutputTokens: 128_000 });
+    expect(goRouteFor("opencode-go/gpt-6-luna")).toBe("responses");
+    expect(goRouteFor("opencode-go/claude-haiku-5-5")).toBe("messages");
+    expect(synthesizeGoModelOption("claude-haiku-5-5")?.supportsImageInput).toBe(true);
+  });
+
+  it("sends real reasoning-off for Luna and adaptive effort for Haiku", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => sseResponseWith([]));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/gpt-6-luna", reasoning: "none" }));
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).reasoning).toEqual({ effort: "none" });
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", reasoning: "high", messages: [{ role: "assistant", content: "", parts: [{ type: "reasoning", text: "check", signature: "signed" }, { type: "function_call", id: "tool", name: "desktop_list_dir", arguments: {} }] }] }));
+      const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+      expect(body.thinking).toEqual({ type: "adaptive" });
+      expect(body.output_config).toEqual({ effort: "high" });
+      expect(body.messages[0].content[0]).toEqual({ type: "thinking", thinking: "check", signature: "signed" });
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", reasoning: "none" }));
+      expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).thinking).toEqual({ type: "disabled" });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("retains Haiku thinking signatures for subsequent tool-result turns", async () => {
+    const events = [
+      { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Checking" } },
+      { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "signed-block" } },
+      { type: "content_block_stop", index: 0 },
+    ];
+    const fetchMock = vi.fn(async () => sseResponseWith(events.map((event) => `data: ${JSON.stringify(event)}\n\n`)));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const onProviderContextPart = vi.fn();
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", onProviderContextPart }));
+      expect(onProviderContextPart).toHaveBeenCalledWith({ type: "reasoning", text: "Checking", signature: "signed-block" });
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("synthesizes safe options for chat-route families", () => {
     const flash = synthesizeGoModelOption("opencode-go/deepseek-v4-flash");
     expect(flash).toMatchObject({
@@ -223,7 +262,7 @@ describe("opencode go model discovery", () => {
     vi.stubGlobal("fetch", fetchMock);
     try {
       await new OpenCodeGoAdapter().stream(goOptions({
-        model: "opencode-go/gpt-5.6-luna",
+        model: "opencode-go/muse-spark-1.3-contributor",
         reasoning: "none",
       }));
       const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];

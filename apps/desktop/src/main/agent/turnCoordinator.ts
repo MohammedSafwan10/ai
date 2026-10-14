@@ -1204,7 +1204,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             },
             onProviderContextPart: (part) => {
               if (samplingController.signal.aborted) return;
-              samplingRequest.interruptible = part.type === "server_tool_response";
+              if (part.type !== "reasoning") samplingRequest.interruptible = part.type === "server_tool_response";
               providerContextParts.push(part);
             },
             onUsage: (usage) => {

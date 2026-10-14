@@ -226,9 +226,9 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           parallel_tool_calls: true,
         } : {}),
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
-        // "none" omits reasoning entirely: some Responses models (Muse Spark)
-        // answer HTTP 400 when asked to disable reasoning explicitly.
-        ...(options.reasoning === "none" ? {} : { reasoning: { effort: options.reasoning, summary: "auto" } }),
+        // GPT accepts explicit reasoning-off. Other Responses models such as
+        // Muse reject it, so retain their omission behavior.
+        ...(options.reasoning === "none" && !stripGoPrefix(options.model).startsWith("gpt-") ? {} : { reasoning: { effort: options.reasoning, ...(options.reasoning !== "none" ? { summary: "auto" } : {}) } }),
         stream: true,
         // No temperature: reasoning models behind the gateway (e.g. Luna)
         // reject non-default values, and omission is safe everywhere.
@@ -321,6 +321,9 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           })),
           tool_choice: { type: "auto" },
         } : {}),
+        ...(stripGoPrefix(options.model) === "claude-haiku-5-5" ? (options.reasoning === "none"
+          ? { thinking: { type: "disabled" }, output_config: { effort: "low" } }
+          : { thinking: { type: "adaptive" }, output_config: { effort: options.reasoning } }) : {}),
         max_tokens: options.maxOutputTokens || model.maxOutputTokens || 32_768,
         stream: true,
         // No temperature: omitted everywhere on Go — strict models reject it.
@@ -333,7 +336,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       throw new Error(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status));
     }
 
-    const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean }>();
+    const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean; thinking?: string; signature?: string }>();
     let inputTokens = 0;
     let thoughtChars = 0;
     let hitMaxTokens = false;
@@ -369,17 +372,22 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           name: typeof block.name === "string" ? block.name : undefined,
           json: "",
           emitted: false,
+          thinking: typeof block.thinking === "string" ? block.thinking : "",
+          signature: typeof block.signature === "string" ? block.signature : "",
         });
         return;
       }
       if (data?.type === "content_block_delta") {
         const delta = data.delta || {};
-        const block = blocks.get(data.index) || { json: "", emitted: false };
+        const block = blocks.get(data.index) || { json: "", emitted: false, thinking: "", signature: "" };
         if (delta.type === "text_delta" && typeof delta.text === "string") {
           options.onTextDelta(delta.text);
         } else if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
           thoughtChars += delta.thinking.length;
           options.onThoughtDelta(delta.thinking);
+          block.thinking = (block.thinking || "") + delta.thinking;
+        } else if (delta.type === "signature_delta" && typeof delta.signature === "string") {
+          block.signature = (block.signature || "") + delta.signature;
         } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
           block.json += delta.partial_json;
           const draft = parsePartialDesktopToolCall(block.name, block.json);
@@ -389,6 +397,8 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         return;
       }
       if (data?.type === "content_block_stop") {
+        const block = blocks.get(data.index);
+        if (block?.kind === "thinking" && block.signature) options.onProviderContextPart?.({ type: "reasoning", text: block.thinking || "", signature: block.signature });
         flushBlock(data.index);
         blocks.delete(data.index);
         return;
@@ -444,7 +454,7 @@ const toAnthropicMessages = (messages: ProviderMessage[]) => {
     }
 
     if (message.role === "assistant" && functionCalls.length > 0) {
-      const content: Array<Record<string, unknown>> = [];
+      const content: Array<Record<string, unknown>> = parts.flatMap((part) => part.type === "reasoning" && part.signature ? [{ type: "thinking", thinking: part.text, signature: part.signature }] : []);
       if (text) content.push({ type: "text", text });
       functionCalls.forEach((part) => {
         content.push({
