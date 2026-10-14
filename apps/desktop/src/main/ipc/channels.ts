@@ -52,6 +52,7 @@ export const channels = {
   refreshAiCredits: "desktop:refreshAiCredits",
   getBrowserState: "desktop:getBrowserState",
   setBrowserVisible: "desktop:setBrowserVisible",
+  setBrowserOccluded: "desktop:setBrowserOccluded",
   setBrowserBounds: "desktop:setBrowserBounds",
   openBrowserUrl: "desktop:openBrowserUrl",
   navigateBrowser: "desktop:navigateBrowser",

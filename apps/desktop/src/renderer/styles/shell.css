@@ -78,6 +78,8 @@
 }
 
 .topbar {
+  container-type: inline-size;
+  container-name: chat-header;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -111,6 +113,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+@container chat-header (max-width: 560px) {
+  .update-pill { width: 34px; padding: 0; }
+  .update-pill > span { display: none; }
+  .subagent-topbar-label { display: none; }
 }
 
 .update-icon-button,

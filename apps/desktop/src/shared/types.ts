@@ -1781,6 +1781,7 @@ export interface PrivoraDesktopApi {
   refreshAiCredits(): Promise<AiCreditSummaryRecord>;
   getBrowserState(workspaceId: string): Promise<BrowserPanelStateRecord | null>;
   setBrowserVisible(workspaceId: string, visible: boolean): Promise<BrowserPanelStateRecord | null>;
+  setBrowserOccluded(occluded: boolean): Promise<void>;
   setBrowserBounds(input: BrowserBoundsInput): Promise<BrowserPanelStateRecord | null>;
   openBrowserUrl(input: BrowserOpenInput): Promise<BrowserPanelStateRecord>;
   navigateBrowser(input: BrowserNavigationInput): Promise<BrowserPanelStateRecord>;

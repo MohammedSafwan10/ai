@@ -26,7 +26,7 @@
 .agent-coordination-line > div { margin: 10px 0 10px 18px; color: var(--privora-text); }
 .agent-spawn-line { display: flex; gap: 8px; align-items: center; border: 0; background: transparent; color: var(--privora-muted); cursor: pointer; padding: 8px 0; font-size: 12px; }
 .agent-spawn-line:hover { color: var(--privora-text); }
-.subagent-topbar-button { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--privora-muted); cursor: pointer; padding: 6px; border-radius: 6px; font-size: 12px; }
+.subagent-topbar-button { display: inline-flex; flex-shrink: 0; white-space: nowrap; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--privora-muted); cursor: pointer; padding: 6px; border-radius: 6px; font-size: 12px; }
 .subagent-topbar-button:hover { color: var(--privora-text); background: var(--privora-surface-faint); }
 @keyframes agent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .agent-status-dot.live { animation: none; } }

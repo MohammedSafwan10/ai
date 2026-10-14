@@ -604,6 +604,9 @@ export const registerIpc = (
   handle(channels.setBrowserVisible, z.tuple([idSchema, z.boolean()]), (_event, workspaceId: string, visible: boolean) => {
     return browserManager.setVisible(workspaceId, visible);
   });
+  handle(channels.setBrowserOccluded, z.tuple([z.boolean()]), (_event, occluded: boolean) => {
+    browserManager.setOccluded(occluded);
+  });
 
   handle(channels.setBrowserBounds, z.tuple([browserBoundsInputSchema]), (_event, input: BrowserBoundsInput) => {
     return browserManager.setBounds(input.workspaceId, {

@@ -144,6 +144,7 @@ const MAX_PDF_BYTES = 32 * 1024 * 1024;
 const PDF_FETCH_TIMEOUT_MS = 20_000;
 
 export class BrowserSessionManager {
+  private nativeViewsOccluded = false;
   private sessions = new Map<string, BrowserSessionRecord>();
   private workspaceTabs = new Map<string, BrowserSessionRecord[]>();
   private downloads = new Map<string, BrowserDownloadRecord[]>();
@@ -248,6 +249,12 @@ export class BrowserSessionManager {
     });
     this.updateState(session, { visible });
     return session.state;
+  }
+
+  setOccluded(occluded: boolean) {
+    if (this.nativeViewsOccluded === occluded) return;
+    this.nativeViewsOccluded = occluded;
+    this.workspaceTabs.forEach((tabs) => tabs.forEach((tab) => this.syncAttachment(tab)));
   }
 
   setBounds(workspaceId: string | null | undefined, bounds: Rectangle) {
@@ -1710,7 +1717,7 @@ export class BrowserSessionManager {
     const window = this.getMainWindow();
     if (!window || window.isDestroyed()) return;
     const active = this.sessions.get(session.workspaceId);
-    const shouldAttach = active?.id === session.id && session.visible && Boolean(session.view.webContents.getURL()) && session.bounds.width > 0 && session.bounds.height > 0;
+    const shouldAttach = !this.nativeViewsOccluded && active?.id === session.id && session.visible && Boolean(session.view.webContents.getURL()) && session.bounds.width > 0 && session.bounds.height > 0;
     if (shouldAttach && !session.attached) {
       window.contentView.addChildView(session.view);
       session.attached = true;

@@ -9,6 +9,8 @@
 .security-dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .security-dialog > header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; background: var(--privora-bg); border-bottom: 1px solid var(--privora-border); }
 .security-dialog h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.security-dialog > header h2 { min-width: 0; overflow-wrap: anywhere; }
+.security-dialog > header button { flex-shrink: 0; }
 .security-dialog h3 { font-size: 13px; font-weight: 600; margin: 0; }
 .security-dialog h4 { font-size: 12px; font-weight: 600; margin: 14px 0 6px; }
 .security-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--privora-text); border: 1px solid var(--privora-border); border-radius: 7px; padding: 7px 10px; font-size: 12px; }

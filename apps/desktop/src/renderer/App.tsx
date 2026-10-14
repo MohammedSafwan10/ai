@@ -12,6 +12,7 @@ import { SecurityBrowserPane } from "./features/security/SecurityBrowserPane";
 import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
 import { SubagentsPanel } from "./features/chat/SubagentsPanel";
+import { useBrowserOcclusion } from "./features/browser/useBrowserOcclusion";
 import { RequestUserInputPanel } from "./components/RequestUserInputPanel";
 import { CreateSecurityWorkspaceDialog, SecurityWorkspaceBadge, SecurityWorkspaceDetails, useSecurityWorkspace } from "./features/security/SecurityWorkspace";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
@@ -48,6 +49,7 @@ export default function App() {
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsDestination>("general");
   const [ideCollapsed, setIdeCollapsed] = useState(true);
   const [ideCollapsedByUser, setIdeCollapsedByUser] = useState(false);
+  useBrowserOcclusion(settingsOpen || createSecurityOpen || securityDetailsOpen || ideCollapsed || subagentsOpen);
   const [ideWidth, setIdeWidth] = useState(620);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [ideResizing, setIdeResizing] = useState(false);
@@ -480,7 +482,7 @@ export default function App() {
         topbarTrailing={(
           <>
             <UpdateControl status={updateStatus} />
-            <button className="subagent-topbar-button" title="Show subagents" onClick={() => { setSubagentRequest(null); setSubagentsOpen(true); setIdeCollapsed(false); }}><span className={`agent-status-dot ${snapshot.subagents.some((agent) => ["pending", "running", "waiting"].includes(agent.status)) ? "live" : "completed"}`} /><span>Subagents · {snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length} active · {snapshot.subagents.filter((agent) => agent.status === "completed").length} done</span></button>
+            <button className="subagent-topbar-button" aria-label="Show subagents" title={`Subagents: ${snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length} active, ${snapshot.subagents.filter((agent) => agent.status === "completed").length} done`} onClick={() => { setSubagentRequest(null); setSubagentsOpen(true); setIdeCollapsed(false); }}><span className={`agent-status-dot ${snapshot.subagents.some((agent) => ["pending", "running", "waiting"].includes(agent.status)) ? "live" : "completed"}`} /><span className="subagent-topbar-label">Subagents</span><span>{snapshot.subagents.length}</span></button>
             {!isSecurityWorkspace && <AppLauncher disabled={!activeWorkspace} />}
           </>
         )}

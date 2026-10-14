@@ -103,6 +103,7 @@ const api: PrivoraDesktopApi = {
   refreshAiCredits: () => ipcRenderer.invoke(channels.refreshAiCredits),
   getBrowserState: (workspaceId: string) => ipcRenderer.invoke(channels.getBrowserState, workspaceId),
   setBrowserVisible: (workspaceId: string, visible: boolean) => ipcRenderer.invoke(channels.setBrowserVisible, workspaceId, visible),
+  setBrowserOccluded: (occluded: boolean) => ipcRenderer.invoke(channels.setBrowserOccluded, occluded),
   setBrowserBounds: (input: BrowserBoundsInput) => ipcRenderer.invoke(channels.setBrowserBounds, input),
   openBrowserUrl: (input: BrowserOpenInput) => ipcRenderer.invoke(channels.openBrowserUrl, input),
   navigateBrowser: (input: BrowserNavigationInput) => ipcRenderer.invoke(channels.navigateBrowser, input),
