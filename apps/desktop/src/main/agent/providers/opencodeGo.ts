@@ -308,11 +308,12 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         // x-api-key, not (only) Authorization: Bearer. Send both.
         "x-api-key": options.opencodeGoApiKey,
         "anthropic-version": "2023-06-01",
+        ...(stripGoPrefix(options.model) === "claude-haiku-5-5" && options.reasoning !== "none" ? { "anthropic-beta": "thinking-binding-controls-2026-08-01" } : {}),
       },
       body: JSON.stringify({
         model: stripGoPrefix(options.model),
         ...(options.systemInstruction ? { system: options.systemInstruction } : {}),
-        messages: toAnthropicMessages(options.messages),
+        messages: toAnthropicMessages(options.messages, options.reasoning !== "none"),
         ...(!options.disableTools ? {
           tools: desktopToolDefinitionsForMode(options.collaborationMode, options.toolEnvironment).map((tool) => ({
             name: tool.name,
@@ -323,7 +324,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         } : {}),
         ...(stripGoPrefix(options.model) === "claude-haiku-5-5" ? (options.reasoning === "none"
           ? { thinking: { type: "disabled" }, output_config: { effort: "low" } }
-          : { thinking: { type: "adaptive" }, output_config: { effort: options.reasoning } }) : {}),
+          : { thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } }, output_config: { effort: options.reasoning } }) : {}),
         max_tokens: options.maxOutputTokens || model.maxOutputTokens || 32_768,
         stream: true,
         // No temperature: omitted everywhere on Go — strict models reject it.
@@ -424,7 +425,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
   }
 };
 
-const toAnthropicMessages = (messages: ProviderMessage[]) => {
+const toAnthropicMessages = (messages: ProviderMessage[], includeThinking = true) => {
   const out: Array<{ role: "user" | "assistant"; content: Array<Record<string, unknown>> }> = [];
   const push = (role: "user" | "assistant", content: Array<Record<string, unknown>>) => {
     if (content.length === 0) return;
@@ -454,7 +455,7 @@ const toAnthropicMessages = (messages: ProviderMessage[]) => {
     }
 
     if (message.role === "assistant" && functionCalls.length > 0) {
-      const content: Array<Record<string, unknown>> = parts.flatMap((part) => part.type === "reasoning" && part.signature ? [{ type: "thinking", thinking: part.text, signature: part.signature }] : []);
+      const content: Array<Record<string, unknown>> = parts.flatMap((part) => includeThinking && part.type === "reasoning" && part.signature ? [{ type: "thinking", thinking: part.text, signature: part.signature }] : []);
       if (text) content.push({ type: "text", text });
       functionCalls.forEach((part) => {
         content.push({

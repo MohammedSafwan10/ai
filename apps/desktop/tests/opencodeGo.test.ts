@@ -33,11 +33,14 @@ describe("opencode go model discovery", () => {
       expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).reasoning).toEqual({ effort: "none" });
       await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", reasoning: "high", messages: [{ role: "assistant", content: "", parts: [{ type: "reasoning", text: "check", signature: "signed" }, { type: "function_call", id: "tool", name: "desktop_list_dir", arguments: {} }] }] }));
       const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-      expect(body.thinking).toEqual({ type: "adaptive" });
+      expect(body.thinking).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+      expect((fetchMock.mock.calls[1][1].headers as Record<string, string>)["anthropic-beta"]).toBe("thinking-binding-controls-2026-08-01");
       expect(body.output_config).toEqual({ effort: "high" });
       expect(body.messages[0].content[0]).toEqual({ type: "thinking", thinking: "check", signature: "signed" });
-      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", reasoning: "none" }));
-      expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).thinking).toEqual({ type: "disabled" });
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/claude-haiku-5-5", reasoning: "none", messages: [{ role: "assistant", content: "", parts: [{ type: "reasoning", text: "old thought", signature: "signed" }, { type: "function_call", id: "tool", name: "desktop_list_dir", arguments: {} }] }] }));
+      const disabledBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+      expect(disabledBody.thinking).toEqual({ type: "disabled" });
+      expect(disabledBody.messages[0].content.some((part: { type: string }) => part.type === "thinking")).toBe(false);
     } finally { vi.unstubAllGlobals(); }
   });
 

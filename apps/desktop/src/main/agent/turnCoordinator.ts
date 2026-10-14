@@ -831,6 +831,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     let recoveryAttempts = options.recoveryAttempts;
     let lastProviderUsage: TokenUsageRecord | null = null;
     let totalProviderUsage: TokenUsageRecord | null = null;
+    let boundSystemInstruction: string | undefined;
     const agentsMdContext = await buildAgentsMdContext(options.workspaceRoot);
     if (options.controller.signal.aborted) {
       this.pendingSteers.delete(options.threadId);
@@ -1036,10 +1037,7 @@ export class TurnCoordinator implements AgentHarnessApi {
 
         try {
           const subagent = this.store.getSubagentByThread(options.threadId);
-          await this.modelLoop.stream({
-            provider: getProviderForModel(effectiveModel),
-            model: effectiveModel,
-            systemInstruction: isSecurityWorkspace && workspace.security
+          const currentSystemInstruction = isSecurityWorkspace && workspace.security
               ? buildSecuritySystemPrompt(
                 workspace.security,
                 this.store.getSecurityEnvironment(workspace.security.environmentId),
@@ -1056,7 +1054,12 @@ export class TurnCoordinator implements AgentHarnessApi {
                 subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
               ].filter(Boolean).join("\n\n"),
               effectiveCollaborationMode,
-            ),
+            );
+          if (effectiveModel === "opencode-go/claude-haiku-5-5") boundSystemInstruction ??= currentSystemInstruction;
+          await this.modelLoop.stream({
+            provider: getProviderForModel(effectiveModel),
+            model: effectiveModel,
+            systemInstruction: boundSystemInstruction ?? currentSystemInstruction,
             messages: history,
             reasoning: effectiveReasoning,
             collaborationMode: effectiveCollaborationMode,
