@@ -93,7 +93,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       {transcript?.run && selected && <button className="workspace-icon-button" onClick={() => { void window.privoraDesktop.stopTurn(selected).catch((reason: unknown) => setError(String(reason))); }} aria-label="Stop this agent"><Square size={14} /></button>}
       <button className="workspace-icon-button" onClick={onClose} aria-label="Close subagents panel"><PanelRightClose size={16} /></button>
     </header>
-    {agent && <div className="agent-panel-meta">{status(agent)} · {agent.model} · {agent.reasoningEffort}<p>{agent.prompt}</p></div>}
+    {agent && <div className="agent-panel-meta"><div>{status(agent)} · {agent.model} · {agent.reasoningEffort}</div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
     <div className="agent-panel-scroll" ref={scroller} onScroll={() => { const el = scroller.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {error && <div role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
       {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title} · {group.rows.length}</h3>
