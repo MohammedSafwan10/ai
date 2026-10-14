@@ -274,7 +274,7 @@ export class SecurityWorkspaceService {
     let job = initial;
     const decoder = new KaliOutputDecoder();
     const preview = new HeadTailOutputBuffer(32_000);
-    // Replay retained bytes from zero to reconstruct UTF-8 and redaction boundaries
+    // Replay retained bytes from zero to reconstruct UTF-8 boundaries
     // after a restart. Existing output is not emitted twice to the chat.
     const previousSequence = initial.sequence;
     const emit = (text: string, live: boolean) => {
@@ -297,7 +297,7 @@ export class SecurityWorkspaceService {
       emit(decoder.finish(), true);
       return this.merge({ ...job, outputPreview: preview.toString() }, remote);
     } catch (error) {
-      // Pending partial lines are intentionally not exposed on a lost connection.
+      // Keep emitted partial output while leaving an uncertain job recoverable.
       return this.unknown(job, error);
     }
   }

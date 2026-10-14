@@ -123,7 +123,7 @@ export const diffStats = (diff?: string) => {
 export const previewForTool = (call: DesktopToolCall, output?: string, diff?: string) => {
   if (diff) return diff.slice(0, 12_000);
   if (["kali_exec", "kali_job_status", "kali_job_output", "kali_job_cancel", "kali_capabilities", "kali_artifact", "security_finding_list", "security_finding_save"].includes(call.name)) {
-    return output ? redactSecrets(output).slice(-12_000) : undefined;
+    return output ? output.slice(-12_000) : undefined;
   }
   if (["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics"].includes(call.name)) {
     return output?.slice(-12_000);

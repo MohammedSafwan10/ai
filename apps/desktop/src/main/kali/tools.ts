@@ -8,27 +8,11 @@ export const SECURITY_TOOL_NAMES = [
 
 export const isSecurityTool = (name: string) => SECURITY_TOOL_NAMES.some((tool) => tool === name);
 
-/** Display only: leave execution argv intact and keep opaque scripts out of logs. */
+/** Local command history mirrors the argv actually sent to the assigned VM. */
 export const kaliCommandPreview = (argv: readonly unknown[]) => {
-  const executable = String(argv[0] || "").split(/[\\/]/).pop()?.toLowerCase() || "";
-  const shell = /^(?:ba|da|z|k)?sh$/.test(executable);
-  const interpreter = shell || /^(?:python[\d.]*|node|perl|ruby|pwsh|powershell)(?:\.exe)?$/.test(executable);
-  let hideNext = false;
-  const displayed = argv.map((arg, index) => {
+  const displayed = argv.map((arg) => {
     const value = String(arg);
-    if (hideNext) { hideNext = false; return "[redacted]"; }
-    if (index > 0 && interpreter && (/^(?:-c|-e|--command|-command|-encodedcommand)$/i.test(value) || (shell && /^-[a-z]*c[a-z]*$/i.test(value)))) {
-      hideNext = true;
-      return value;
-    }
-    if (/^--?(?:password|passwd|passphrase|token|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|proxy-user|user)(?:=|$)/i.test(value) || (index > 0 && /^(curl|wget)$/.test(executable) && value === "-u")) {
-      const equals = value.indexOf("=");
-      if (equals >= 0) return `${value.slice(0, equals + 1)}[redacted]`;
-      hideNext = true;
-      return value;
-    }
-    const safe = redactSecrets(value).replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
-    return /\s/.test(safe) ? JSON.stringify(safe) : safe;
+    return /\s/.test(value) ? JSON.stringify(value) : value;
   });
   return displayed.join(" ").slice(0, 2000);
 };
@@ -55,42 +39,15 @@ export const kaliArtifactMime = (name: string, bytes: Buffer) => {
   return "application/octet-stream";
 };
 
-/** Secrets can span transport chunks. Only release complete lines after redaction. */
+/** Emit partial lines immediately, preserving split UTF-8 per output stream. */
 export class KaliOutputDecoder {
   private readonly decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
-  private readonly lines = { stdout: "", stderr: "" };
-  private readonly discarded = { stdout: false, stderr: false };
 
   push(stream: "stdout" | "stderr", bytes: Buffer) {
-    return this.accept(stream, this.decoders[stream].write(bytes));
+    return this.decoders[stream].write(bytes);
   }
 
   finish() {
-    let result = "";
-    for (const stream of ["stdout", "stderr"] as const) {
-      result += this.accept(stream, this.decoders[stream].end());
-      if (!this.discarded[stream]) result += redactSecrets(this.lines[stream]);
-      this.lines[stream] = "";
-    }
-    return result;
-  }
-
-  private accept(stream: "stdout" | "stderr", text: string) {
-    let result = "";
-    for (const part of text.split(/(?<=\n)/)) {
-      if (!this.discarded[stream]) this.lines[stream] += part;
-      if (this.lines[stream].length > 16_384) {
-        // Do not expose token fragments from arbitrarily long unbroken lines.
-        this.discarded[stream] = true;
-        this.lines[stream] = "";
-        result += "[oversized output line withheld from live preview]\n";
-      }
-      if (part.endsWith("\n")) {
-        if (!this.discarded[stream]) result += redactSecrets(this.lines[stream]);
-        this.lines[stream] = "";
-        this.discarded[stream] = false;
-      }
-    }
-    return result;
+    return this.decoders.stdout.end() + this.decoders.stderr.end();
   }
 }

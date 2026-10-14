@@ -3,21 +3,21 @@ import { categoryForTool, liveStatusForTool, previewForTool, titleForTool } from
 import { kaliCommandPreview } from "../src/main/kali/tools";
 
 describe("Kali tool activity", () => {
-  it("identifies remote execution without displaying credential flags", () => {
+  it("shows the operator's complete command without changing execution arguments", () => {
     const call = { id: "call", name: "kali_exec" as const, arguments: { argv: ["check", "--password", "credential-value", "--token=another-value", "host"] } };
-    expect(titleForTool(call)).toBe("Kali · Run check --password [redacted] --token=[redacted] host");
+    expect(titleForTool(call)).toBe("Kali · Run check --password credential-value --token=another-value host");
     expect(call.arguments.argv[2]).toBe("credential-value");
     expect(categoryForTool(call)).toBe("terminal");
     expect(liveStatusForTool(call, "running")).toBe("Running in Kali");
     expect(liveStatusForTool(call, "done")).toBeUndefined();
   });
 
-  it("keeps opaque shell and interpreter code out of stored display labels", () => {
+  it("keeps shell and interpreter source visible in command history", () => {
     for (const argv of [["/bin/bash", "-lc", "echo sensitive-body"], ["python3", "-c", "print('sensitive-body')"]]) {
-      expect(kaliCommandPreview(argv)).not.toContain("sensitive-body");
-      expect(kaliCommandPreview(argv)).toContain("[redacted]");
+      expect(kaliCommandPreview(argv)).toContain("sensitive-body");
+      expect(kaliCommandPreview(argv)).not.toContain("[redacted]");
     }
-    expect(kaliCommandPreview(["curl", "-u", "username:credential", "https://user:pass@example.com"])).not.toMatch(/credential|user:pass/);
+    expect(kaliCommandPreview(["curl", "-u", "username:credential", "https://user:pass@example.com"])).toContain("username:credential");
   });
 
   it("uses readable lifecycle and evidence titles", () => {
@@ -27,9 +27,9 @@ describe("Kali tool activity", () => {
     expect(categoryForTool({ id: "environment", name: "kali_capabilities", arguments: {} })).toBe("diagnostic");
   });
 
-  it("bounds and redacts remote previews while leaving ordinary output intact", () => {
+  it("bounds remote previews without masking the VM output", () => {
     const call = { id: "output", name: "kali_job_output" as const, arguments: { jobId: "job" } };
-    expect(previewForTool(call, "ready\npassword=credential-value\n")).toBe("ready\n[redacted]\n");
+    expect(previewForTool(call, "ready\npassword=credential-value\n")).toBe("ready\npassword=credential-value\n");
     expect(previewForTool(call, "x".repeat(20_000))).toHaveLength(12_000);
   });
 });

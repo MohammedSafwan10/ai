@@ -1,5 +1,5 @@
-import { Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
 import type { ApprovalDecisionScope, SubagentRecord, ToolEventRecord } from "../../shared/types";
@@ -21,7 +21,9 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
   const [autoExpandedImageIds, setAutoExpandedImageIds] = useState<Set<string>>(() => new Set());
   const [autoExpandedFileDraftIds, setAutoExpandedFileDraftIds] = useState<Set<string>>(() => new Set());
+  const [autoExpandedTerminalIds, setAutoExpandedTerminalIds] = useState<Set<string>>(() => new Set());
   const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const [imagePreview, setImagePreview] = useState<GeneratedImagePreview | null>(null);
   const messageActive = isActiveTurnStatus(messageStatus);
   const resolvedTools = useMemo(
@@ -37,6 +39,12 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const currentLiveToolId = useMemo(() => latestLiveToolId(normalizedTools), [normalizedTools]);
   const hasBlockingAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval");
   const liveGroupOpen = messageActive && (defaultOpen || hasLive);
+  useEffect(() => {
+    const ids = normalizedTools.filter((tool) => isTerminalOutputTool(tool) && isLiveOutput(tool) && !autoExpandedTerminalIds.has(tool.id)).map((tool) => tool.id);
+    if (!ids.length) return;
+    setExpandedOutputIds((current) => new Set([...current, ...ids]));
+    setAutoExpandedTerminalIds((current) => new Set([...current, ...ids]));
+  }, [autoExpandedTerminalIds, normalizedTools]);
   useEffect(() => {
     if (userOpen === null && (defaultOpen || hasBlockingAttention || messageStatus === "awaiting_approval")) {
       setUserOpen(true);
@@ -128,10 +136,11 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
       return next;
     });
     const tool = tools.find((item) => item.id === toolId);
-    if (opening && tool?.detailAvailable && !detailedTools[toolId]) {
+    if (opening && tool?.detailAvailable && (!detailedTools[toolId] || detailedTools[toolId].updatedAt < tool.updatedAt)) {
+      setDetailErrors((current) => ({ ...current, [toolId]: "" }));
       void window.privoraDesktop.getToolEventDetail(toolId)
         .then(({ tool: detail }) => setDetailedTools((current) => ({ ...current, [toolId]: detail })))
-        .catch((error) => console.error("Could not load tool detail", error));
+        .catch(() => setDetailErrors((current) => ({ ...current, [toolId]: "Could not load saved output. Close and reopen to retry." })));
     }
   };
 
@@ -178,8 +187,9 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                     active={tool.id === currentLiveToolId}
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
-                {tool.approvalReason && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
-                {(hasUsefulOutput(displayOutput(tool)) || liveFileDraftOutput(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
+                {tool.approvalReason && tool.status === "awaiting_approval" && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
+                {expandedOutputIds.has(tool.id) && detailErrors[tool.id] && <p role="alert">{detailErrors[tool.id]}</p>}
+                {(hasUsefulOutput(displayOutput(tool)) || isTerminalOutputTool(tool) || liveFileDraftOutput(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
                   isLiveFileDraft(tool) ? (
                     expandedOutputIds.has(tool.id) && <LiveFileDraft tool={tool} />
                   ) : isTerminalOutputTool(tool) ? (
@@ -285,11 +295,11 @@ function ToolTitleLine({
   onToggle: () => void;
 }) {
   const canExpand = (
-    (isTerminalOutputTool(tool) && hasTerminalOutput(tool, output)) ||
+    isTerminalOutputTool(tool) ||
     (isQuestionTool(tool) && hasUsefulOutput(output))
   ) || isLiveFileDraft(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
   const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) && !isImageTool(tool)
-    ? compactOutputPreview(output.trimEnd())
+    ? compactOutputPreview(cleanTerminalText(output).trimEnd())
     : "";
   if (!canExpand) {
     return (
@@ -304,6 +314,7 @@ function ToolTitleLine({
       className={clsx("tool-title-line", "tool-title-button", expanded && "is-open")}
       onClick={onToggle}
       title={expanded ? "Collapse output" : "Expand output"}
+      aria-expanded={expanded}
     >
       {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isImageTool(tool) ? <ImageIcon size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : isComputerTool(tool) ? <MonitorCog size={13} /> : <Terminal size={13} />}
       <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
@@ -368,21 +379,48 @@ function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagen
   );
 }
 
-function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: string }) {
+export function TerminalOutputPanel({ tool, output }: { tool: ToolEventRecord; output: string }) {
   const sections = terminalOutputSections(tool, output);
   return (
     <div className="terminal-output-wrap">
       {sections.map((section) => (
-        <section className="terminal-output-section" key={section.label}>
-          <small>{section.label}</small>
-          <pre className="terminal-output-panel">
-            {section.value.trimEnd() || "(no output)"}
-          </pre>
-        </section>
+        <TerminalSection key={section.label} section={section} live={isLiveOutput(tool)} />
       ))}
     </div>
   );
 }
+
+function TerminalSection({ section, live }: { section: { label: string; value: string }; live: boolean }) {
+  const panel = useRef<HTMLPreElement>(null);
+  const following = useRef(section.label !== "Command");
+  const [copyStatus, setCopyStatus] = useState("");
+  const text = cleanTerminalText(section.value);
+  useEffect(() => {
+    if (panel.current && following.current) panel.current.scrollTop = panel.current.scrollHeight;
+  }, [text]);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopyStatus("Copied"); }
+    catch { setCopyStatus("Copy failed"); }
+  };
+  return (
+    <section className="terminal-output-section">
+      <div className="terminal-output-heading">
+        <small>{section.label}</small>
+        <button type="button" onClick={() => void copy()} aria-label={`Copy ${section.label.toLowerCase()}`}><Copy size={12} />{copyStatus || "Copy"}</button>
+      </div>
+      <pre ref={panel} className="terminal-output-panel" onScroll={() => {
+        const element = panel.current;
+        if (element) following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+      }}>{text || (live && section.label !== "Command" ? "Waiting for output…" : "(no output)")}</pre>
+    </section>
+  );
+}
+
+// Render command output as inert text; terminal color/cursor escapes are not text.
+export const cleanTerminalText = (text: string) => text
+  .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+  .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+  .replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
 function BrowserOutputPanel({ tool }: { tool: ToolEventRecord }) {
   const details = browserDetails(tool);
@@ -580,8 +618,12 @@ const cleanTitle = (title: string) => title.replace(/\s+\.$/, "").trim() || "Too
 const isTerminalApproval = (tool: ToolEventRecord) =>
   tool.name === "exec_command" || tool.name === "write_stdin";
 
-const isTerminalOutputTool = (tool: ToolEventRecord) =>
+export const isTerminalOutputTool = (tool: ToolEventRecord) =>
   [
+    "kali_exec",
+    "kali_job_output",
+    "kali_job_status",
+    "kali_job_cancel",
     "exec_command",
     "write_stdin",
     "terminal_stop",
@@ -617,6 +659,11 @@ const formatBytes = (bytes: number) => {
 };
 
 const primaryToolLabel = (tool: ToolEventRecord) => {
+  if (tool.name === "kali_exec") {
+    const argv = Array.isArray(tool.args.argv) ? tool.args.argv : [];
+    const executable = String(argv[0] || "command").split(/[\\/]/).pop();
+    return `Kali · ${executable}`;
+  }
   if (tool.name === "web_search") {
     const query = typeof tool.args.query === "string" ? tool.args.query.trim() : "";
     if (tool.status === "done") return query ? `Searched web for ${query}` : "Searched web";
@@ -674,10 +721,7 @@ const hasUsefulOutput = (output?: string) => {
 const displayOutput = (tool: ToolEventRecord) =>
   tool.output || tool.result?.output || tool.result?.error || "";
 
-const hasTerminalOutput = (tool: ToolEventRecord, output: string) =>
-  terminalOutputSections(tool, output).some((section) => hasUsefulOutput(section.value));
-
-const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: string): Array<{ label: string; value: string }> => {
+export const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: string): Array<{ label: string; value: string }> => {
   const data = objectValue(tool.result?.data);
   const stdout = stringValue(data.stdout);
   const stderr = stringValue(data.stderr);
@@ -687,6 +731,8 @@ const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: string): 
   const sessionOutput = stringValue(session.outputPreview) || stringValue(session.output);
   const liveOutput = stringValue(fallbackOutput);
   const sections: Array<{ label: string; value: string }> = [];
+  const command = terminalCommandText(tool);
+  if (command) sections.push({ label: "Command", value: command });
   const streamsMerged = data.streamsMerged === true || data.streams_merged === true;
 
   if (stdout) sections.push({ label: streamsMerged ? "Terminal output" : "Stdout", value: stdout });
@@ -694,14 +740,27 @@ const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: string): 
   if (!stdout && !stderr && sessionOutput) sections.push({ label: "Terminal output", value: sessionOutput });
 
   const primary = stdout || stderr || sessionOutput;
-  if (!primary && resultOutput) sections.push({ label: "Output", value: resultOutput });
+  if (!primary && (liveOutput || resultOutput)) sections.push({ label: isLiveOutput(tool) ? "Live output" : "Output", value: liveOutput || resultOutput });
   if (resultError && resultError !== resultOutput) sections.push({ label: "Error", value: resultError });
 
-  if (sections.length === 0 && liveOutput) {
-    sections.push({ label: tool.status === "running" || tool.status === "preparing" ? "Live output" : "Output", value: liveOutput });
-  }
+  if (!sections.some((section) => section.label !== "Command")) sections.push({ label: "Output", value: "" });
+  return sections;
+};
 
-  return sections.length > 0 ? sections : [{ label: "Output", value: "" }];
+export const terminalCommandText = (tool: ToolEventRecord) => {
+  if (Array.isArray(tool.args.argv)) {
+    const argv = tool.args.argv.map(String);
+    // Display shell source as real lines rather than JSON-escaped code.
+    const executable = argv[0]?.split(/[\\/]/).pop()?.toLowerCase() || "";
+    const shell = /^(?:ba|da|z|k)?sh$/.test(executable);
+    const interpreter = /^(?:python[\d.]*|node|perl|ruby|pwsh|powershell)(?:\.exe)?$/.test(executable);
+    const script = argv.findIndex((value, index) => index > 0 && ((shell && /^-[a-z]*c[a-z]*$/i.test(value)) || (interpreter && /^(?:-c|-e|--command|-command)$/i.test(value))));
+    if (script > 0 && argv[script + 1] !== undefined) {
+      return `${argv.slice(0, script + 1).join(" ")}\n${argv[script + 1]}${argv.length > script + 2 ? `\n${argv.slice(script + 2).map((value) => JSON.stringify(value)).join(" ")}` : ""}`;
+    }
+    return argv.map((value) => /\s/.test(value) ? JSON.stringify(value) : value).join(" ");
+  }
+  return typeof tool.args.cmd === "string" ? tool.args.cmd : typeof tool.args.command === "string" ? tool.args.command : "";
 };
 
 const browserDetails = (tool: ToolEventRecord): Array<{ label: string; value: string }> => {
@@ -1151,7 +1210,7 @@ const stringValue = (value: unknown) =>
 export const mergeToolDetail = (live: ToolEventRecord, detail: ToolEventRecord): ToolEventRecord => {
   const liveStamp = live.updatedAt || live.createdAt || 0;
   const detailStamp = detail.updatedAt || detail.createdAt || 0;
-  return detailStamp > liveStamp ? { ...live, ...detail } : { ...detail, ...live };
+  return detailStamp >= liveStamp ? { ...live, ...detail } : { ...detail, ...live };
 };
 
 const hasFileDiffs = (tool: ToolEventRecord) =>

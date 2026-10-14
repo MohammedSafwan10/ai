@@ -6,6 +6,14 @@ integration, findings, and evidence UI are implemented in source; packaged
 assessment acceptance is in progress. Task-specific packages are installed only
 when needed, not as a full-suite prerequisite.
 
+Kali terminal rows can be reopened after completion, including commands that
+produce no output. Expand a row to inspect and copy its command and retained
+output. Live partial lines appear as soon as the tool emits them; a quiet or
+internally buffered scan may still wait before writing progress. Local command
+history and terminal output are shown without automatic credential masking.
+Output previews remain bounded for responsiveness; large logs should also be
+written to an evidence file in the job directory.
+
 ## Where the agent lives
 
 OpenCode Go is the hosted model provider, not a Kali utility or the Go programming

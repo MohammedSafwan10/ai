@@ -176,15 +176,15 @@ describe("Security workspace runtime", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("incrementally decodes each stream and redacts secrets split between output events", async () => {
+  it("incrementally preserves each stream across UTF-8 and arbitrary output boundaries", async () => {
     const bytes = Buffer.from("€ 😀 漢字\npassword=split-secret\n");
     const request = completeTransport({ events: Array.from(bytes, (value) => ({ stream: "stdout", data: Buffer.from([value]) })) });
     const test = fixture(request);
     const output: string[] = [];
     const result = await test.service().execute(call("kali_exec", { argv: ["echo"] }), { ...context, onOutput: (text) => output.push(text) });
-    expect(result.output).toBe("€ 😀 漢字\n[redacted]\n");
+    expect(result.output).toBe("€ 😀 漢字\npassword=split-secret\n");
     expect(output.join("")).toBe(result.output);
-    expect(JSON.stringify([...test.jobs.values()])).not.toContain("split-secret");
+    expect(JSON.stringify([...test.jobs.values()])).toContain("split-secret");
     expect(result.output).not.toContain("�");
   });
 
@@ -354,7 +354,7 @@ describe("Security workspace runtime", () => {
   });
 });
 
-describe("Kali live output redaction", () => {
+describe("Kali live output decoding", () => {
   it("allows only safe text and raster previews without trusting filename extensions", () => {
     expect(kaliArtifactMime("evidence.txt", Buffer.from("€ evidence"))).toBe("text/plain");
     expect(kaliArtifactMime("evidence.html", Buffer.from("<script>alert(1)</script>"))).toBe("application/octet-stream");
@@ -363,16 +363,15 @@ describe("Kali live output redaction", () => {
     expect(kaliArtifactMime("false.png", Buffer.from("not a picture"))).toBe("application/octet-stream");
     expect(kaliArtifactMime("picture.bin", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))).toBe("image/png");
   });
-  it("handles interleaved streams without corrupting UTF-8 and masks oversized secret lines", () => {
+  it("emits partial lines immediately, keeping interleaved UTF-8 and long lines intact", () => {
     const decoder = new KaliOutputDecoder();
     const euro = Buffer.from("€\n");
     expect(decoder.push("stdout", euro.subarray(0, 1))).toBe("");
-    expect(decoder.push("stderr", Buffer.from("token="))).toBe("");
+    expect(decoder.push("stderr", Buffer.from("token="))).toBe("token=");
     expect(decoder.push("stdout", euro.subarray(1))).toBe("€\n");
-    expect(decoder.push("stderr", Buffer.from("sensitive\n"))).toBe("[redacted]\n");
+    expect(decoder.push("stderr", Buffer.from("sensitive\n"))).toBe("sensitive\n");
     const oversized = decoder.push("stdout", Buffer.from("password=" + "a".repeat(20_000)));
-    expect(oversized).toContain("withheld");
-    expect(oversized).not.toContain("aaaa");
+    expect(oversized).toBe("password=" + "a".repeat(20_000));
     expect(decoder.finish()).toBe("");
   });
 });
