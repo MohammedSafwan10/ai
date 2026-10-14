@@ -104,6 +104,9 @@ describe("Security model loop", () => {
     expect(security).toContain("browser_search");
     expect(security).toContain("browser_extract");
     expect(security).toContain("browser_act");
+    expect(security).toContain("browser_screenshot");
+    expect(security).toContain("browser_evidence");
+    expect(security).toContain("browser_pdf");
     expect(security).not.toContain("browser_form_submit");
     expect(security).not.toContain("exec_command");
     expect(security).not.toContain("desktop_write_file");

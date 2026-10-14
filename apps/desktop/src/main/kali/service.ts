@@ -373,6 +373,8 @@ export class SecurityWorkspaceService {
         }
         case "kali_job_output": {
           let job = this.scopedJob(requiredText(args.jobId, "job ID", 100), context);
+          if (args.follow !== undefined && typeof args.follow !== "boolean") throw new Error("follow must be a boolean.");
+          if (args.follow !== true) return this.result(job, true);
           if (!terminal(job.state)) job = await this.reconcile(job);
           if (job.remoteJobId && job.state !== "unknown") job = await this.watch(job, context);
           return this.result(job, true);

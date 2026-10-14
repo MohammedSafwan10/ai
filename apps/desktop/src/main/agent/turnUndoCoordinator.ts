@@ -34,7 +34,7 @@ export class TurnUndoCoordinator {
     }
     // A remote command can outlive its chat turn. Never erase its audit record or replay it.
     if (thread.workspaceId && this.store.listSecurityJobs(thread.workspaceId)
-      .some((job) => [thread.id, ...children.map((agent) => agent.threadId)].includes(job.threadId) && ["submitting", "queued", "running", "unknown", "cancelling"].includes(job.state))) {
+      .some((job) => [thread.id, ...children.map((agent) => agent.threadId)].includes(job.threadId) && ["submitting", "queued", "running", "unknown", "stop_requested"].includes(job.state))) {
       throw new Error("Finish or reconcile the remaining Kali jobs before rewinding this chat.");
     }
     const turns = [...removed, ...children.flatMap((agent) => this.store.listMessages(agent.threadId))].filter((item) => item.role === "assistant");

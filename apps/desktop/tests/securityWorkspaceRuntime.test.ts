@@ -60,6 +60,23 @@ const completeTransport = (options: { events?: { stream: "stdout" | "stderr"; da
 };
 
 describe("Security workspace runtime", () => {
+  it("peeks at running output without remote requests and follows only when requested", async () => {
+    const request = completeTransport({ events: [{ stream: "stdout", data: Buffer.from("final output") }] });
+    const test = fixture(request);
+    const service = test.service();
+    await service.execute(call("kali_exec", { argv: ["echo"] }), context);
+    const job = [...test.jobs.values()][0];
+    test.jobs.set(job.id, { ...job, state: "running", outputPreview: "partial output", sequence: 0 });
+    request.mockClear();
+    const peek = await service.execute(call("kali_job_output", { jobId: job.id }), context);
+    expect(peek).toMatchObject({ success: true, output: "partial output", data: { state: "running" } });
+    expect(request).not.toHaveBeenCalled();
+    const follow = await service.execute(call("kali_job_output", { jobId: job.id, follow: true }), context);
+    expect(follow.data?.state).toBe("succeeded");
+    expect(request.mock.calls.some(([, payload]) => payload.operation === "output")).toBe(true);
+    expect((await service.execute(call("kali_job_output", { jobId: job.id, follow: "yes" }), context)).error).toContain("boolean");
+    service.beginShutdown();
+  });
   it("persists a stable identity before delivery and never resubmits a completed call", async () => {
     const request = completeTransport();
     const test = fixture(async (env, payload) => {

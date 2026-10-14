@@ -109,6 +109,7 @@ export function Sidebar({
                     title={row.workspace.name}
                     active={row.workspace.id === activeWorkspace?.id}
                     collapsed={collapsedGroups.has(row.workspace.id)}
+                    security={row.workspace.type === "security"}
                     onToggle={toggleGroup}
                     onRemove={onRemoveWorkspace}
                     icon={
@@ -146,6 +147,7 @@ function ProjectRow({
   onToggle,
   onRemove,
   icon,
+  security = false,
 }: {
   id: string;
   title: string;
@@ -154,6 +156,7 @@ function ProjectRow({
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   icon?: ReactNode;
+  security?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -209,6 +212,7 @@ function ProjectRow({
         <div className="thread-menu project-menu floating-thread-menu" ref={menuRef} style={menuStyle}>
           {confirmRemove ? (
             <>
+              {security && <p className="project-remove-note">Chats will be deleted. Local project files go to Recycle Bin; Kali files remain.</p>}
               <button type="button" className="danger" onClick={remove}>
                 <Trash2 size={15} />
                 <span>Remove now</span>
@@ -418,6 +422,8 @@ function isLiveRun(run: ActiveRunState) {
     "running",
     "executing_tool",
     "waiting_tool",
+    "waiting_verification",
+    "awaiting_approval",
     "draining",
     "completing",
   ].includes(run.status);

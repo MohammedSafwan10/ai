@@ -7,12 +7,12 @@ import type { BrowserSessionManager } from "../src/main/browser/BrowserSessionMa
 import type { NotesStore } from "../src/main/notes/NotesStore";
 import type { SecurityEnvironmentRecord, SecurityWorkspaceService } from "../src/shared/securityWorkspace";
 
-const mocked = vi.hoisted(() => ({ directory: "", handlers: new Map<string, (...args: unknown[]) => unknown>(), pick: vi.fn() }));
+const mocked = vi.hoisted(() => ({ directory: "", handlers: new Map<string, (...args: unknown[]) => unknown>(), pick: vi.fn(), trash: vi.fn() }));
 vi.mock("electron", () => ({
   app: { isPackaged: false, getPath: () => mocked.directory },
   BrowserWindow: { getAllWindows: () => [] },
   ipcMain: { handle: (name: string, handler: (...args: unknown[]) => unknown) => mocked.handlers.set(name, handler), on: vi.fn() },
-  dialog: { showOpenDialog: mocked.pick }, Menu: {}, shell: {},
+  dialog: { showOpenDialog: mocked.pick }, Menu: {}, shell: { trashItem: mocked.trash },
 }));
 import { DesktopStore } from "../src/main/db/store";
 import { registerIpc, type IpcState } from "../src/main/ipc/register";
@@ -25,15 +25,48 @@ const environment: SecurityEnvironmentRecord = { id: "kali", name: "Kali", host:
 const invoke = (name: string, ...args: unknown[]) => mocked.handlers.get(name)?.({}, ...args);
 beforeEach(() => {
   mocked.directory = fs.mkdtempSync(path.join(os.tmpdir(), "privora-security-ipc-"));
-  mocked.handlers.clear(); mocked.pick.mockReset();
+  mocked.handlers.clear(); mocked.pick.mockReset(); mocked.trash.mockReset();
+  mocked.trash.mockImplementation(async (target: string) => { fs.renameSync(target, path.join(mocked.directory, "recycled-project")); });
   store = new DesktopStore(mocked.directory); store.saveSecurityEnvironment(environment);
   state = { activeThreadId: null, activeWorkspaceId: null };
   service = { importEnvironmentProfile: vi.fn(async () => environment), checkEnvironment: vi.fn(async () => ({ ...environment, status: "connected" as const })), cancelJob: vi.fn(), };
-  registerIpc(store, { listActiveRuns: () => [], getActiveRun: () => null, getTerminalState: () => null } as unknown as AgentService, state, {} as BrowserSessionManager, {} as NotesStore, undefined, { securityService: service });
+  registerIpc(store, { listActiveRuns: () => [], getActiveRun: () => null, getTerminalState: () => null } as unknown as AgentService, state, { clearWorkspaceProfileData: vi.fn() } as unknown as BrowserSessionManager, {} as NotesStore, undefined, { securityService: service });
 });
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("recycles only the app-owned project directory and preserves its evidence", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    fs.writeFileSync(path.join(workspace.path, "evidence", "report.txt"), "saved evidence");
+    await invoke(channels.removeWorkspace, workspace.id);
+    expect(mocked.trash).toHaveBeenCalledWith(workspace.path);
+    expect(store.getWorkspace(workspace.id)).toBeNull();
+    expect(fs.readFileSync(path.join(mocked.directory, "recycled-project", "evidence", "report.txt"), "utf8")).toBe("saved evidence");
+  });
+  it("retains the project when recycling fails", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    mocked.trash.mockRejectedValue(new Error("Recycle failed"));
+    await expect(invoke(channels.removeWorkspace, workspace.id)).rejects.toThrow("Recycle failed");
+    expect(store.getWorkspace(workspace.id)).not.toBeNull();
+    expect(fs.existsSync(workspace.path)).toBe(true);
+  });
+  it("rejects a stored path pointing at another project", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const other = store.createSecurityWorkspace({ name: "Other", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    vi.spyOn(store, "getWorkspace").mockImplementation((id) => id === workspace.id ? { ...workspace, path: other.path } : other);
+    await expect(invoke(channels.removeWorkspace, workspace.id)).rejects.toThrow("Unexpected Security project directory");
+    expect(mocked.trash).not.toHaveBeenCalled();
+    expect(fs.existsSync(other.path)).toBe(true);
+  });
+  it("refuses a project directory replaced with a junction", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const held = path.join(mocked.directory, "held-project");
+    fs.renameSync(workspace.path, held);
+    fs.symlinkSync(held, workspace.path, "junction");
+    await expect(invoke(channels.removeWorkspace, workspace.id)).rejects.toThrow("Unsafe Security project directory");
+    expect(mocked.trash).not.toHaveBeenCalled();
+    expect(store.getWorkspace(workspace.id)).not.toBeNull();
+  });
   it("deletes a chat with unknown jobs while retaining project-level recovery records", async () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
     const thread = store.createThread(workspace.id);
@@ -75,7 +108,8 @@ describe("security workspace IPC", () => {
     expect(state.activeWorkspaceId).toBe(workspace.id);
     expect(store.getThread(state.activeThreadId!)?.workspaceId).toBe(workspace.id);
     expect(await invoke(channels.getSecurityWorkspaceState, workspace.id)).toEqual({ environment, jobs: [], findings: [] });
-    expect(() => invoke(channels.createSecurityWorkspace, { ...input, objective: "" })).toThrow();
+    expect(() => invoke(channels.createSecurityWorkspace, { ...input, objective: "", scope: "" })).toThrow();
+    expect(() => invoke(channels.createSecurityWorkspace, { ...input, objective: "x".repeat(12_000), scope: "y".repeat(12_000) })).not.toThrow();
     expect(() => invoke(channels.createSecurityWorkspace, { ...input, identityFile: "secret" })).toThrow();
     await expect(invoke(channels.getSecurityWorkspaceState, "missing")).rejects.toThrow(/not found/);
   });

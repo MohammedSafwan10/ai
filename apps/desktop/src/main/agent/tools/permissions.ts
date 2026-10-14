@@ -247,7 +247,7 @@ export const findMatchingApprovalScope = (
   nowMs = Date.now(),
 ) =>
   scopes.find((scope) => {
-    if (["exec_command", "write_stdin", "desktop_run_diagnostics"].includes(call.name)) return false;
+    if (["kali_exec", "exec_command", "write_stdin", "desktop_run_diagnostics"].includes(call.name)) return false;
     if (scope.expiresAt && scope.expiresAt <= nowMs) return false;
     if (scope.maxUses && scope.useCount >= scope.maxUses) return false;
     if (scope.kind === "tool_thread" || scope.kind === "tool_workspace") {

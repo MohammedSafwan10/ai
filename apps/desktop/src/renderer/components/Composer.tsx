@@ -892,7 +892,7 @@ const modelDisplayLabel = (label: string) =>
     .replace(/\s*\(CLIProxy\)$/i, "")
     .trim();
 
-const MAX_ATTACHMENTS = 15;
+const MAX_ATTACHMENTS = 12;
 const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const COMPOSER_LONG_PROMPT_CHARS = 1200;

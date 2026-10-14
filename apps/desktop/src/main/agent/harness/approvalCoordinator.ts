@@ -84,6 +84,7 @@ export class ApprovalCoordinator {
   }
 
   createScope(bundle: ApprovalBundle, call: DesktopToolCall, decisionScope: ApprovalDecisionScope) {
+    if (call.name === "kali_exec") return undefined;
     if (decisionScope === "once") return undefined;
     const thread = this.store.getThread(bundle.threadId);
     const timestamp = Date.now();

@@ -318,6 +318,10 @@ describe("desktop permission classifier", () => {
   });
 
   it("never reuses approval scopes for terminal commands", () => {
+    const kali = call("kali_exec", { argv: ["sudo", "apt-get", "install", "jq"] });
+    expect(findMatchingApprovalScope(kali, [approvalScope({ kind: "tool_workspace", toolName: "kali_exec" })])).toBeNull();
+    expect(classifyToolCall(kali, "ask_risky").requiresApproval).toBe(true);
+    expect(classifyToolCall(kali, "yolo").requiresApproval).toBe(false);
     const terminalCall = call("exec_command", { cmd: "npm install lodash", workdir: "apps/desktop" });
     const scope = approvalScope({
       kind: "terminal_prefix",

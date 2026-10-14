@@ -56,7 +56,12 @@ export const supportsParallelExecution = (call: DesktopToolCall) => {
     case "desktop_search":
     case "desktop_git_status":
     case "desktop_git_diff":
+    case "kali_capabilities":
+    case "security_finding_list":
       return true;
+    case "kali_job_output":
+      // A peek reads persisted output only. Following changes job state and stays serialized.
+      return call.arguments.follow !== true;
     default:
       return false;
   }

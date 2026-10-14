@@ -20,8 +20,8 @@ export const kaliToolDefinitions = [
       timeoutSeconds: { type: "number", minimum: 1, maximum: 3600, description: "Maximum duration; defaults to 120 seconds." },
     }, ["argv"])),
   tool("kali_job_status", "Inspect a persisted job belonging to this Security workspace.", job),
-  tool("kali_job_output", "Retrieve ordered output for a persisted job, including after reconnect.",
-    schema({ jobId }, ["jobId"])),
+  tool("kali_job_output", "Peek at retained output and last observed state without waiting or contacting Kali. Set follow=true to reconnect and stream until completion; uncertain jobs are never replayed.",
+    schema({ jobId, follow: { type: "boolean", description: "Follow output until completion. Default false returns the currently retained output immediately." } }, ["jobId"])),
   tool("kali_job_cancel", "Request cancellation of a job in this workspace and verify its actual state.", job),
   tool("kali_artifact", "Retrieve a bounded file from this remote project, verify its hash, and save it as Privora evidence.",
     schema({ jobId, path: text("Relative path within the remote project. Symlinks and traversal are rejected.") }, ["jobId", "path"])),
@@ -43,6 +43,7 @@ const SECURITY_NAMES = new Set(kaliToolDefinitions.map((definition) => definitio
 const BROWSER_RESEARCH_NAMES = new Set([
   "browser_search", "browser_open", "browser_open_link", "browser_snapshot",
   "browser_extract", "browser_inspect", "browser_wait", "browser_tab", "browser_capabilities", "browser_act",
+  "browser_screenshot", "browser_evidence", "browser_pdf",
 ]);
 const COMMON_NAMES = new Set([
   "request_user_input", "spawn_agent", "send_message", "assign_task",

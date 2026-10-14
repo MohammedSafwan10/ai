@@ -250,7 +250,7 @@ export const registerIpc = (
   handle(channels.checkSecurityEnvironment, z.tuple([idSchema]), (_event, id: string) => requireSecurityService().checkEnvironment(id));
   handle(channels.createSecurityWorkspace, z.tuple([z.object({
     name: z.string().trim().min(1).max(120), environmentId: idSchema,
-    objective: z.string().trim().min(1).max(8_000), scope: z.string().trim().min(1).max(8_000),
+    objective: z.string().trim().min(1).max(12_000), scope: z.string().trim().min(1).max(12_000),
   }).strict()]), (_event, input: CreateSecurityWorkspaceInput) => {
     const workspace = store.createSecurityWorkspace(input);
     const thread = store.createThread(workspace.id);
@@ -290,6 +290,20 @@ export const registerIpc = (
     if (hasActiveRun) throw new Error("Stop running chats in this project before removing it.");
     if (store.listSecurityJobs(workspaceId).some((job) => ["submitting", "queued", "running", "stop_requested", "unknown"].includes(job.state))) throw new Error("Stop or reconcile remote jobs before removing this security workspace.");
 
+    if (workspace.type === "security") {
+      const root = path.join(app.getPath("userData"), "security-workspaces");
+      const expected = path.join(root, workspace.id);
+      if (!/^[0-9a-f-]{36}$/i.test(workspace.id) || path.resolve(workspace.path) !== expected) throw new Error("Unexpected Security project directory; files preserved.");
+      const stat = await fs.promises.lstat(expected).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (stat) {
+        if (!stat.isDirectory() || stat.isSymbolicLink() || path.dirname(await fs.promises.realpath(expected)) !== await fs.promises.realpath(root)) throw new Error("Unsafe Security project directory; files preserved.");
+        // Recoverable deletion; fail before removing the database records if trash fails.
+        await shell.trashItem(expected);
+      }
+    }
     await browserManager.clearWorkspaceProfileData(workspaceId);
     const removed = store.removeWorkspace(workspaceId);
     if (state.activeWorkspaceId === workspaceId || (state.activeThreadId && workspaceThreadIds.has(state.activeThreadId))) {

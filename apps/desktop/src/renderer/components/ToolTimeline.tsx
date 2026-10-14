@@ -618,7 +618,7 @@ const liveLineClass = (line: string) => {
 const cleanTitle = (title: string) => title.replace(/\s+\.$/, "").trim() || "Tool";
 
 const isTerminalApproval = (tool: ToolEventRecord) =>
-  tool.name === "exec_command" || tool.name === "write_stdin";
+  tool.name === "kali_exec" || tool.name === "exec_command" || tool.name === "write_stdin";
 
 export const isTerminalOutputTool = (tool: ToolEventRecord) =>
   [
@@ -1427,16 +1427,20 @@ const completedSummary = (tools: ToolEventRecord[], done: number) => {
   ).length;
   const commands = tools.filter((tool) =>
     tool.status === "done" &&
-    ["exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
+    ["kali_exec", "exec_command", "write_stdin", "terminal_read", "terminal_resize", "terminal_stop", "terminal_list", "desktop_run_diagnostics", "desktop_git_status", "desktop_git_diff"].includes(tool.name)
+  ).length;
+  const findings = tools.filter((tool) =>
+    tool.status === "done" && tool.name === "security_finding_save"
   ).length;
   const reads = tools.filter((tool) =>
     tool.status === "done" &&
-    ["desktop_read_file", "desktop_list_dir", "desktop_search"].includes(tool.name)
+    ["kali_capabilities", "kali_job_status", "kali_job_output", "kali_artifact", "security_finding_list", "desktop_read_file", "desktop_list_dir", "desktop_search"].includes(tool.name)
   ).length;
   const parts = [
     fileChanges ? `${fileChanges} ${fileChanges === 1 ? "file changed" : "files changed"}` : "",
     commands ? `${commands} ${commands === 1 ? "command" : "commands"}` : "",
-    !fileChanges && !commands && reads ? `${reads} ${reads === 1 ? "check" : "checks"}` : "",
+    findings ? `${findings} ${findings === 1 ? "finding saved" : "findings saved"}` : "",
+    !fileChanges && !commands && !findings && reads ? `${reads} ${reads === 1 ? "check" : "checks"}` : "",
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : `${done} ${done === 1 ? "tool" : "tools"} done`;
 };

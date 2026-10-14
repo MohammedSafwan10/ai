@@ -137,4 +137,13 @@ describe("edit message rewind", () => {
     store.upsertMessage({ ...message, steeredTurnId: "answer" });
     await expect(new TurnUndoCoordinator(store, () => false).rewind("later")).rejects.toThrow("original prompt");
   });
+  it("blocks rewinding a security chat when a Kali job is in stop_requested state", async () => {
+    setup();
+    store.saveSecurityEnvironment({ id: "kali", name: "Kali", host: "127.0.0.1", port: 2222, username: "privora", status: "connected" });
+    const secWorkspace = store.createSecurityWorkspace({ name: "Lab", objective: "Test", scope: "Local", environmentId: "kali" });
+    const secThread = store.createThread(secWorkspace.id);
+    store.upsertMessage({ id: "sec-prompt", threadId: secThread.id, role: "user", content: "Run check", status: "completed", createdAt: 1, updatedAt: 1 });
+    store.upsertSecurityJob({ id: "job-stopping", remoteJobId: "remote-1", workspaceId: secWorkspace.id, threadId: secThread.id, environmentId: "kali", idempotencyKey: "key-1", projectId: "proj-1", state: "stop_requested", sequence: 0, outputPreview: "", commandPreview: "sleep 10", exitCode: null, error: null, createdAt: 1, updatedAt: 1 });
+    await expect(new TurnUndoCoordinator(store, () => false).rewind("sec-prompt")).rejects.toThrow("Finish or reconcile the remaining Kali jobs");
+  });
 });
