@@ -79,6 +79,7 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
   const [goModelIds, setGoModelIds] = useState<string[]>([]);
   const goFetchedRef = useRef(false);
   const [confirmFullAccessOpen, setConfirmFullAccessOpen] = useState(false);
@@ -92,6 +93,15 @@ export function Composer({
     () => withDiscoveredGoModels(getModelProviderGroups(), goModelIds),
     [goModelIds],
   );
+  const filteredModelGroups = useMemo(() => {
+    const terms = modelSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return modelProviderGroups.map((group) => ({ ...group, models: group.models.filter((model) => {
+      const text = `${model.label} ${model.id} ${group.label}`.toLowerCase();
+      const compact = text.replace(/[^a-z0-9]/g, "");
+      return terms.every((term) => text.includes(term) || compact.includes(term.replace(/[^a-z0-9]/g, "")));
+    }) })).filter((group) => group.models.length > 0);
+  }, [modelProviderGroups, modelSearch]);
+  useEffect(() => { if (activeMenu !== "model") setModelSearch(""); }, [activeMenu]);
   useEffect(() => {
     if (activeMenu !== "model" || !settings.opencodeGoApiKeyStored || goFetchedRef.current) return;
     goFetchedRef.current = true;
@@ -794,8 +804,11 @@ export function Composer({
                     <ChevronLeft size={15} />
                     <span>Model and effort</span>
                   </button>
-                  <small>Model</small>
-                  {modelProviderGroups.map((group) => (
+                  <div className="model-picker-search">
+                    <input type="search" autoFocus aria-label="Search models" placeholder="Search models…" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } }} />
+                  </div>
+                  {filteredModelGroups.length === 0 && <p className="model-picker-empty" role="status">No matching models</p>}
+                  {filteredModelGroups.map((group) => (
                     <div className="model-group" key={group.id}>
                       <small>{group.label}</small>
                       {group.models.map((model) => (

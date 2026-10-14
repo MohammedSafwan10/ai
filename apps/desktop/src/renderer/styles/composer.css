@@ -1215,6 +1215,33 @@
   overflow: auto;
 }
 
+.model-picker-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--privora-surface);
+  padding: 5px 0 7px;
+}
+
+.model-picker-search input {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid var(--privora-border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: var(--privora-bg);
+  color: var(--privora-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.model-picker-empty {
+  padding: 8px;
+  color: var(--privora-muted);
+  font-size: 12px;
+}
+
 .composer .floating-menu .model-picker-back {
   display: none;
 }
