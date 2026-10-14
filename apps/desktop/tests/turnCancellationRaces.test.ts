@@ -29,6 +29,40 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it("continues after an incomplete draft without executing the unfinished action", async () => {
+    const { thread, coordinator } = fixture();
+    let round = 0;
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      if (round++ === 0) {
+        options.onTextDelta("Checking the page.");
+        options.onToolDraft({ id: "unfinished", name: "desktop_write_file", arguments: { path: "must-not-exist.txt", content: "partial" } });
+      } else {
+        expect(JSON.stringify(options.messages)).toContain("was NOT executed");
+        options.onTextDelta("The unfinished action was discarded; here is the answer.");
+      }
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Continue my task" });
+    await coordinator.waitForIdle();
+    expect(hooks.stream).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(folder, "must-not-exist.txt"))).toBe(false);
+    expect(store.listMessages(thread.id).at(-1)?.status).toBe("completed");
+    expect(store.listMessages(thread.id).at(-1)?.content).toContain("here is the answer");
+  });
+
+  it("bounds incomplete-call recovery and gives a visible failure instead of silently finishing", async () => {
+    const { thread, coordinator } = fixture();
+    let round = 0;
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      options.onToolDraft({ id: `unfinished-${round++}`, name: "browser_open", arguments: { url: "https://example.test/" } });
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Read the page" });
+    await coordinator.waitForIdle();
+    expect(hooks.stream).toHaveBeenCalledTimes(3);
+    expect(store.listMessages(thread.id).at(-1)?.status).toBe("failed");
+    expect(store.listMessages(thread.id).at(-1)?.content).toContain("incomplete tool request");
+    expect(coordinator.listActiveRuns()).toHaveLength(0);
+  });
+
   it("validates incompatible model reasoning before creating a phantom running message", async () => {
     const { thread, coordinator } = fixture();
     await expect(coordinator.startTurn({ threadId: thread.id, prompt: "Begin", reasoningEffort: "max" })).rejects.toThrow("does not support");

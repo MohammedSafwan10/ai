@@ -1330,7 +1330,7 @@ export class TurnCoordinator implements AgentHarnessApi {
           throw new Error("Stopped.");
         }
 
-        this.closeDanglingDraftTools(options.threadId, options.assistantMessage.id, new Set(calls.map((call) => call.id)));
+        const discardedDrafts = this.closeDanglingDraftTools(options.threadId, options.assistantMessage.id, new Set(calls.map((call) => call.id)));
         flushAssistant("running", true);
         if (steeredDuringSample) {
           const partialText = assistantText.slice(textStart);
@@ -1357,6 +1357,21 @@ export class TurnCoordinator implements AgentHarnessApi {
               history = appendAssistantToolCalls(history, iterationText, [], providerContextParts);
             }
             history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
+            this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+            continue;
+          }
+          if (discardedDrafts > 0) {
+            if (recoveryAttempts >= MAX_STALL_RECOVERY_ATTEMPTS) {
+              const failure = "The model repeatedly ended with an incomplete tool request. That request was not executed. Please retry your message.";
+              const start = assistantText.length;
+              assistantText += `${assistantText ? "\n\n" : ""}${failure}`;
+              recordAssistantTextPart(options.assistantMessage, "final_answer", start, assistantText.length);
+              throw new Error(failure);
+            }
+            recoveryAttempts += 1;
+            history = [...history, textProviderMessage("Your last response ended with an incomplete streamed tool request. It was discarded and was NOT executed. Continue the user's task by issuing a complete, valid tool call or explain what prevented completion. Do not claim the unfinished action succeeded, and do not repeat previously completed actions.")];
+            run.reason = "Recovering an incomplete model tool request.";
+            this.emitRun(run);
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
@@ -2362,9 +2377,9 @@ export class TurnCoordinator implements AgentHarnessApi {
 
   private closeDanglingDraftTools(threadId: string, messageId: string, activeCallIds: Set<string>) {
     this.flushThreadToolDrafts(threadId, messageId);
-    this.store.listActiveDraftToolEvents(threadId, messageId)
-      .filter((event) => !activeCallIds.has(event.callId))
-      .forEach((event) => {
+    const drafts = this.store.listActiveDraftToolEvents(threadId, messageId)
+      .filter((event) => !activeCallIds.has(event.callId));
+    drafts.forEach((event) => {
         const call: DesktopToolCall = {
           id: event.callId,
           name: event.name as DesktopToolCall["name"],
@@ -2378,6 +2393,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         });
         this.emit({ type: "tool.upserted", tool: closed });
       });
+    return drafts.length;
   }
 
   private nextActivityOrder() {

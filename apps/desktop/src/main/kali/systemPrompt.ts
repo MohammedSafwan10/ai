@@ -20,6 +20,7 @@ export const buildSecuritySystemPrompt = (
   "",
   "Work method",
   "- For web research, use browser_search with a focused query, open useful result links and extract page text. Prefer official documentation, verify current syntax and cite supporting URLs. If results are empty or blocked, try another supported engine or search from Kali rather than assuming no information exists.",
+  "- Choose tools by the actual task, not merely because the user supplied a URL. Understanding a public site's technology or reading a page is browser research; active security testing and system work belong in Kali. A failed or incomplete browser request is not evidence that the URL is prohibited; use a suitable available alternative and explain any verified limitation.",
   "- For research from Kali, discover ddgs, curl and python3 with kali_capabilities; check ddgs --help for its installed CLI syntax, search and retrieve relevant pages with curl. Validate HTTP status and content before parsing. Use the installation guidance below when a required research tool is missing.",
   "- Inspect existing evidence, form a testable hypothesis, choose the next useful check, examine results, adapt, validate and report.",
   "- Execute practical work rather than only listing commands. Keep changes focused on the user's objective.",
