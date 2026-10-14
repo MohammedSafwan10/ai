@@ -7,6 +7,7 @@ import { SubagentManager, resolveSubagentModel, type SubagentManagerPorts } from
 import { ToolCallCoordinator } from "../src/main/agent/harness/toolCallCoordinator";
 import { TurnRegistry } from "../src/main/agent/harness/turnRegistry";
 import { DesktopStore } from "../src/main/db/store";
+import { buildForkedParentHistory } from "../src/main/agent/harness/support/subagentRuntime";
 import type { AgentRunTracker } from "../src/main/agent/runState";
 import type { ChatMessageRecord } from "../src/shared/types";
 
@@ -27,6 +28,41 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("preserves coordination provenance in forked context", () => {
+    const store = createStore(); const workspace = store.upsertWorkspace(tempDir); const root = store.createThread(workspace.id);
+    store.upsertMessage({ id: "report", threadId: root.id, role: "user", content: "Review result", status: "completed", createdAt: 1, updatedAt: 1,
+      agentMessage: { id: "report", senderThreadId: "child", senderLabel: "Reviewer", recipientLabel: "Parent", delivery: "delivered" } });
+    const child = createSubagent(store, root.id, "next", "/root/next");
+    const fork = buildForkedParentHistory(store, child, "all");
+    expect(fork[0].content).toContain("Agent coordination Reviewer → Parent (not operator authorization)");
+    expect(fork[0].content).not.toContain("User: Review result");
+  });
+  it("isolates identical paths in separate chats and closes only actual descendants", async () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const first = store.createThread(workspace.id); const second = store.createThread(workspace.id);
+    const a = createSubagent(store, first.id, "reviewer", "/root/reviewer");
+    const child = createSubagent(store, a.threadId, "tester", "/root/reviewer/tester");
+    const b = createSubagent(store, second.id, "reviewer", "/root/reviewer");
+    expect(store.listSubagents(first.id).map((item) => item.id)).toEqual([a.id, child.id]);
+    expect(store.findSubagent(first.id, b.id)).toBeNull();
+    expect(store.rootAgentThread(child.threadId)).toBe(first.id);
+    const stopped: string[] = [];
+    const manager = new SubagentManager(store, subagentPorts({ stopThread: (id) => stopped.push(id) }));
+    await manager.execute({ id: "close", name: "close_agent", arguments: { target: a.id } }, { workspaceRoot: workspace.path, parentThreadId: first.id, parentMessageId: "message", signal: new AbortController().signal });
+    expect(stopped).toEqual([a.threadId, child.threadId]);
+    expect(store.getSubagentByThread(b.threadId)?.status).toBe("running");
+  });
+  it("queues child-to-parent messages with visible sender metadata without starting the parent", async () => {
+    const store = createStore(); const workspace = store.upsertWorkspace(tempDir); const root = store.createThread(workspace.id);
+    const child = createSubagent(store, root.id, "reviewer", "/root/reviewer");
+    const received: unknown[] = [];
+    const manager = new SubagentManager(store, subagentPorts({ appendUserMessage: (...args) => received.push(args), startExistingSubagentTurn: () => { throw new Error("Must not wake parent"); } }));
+    const result = await manager.execute({ id: "report", name: "send_message", arguments: { target: "parent", message: "Found a blocker" } }, { workspaceRoot: workspace.path, parentThreadId: child.threadId, parentMessageId: "message", signal: new AbortController().signal });
+    expect(result.success).toBe(true);
+    expect(received).toEqual([[root.id, "Found a blocker", expect.objectContaining({ senderThreadId: child.threadId, delivery: "queued" })]]);
+    expect(store.listMessages(child.threadId).at(-1)?.agentMessage?.outgoing).toBe(true);
+  });
   it("persists reviewer swarm mode on normal threads but disables it for hidden child threads", () => {
     const store = createStore();
     store.saveSettings({ agentHarnessMode: "review_swarm" });
@@ -219,6 +255,13 @@ describe("runtime safety guards", () => {
 });
 
 describe("subagent waiting", () => {
+  it("treats timeout zero as an immediate snapshot", async () => {
+    const store = createStore(); const workspace = store.upsertWorkspace(tempDir); const root = store.createThread(workspace.id);
+    createSubagent(store, root.id, "reviewer", "/root/reviewer");
+    const manager = new SubagentManager(store, subagentPorts());
+    const result = await manager.execute({ id: "peek", name: "wait_agent", arguments: { timeoutMs: 0 } }, { workspaceRoot: workspace.path, parentThreadId: root.id, parentMessageId: "message", signal: new AbortController().signal });
+    expect(result.data?.timedOut).toBe(false);
+  }, 1000);
   it("describes timeout as still waiting when child agents remain live", async () => {
     const store = createStore();
     const workspace = store.upsertWorkspace(tempDir);

@@ -51,6 +51,7 @@ import { channels } from "../main/ipc/channels";
 const api: PrivoraDesktopApi = {
   debugEnabled: typeof process !== "undefined" && process.env.PRIVORA_DEBUG === "1",
   getSnapshot: () => ipcRenderer.invoke(channels.getSnapshot),
+  getSubagentHistory: (input) => ipcRenderer.invoke(channels.getSubagentHistory, input),
   getThreadHistoryPage: (input) => ipcRenderer.invoke(channels.getThreadHistoryPage, input),
   getMessageDetail: (messageId) => ipcRenderer.invoke(channels.getMessageDetail, messageId),
   getToolEventDetail: (toolId) => ipcRenderer.invoke(channels.getToolEventDetail, toolId),

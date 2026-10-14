@@ -6,6 +6,7 @@ import {
 } from "../../../shared/types";
 
 let sequence = 0;
+export const currentEventSequence = () => sequence;
 
 export const envelopePrivoraEvent = (payload: PrivoraEventPayload): PrivoraEventEnvelope => {
   const emittedAt = Date.now();

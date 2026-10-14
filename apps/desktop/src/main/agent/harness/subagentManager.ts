@@ -1,5 +1,6 @@
 import type { DesktopStore } from "../../db/store";
-import type { DesktopToolCall, SubagentRecord, ToolResult } from "../../../shared/types";
+import { randomUUID } from "node:crypto";
+import type { ChatMessageRecord, DesktopToolCall, SubagentRecord, ToolResult } from "../../../shared/types";
 import type { AgentRunTracker } from "../runState";
 import { loadSubagentRoles, pickSubagentNickname } from "../subagents";
 import type { SubagentRoleConfig } from "../subagents";
@@ -26,9 +27,10 @@ export interface SubagentManagerPorts {
   isRunActive: (threadId: string) => boolean;
   startSubagentTurn: (agent: SubagentRecord, workspaceRoot: string, prompt: string, role: SubagentRoleConfig | undefined, forkTurns: string) => void;
   startExistingSubagentTurn: (agent: SubagentRecord, workspaceRoot: string) => void;
-  appendUserMessage: (threadId: string, message: string) => void;
+  appendUserMessage: (threadId: string, message: string, metadata?: ChatMessageRecord["agentMessage"]) => void;
   stopThread: (threadId: string, reason: string) => void;
   emitSnapshot: () => void;
+  emitMessage?: (message: ChatMessageRecord) => void;
 }
 
 export interface SubagentToolContext {
@@ -75,9 +77,9 @@ export class SubagentManager {
     });
     if (status === "completed" && updated) {
       const latestUser = this.store.findLatestMessage(threadId, "user");
-      const latestAssistant = this.store.findLatestMessage(threadId, "assistant");
+      const latestAssistant = this.store.listMessages(threadId).reverse().find((message) => message.role === "assistant" && !message.agentMessage?.outgoing);
       const workspace = updated.workspaceId ? this.store.getWorkspace(updated.workspaceId)?.path : undefined;
-      if (latestUser && latestAssistant && latestUser.createdAt > latestAssistant.createdAt && workspace && !this.ports.isRunActive(threadId)) {
+      if (latestUser && latestUser.agentMessage?.delivery !== "delivered" && latestAssistant && latestUser.createdAt > latestAssistant.createdAt && workspace && !this.ports.isRunActive(threadId)) {
         this.store.updateSubagent(threadId, { status: "pending" });
         this.ports.startExistingSubagentTurn(updated, workspace);
       }
@@ -92,7 +94,7 @@ export class SubagentManager {
     if (!taskName) return { success: false, error: "taskName must use lowercase letters, digits, and underscores." };
     if (!message) return { success: false, error: "message is required." };
     const parentAgent = this.store.getSubagentByThread(context.parentThreadId);
-    const rootThreadId = parentAgent?.parentThreadId || context.parentThreadId;
+    const rootThreadId = this.store.rootAgentThread(context.parentThreadId);
     if (this.store.listDirectSubagents(context.parentThreadId).filter(isLiveSubagent).length >= MAX_LIVE_SUBAGENTS_PER_PARENT) {
       return { success: false, error: `Subagent limit reached: at most ${MAX_LIVE_SUBAGENTS_PER_PARENT} live child agents per parent.` };
     }
@@ -136,10 +138,23 @@ export class SubagentManager {
     const target = String(call.arguments.target || "").trim();
     const message = String(call.arguments.message || "").trim();
     if (!message) return { success: false, error: "message is required." };
+    if (message.length > 32_000) return { success: false, error: "Agent messages must be at most 32000 characters." };
+    const sender = this.store.getSubagentByThread(parentThreadId);
+    const senderLabel = sender ? formatSubagentLabel(sender) : "Parent";
+    if (sender && ["parent", sender.parentThreadId].includes(target)) {
+      if (triggerTurn) return { success: false, error: "Use send_message to report to the parent; assigning its task is unavailable." };
+      const metadata: ChatMessageRecord["agentMessage"] = { id: randomUUID(), senderThreadId: parentThreadId, senderLabel, recipientLabel: "Parent", delivery: "queued" };
+      this.ports.appendUserMessage(sender.parentThreadId, message, metadata);
+      this.recordSent(parentThreadId, message, metadata);
+      this.ports.emitSnapshot();
+      return { success: true, output: "Queued message to parent; it will be delivered at its next model boundary.", data: { targetThreadId: sender.parentThreadId, delivery: "queued" } };
+    }
     const agent = this.store.findSubagent(parentThreadId, target);
     if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
     if (agent.status === "closed") return { success: false, error: `${formatSubagentLabel(agent)} is closed.` };
-    this.ports.appendUserMessage(agent.threadId, message);
+    const metadata: ChatMessageRecord["agentMessage"] = { id: randomUUID(), senderThreadId: parentThreadId, senderLabel, recipientLabel: formatSubagentLabel(agent), delivery: "queued" };
+    this.ports.appendUserMessage(agent.threadId, message, metadata);
+    this.recordSent(parentThreadId, message, metadata);
     const alreadyRunning = this.ports.isRunActive(agent.threadId);
     this.store.updateSubagent(agent.threadId, {
       status: triggerTurn && !alreadyRunning ? "pending" : agent.status,
@@ -160,9 +175,16 @@ export class SubagentManager {
     };
   }
 
+  private recordSent(threadId: string, message: string, metadata: NonNullable<ChatMessageRecord["agentMessage"]>) {
+    const record = this.store.upsertMessage({ id: `agent-sent-${metadata.id}`, threadId, role: "assistant", content: message,
+      agentMessage: { ...metadata, outgoing: true }, status: "completed", createdAt: Date.now(), updatedAt: Date.now() });
+    this.ports.emitMessage?.(record);
+  }
+
   private async wait(call: DesktopToolCall, parentThreadId: string, signal: AbortSignal): Promise<ToolResult> {
     const startedAt = Date.now();
-    const timeoutMs = Math.max(0, Math.min(120_000, Number(call.arguments.timeoutMs || call.arguments.timeout_ms) || 30_000));
+    const requestedTimeout = Number(call.arguments.timeoutMs ?? call.arguments.timeout_ms ?? 30_000);
+    const timeoutMs = Number.isFinite(requestedTimeout) ? Math.max(0, Math.min(120_000, requestedTimeout)) : 30_000;
     const initialAgents = this.store.listSubagents(parentThreadId);
     if (initialAgents.filter(isLiveSubagent).length === 0 && initialAgents.some((agent) => ["completed", "failed", "stopped", "closed"].includes(agent.status))) {
       return { success: true, output: subagentStatusSummary(initialAgents), data: { timed_out: false, timedOut: false, agents: initialAgents.map(subagentToolData) } };
@@ -197,7 +219,7 @@ export class SubagentManager {
     const target = String(call.arguments.target || "").trim();
     const agent = this.store.findSubagent(parentThreadId, target);
     if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
-    const descendants = this.store.listSubagents().filter((candidate) => candidate.agentPath === agent.agentPath || candidate.agentPath.startsWith(`${agent.agentPath}/`));
+    const descendants = [agent, ...this.store.listSubagents(agent.threadId)];
     descendants.forEach((candidate) => {
       this.ports.stopThread(candidate.threadId, "Closed before approval.");
       this.store.updateSubagent(candidate.threadId, {

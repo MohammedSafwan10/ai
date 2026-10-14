@@ -105,7 +105,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "send_message",
-    description: "Send a text message to an existing child agent. This queues the message but does not force a new turn.",
+    description: "Send a text message to an existing child agent, or target=parent from a child. It enters the recipient's context at its next model boundary; it does not start an idle recipient. Queued and delivered messages are visible to the user.",
     parameters: schema({
       target: textProperty("Child task name, canonical agent path, nickname, id, or thread id."),
       message: textProperty("Message text to queue on the target agent."),

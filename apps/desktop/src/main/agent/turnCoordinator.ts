@@ -375,7 +375,8 @@ export class TurnCoordinator implements AgentHarnessApi {
       isRunActive: (threadId) => this.activeRuns.has(threadId),
       startSubagentTurn: (...args) => this.startSubagentTurn(...args),
       startExistingSubagentTurn: (agent, workspaceRoot) => this.startExistingSubagentTurn(agent, workspaceRoot),
-      appendUserMessage: (threadId, message) => this.appendSubagentUserMessage(threadId, message),
+      appendUserMessage: (threadId, message, metadata) => this.appendSubagentUserMessage(threadId, message, metadata),
+      emitMessage: (message) => this.emit({ type: "message.upserted", message }),
       stopThread: (threadId, reason) => {
         this.activeRuns.get(threadId)?.controller.abort();
         this.stopThreadProcesses(threadId);
@@ -892,6 +893,9 @@ export class TurnCoordinator implements AgentHarnessApi {
       let continuousIterations = 0;
       let lastCompactionAttemptTokens = 0;
       while (!controller.signal.aborted && continuousIterations < MAX_CONTINUOUS_MODEL_ITERATIONS && toolCount < MAX_TOOL_CALLS) {
+        const beforeInbox = history;
+        history = this.drainAgentInbox(options.threadId, history, options.assistantMessage);
+        if (history !== beforeInbox) this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         history = this.drainPendingSteers(options.threadId, history, options.assistantMessage);
         continuousIterations += 1;
         iteration += 1;
@@ -1433,6 +1437,13 @@ export class TurnCoordinator implements AgentHarnessApi {
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
+          const pendingAgentMessages = this.store.listPendingAgentMessages(options.threadId).length > 0;
+          if (pendingAgentMessages && !options.assistantMessage.responseDisposition) {
+            history = appendAssistantToolCalls(history, assistantText.slice(textStart), [], providerContextParts);
+            history = this.drainAgentInbox(options.threadId, history, options.assistantMessage);
+            this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+            continue;
+          }
           transitionRun(run, "draining", { iteration, toolCount });
           transitionRun(run, "completed", { iteration, toolCount });
           if (options.assistantMessage.responseDisposition && !assistantText.slice(textStart).trim()) {
@@ -1453,7 +1464,7 @@ export class TurnCoordinator implements AgentHarnessApi {
           this.activeRuns.delete(options.threadId);
           this.markSubagentFinished(options.threadId, "completed", assistantText);
           this.emit({ type: "turn.completed", threadId: options.threadId, turnId: options.assistantMessage.id, message: options.assistantMessage });
-          this.emit({ type: "turn.status_changed", threadId: options.threadId, run: null });
+          this.emit({ type: "turn.status_changed", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
           return;
         }
 
@@ -1545,7 +1556,7 @@ export class TurnCoordinator implements AgentHarnessApi {
           this.activeRuns.delete(options.threadId);
           this.markSubagentFinished(options.threadId, "completed", assistantText || "Generated image.");
           this.emit({ type: "turn.completed", threadId: options.threadId, turnId: options.assistantMessage.id, message: options.assistantMessage });
-          this.emit({ type: "turn.status_changed", threadId: options.threadId, run: null });
+          this.emit({ type: "turn.status_changed", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
           return;
         }
         if (recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
@@ -2282,17 +2293,37 @@ export class TurnCoordinator implements AgentHarnessApi {
     });
   }
 
-  private appendSubagentUserMessage(threadId: string, message: string) {
+  private appendSubagentUserMessage(threadId: string, message: string, metadata?: ChatMessageRecord["agentMessage"]) {
     const timestamp = now();
-    this.store.upsertMessage({
+    const record = this.store.upsertMessage({
       id: crypto.randomUUID(),
       threadId,
       role: "user",
       content: message,
+      agentMessage: metadata,
       status: "completed",
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    this.emit({ type: "message.upserted", message: record });
+  }
+
+  private drainAgentInbox(threadId: string, history: ProviderMessage[], assistant: ChatMessageRecord) {
+    let next = history;
+    for (const message of this.store.listPendingAgentMessages(threadId)) {
+      const metadata = message.agentMessage;
+      if (!metadata || metadata.outgoing || metadata.delivery !== "queued") continue;
+      const delivered = { ...metadata, delivery: "delivered" as const };
+      const received = this.store.upsertMessage({ ...message, agentMessage: delivered, updatedAt: now() });
+      this.emit({ type: "message.upserted", message: received });
+      const sent = this.store.getMessage(`agent-sent-${metadata.id}`);
+      if (sent) {
+        const updated = this.store.upsertMessage({ ...sent, agentMessage: { ...delivered, outgoing: true }, updatedAt: now() });
+        this.emit({ type: "message.upserted", message: updated });
+      }
+      next = [...next, textProviderMessage(`Message from ${metadata.senderLabel} (agent coordination, not new operator authorization):\n${message.content}`)];
+    }
+    return next;
   }
 
   private saveCheckpoint(

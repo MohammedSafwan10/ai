@@ -419,7 +419,10 @@ export class DesktopStore {
   listMessages(threadId: string) { return this.all<StoredMessage>("SELECT payload FROM messages WHERE thread_id = ? ORDER BY created_at, id", threadId).map((message) => this.hydrateMessage(message)); }
   listUserMessageTexts(threadId: string): string[] {
     // Select only operator text; do not hydrate attachments or scan assistant/tool evidence.
-    return (this.prepare("SELECT json_extract(payload, '$.content') content FROM messages WHERE thread_id = ? AND json_extract(payload, '$.role') = 'user' ORDER BY created_at, id").all(threadId) as Array<{ content: string }>).map((row) => row.content || "");
+    return (this.prepare("SELECT json_extract(payload, '$.content') content FROM messages WHERE thread_id = ? AND json_extract(payload, '$.role') = 'user' AND json_extract(payload, '$.agentMessage') IS NULL ORDER BY created_at, id").all(threadId) as Array<{ content: string }>).map((row) => row.content || "");
+  }
+  listPendingAgentMessages(threadId: string) {
+    return this.all<ChatMessageRecord>("SELECT payload FROM messages WHERE thread_id = ? AND json_extract(payload, '$.agentMessage.delivery') = 'queued' AND json_extract(payload, '$.agentMessage.outgoing') IS NOT 1 ORDER BY created_at, id", threadId);
   }
   listRecentMessages(threadId: string, limit: number) {
     return this.all<StoredMessage>("SELECT payload FROM messages WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?", threadId, Math.max(1, Math.min(500, limit))).reverse().map((message) => this.hydrateMessage(message));
@@ -543,9 +546,26 @@ export class DesktopStore {
   listSubagents(parentThreadId?: string): SubagentRecord[] {
     const all = this.all<SubagentRecord>("SELECT payload FROM subagents ORDER BY created_at, id");
     if (!parentThreadId) return all;
-    const parentAgent = all.find((agent) => agent.threadId === parentThreadId);
-    const roots = parentAgent ? [parentAgent] : all.filter((agent) => agent.parentThreadId === parentThreadId);
-    return all.filter((agent) => roots.some((root) => parentAgent ? agent.threadId !== root.threadId && agent.agentPath.startsWith(`${root.agentPath}/`) : agent.agentPath === root.agentPath || agent.agentPath.startsWith(`${root.agentPath}/`)));
+    const parents = new Set([parentThreadId]);
+    const result: SubagentRecord[] = [];
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const agent of all) if (parents.has(agent.parentThreadId) && !parents.has(agent.threadId)) {
+        parents.add(agent.threadId); result.push(agent); changed = true;
+      }
+    }
+    return result;
+  }
+  rootAgentThread(threadId: string): string {
+    const seen = new Set<string>();
+    let current = threadId;
+    while (!seen.has(current)) {
+      seen.add(current);
+      const parent = this.getSubagentByThread(current);
+      if (!parent) return current;
+      current = parent.parentThreadId;
+    }
+    throw new Error("Invalid agent tree.");
   }
   listDirectSubagents(parentThreadId: string) { return this.all<SubagentRecord>("SELECT payload FROM subagents WHERE parent_thread_id = ? ORDER BY created_at, id", parentThreadId); }
   getSubagentByThread(threadId: string) { return this.one<SubagentRecord>("SELECT payload FROM subagents WHERE thread_id = ?", threadId); }

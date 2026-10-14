@@ -1,5 +1,6 @@
 export const channels = {
   getSnapshot: "desktop:getSnapshot",
+  getSubagentHistory: "desktop:getSubagentHistory",
   getThreadHistoryPage: "desktop:getThreadHistoryPage",
   getMessageDetail: "desktop:getMessageDetail",
   getToolEventDetail: "desktop:getToolEventDetail",

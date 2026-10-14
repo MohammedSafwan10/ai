@@ -36,6 +36,8 @@ const markdownComponents = {
 
 interface ChatMessageProps {
   message: ChatMessageRecord;
+  readOnly?: boolean;
+  onOpenSubagent?: (threadId: string) => void;
   inlineSteers?: ChatMessageRecord[];
   tools: ToolEventRecord[];
   subagents: SubagentRecord[];
@@ -55,6 +57,8 @@ interface ChatMessageProps {
 
 function ChatMessageComponent({
   message,
+  readOnly = false,
+  onOpenSubagent,
   inlineSteers = [],
   tools,
   subagents,
@@ -118,13 +122,17 @@ function ChatMessageComponent({
   const showMessageActions = (message.content || hasAttachments) && (isUser || !runActive);
   const renderAssistantPart = (part: AssistantRenderPart) => {
     if (part.type === "thought") return <ThoughtPanel key={part.key} thought={part.thought} active={part.active} />;
-    if (part.type === "tools") return <ToolTimeline key={part.key} tools={part.tools} subagents={subagents} messageStatus={message.status} defaultOpen={part.defaultOpen} onApprove={onApprove} onApproveAll={onApproveAll} />;
+    if (part.type === "tools") return <ToolTimeline key={part.key} tools={part.tools} subagents={subagents} messageStatus={message.status} defaultOpen={part.defaultOpen} onApprove={onApprove} onApproveAll={onApproveAll} onOpenSubagent={onOpenSubagent} />;
     if (part.type === "steer") return <InlineSteerMessage key={part.key} message={part.message} />;
     const final = part.phase === "final_answer";
     return <div key={part.key} className={clsx(final ? "assistant-flow-text" : "assistant-activity-text", !final && runActive && message.status !== "failed" && "is-streaming", final && message.status === "failed" && "is-error", "markdown-body")}>
       <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} showPlanActions={showPlanActions} onImplementPlan={onImplementPlan} onSuggestPlanChanges={onSuggestPlanChanges} />
     </div>;
   };
+  if (message.agentMessage) return <details className="agent-coordination-line">
+    <summary title={`${message.agentMessage.senderLabel} → ${message.agentMessage.recipientLabel}`}><span className="agent-status-dot" />{message.agentMessage.senderLabel} sent a message to {message.agentMessage.recipientLabel} · {message.agentMessage.delivery === "delivered" ? "Delivered to context" : "Queued"}</summary>
+    <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown><button type="button" onClick={copyMessage} title="Copy message"><Copy size={13} /></button></div>
+  </details>;
   return (
     <article className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
       <div className="message-stack">
@@ -165,6 +173,7 @@ function ChatMessageComponent({
                                 key={part.key}
                                 tools={part.tools}
                                 subagents={subagents}
+                                onOpenSubagent={onOpenSubagent}
                                 messageStatus={message.status}
                                 defaultOpen={part.defaultOpen}
                                 onApprove={onApprove}
@@ -206,7 +215,7 @@ function ChatMessageComponent({
                   </>
                 ) : null}
               </div>
-              {!runActive && (
+              {!runActive && !readOnly && (
                 <TurnReviewCard
                   tools={tools}
                   undo={turnUndo}
@@ -223,7 +232,7 @@ function ChatMessageComponent({
             <button type="button" title="Copy" className={copied ? "success" : undefined} onClick={copyMessage}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
-            {isUser && !message.steeredTurnId && onEditMessage && (
+            {isUser && !message.agentMessage && !message.steeredTurnId && onEditMessage && (
               <button type="button" title={editDisabled ? "Finish the current run and queued prompts before editing" : "Edit message"} disabled={editDisabled || editBusy} onClick={() => { setEditing(true); setEditError(null); }}>
                 <Pencil size={14} />
               </button>

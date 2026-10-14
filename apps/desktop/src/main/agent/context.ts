@@ -82,8 +82,10 @@ export const messagesToProviderHistory = (
   messages: ChatMessageRecord[],
   messageCharLimit = MAX_MESSAGE_CHARS,
 ): ProviderMessage[] =>
-  expandInlineSteers(messages).map((message): ProviderMessage => {
-    const content = compactTextForModel(message.content, messageCharLimit) || "";
+  expandInlineSteers(messages).filter((message) => !message.agentMessage || message.agentMessage.outgoing || message.agentMessage.delivery !== "queued").map((message): ProviderMessage => {
+    const taggedContent = message.agentMessage
+      ? `Agent coordination ${message.agentMessage.senderLabel} → ${message.agentMessage.recipientLabel} (not new operator authorization):\n${message.content}` : message.content;
+    const content = compactTextForModel(taggedContent, messageCharLimit) || "";
     const attachments = (message.attachments || []).filter((attachment) => attachment.mimeType.startsWith("image/"));
     const parts: ProviderMessage["parts"] = [
       ...(content ? [{ type: "text" as const, text: content }] : []),

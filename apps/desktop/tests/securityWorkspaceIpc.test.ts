@@ -35,6 +35,22 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("reads a child transcript without switching chats and rejects another chat tree", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const root = store.createThread(workspace.id); const other = store.createThread(workspace.id);
+    const child = store.createSubagent({ parentThreadId: root.id, parentMessageId: "message", workspaceId: workspace.id, taskName: "review", agentPath: "/root/review", prompt: "Review" });
+    state.activeThreadId = root.id;
+    expect(invoke(channels.getSubagentHistory, { parentThreadId: root.id, threadId: child.threadId })).toMatchObject({ page: { threadId: child.threadId } });
+    expect(state.activeThreadId).toBe(root.id);
+    const pending = { call: { id: "question", name: "request_user_input" as const, arguments: {} }, questions: [{ id: "route", header: "Route", question: "Which route?", options: [] }] };
+    const checkpoint = { threadId: child.threadId, assistantMessageId: "child-answer", workspaceRoot: workspace.path, history: [], assistantText: "", assistantThought: "", iteration: 1, toolCount: 1, recoveryAttempts: 0, lastProgressAt: 1, pendingUserInput: pending, updatedAt: 1 };
+    vi.spyOn(store, "getRunCheckpoint").mockReturnValue(checkpoint);
+    registerIpc(store, { listActiveRuns: () => [], getActiveRun: () => ({ threadId: child.threadId, assistantMessageId: "child-answer", status: "waiting_tool" }), getTerminalState: () => null } as unknown as AgentService, state, {} as BrowserSessionManager, {} as NotesStore);
+    expect(invoke(channels.getSubagentHistory, { parentThreadId: root.id, threadId: child.threadId })).toMatchObject({ pendingInput: { callId: "question", threadId: child.threadId, questions: pending.questions } });
+    vi.spyOn(store, "getRunCheckpoint").mockReturnValue({ ...checkpoint, pendingUserInput: { ...pending, resolvedResult: { success: true } } });
+    expect(invoke(channels.getSubagentHistory, { parentThreadId: root.id, threadId: child.threadId })).toMatchObject({ pendingInput: null });
+    expect(() => invoke(channels.getSubagentHistory, { parentThreadId: other.id, threadId: child.threadId })).toThrow("selected chat");
+  });
   it("recycles only the app-owned project directory and preserves its evidence", async () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
     fs.writeFileSync(path.join(workspace.path, "evidence", "report.txt"), "saved evidence");

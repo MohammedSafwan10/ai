@@ -8,6 +8,7 @@ import { isActiveTurnStatus } from "../../shared/runStatus";
 import { InlineFileChangeList } from "./InlineDiff";
 
 interface ToolTimelineProps {
+  onOpenSubagent?: (threadId: string) => void;
   tools: ToolEventRecord[];
   subagents?: SubagentRecord[];
   messageStatus: string;
@@ -16,7 +17,7 @@ interface ToolTimelineProps {
   onApproveAll: (callIds: string[]) => void;
 }
 
-export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen = false, onApprove, onApproveAll }: ToolTimelineProps) {
+export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen = false, onApprove, onApproveAll, onOpenSubagent }: ToolTimelineProps) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
@@ -147,6 +148,11 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
 
   return (
     <div className="tool-timeline">
+      {onOpenSubagent && normalizedTools.filter((tool) => tool.name === "spawn_agent").flatMap((tool) => subagentsForTool(tool, subagents)).map((agent) => {
+        const live = ["pending", "running", "waiting"].includes(agent.status);
+        const label = agent.status === "completed" ? "finished" : live ? "started working" : agent.status;
+        return <button key={agent.id} type="button" className="agent-spawn-line" title={`${agent.status}: ${agent.lastPreview || agent.prompt}`} onClick={() => onOpenSubagent(agent.threadId)}><span className={`agent-status-dot ${live ? "live" : agent.status}`} />{formatSubagentName(agent)} {label}</button>;
+      })}
       <button
         className="tool-summary"
         onClick={() => setUserOpen((value) => !(value ?? shouldShowRows))}
@@ -216,7 +222,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                     )
                   ) : isSubagentTool(tool) ? (
                     expandedOutputIds.has(tool.id) && (
-                      <SubagentInspector tool={tool} subagents={subagents} />
+                      <SubagentInspector tool={tool} subagents={subagents} onOpen={onOpenSubagent} />
                     )
                   ) : (
                     isLiveOutput(tool)
@@ -325,7 +331,7 @@ function ToolTitleLine({
   );
 }
 
-function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagents: SubagentRecord[] }) {
+function SubagentInspector({ tool, subagents, onOpen }: { tool: ToolEventRecord; subagents: SubagentRecord[]; onOpen?: (threadId: string) => void }) {
   const agents = subagentsForTool(tool, subagents);
   const fallback = subagentRecordFromTool(tool);
   const visibleAgents = agents.length > 0 ? agents : fallback ? [fallback] : [];
@@ -347,6 +353,7 @@ function SubagentInspector({ tool, subagents }: { tool: ToolEventRecord; subagen
         const showEmptyState = !showHeading && !showPath && !showTask && !preview;
         return (
           <section key={agent.id || agent.threadId || agent.agentPath}>
+            {onOpen && <button type="button" className="subagent-open-chat" onClick={() => onOpen(agent.threadId)}>Open {formatSubagentName(agent)} · {agent.status}</button>}
             {showHeading && (
               <div className="subagent-inspector-head">
                 <span className={clsx("subagent-dot", agent.status)} />

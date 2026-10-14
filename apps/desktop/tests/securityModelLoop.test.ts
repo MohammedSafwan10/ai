@@ -4,6 +4,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 import type { BrowserSessionManager } from "../src/main/browser/BrowserSessionManager";
+import type { BrowserWindow } from "electron";
+import type { SubagentManager } from "../src/main/agent/harness/subagentManager";
+import type { PrivoraEventEnvelope } from "../src/shared/types";
 
 vi.mock("electron", () => ({
   app: { isPackaged: false, getPath: () => os.tmpdir() },
@@ -42,6 +45,77 @@ const fixture = () => {
 };
 
 describe("Security model loop", () => {
+  it("keeps the new child run visible when a queued task follows a refusal", async () => {
+    const { workspace, thread } = fixture();
+    const events: PrivoraEventEnvelope[] = [];
+    const window = { isDestroyed: () => false, webContents: { send: (_channel: string, event: PrivoraEventEnvelope) => events.push(event) } } as unknown as BrowserWindow;
+    const coordinator = new TurnCoordinator(store, () => window, () => ({ activeThreadId: thread.id, activeWorkspaceId: workspace.id }));
+    let childRound = 0; let rootRound = 0;
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      if (options.threadId !== thread.id) {
+        if (childRound++ === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          await (coordinator as unknown as { subagents: SubagentManager }).subagents.execute({ id: "queued-followup", name: "assign_task", arguments: { target: "review", message: "Retry review" } },
+            { workspaceRoot: workspace.path, parentThreadId: thread.id, parentMessageId: "parent", signal: new AbortController().signal });
+          options.onResponseDisposition?.("model_refusal");
+          options.onTextDelta("Declined.");
+        } else options.onTextDelta("Follow-up complete.");
+      } else if (rootRound++ === 0) options.onToolCall({ id: "spawn-refusal", name: "spawn_agent", arguments: { taskName: "review", message: "Review fixture" } });
+      else if (rootRound === 2) options.onToolCall({ id: "wait-refusal", name: "wait_agent", arguments: { timeoutMs: 500 } });
+      else options.onTextDelta("Finished.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Review with child" });
+    await coordinator.waitForIdle();
+    const child = store.listSubagents(thread.id)[0];
+    const firstCompletion = events.findIndex(({ payload }) => payload.type === "turn.completed" && payload.threadId === child.threadId);
+    const status = events.slice(firstCompletion + 1).find(({ payload }) => payload.type === "turn.status_changed" && payload.threadId === child.threadId)?.payload;
+    expect(status).toMatchObject({ type: "turn.status_changed", run: { status: "sampling" } });
+    expect(childRound).toBe(2);
+  });
+  it("delivers persisted agent messages both ways without duplicate follow-up turns", async () => {
+    const { thread, coordinator } = fixture();
+    let parentRound = 0; let childRound = 0;
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      const isChild = options.threadId !== thread.id;
+      if (isChild) {
+        const requests = options.messages.filter((item) => item.content.includes("Include evidence"));
+        if (requests.length) expect(requests).toHaveLength(1);
+        if (childRound++ === 0) options.onToolCall({ id: "child-report", name: "send_message", arguments: { target: "parent", message: "Review result ready" } });
+        else options.onTextDelta("Child review complete.");
+        return;
+      }
+      const round = parentRound++;
+      if (round === 0) options.onToolCall({ id: "spawn", name: "spawn_agent", arguments: { taskName: "review", message: "Review fixture" } });
+      else if (round === 1 || round === 3) options.onToolCall({ id: `wait-${round}`, name: "wait_agent", arguments: { timeoutMs: 500 } });
+      else if (round === 2) {
+        expect(options.messages.some((item) => item.content.includes("Review result ready"))).toBe(true);
+        options.onToolCall({ id: "followup", name: "assign_task", arguments: { target: "review", message: "Include evidence" } });
+      } else options.onTextDelta("Parent review complete.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Review with one child" });
+    await coordinator.waitForIdle();
+    const child = store.listSubagents(thread.id)[0];
+    expect(store.listMessages(thread.id).filter((item) => item.agentMessage && !item.agentMessage.outgoing)).toHaveLength(1);
+    expect(store.listMessages(thread.id).find((item) => item.agentMessage && !item.agentMessage.outgoing)?.agentMessage?.delivery).toBe("delivered");
+    expect(store.listMessages(child.threadId).find((item) => item.content === "Include evidence")?.agentMessage?.delivery).toBe("delivered");
+    expect(store.getSubagentByThread(child.threadId)?.status).toBe("completed");
+    expect(parentRound).toBe(5);
+  });
+  it("delivers an old queued report once on the next parent turn without waking it", async () => {
+    const { thread, coordinator } = fixture();
+    store.upsertMessage({ id: "queued-report", threadId: thread.id, role: "user", content: "Persisted child report", status: "completed", createdAt: 1, updatedAt: 1,
+      agentMessage: { id: "queued-report", senderThreadId: "child", senderLabel: "Reviewer", recipientLabel: "Parent", delivery: "queued" } });
+    expect(coordinator.listActiveRuns()).toHaveLength(0);
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      expect(options.messages.filter((item) => item.content.includes("Persisted child report"))).toHaveLength(1);
+      expect(options.messages.find((item) => item.content.includes("Persisted child report"))?.content).toContain("not new operator authorization");
+      options.onTextDelta("Reviewed the report.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Continue" });
+    await coordinator.waitForIdle();
+    expect(store.getMessage("queued-report")?.agentMessage?.delivery).toBe("delivered");
+    expect(provider.stream).toHaveBeenCalledTimes(1);
+  });
   it("automatically delivers the bounty guide to the provider on an assessment and follow-up", async () => {
     const { thread, coordinator } = fixture();
     provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {

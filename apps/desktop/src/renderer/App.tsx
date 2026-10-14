@@ -11,6 +11,8 @@ import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
 import { SecurityBrowserPane } from "./features/security/SecurityBrowserPane";
 import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
+import { SubagentsPanel } from "./features/chat/SubagentsPanel";
+import { RequestUserInputPanel } from "./components/RequestUserInputPanel";
 import { CreateSecurityWorkspaceDialog, SecurityWorkspaceBadge, SecurityWorkspaceDetails, useSecurityWorkspace } from "./features/security/SecurityWorkspace";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue, type QueuedPrompt } from "./features/chat/usePromptQueue";
@@ -39,6 +41,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createSecurityOpen, setCreateSecurityOpen] = useState(false);
   const [securityDetailsOpen, setSecurityDetailsOpen] = useState(false);
+  const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const [subagentRequest, setSubagentRequest] = useState<{ threadId: string; key: number } | null>(null);
   const isSecurityWorkspace = activeWorkspace?.type === "security";
   const securityWorkspace = useSecurityWorkspace(activeWorkspace, securityDetailsOpen, !settingsOpen);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsDestination>("general");
@@ -476,6 +480,7 @@ export default function App() {
         topbarTrailing={(
           <>
             <UpdateControl status={updateStatus} />
+            <button className="subagent-topbar-button" title="Show subagents" onClick={() => { setSubagentRequest(null); setSubagentsOpen(true); setIdeCollapsed(false); }}><span className={`agent-status-dot ${snapshot.subagents.some((agent) => ["pending", "running", "waiting"].includes(agent.status)) ? "live" : "completed"}`} /><span>Subagents · {snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length} active · {snapshot.subagents.filter((agent) => agent.status === "completed").length} done</span></button>
             {!isSecurityWorkspace && <AppLauncher disabled={!activeWorkspace} />}
           </>
         )}
@@ -533,6 +538,7 @@ export default function App() {
                       inlineSteers={inlineSteersByTurn.get(message.id) || EMPTY_MESSAGES}
                       tools={toolsByMessage.get(message.id) || EMPTY_TOOLS}
                       subagents={snapshot.subagents}
+                      onOpenSubagent={(threadId) => { setSubagentRequest({ threadId, key: Date.now() }); setSubagentsOpen(true); setIdeCollapsed(false); }}
                       activeRunStatus={
                         snapshot.activeRun?.assistantMessageId === message.id
                           ? snapshot.activeRun.status
@@ -777,8 +783,9 @@ export default function App() {
         }}
         disabled={ideCollapsed}
       />
-      {isSecurityWorkspace && <SecurityBrowserPane workspace={activeWorkspace} hidden={ideCollapsed || settingsOpen} onClose={() => { setIdeCollapsed(true); setIdeCollapsedByUser(true); }} />}
-      {!isSecurityWorkspace && <WorkspaceIdeShell
+      {subagentsOpen && activeThread && <SubagentsPanel parentThreadId={activeThread.id} snapshot={snapshot} request={subagentRequest} hidden={ideCollapsed || settingsOpen} onClose={() => setSubagentsOpen(false)} />}
+      {!subagentsOpen && isSecurityWorkspace && <SecurityBrowserPane workspace={activeWorkspace} hidden={ideCollapsed || settingsOpen} onClose={() => { setIdeCollapsed(true); setIdeCollapsedByUser(true); }} />}
+      {!subagentsOpen && !isSecurityWorkspace && <WorkspaceIdeShell
         workspace={activeWorkspace}
         reviewSession={reviewSession}
         hidden={ideCollapsed || settingsOpen}
@@ -1080,119 +1087,5 @@ function EmptyThreadState({
   );
 }
 
-function RequestUserInputPanel({
-  request,
-  onSubmit,
-}: {
-  request: RequestUserInputRequestRecord;
-  onSubmit: (answers: Record<string, { answers: string[] }>) => Promise<void>;
-}) {
-  const [selected, setSelected] = useState<Record<string, string>>(() =>
-    Object.fromEntries(request.questions.map((question) => [question.id, question.options[0]?.label || ""])),
-  );
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [index, setIndex] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
-  const question = request.questions[Math.min(index, request.questions.length - 1)];
-  const isFirst = index === 0;
-  const isLast = index === request.questions.length - 1;
-
-  useEffect(() => {
-    setSelected(Object.fromEntries(request.questions.map((question) => [question.id, question.options[0]?.label || ""])));
-    setNotes({});
-    setIndex(0);
-    setSubmitting(false);
-  }, [request.callId, request.questions]);
-
-  const submit = async () => {
-    if (submitting) return;
-    setSubmitting(true);
-    const answers = Object.fromEntries(request.questions.map((question) => {
-      const values = [selected[question.id]].filter(Boolean);
-      const note = notes[question.id]?.trim();
-      if (note) values.push(`user_note: ${note}`);
-      return [question.id, { answers: values }];
-    }));
-    await onSubmit(answers);
-  };
-
-  if (!question) return null;
-
-  return (
-    <section className="request-user-input-panel" aria-label="Plan question">
-      <div className="request-user-input-header">
-        <div>
-          <MessageSquareMore size={15} />
-          <span>{request.questions.length === 1 ? "Question" : `Question ${index + 1}/${request.questions.length}`}</span>
-        </div>
-        {request.questions.length > 1 && (
-          <div className="request-user-input-nav" aria-label="Question navigation">
-            <button
-              type="button"
-              title="Previous question"
-              disabled={isFirst}
-              onClick={() => setIndex((current) => Math.max(0, current - 1))}
-            >
-              <ChevronLeft size={15} />
-            </button>
-            <button
-              type="button"
-              title="Next question"
-              disabled={isLast}
-              onClick={() => setIndex((current) => Math.min(request.questions.length - 1, current + 1))}
-            >
-              <ChevronRight size={15} />
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="request-user-input-question" key={question.id}>
-        <small>{question.header}</small>
-        <p>{question.question}</p>
-        <div className="request-user-input-options">
-          {question.options.map((option) => (
-            <button
-              type="button"
-              key={option.label}
-              className={selected[question.id] === option.label ? "active" : undefined}
-              onClick={() => setSelected((current) => ({ ...current, [question.id]: option.label }))}
-            >
-              <span>{option.label}</span>
-              <small>{option.description}</small>
-            </button>
-          ))}
-        </div>
-        {question.isOther && (
-          <input
-            value={notes[question.id] || ""}
-            onChange={(event) => setNotes((current) => ({ ...current, [question.id]: event.target.value }))}
-            placeholder="Optional note"
-          />
-        )}
-      </div>
-      <div className="request-user-input-actions">
-        {request.questions.length > 1 && (
-          <button
-            type="button"
-            className="secondary"
-            disabled={isFirst}
-            onClick={() => setIndex((current) => Math.max(0, current - 1))}
-          >
-            Back
-          </button>
-        )}
-        {!isLast ? (
-          <button type="button" onClick={() => setIndex((current) => Math.min(request.questions.length - 1, current + 1))}>
-            Next
-          </button>
-        ) : (
-          <button type="button" onClick={submit} disabled={submitting}>
-            Continue
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
 
 const EMPTY_TOOLS: [] = [];

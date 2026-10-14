@@ -6,6 +6,7 @@ import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
 import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
+import { currentEventSequence } from "../agent/harness/eventBus";
 import { resolveExistingWorkspacePath } from "../security/pathSandbox";
 import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
@@ -157,6 +158,18 @@ export const registerIpc = (
     if (!store.getThread(input.threadId)) throw new Error("Thread not found.");
     return store.getThreadHistoryPage(input.threadId, input);
   });
+  handle(channels.getSubagentHistory, z.tuple([z.object({ parentThreadId: idSchema, threadId: idSchema, before: z.string().max(512).optional() }).strict()]),
+    (_event, input: { parentThreadId: string; threadId: string; before?: string }) => {
+      if (state.activeThreadId !== input.parentThreadId || !store.listSubagents(input.parentThreadId).some((agent) => agent.threadId === input.threadId)) throw new Error("Agent does not belong to the selected chat.");
+      const run = runtime.getActiveRun(input.threadId);
+      const checkpoint = store.getRunCheckpoint(input.threadId);
+      const pending = checkpoint?.pendingUserInput;
+      const pendingInput = run && run.assistantMessageId === checkpoint?.assistantMessageId && pending && !pending.resolvedResult ? {
+        threadId: input.threadId, assistantMessageId: checkpoint.assistantMessageId,
+        callId: pending.call.id, questions: pending.questions, createdAt: checkpoint.updatedAt,
+      } : null;
+      return { page: store.getThreadHistoryPage(input.threadId, { before: input.before, limit: 50 }), run, pendingInput, sequence: currentEventSequence() };
+    });
 
   handle(channels.getMessageDetail, z.tuple([idSchema]), (_event, messageId: string) => {
     const message = store.getMessagePreview(messageId);

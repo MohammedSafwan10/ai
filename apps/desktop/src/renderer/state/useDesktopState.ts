@@ -216,6 +216,7 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
     }
     if (event.type === "message.upserted") {
       if (event.message.threadId === next.activeThreadId) next = { ...next, messages: upsertById(next.messages, event.message) };
+      else if (event.message.role === "assistant" && !event.message.agentMessage) next = { ...next, subagents: next.subagents.map((agent) => agent.threadId === event.message.threadId ? { ...agent, lastPreview: event.message.content.slice(-240), updatedAt: event.message.updatedAt } : agent) };
       continue;
     }
     if (event.type === "tool.upserted") {

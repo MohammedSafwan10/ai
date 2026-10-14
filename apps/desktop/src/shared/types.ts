@@ -897,6 +897,7 @@ export interface ThreadRecord {
 }
 
 export interface ChatMessageRecord {
+  agentMessage?: { id: string; senderThreadId: string; senderLabel: string; recipientLabel: string; delivery: "queued" | "delivered"; outgoing?: boolean };
   id: string;
   threadId: string;
   role: MessageRole;
@@ -1735,6 +1736,7 @@ export interface PrivoraDesktopApi {
   saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;
   debugEnabled: boolean;
   getSnapshot(): Promise<AppSnapshot>;
+  getSubagentHistory(input: { parentThreadId: string; threadId: string; before?: string }): Promise<{ page: ThreadHistoryPage; run: ActiveRunState | null; pendingInput: RequestUserInputRequestRecord | null; sequence: number }>;
   getThreadHistoryPage(input: ThreadHistoryPageInput): Promise<ThreadHistoryPage>;
   getMessageDetail(messageId: string): Promise<MessageDetailRecord>;
   getToolEventDetail(toolId: string): Promise<ToolEventDetailRecord>;
