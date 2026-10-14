@@ -778,21 +778,9 @@ export const registerIpc = (
     return shell.openPath(target.absolutePath);
   });
 
-  handle(channels.openExternalUrl, z.tuple([externalUrlSchema]), async (_event, url: string) => {
-    const parsed = new URL(url);
-    const confirmation = await dialog.showMessageBox({
-      type: "question",
-      buttons: ["Open in default browser", "Cancel"],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
-      title: "Open external website?",
-      message: `Open ${parsed.origin} in your default browser?`,
-      detail: url,
-    });
-    if (confirmation.response !== 0) return;
-    return shell.openExternal(url);
-  });
+  // A user click is already the decision to open the link. The IPC schema
+  // permits only web URLs; do not interrupt normal navigation with a second dialog.
+  handle(channels.openExternalUrl, z.tuple([externalUrlSchema]), (_event, url: string) => shell.openExternal(url));
 
   handle(channels.listWorkspaceOpenTargets, z.tuple([]), async () => {
     return listWorkspaceOpenTargets();

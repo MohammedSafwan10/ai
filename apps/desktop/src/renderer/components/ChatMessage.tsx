@@ -767,6 +767,7 @@ function MarkdownExternalLink({
     <a
       {...props}
       href={externalHref}
+      title={externalHref}
       rel="noreferrer"
       onClick={(event) => {
         event.preventDefault();
