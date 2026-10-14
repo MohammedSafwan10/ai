@@ -28,6 +28,15 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("anchors sent coordination at the current sender turn and retains routing metadata", async () => {
+    const store = createStore(); const workspace = store.upsertWorkspace(tempDir); const root = store.createThread(workspace.id);
+    const child = createSubagent(store, root.id, "reviewer", "/root/reviewer");
+    store.upsertMessage({ id: "sender-turn", threadId: root.id, role: "assistant", content: "Progress before message", status: "running", createdAt: 1, updatedAt: 1 });
+    const manager = new SubagentManager(store, subagentPorts({ nextActivityOrder: () => 42, getAssistantTextOffset: () => 30 }));
+    await manager.execute({ id: "send-call", name: "send_message", arguments: { target: child.id, message: "Review this boundary" } }, { workspaceRoot: workspace.path, parentThreadId: root.id, parentMessageId: "sender-turn", signal: new AbortController().signal });
+    const sent = store.listMessages(root.id).find((message) => message.agentMessage?.outgoing)!;
+    expect(sent).toMatchObject({ steeredTurnId: "sender-turn", steerTextOffset: 30, steerStreamOrder: 42, agentMessage: { recipientThreadId: child.threadId, toolCallId: "send-call" } });
+  });
   it("preserves coordination provenance in forked context", () => {
     const store = createStore(); const workspace = store.upsertWorkspace(tempDir); const root = store.createThread(workspace.id);
     store.upsertMessage({ id: "report", threadId: root.id, role: "user", content: "Review result", status: "completed", createdAt: 1, updatedAt: 1,

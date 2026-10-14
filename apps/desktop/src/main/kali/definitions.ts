@@ -34,7 +34,7 @@ export const kaliToolDefinitions = [
       state: { type: "string", enum: ["candidate", "observed", "verified", "rejected", "stale"] },
       reproduction: text("Procedure and observed result supporting verification."),
       remediation: text("Concrete corrective action."),
-      evidenceJobIds: strings("Persisted job IDs containing evidence; all must belong to this workspace."),
+      evidenceJobIds: strings("Persisted job IDs containing evidence; all must belong to this workspace. Required for a new verified finding. Omit on an update to preserve its existing IDs; an explicit empty array clears IDs only for non-verified findings."),
     }, ["title", "description", "severity", "state"])),
 ] as const;
 

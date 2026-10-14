@@ -31,6 +31,18 @@ beforeEach(() => { encryption.available = true; directory = fs.mkdtempSync(path.
 afterEach(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
 
 describe("security workspace persistence", () => {
+  it("preserves existing missing evidence references without accepting new missing or verified evidence", () => {
+    const workspace = securityWorkspace(); const thread = store.createThread(workspace.id);
+    store.upsertSecurityJob(jobFor(workspace.id, thread.id));
+    const finding = { id: "legacy-finding", workspaceId: workspace.id, title: "Unresolved", description: "Retained reference", severity: "info" as const, state: "observed" as const, reproduction: "", remediation: "", evidenceJobIds: ["call"], createdAt: 1, updatedAt: 2 };
+    store.upsertSecurityFinding(finding);
+    const db = new DatabaseSync(path.join(directory, "privora-desktop.sqlite"));
+    db.prepare("DELETE FROM security_jobs WHERE id = ?").run("call"); db.close();
+    store.upsertSecurityFinding({ ...finding, state: "stale", description: "Lookup unresolved after maintenance" });
+    expect(store.getSecurityFinding(finding.id)?.evidenceJobIds).toEqual(["call"]);
+    expect(() => store.upsertSecurityFinding({ ...finding, state: "verified" })).toThrow(/same workspace/);
+    expect(() => store.upsertSecurityFinding({ ...finding, id: "new-finding" })).toThrow(/same workspace/);
+  });
   it("keeps encrypted SSH configuration out of snapshots and disk plaintext", () => {
     store.saveSecurityEnvironment({ ...environment, ...config }, config);
     expect(store.getSecurityEnvironmentConfig(environment.id)).toEqual(config);

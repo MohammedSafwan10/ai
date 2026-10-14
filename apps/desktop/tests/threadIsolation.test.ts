@@ -204,7 +204,7 @@ describe("renderer thread isolation", () => {
     expect(next.subagents).toHaveLength(1);
   });
 
-  it("surfaces child tool events in the active parent timeline", () => {
+  it("keeps child tool events out of the active parent timeline", () => {
     const current = reducePayloadEvents(baseSnapshot(), [
       {
         type: "snapshot.updated",
@@ -231,8 +231,7 @@ describe("renderer thread isolation", () => {
       { type: "tool.upserted", tool: tool("child-tool", "agent-thread", "child-assistant") },
     ]);
 
-    expect(next.toolEvents.map((item) => item.id)).toContain("child-tool");
-    expect(next.toolEvents.find((item) => item.id === "child-tool")?.messageId).toBe("old-assistant");
+    expect(next.toolEvents.map((item) => item.id)).not.toContain("child-tool");
   });
 
   it("coalesces run states independently per thread", () => {

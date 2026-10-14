@@ -38,10 +38,10 @@ describe("desktop model metadata and runtime budgets", () => {
       maxOutputTokens: 65_536,
       defaultOutputTokens: 32_000,
     });
-    expect(getModelOption("deepseek/deepseek-v4-flash")).toMatchObject({
+    expect(getModelOption("opencode-go/deepseek-v4.1-flash")).toMatchObject({
       contextWindowTokens: 1_048_576,
-      maxOutputTokens: 393_216,
-      defaultOutputTokens: 4_096,
+      maxOutputTokens: 131_072,
+      defaultOutputTokens: 16_384,
       supportsImageInput: false,
     });
     expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free")).toMatchObject({
@@ -73,7 +73,7 @@ describe("desktop model metadata and runtime budgets", () => {
   it("exposes only verified reasoning levels and rejects unsupported selections", () => {
     expect(getModelOption(GPT_56_SOL_MODEL_ID).reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(getModelOption(GEMINI_37_FLASH_MODEL_ID).reasoningEfforts).toEqual(["low", "medium", "high"]);
-    expect(getModelOption("deepseek/deepseek-v4-flash").reasoningEfforts).toEqual(["none", "high", "xhigh"]);
+    expect(getModelOption("opencode-go/deepseek-v4.1-flash").reasoningEfforts).toEqual(["none", "high", "xhigh"]);
     expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free").reasoningEfforts).toEqual(["none", "low", "medium"]);
     expect(getModelOption(OPENROUTER_OX_ALPHA_MODEL_ID).reasoningEfforts).toEqual(["none", "low", "high", "max"]);
     expect(getModelOption(OPENROUTER_MINIMAX_M3_MODEL_ID).reasoningControl).toBe("toggle");
@@ -94,13 +94,13 @@ describe("desktop model metadata and runtime budgets", () => {
   });
 
   it("uses cost-safe OpenRouter output defaults while preserving long input budgets", () => {
-    const deepseek = resolveModelRuntimeBudget("deepseek/deepseek-v4-flash", "normal");
+    const deepseek = resolveModelRuntimeBudget("opencode-go/deepseek-v4.1-flash", "normal");
     const nemotron = resolveModelRuntimeBudget("nvidia/nemotron-3-super-120b-a12b:free", "normal");
     const minimax = resolveModelRuntimeBudget(OPENROUTER_MINIMAX_M3_MODEL_ID, "normal");
     const oxAlpha = resolveModelRuntimeBudget(OPENROUTER_OX_ALPHA_MODEL_ID, "normal");
 
-    expect(deepseek.outputTokens).toBe(4_096);
-    expect(deepseek.inputBudgetTokens).toBe(1_013_023);
+    expect(deepseek.outputTokens).toBe(16_384);
+    expect(deepseek.inputBudgetTokens).toBe(1_000_735);
     expect(nemotron.outputTokens).toBe(4_096);
     expect(nemotron.hardInputBudgetTokens).toBe(250_048);
     expect(minimax.outputTokens).toBe(4_096);

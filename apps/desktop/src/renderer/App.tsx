@@ -1,3 +1,4 @@
+import { groupInlineMessages } from "./features/chat/inlineMessages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
@@ -76,24 +77,12 @@ export default function App() {
   const running = isActiveTurnStatus(runStatus);
   const resumable = snapshot.activeRun?.resumable === true && (runStatus === "stalled" || runStatus === "stopped");
   const allMessages = snapshot.messages;
-  const messages = useMemo(() => {
-    const availableParents = new Set(allMessages.map((message) => message.id));
-    return allMessages.filter((message) => !message.steeredTurnId || !availableParents.has(message.steeredTurnId));
-  }, [allMessages]);
-  const inlineSteersByTurn = useMemo(() => {
-    const map = new Map<string, typeof allMessages>();
-    const availableParents = new Set(allMessages.map((message) => message.id));
-    allMessages.forEach((message) => {
-      if (!message.steeredTurnId || !availableParents.has(message.steeredTurnId)) return;
-      const current = map.get(message.steeredTurnId) || [];
-      current.push(message);
-      map.set(message.steeredTurnId, current);
-    });
-    return map;
-  }, [allMessages]);
+  const inlineMessages = useMemo(() => groupInlineMessages(allMessages, snapshot.toolEvents), [allMessages, snapshot.toolEvents]);
+  const messages = inlineMessages.roots;
+  const inlineSteersByTurn = inlineMessages.inlineByTurn;
   const promptHistory = useMemo(
     () => allMessages
-      .filter((message) => message.role === "user" && message.threadId === activeThread?.id && message.content.trim())
+      .filter((message) => message.role === "user" && !message.agentMessage && message.threadId === activeThread?.id && message.content.trim())
       .map((message) => message.content)
       .filter((content, index, items) => index === 0 || content !== items[index - 1]),
     [activeThread?.id, allMessages],

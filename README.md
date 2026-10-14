@@ -6,7 +6,7 @@ Privora brings AI chat, local development tools, and connected security environm
 
 - `apps/workspace` - browser AI workspace app for chat, artifacts, Web Dev, Characters, Command Center, image generation, Deep Research, Debate, and Clash.
 - `apps/web` - SaaS website for pricing, auth, account pages, legal pages, desktop connection, and future admin.
-- `apps/desktop` - Electron desktop app for local coding workflows and Security projects that execute tools in an assigned Kali VM, with streamed output, Stop/recovery, findings, and saved evidence.
+- `apps/desktop` - Electron desktop app for local coding workflows and Security projects, with built-in browser research, live subagents, recoverable context compaction, and tools executed in an assigned Kali VM.
 - `appwrite` - Appwrite Functions and scripts for the update feed and SaaS AI credit engine.
 - `docs` - shared runbooks and architecture notes.
 
@@ -64,6 +64,7 @@ Desktop release and SaaS credit automation are documented in:
 
 - `docs/desktop-auto-updates.md`
 - `apps/desktop/docs/browser-agent.md` for Browser Agent phases, workflow evidence, and storage cleanup behavior.
+- `apps/desktop/docs/reliable-compaction.md` for preserved task state, checkpoint validation, recovery, and model-budget limits.
 - `apps/desktop/docs/saas-ai-credits.md`
 
 ## Desktop Security workspace
@@ -71,6 +72,8 @@ Desktop release and SaaS credit automation are documented in:
 Create a **Security project** from the desktop sidebar, choose a saved Kali connection, and describe the objective and authorized scope. Connection profiles are imported once per VM and reused across projects. Normal local projects retain their existing coding tools; Security projects execute through SSH in their assigned environment.
 
 The selected model and reasoning level stay in Privora. Kali needs the small Python runner and SSH access, without Docker or a second model agent. Chat shows remote activity; project details provide jobs, connection checks, findings, evidence previews, and native file saving.
+
+Security projects also support public research in the built-in desktop browser, including screenshots, evidence capture, and PDF reading. Browser research traffic originates on the desktop; target commands execute in Kali. Subagents have live transcripts and visible coordination messages. Long chats can compact while retaining operator instructions, operational state, and evidence references; original transcripts and artifacts remain stored.
 
 **Full access** skips command approval prompts in Privora. It does not grant root privileges, expand target authorization, or add hardware capabilities. Remote GUI/browser control and interactive PTY sessions are future work.
 

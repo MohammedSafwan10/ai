@@ -7,6 +7,13 @@ The usable Windows portable build is verified; installer distribution and
 representative assessment acceptance remain separate.
 Date: 13 October 2026.
 
+14 October 2026 update: desktop browser screenshots, evidence capture and PDF
+reading are available for research; live subagent transcripts and coordination
+events are implemented; reliable foreground compaction preserves task state and
+evidence references. The latest compaction verification passed 650 tests (7
+skipped), TypeScript and Windows packaging. Live validation of every provider
+and representative assessments remain separate.
+
 Privora Security extends the existing desktop app into a security research
 workspace. It keeps the normal chat interface and connects the agent to testing
 environments, tools, files and evidence. Web assessment is one workflow among
@@ -29,6 +36,7 @@ repository review, application analysis, network assessment and investigation.
 - [Interface and streaming behavior](UI_AND_STREAMING.md)
 - [Delivery stages and verification](DELIVERY.md)
 - [Kali tool operations and expert workflow](KALI_OPERATIONS.md)
+- [Reliable context compaction and recovery](../reliable-compaction.md)
 
 ## Product boundaries
 
@@ -61,7 +69,8 @@ Existing chats, model selection, reasoning, Plan Mode, and access controls are
 reused. The chat header opens jobs, output, Stop, findings, and evidence on demand.
 Host filesystem, terminal, computer controls and browser form actions are blocked
 in Security projects. Built-in browser search, navigation and page-reading tools
-are available for public research; their traffic originates on the desktop host.
+are available for public research, including screenshots, evidence capture, and
+PDF reading; their traffic originates on the desktop host.
 Target commands and browser-automation scripts run in the assigned Kali environment.
 The SSH connector is registered only for that environment. The agent may install
 needed tools autonomously under the operator's authorization, verifying

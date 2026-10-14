@@ -43,6 +43,7 @@ export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
 export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
 export const DEEPSEEK_V41_FLASH_EXP_MODEL_ID = "deepseek-v4.1-flash-expires-on-0910";
 export const DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID = "deepseek-v4-flash-vision-exp";
+export const OPENCODE_GO_DEEPSEEK_V41_FLASH_MODEL_ID = "opencode-go/deepseek-v4.1-flash";
 export const OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID = "opencode-go/deepseek-v4-flash";
 export const OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID = "opencode-go/deepseek-v4-pro";
 export const OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID = "opencode-go/deepseek-v4-flash-vision-exp";
@@ -120,36 +121,8 @@ const modelOptions: ModelOption[] = [
     description: "Latest stable Gemini Flash model for agentic, coding, and multimodal tasks.",
   },
   {
-    id: DEEPSEEK_V41_FLASH_EXP_MODEL_ID,
-    label: "DeepSeek V4.1 Flash (Temp, expires 09-10)",
-    provider: "deepseek",
-    supportsTools: true,
-    supportsImageInput: true,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 393_216,
-    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
-    description: "Short-lived internal test, new arch, faster, natively multimodal. Direct DeepSeek BYOK. Expires Sept 10, 2026. Pricing same as v4-flash.",
-  },
-  {
-    id: DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID,
-    label: "DeepSeek V4 Flash Vision Exp",
-    provider: "deepseek",
-    supportsTools: true,
-    supportsImageInput: true,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 393_216,
-    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
-    description: "Experimental multimodal vision version. Direct DeepSeek BYOK, image input billed as input tokens.",
-  },
-  {
-    id: OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID,
-    label: "DeepSeek V4 Flash (Go)",
+    id: OPENCODE_GO_DEEPSEEK_V41_FLASH_MODEL_ID,
+    label: "DeepSeek V4.1 Flash (Go)",
     provider: "opencode-go",
     supportsTools: true,
     supportsImageInput: false,
@@ -159,38 +132,8 @@ const modelOptions: ModelOption[] = [
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 131_072,
     defaultOutputTokens: OPENCODE_GO_DEFAULT_OUTPUT_TOKENS,
-    upstreamModelId: "deepseek-v4-flash",
-    description: "Go subscription workhorse. Billed to Go caps ($12/5h, $30/wk, $60/mo).",
-  },
-  {
-    id: OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID,
-    label: "DeepSeek V4 Pro (Go)",
-    provider: "opencode-go",
-    supportsTools: true,
-    supportsImageInput: false,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 131_072,
-    defaultOutputTokens: OPENCODE_GO_DEFAULT_OUTPUT_TOKENS,
-    upstreamModelId: "deepseek-v4-pro",
-    description: "Stronger Go reasoning model. Billed to Go caps, not Privora credits.",
-  },
-  {
-    id: OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID,
-    label: "DeepSeek V4 Flash Vision (Go)",
-    provider: "opencode-go",
-    supportsTools: true,
-    supportsImageInput: true,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 131_072,
-    defaultOutputTokens: OPENCODE_GO_DEFAULT_OUTPUT_TOKENS,
-    upstreamModelId: "deepseek-v4-flash-vision-exp",
-    description: "Vision-capable Go model. Image input billed as input tokens.",
+    upstreamModelId: "deepseek-v4.1-flash",
+    description: "DeepSeek V4.1 Flash through OpenCode Go. Context and output limits use Go family defaults.",
   },
   {
     id: OPENCODE_GO_KIMI_K27_CODE_MODEL_ID,
@@ -358,20 +301,6 @@ const modelOptions: ModelOption[] = [
     description: "Efficient high-volume GPT-5.6 model through CLIProxy.",
   },
   {
-    id: OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID,
-    label: "DeepSeek V4 Flash",
-    provider: "openrouter",
-    supportsTools: true,
-    supportsImageInput: false,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 393_216,
-    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
-    description: "Fast DeepSeek MoE model with 1M context through your OpenRouter key.",
-  },
-  {
     id: "nvidia/nemotron-3-super-120b-a12b:free",
     label: "Nemotron 3 Super",
     provider: "openrouter",
@@ -415,36 +344,6 @@ const modelOptions: ModelOption[] = [
     description: "Free OpenRouter 1M context reasoning model for coding, agentic workflows, and multimodal tasks.",
   },
   {
-    id: PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID,
-    label: "DeepSeek V4 Flash",
-    provider: "privora-cloud",
-    supportsTools: true,
-    supportsImageInput: false,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 8_192,
-    defaultOutputTokens: 2_048,
-    upstreamModelId: "deepseek/deepseek-v4-flash",
-    description: "Fast hosted Privora model. Uses AI credits unless you switch to BYOK.",
-  },
-  {
-    id: PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID,
-    label: "DeepSeek V4 Pro",
-    provider: "privora-cloud",
-    supportsTools: true,
-    supportsImageInput: false,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "high", "xhigh"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 8_192,
-    defaultOutputTokens: 2_048,
-    upstreamModelId: "deepseek/deepseek-v4-pro",
-    description: "Stronger hosted Privora model. Uses AI credits unless you switch to BYOK.",
-  },
-  {
     id: PRIVORA_MINIMAX_M3_MODEL_ID,
     label: "MiniMax M3",
     provider: "privora-cloud",
@@ -464,7 +363,12 @@ const modelOptions: ModelOption[] = [
 
 export const normalizeModelId = (modelId: string | undefined) => {
   const normalizedId = modelId?.trim();
-  return normalizedId || GEMINI_37_FLASH_MODEL_ID;
+  const retiredDeepSeekIds = new Set([
+    DEEPSEEK_V41_FLASH_EXP_MODEL_ID, DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID,
+    OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID, OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID, OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID,
+    OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID, PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID, PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID,
+  ]);
+  return normalizedId && retiredDeepSeekIds.has(normalizedId) ? OPENCODE_GO_DEEPSEEK_V41_FLASH_MODEL_ID : normalizedId || GEMINI_37_FLASH_MODEL_ID;
 };
 
 export const findModelOption = (modelId: string | undefined) => {

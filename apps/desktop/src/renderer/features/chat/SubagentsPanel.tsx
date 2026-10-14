@@ -5,6 +5,7 @@ import { ChatMessage } from "../../components/ChatMessage";
 import { RequestUserInputPanel } from "../../components/RequestUserInputPanel";
 import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
+import { groupInlineMessages } from "./inlineMessages";
 
 const name = (agent: SubagentRecord) => agent.agentNickname || agent.taskName;
 const upsert = <T extends { id: string }>(items: T[], item: T) => {
@@ -71,6 +72,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
     { title: "Done", rows: agents.filter((item) => !live(item) && item.status === "completed") },
     { title: "Needs attention", rows: agents.filter((item) => !live(item) && item.status !== "completed") },
   ];
+  const inlineMessages = transcript ? groupInlineMessages(transcript.page.messages, transcript.page.toolEvents) : null;
   const approve = (callId: string, approved: boolean) => {
     if (!selected) return;
     void window.privoraDesktop.decideApproval({ threadId: selected, callId, approved, scope: "once" }).catch((reason: unknown) => setError(String(reason)));
@@ -104,8 +106,8 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       </section>)}
       {selected && !transcript && !error && <p role="status">Loading agent chat…</p>}
       {transcript?.page.hasOlder && <button onClick={() => void older()} disabled={loadingOlder}>{loadingOlder ? "Loading…" : "Load earlier messages"}</button>}
-      {transcript && transcript.page.messages.filter((message) => !message.steeredTurnId).map((message: ChatMessageRecord) => <ChatMessage key={message.id}
-        message={message} inlineSteers={transcript.page.messages.filter((item) => item.steeredTurnId === message.id)}
+      {transcript && inlineMessages?.roots.map((message: ChatMessageRecord) => <ChatMessage key={message.id}
+        message={message} inlineSteers={inlineMessages.inlineByTurn.get(message.id)} coordinationDetails
         tools={transcript.page.toolEvents.filter((tool: ToolEventRecord) => tool.messageId === message.id)} subagents={agents} onOpenSubagent={setSelected}
         activeRunStatus={transcript.run?.assistantMessageId === message.id ? transcript.run.status : null}
         onApprove={approve} onApproveAll={(ids) => ids.forEach((id) => approve(id, true))}

@@ -17,6 +17,13 @@ import { OpenCodeGoAdapter } from "../src/main/agent/providers/opencodeGo";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 
 describe("opencode go model discovery", () => {
+  it("offers only DeepSeek V4.1 Flash Go and does not reintroduce retired models through discovery", () => {
+    const groups = withDiscoveredGoModels(getModelProviderGroups(), ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"]);
+    expect(groups.flatMap((group) => group.models).filter((model) => /deepseek/i.test(model.id)).map((model) => model.id)).toEqual(["opencode-go/deepseek-v4.1-flash"]);
+    expect(groups.some((group) => group.id === "deepseek")).toBe(false);
+    expect(getModelOption("deepseek/deepseek-v4-flash").id).toBe("opencode-go/deepseek-v4.1-flash");
+    expect(getModelOption("opencode-go/deepseek-v4-pro").id).toBe("opencode-go/deepseek-v4.1-flash");
+  });
   it.each([
     { model: "opencode-go/glm-5.3-flash", event: { choices: [{ delta: { refusal: "Cannot assist with that request." } }] }, expected: "model_refusal" },
     { model: "opencode-go/gpt-6-luna", event: { type: "response.refusal.delta", delta: "Cannot assist with that request." }, expected: "model_refusal" },
@@ -98,16 +105,16 @@ describe("opencode go model discovery", () => {
     } finally { vi.unstubAllGlobals(); }
   });
   it("synthesizes safe options for chat-route families", () => {
-    const flash = synthesizeGoModelOption("opencode-go/deepseek-v4-flash");
+    const flash = synthesizeGoModelOption("opencode-go/deepseek-v4.1-flash");
     expect(flash).toMatchObject({
-      id: "opencode-go/deepseek-v4-flash",
+      id: "opencode-go/deepseek-v4.1-flash",
       provider: "opencode-go",
       supportsImageInput: false,
-      upstreamModelId: "deepseek-v4-flash",
+      upstreamModelId: "deepseek-v4.1-flash",
     });
-    const vision = synthesizeGoModelOption("deepseek-v4-flash-vision-exp");
-    expect(vision?.supportsImageInput).toBe(true);
-    expect(vision?.id).toBe("opencode-go/deepseek-v4-flash-vision-exp");
+    const vision = synthesizeGoModelOption("deepseek-v4.1-flash-vision-exp");
+    expect(vision).toBeNull();
+    expect(vision).toBeNull();
     expect(synthesizeGoModelOption("kimi-k2.7-code")?.provider).toBe("opencode-go");
   });
 
@@ -120,7 +127,7 @@ describe("opencode go model discovery", () => {
   });
 
   it("resolves static and discovered go models through the shared registry", () => {
-    expect(getModelOption("opencode-go/deepseek-v4-flash").provider).toBe("opencode-go");
+    expect(getModelOption("opencode-go/deepseek-v4.1-flash").provider).toBe("opencode-go");
     const dynamic = findModelOption("opencode-go/grok-4.5");
     expect(dynamic?.provider).toBe("opencode-go");
     expect(getModelOption("opencode-go/gpt-5.6-luna").provider).toBe("opencode-go");
@@ -130,21 +137,20 @@ describe("opencode go model discovery", () => {
 
   it("merges discovered ids into the go picker group without duplicates", () => {
     const groups = withDiscoveredGoModels(getModelProviderGroups(), [
-      "deepseek-v4-flash",
+      "deepseek-v4.1-flash",
       "opencode-go/grok-4.5",
       "opencode-go/gpt-5.6-luna",
     ]);
     const go = groups.find((group) => group.id === "opencode-go");
     expect(go).toBeDefined();
     const ids = go?.models.map((model) => model.id) || [];
-    expect(ids.filter((id) => id === "opencode-go/deepseek-v4-flash")).toHaveLength(1);
+    expect(ids.filter((id) => id === "opencode-go/deepseek-v4.1-flash")).toHaveLength(1);
     expect(ids).toContain("opencode-go/grok-4.5");
     expect(ids).toContain("opencode-go/gpt-5.6-luna");
   });
 
   it("marks native-vision models from every verified family", () => {
     const vision = [
-      "opencode-go/deepseek-v4-flash-vision-exp",
       "opencode-go/kimi-k3",
       "opencode-go/kimi-k2.7-code",
       "opencode-go/muse-spark-1.3-contributor",
@@ -161,8 +167,7 @@ describe("opencode go model discovery", () => {
       expect(synthesizeGoModelOption(id)?.supportsImageInput, id).toBe(true);
     }
     const textOnly = [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
+      "opencode-go/deepseek-v4.1-flash",
       "opencode-go/glm-5.2",
       "opencode-go/glm-5.3",
       "opencode-go/qwen3.7-max",
@@ -204,16 +209,16 @@ describe("opencode go model discovery", () => {
 
   it("prettifies go model ids for display", () => {
     expect(prettifyGoLabel("kimi-k2.7-code")).toBe("Kimi K2.7 Code");
-    expect(prettifyGoLabel("deepseek-v4-flash")).toBe("Deepseek V4 Flash");
+    expect(prettifyGoLabel("deepseek-v4.1-flash")).toBe("Deepseek V4.1 Flash");
   });
 
   it("fetches and splits the live catalog", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       object: "list",
-      data: [{ id: "deepseek-v4-flash" }, { id: "gpt-5.6-luna" }, { id: "future-unknown-zzz" }, { id: 42 }, {}],
+      data: [{ id: "deepseek-v4.1-flash" }, { id: "gpt-5.6-luna" }, { id: "future-unknown-zzz" }, { id: 42 }, {}],
     }), { status: 200 }));
     const result = await fetchGoModelIds("go-key", fetchMock as unknown as typeof fetch);
-    expect(result.ids).toEqual(["deepseek-v4-flash", "gpt-5.6-luna"]);
+    expect(result.ids).toEqual(["deepseek-v4.1-flash", "gpt-5.6-luna"]);
     expect(result.unsupported).toEqual(["future-unknown-zzz"]);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer go-key");
@@ -226,7 +231,7 @@ describe("opencode go model discovery", () => {
   });
 
   it("routes families to the right go endpoint", () => {
-    expect(goRouteFor("opencode-go/deepseek-v4-flash")).toBe("chat");
+    expect(goRouteFor("opencode-go/deepseek-v4.1-flash")).toBe("chat");
     expect(goRouteFor("opencode-go/kimi-k2.7-code")).toBe("chat");
     expect(goRouteFor("opencode-go/gpt-5.6-luna")).toBe("responses");
     expect(goRouteFor("opencode-go/grok-4.6")).toBe("responses");
@@ -286,7 +291,7 @@ describe("opencode go model discovery", () => {
   it("never sends temperature on any go route", async () => {    const fetchMock = vi.fn(async () => sseResponseWith([]));
     vi.stubGlobal("fetch", fetchMock);
     try {
-      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/deepseek-v4-flash" }));
+      await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/deepseek-v4.1-flash" }));
       await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/gpt-5.6-luna" }));
       await new OpenCodeGoAdapter().stream(goOptions({ model: "opencode-go/minimax-m3" }));
       for (const [, init] of fetchMock.mock.calls as unknown as Array<[string, RequestInit]>) {
@@ -426,7 +431,7 @@ const sseResponseWith = (chunks: string[]) => new Response(new ReadableStream({
 
 const goOptions = (overrides: Partial<ProviderStreamOptions> = {}): ProviderStreamOptions => ({
   provider: "opencode-go",
-  model: "opencode-go/deepseek-v4-flash",
+  model: "opencode-go/deepseek-v4.1-flash",
   systemInstruction: "system",
   messages: [{ role: "user", content: "hi", parts: [{ type: "text", text: "hi" }] }],
   reasoning: "high",

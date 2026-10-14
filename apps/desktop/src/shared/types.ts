@@ -897,7 +897,7 @@ export interface ThreadRecord {
 }
 
 export interface ChatMessageRecord {
-  agentMessage?: { id: string; senderThreadId: string; senderLabel: string; recipientLabel: string; delivery: "queued" | "delivered"; outgoing?: boolean };
+  agentMessage?: { id: string; senderThreadId: string; senderLabel: string; recipientLabel: string; recipientThreadId?: string; toolCallId?: string; delivery: "queued" | "delivered"; outgoing?: boolean };
   id: string;
   threadId: string;
   role: MessageRole;

@@ -220,9 +220,8 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
       continue;
     }
     if (event.type === "tool.upserted") {
-      const parent = next.subagents.find((agent) => agent.threadId === event.tool.threadId);
-      if (event.tool.threadId === next.activeThreadId || parent?.parentThreadId === next.activeThreadId) {
-        next = { ...next, toolEvents: upsertById(next.toolEvents, parent ? { ...event.tool, messageId: parent.parentMessageId } : event.tool) };
+      if (event.tool.threadId === next.activeThreadId) {
+        next = { ...next, toolEvents: upsertById(next.toolEvents, event.tool) };
       }
       continue;
     }

@@ -461,21 +461,22 @@ export class SecurityWorkspaceService {
     const id = args.id === undefined ? randomUUID() : requiredText(args.id, "finding ID", 100);
     const existing = this.store.getSecurityFinding(id);
     if (existing && existing.workspaceId !== context.workspaceId) throw new Error("Finding belongs to another workspace.");
-    const severity = args.severity ?? "info";
-    const state = args.state ?? "candidate";
+    const severity = args.severity ?? existing?.severity ?? "info";
+    const state = args.state ?? existing?.state ?? "candidate";
     if (!["info", "low", "medium", "high", "critical"].includes(String(severity)) || !["candidate", "observed", "verified", "rejected", "stale"].includes(String(state))) throw new Error("Invalid finding severity or state.");
-    const evidenceJobIds = args.evidenceJobIds ?? [];
-    if (!Array.isArray(evidenceJobIds) || evidenceJobIds.length > 100 || evidenceJobIds.some((id) => typeof id !== "string")) throw new Error("Invalid finding evidence.");
-    const evidence = evidenceJobIds.map((id) => this.scopedJob(id, context));
-    const reproduction = typeof args.reproduction === "string" ? redactSecrets(args.reproduction).slice(0, 20_000) : "";
+    const evidenceJobIds = args.evidenceJobIds === undefined ? existing?.evidenceJobIds ?? [] : args.evidenceJobIds;
+    if (!Array.isArray(evidenceJobIds) || evidenceJobIds.length > 100 || evidenceJobIds.some((id) => typeof id !== "string" || !id.trim())) throw new Error("evidenceJobIds must be an array of persisted job ID strings; no evidence was changed.");
+    const preserveUnresolved = args.evidenceJobIds === undefined && existing && state !== "verified";
+    const evidence = preserveUnresolved ? [] : evidenceJobIds.map((id) => this.scopedJob(id, context));
+    const reproduction = typeof args.reproduction === "string" ? redactSecrets(args.reproduction).slice(0, 20_000) : existing?.reproduction ?? "";
     if (state === "verified" && (!reproduction.trim() || !evidence.length || evidence.some((job) => job.state !== "succeeded" || (!job.outputPreview.trim() && !job.artifacts?.length)))) {
-      throw new Error("Verified findings require reproduction and successful completed jobs with retained evidence.");
+      throw new Error("Verified findings require reproduction and evidenceJobIds referencing successful completed jobs with retained evidence. Supply those IDs explicitly for a new finding; omitted IDs on updates preserve existing evidence. No finding was changed.");
     }
     const record: SecurityFindingRecord = {
       id, workspaceId: context.workspaceId, title: redactSecrets(requiredText(args.title, "finding title", 300)),
       description: redactSecrets(requiredText(args.description, "finding description")),
       severity: severity as SecurityFindingRecord["severity"], state: state as SecurityFindingRecord["state"], reproduction,
-      remediation: typeof args.remediation === "string" ? redactSecrets(args.remediation).slice(0, 20_000) : "",
+      remediation: typeof args.remediation === "string" ? redactSecrets(args.remediation).slice(0, 20_000) : existing?.remediation ?? "",
       evidenceJobIds, createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
     };
     this.store.upsertSecurityFinding(record);

@@ -23,6 +23,15 @@ afterEach(() => {
 });
 
 describe("long chat SQLite repository", () => {
+  it("keeps detailed child tools in the child transcript rather than the parent history", () => {
+    const db = createStore(); const root = db.createThread(null);
+    db.upsertMessage(message("assistant", root.id, 1));
+    const child = db.createSubagent({ parentThreadId: root.id, parentMessageId: "assistant", workspaceId: null, taskName: "review", agentPath: "/root/review", prompt: "Inspect" });
+    db.upsertMessage(message("child-answer", child.threadId, 2));
+    db.upsertToolEvent(tool("child-tool", child.threadId, "child-answer", "Detailed child command output"));
+    expect(db.getThreadHistoryPage(root.id).toolEvents).toEqual([]);
+    expect(db.getThreadHistoryPage(child.threadId).toolEvents.map((item) => item.id)).toEqual(["child-tool"]);
+  });
   it("finds unfinished streamed tools after a provider assigns a real call id", () => {
     const db = createStore();
     const thread = db.createThread(null);

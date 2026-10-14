@@ -31,6 +31,8 @@ export interface SubagentManagerPorts {
   stopThread: (threadId: string, reason: string) => void;
   emitSnapshot: () => void;
   emitMessage?: (message: ChatMessageRecord) => void;
+  nextActivityOrder?: () => number;
+  getAssistantTextOffset?: (threadId: string, messageId: string) => number | undefined;
 }
 
 export interface SubagentToolContext {
@@ -49,9 +51,9 @@ export class SubagentManager {
       case "spawn_agent":
         return this.spawn(call, context);
       case "send_message":
-        return this.message(call, context.parentThreadId, false);
+        return this.message(call, context.parentThreadId, false, undefined, context.parentMessageId);
       case "assign_task":
-        return this.message(call, context.parentThreadId, true, context.workspaceRoot);
+        return this.message(call, context.parentThreadId, true, context.workspaceRoot, context.parentMessageId);
       case "wait_agent":
         return this.wait(call, context.parentThreadId, context.signal);
       case "list_agents":
@@ -134,7 +136,7 @@ export class SubagentManager {
     return { success: true, output: `Spawned ${formatSubagentLabel(agent)}.`, data: subagentToolData(agent) };
   }
 
-  private message(call: DesktopToolCall, parentThreadId: string, triggerTurn: boolean, workspaceRoot?: string): ToolResult {
+  private message(call: DesktopToolCall, parentThreadId: string, triggerTurn: boolean, workspaceRoot?: string, senderMessageId?: string): ToolResult {
     const target = String(call.arguments.target || "").trim();
     const message = String(call.arguments.message || "").trim();
     if (!message) return { success: false, error: "message is required." };
@@ -143,18 +145,18 @@ export class SubagentManager {
     const senderLabel = sender ? formatSubagentLabel(sender) : "Parent";
     if (sender && ["parent", sender.parentThreadId].includes(target)) {
       if (triggerTurn) return { success: false, error: "Use send_message to report to the parent; assigning its task is unavailable." };
-      const metadata: ChatMessageRecord["agentMessage"] = { id: randomUUID(), senderThreadId: parentThreadId, senderLabel, recipientLabel: "Parent", delivery: "queued" };
+      const metadata: ChatMessageRecord["agentMessage"] = { id: randomUUID(), senderThreadId: parentThreadId, senderLabel, recipientLabel: "Parent", recipientThreadId: sender.parentThreadId, toolCallId: call.id, delivery: "queued" };
       this.ports.appendUserMessage(sender.parentThreadId, message, metadata);
-      this.recordSent(parentThreadId, message, metadata);
+      this.recordSent(parentThreadId, message, metadata, senderMessageId);
       this.ports.emitSnapshot();
       return { success: true, output: "Queued message to parent; it will be delivered at its next model boundary.", data: { targetThreadId: sender.parentThreadId, delivery: "queued" } };
     }
     const agent = this.store.findSubagent(parentThreadId, target);
     if (!agent) return { success: false, error: `Subagent target not found: ${target}` };
     if (agent.status === "closed") return { success: false, error: `${formatSubagentLabel(agent)} is closed.` };
-    const metadata: ChatMessageRecord["agentMessage"] = { id: randomUUID(), senderThreadId: parentThreadId, senderLabel, recipientLabel: formatSubagentLabel(agent), delivery: "queued" };
+    const metadata: ChatMessageRecord["agentMessage"] = { id: randomUUID(), senderThreadId: parentThreadId, senderLabel, recipientLabel: formatSubagentLabel(agent), recipientThreadId: agent.threadId, toolCallId: call.id, delivery: "queued" };
     this.ports.appendUserMessage(agent.threadId, message, metadata);
-    this.recordSent(parentThreadId, message, metadata);
+    this.recordSent(parentThreadId, message, metadata, senderMessageId);
     const alreadyRunning = this.ports.isRunActive(agent.threadId);
     this.store.updateSubagent(agent.threadId, {
       status: triggerTurn && !alreadyRunning ? "pending" : agent.status,
@@ -175,8 +177,11 @@ export class SubagentManager {
     };
   }
 
-  private recordSent(threadId: string, message: string, metadata: NonNullable<ChatMessageRecord["agentMessage"]>) {
+  private recordSent(threadId: string, message: string, metadata: NonNullable<ChatMessageRecord["agentMessage"]>, senderMessageId?: string) {
+    const anchor = senderMessageId ? this.store.getMessage(senderMessageId) : null;
+    const inline = anchor?.threadId === threadId && anchor.role === "assistant" && !anchor.agentMessage;
     const record = this.store.upsertMessage({ id: `agent-sent-${metadata.id}`, threadId, role: "assistant", content: message,
+      steeredTurnId: inline ? anchor.id : undefined, steerTextOffset: inline ? this.ports.getAssistantTextOffset?.(threadId, anchor.id) ?? anchor.content.length : undefined, steerStreamOrder: inline ? this.ports.nextActivityOrder?.() : undefined,
       agentMessage: { ...metadata, outgoing: true }, status: "completed", createdAt: Date.now(), updatedAt: Date.now() });
     this.ports.emitMessage?.(record);
   }

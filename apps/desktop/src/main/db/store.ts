@@ -337,7 +337,12 @@ export class DesktopStore {
   listSecurityJobs(workspaceId: string, threadId?: string) { return threadId ? this.all<SecurityJobRecord>("SELECT payload FROM security_jobs WHERE workspace_id = ? AND thread_id = ? ORDER BY updated_at DESC, id", workspaceId, threadId) : this.all<SecurityJobRecord>("SELECT payload FROM security_jobs WHERE workspace_id = ? ORDER BY updated_at DESC, id", workspaceId); }
   upsertSecurityFinding(record: SecurityFindingRecord) {
     if (this.getWorkspace(record.workspaceId)?.type !== "security") throw new Error("Finding requires a security workspace.");
-    if (record.evidenceJobIds.some((id) => this.getSecurityJob(id)?.workspaceId !== record.workspaceId)) throw new Error("Finding evidence must belong to the same workspace.");
+    const existing = this.getSecurityFinding(record.id);
+    if (existing && existing.workspaceId !== record.workspaceId) throw new Error("Finding belongs to another workspace.");
+    if (record.evidenceJobIds.some((id) => {
+      const job = this.getSecurityJob(id);
+      return job ? job.workspaceId !== record.workspaceId : record.state === "verified" || !existing?.evidenceJobIds.includes(id);
+    })) throw new Error("Finding evidence must belong to the same workspace; only existing unresolved IDs can be preserved on non-verified updates.");
     this.putRecord("security_findings", record.id, record, { workspaceId: record.workspaceId, updatedAt: record.updatedAt });
     return record;
   }
@@ -462,7 +467,7 @@ export class DesktopStore {
     const hasOlder = newestFirst.length > limit;
     const messages = newestFirst.slice(0, limit).reverse();
     const messageIds = messages.map((message) => message.id);
-    const toolEvents = this.listToolEventsForMessagesWithSubagents(threadId, messageIds);
+    const toolEvents = this.listToolEventPreviewsForMessages(threadId, messageIds);
     const page = {
       threadId,
       messages,
@@ -687,13 +692,6 @@ export class DesktopStore {
     this.run(`DELETE FROM approval_history WHERE thread_id IN (${placeholders(removed.size)})`, ...removed);
     this.run(`DELETE FROM compaction_checkpoints WHERE thread_id IN (${placeholders(removed.size)})`, ...removed);
     this.run(`DELETE FROM threads WHERE id IN (${placeholders(removed.size)})`, ...removed);
-  }
-  private listToolEventsForMessagesWithSubagents(parentThreadId: string, messageIds: string[]) {
-    if (!messageIds.length) return [];
-    const childThreads = this.listSubagents(parentThreadId).filter((agent) => messageIds.includes(agent.parentMessageId)).map((agent) => agent.threadId);
-    const direct = this.listToolEventPreviewsForMessages(parentThreadId, messageIds);
-    const child = childThreads.length ? this.allStoredToolPreviews(`SELECT payload FROM tool_events WHERE thread_id IN (${placeholders(childThreads.length)}) ORDER BY created_at DESC, id DESC LIMIT ${TOOL_PAGE_LIMIT}`, ...childThreads).reverse().map((tool) => ({ ...tool, messageId: this.getSubagentByThread(tool.threadId)?.parentMessageId || tool.messageId })) : [];
-    return [...direct, ...child].sort((a, b) => a.createdAt - b.createdAt).slice(-TOOL_PAGE_LIMIT);
   }
   private listTurnUndosForMessages(threadId: string, ids: string[]) { return ids.length ? this.all<TurnUndoRecord>(`SELECT payload FROM turn_undos WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)}) ORDER BY created_at, id`, threadId, ...ids) : []; }
   private touchThread(threadId: string) { const thread = this.getThread(threadId); if (thread) this.putThread({ ...thread, updatedAt: now() }); }

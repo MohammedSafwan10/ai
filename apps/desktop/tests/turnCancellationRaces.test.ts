@@ -29,6 +29,19 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it("anchors incoming coordination after live text even before the throttled write", async () => {
+    const { thread, coordinator } = fixture();
+    let sampled = false;
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      if (sampled) { options.onTextDelta("Complete."); return; }
+      sampled = true;
+      options.onTextDelta("First");
+      options.onTextDelta("Second");
+      (coordinator as any).appendSubagentUserMessage(thread.id, "Coordination report", { id: "live-coordination", senderThreadId: "child", senderLabel: "Reviewer", recipientLabel: "Parent", delivery: "queued" });
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Continue" });
+    expect(store.listMessages(thread.id).find((message) => message.agentMessage?.id === "live-coordination")?.steerTextOffset).toBe(11);
+  });
   it("consumes a steer captured by a stale compaction retry without delivering it twice", async () => {
     const { thread, coordinator } = fixture();
     const assistant = { id: "summary-turn", threadId: thread.id, role: "assistant" as const, content: "", status: "running" as const, createdAt: 2, updatedAt: 2 };

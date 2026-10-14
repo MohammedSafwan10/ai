@@ -4,7 +4,7 @@ Privora Desktop is an Electron agent app for local development and connected sec
 
 The current Security implementation has passed live Muse Spark/Kali fixture checks, confirmed Stop and follow-up messages, evidence previews, and native file saving. The portable Windows build is verified. Existing installed releases need a new installer before these features are available through their normal update flow; source pushes alone do not publish releases.
 
-See the [Security workspace documentation](docs/security-workspace/README.md) for implementation and limits, and [long-chat architecture](docs/LONG_CHAT_ARCHITECTURE.md) for paginated SQLite history and performance rules.
+See the [Security workspace documentation](docs/security-workspace/README.md) for implementation and limits, [long-chat architecture](docs/LONG_CHAT_ARCHITECTURE.md) for paginated SQLite history and performance rules, and [reliable compaction](docs/reliable-compaction.md) for checkpoint preservation and recovery.
 
 ## What It Does
 
@@ -15,6 +15,8 @@ See the [Security workspace documentation](docs/security-workspace/README.md) fo
 - Keeps file diffs, hashes, warnings, and undo metadata for review.
 - Provides Plan Mode for research/planning without mutating the workspace.
 - Provides Reviewer Swarm mode for automatic read-only review by two model-inheriting subagents before the final answer.
+- Shows active and completed subagents, live child transcripts, and visible parent/child coordination messages.
+- Compacts long conversations with preserved operator instructions, evidence references, operational state, validated checkpoints, and restart recovery.
 - Stores settings, threads, workspaces, secrets, and recovery metadata locally.
 - Creates explicit Security projects whose agent tools run in an assigned Kali
   environment, with live output, cancellation, job reconciliation, and evidence.
@@ -37,10 +39,13 @@ Current desktop tools include:
 - `request_user_input` - Plan Mode questions with user-selected answers.
 - `browser_*` - built-in browser tools for tabs, screenshots, extraction, search, PDF evidence, form workflows, workflow replay, assertions, evidence vault records, and failure diagnosis.
 - `computer_*` - optional native Computer Use tools for Windows app/window inspection, desktop snapshots, guarded actions, traces, screenshots, and failure diagnosis.
+- `spawn_agent`, `send_message`, `assign_task`, `wait_agent`, `list_agents`, and `close_agent` - delegate work and coordinate child agents with visible transcripts and lifecycle events.
 
 Security projects expose `kali_capabilities`, `kali_exec`, `kali_job_status`,
 `kali_job_output`, `kali_job_cancel`, `kali_artifact`, `security_finding_list`, and
-`security_finding_save` instead of host file, terminal, browser, or computer tools.
+`security_finding_save`, alongside coordination tools and the allowed built-in
+browser research tools. Host filesystem, terminal, computer controls, and browser
+form actions are blocked in Security projects, including Full access mode.
 Normal projects retain their existing tool selection. Kali execution uses the
 existing Ask risky / Full access permissions and provider loop; connection loss
 does not redirect execution to the host.
@@ -52,11 +57,18 @@ does not redirect execution to the host.
 3. Enter a project name, objective, and authorized scope. Choose **Check connection** to verify the environment.
 4. Select your model and reasoning level in the normal composer, then describe the task. Open the Security header to inspect remote jobs, copy output, view findings, preview evidence, or save evidence through the native Save dialog.
 
-Security chats can also search and read public pages in Privora Browser. This
+Security chats can also search and read public pages, capture screenshots and
+browser evidence, and read PDFs in Privora Browser. This
 research traffic originates on your desktop; commands, tool installations and
 target testing run in Kali. The agent checks passwordless sudo and can install
 task-relevant tools under your existing authorization. Remote graphical browser
 control is not yet included.
+
+The bug bounty assessment guide loads automatically when the project objective
+or an operator message expresses bug bounty assessment intent. It persists across
+follow-up turns through saved operator context. Web pages and tool output cannot
+activate it or grant target authorization. The guide supports investigation and
+evidence discipline; it does not guarantee a finding, eligibility, or payment.
 
 A reusable project objective:
 
@@ -103,6 +115,37 @@ When enabled, the main agent works normally. After qualifying tool work complete
 
 Reviewer reports are fed back to the parent model before the final response. The parent writes the user-facing final answer naturally from those reports instead of relying on local keyword or regex pass/fail parsing. Reviewer startup failures or timeouts are surfaced as verification risk rather than deadlocking the parent turn.
 
+## Subagents and Long Conversations
+
+The Subagents panel separates active, completed, and needs-attention agents.
+Open a child to follow its streamed conversation and tool activity. Inline events
+show agent starts, completion, and coordination messages; completed transcripts
+remain available for review.
+Detailed child tool output stays in the Subagents panel. Parent chat shows brief
+coordination rows at their captured stream positions; clicking a routed message
+opens the relevant child. Queued/delivered updates keep the same row position.
+
+Foreground compaction uses the selected model to produce a structured handoff.
+Operator instructions with source references, configured Security scope, findings,
+evidence IDs, job observations, subagent results, and tool references are preserved
+separately from model-authored summary claims. Original chat records and artifacts
+remain stored.
+
+Checkpoint installation checks the captured source history and updates matching
+run recovery state in one transaction. Newer messages and later assistant output
+survive; stale candidates are rebuilt once, and cancellation preserves the prior
+valid checkpoint. Invalid summaries receive one repair attempt before a
+deterministic fallback. Recent tool exchanges remain complete.
+
+The timeline shows preparing, summarizing, validating, and resuming stages with
+estimated before/after usage. Budget checks include system instructions and tool
+schemas. If required state cannot fit, the agent pauses visibly rather than
+discarding it. Counts remain estimates, and cache reuse is not guaranteed. Native
+provider compaction and background compaction are not part of this release.
+
+See [reliable compaction](docs/reliable-compaction.md) for behavior, recovery, and
+verification details.
+
 ## Desktop UI
 
 The renderer includes:
@@ -117,6 +160,8 @@ The renderer includes:
 - Expandable terminal activity rows in chat with compact streamed output and session controls.
 - Optional Computer Use mode for guarded native Windows app control with semantic snapshots, action traces, and hard safety blocks.
 - Reviewer Swarm mode with an active pill and multi-agent icon.
+- Subagent status indicators, inline lifecycle/coordination events, and a live transcript panel.
+- Compaction progress and context usage that distinguishes estimates from provider-reported usage.
 - Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
 - Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
 - Clear recovery/error notices if local SQLite storage cannot be opened safely.
@@ -150,8 +195,7 @@ tests/              Vitest coverage for runtime/tool/storage behavior
 Supported provider paths are configured in the app settings and shared model catalog:
 
 - CLIProxy API, defaulting to `http://127.0.0.1:8317`
-- OpenCode Go through its existing hosted-model adapter
-- DeepSeek API for BYOK
+- OpenCode Go through its hosted-model adapter, including DeepSeek V4.1 Flash (Go)
 - Gemini API
 - OpenRouter API for BYOK
 - Privora Cloud hosted models through the Appwrite model gateway
@@ -162,6 +206,11 @@ BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are ch
 CLIProxy model aliases are owned by Privora Desktop in the first implementation, so users do not need to edit CLIProxy's `oauth-model-alias` config for supported models. Desktop also sends a thread-scoped `prompt_cache_key` to CLIProxy Responses requests so Codex-backed sessions can reuse stable prompt context and keep session routing consistent.
 
 Composer model and reasoning selections are saved as global defaults for future new chats and as overrides on the active thread. Thread-scoped modes such as Plan Mode and Reviewer Swarm remain per-thread.
+
+DeepSeek V4.1 Flash (Go) is the only DeepSeek model offered in the picker. Retired
+DeepSeek selections resolve to this Go model; it requires a configured Go key and
+subscription. Its context/output metadata uses Go family defaults, and discovery
+does not restore retired DeepSeek entries.
 
 ## Browser Sign-In
 
@@ -295,6 +344,13 @@ npm test -- --maxWorkers=1
 The 13 October 2026 verification passed 482 tests including real SSH checks,
 TypeScript, the Windows package, and the production dependency audit. This is a
 fixture verification baseline, not a guarantee that every assessment or tool works.
+
+The 14 October 2026 compaction verification passed 650 tests, with 7 skipped,
+plus TypeScript and the Windows package build. Independent review found and
+verified fixes for history restoration, stale retries, budget checks, redaction,
+and steer delivery. Provider request serialization was tested through mocked Go
+Chat Completions, Responses, Messages, and Gemini interactions. These checks do
+not establish live behavior across every paid model or replace assessment acceptance.
 
 For a quick compile check:
 

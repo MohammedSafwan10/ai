@@ -188,7 +188,7 @@ export const prettifyGoLabel = (goModelId: string) =>
 // route. Returns null only for unrecognized families.
 export const synthesizeGoModelOption = (modelId: string): ModelOption | null => {
   const goId = stripGoPrefix(modelId.trim());
-  if (!goId) return null;
+  if (!goId || (goId.toLowerCase().startsWith("deepseek-") && goId.toLowerCase() !== "deepseek-v4.1-flash")) return null;
   const family = matchGoFamily(goId);
   if (!family) return null;
   const normalized = goId.toLowerCase();

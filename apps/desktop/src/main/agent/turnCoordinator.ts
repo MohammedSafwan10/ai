@@ -315,6 +315,7 @@ export class TurnCoordinator implements AgentHarnessApi {
   private modelLoop = new ModelLoop();
   private subagents: SubagentManager;
   private activeRuns = new Map<string, AgentRunTracker>();
+  private liveAssistantTextOffsets = new Map<string, { messageId: string; offset: number }>();
   private pendingExecution = new Set<Promise<unknown>>();
 
   private trackExecution<T>(promise: Promise<T>): Promise<T> {
@@ -378,6 +379,11 @@ export class TurnCoordinator implements AgentHarnessApi {
       startExistingSubagentTurn: (agent, workspaceRoot) => this.startExistingSubagentTurn(agent, workspaceRoot),
       appendUserMessage: (threadId, message, metadata) => this.appendSubagentUserMessage(threadId, message, metadata),
       emitMessage: (message) => this.emit({ type: "message.upserted", message }),
+      nextActivityOrder: () => this.nextActivityOrder(),
+      getAssistantTextOffset: (threadId, messageId) => {
+        const position = this.liveAssistantTextOffsets.get(threadId);
+        return position?.messageId === messageId ? position.offset : undefined;
+      },
       stopThread: (threadId, reason) => {
         this.activeRuns.get(threadId)?.controller.abort();
         this.stopThreadProcesses(threadId);
@@ -839,6 +845,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     let assistantFlushStatus: ChatMessageRecord["status"] = "running";
     let lastAssistantFlushAt = 0;
     const flushAssistant = (status: ChatMessageRecord["status"], force = false) => {
+      if (this.activeRuns.get(options.threadId)?.assistantMessageId === options.assistantMessage.id) this.liveAssistantTextOffsets.set(options.threadId, { messageId: options.assistantMessage.id, offset: assistantText.length });
       assistantFlushStatus = status;
       const commit = () => {
         assistantFlushTimer = null;
@@ -1638,6 +1645,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         clearTimeout(assistantFlushTimer);
         assistantFlushTimer = null;
       }
+      if (!handoff && this.liveAssistantTextOffsets.get(options.threadId)?.messageId === options.assistantMessage.id) this.liveAssistantTextOffsets.delete(options.threadId);
       if (!handoff && this.activeRuns.get(options.threadId)?.assistantMessageId === options.assistantMessage.id) {
         this.activeRuns.delete(options.threadId);
         this.emit({ type: "turn.status_changed", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
@@ -2223,12 +2231,18 @@ export class TurnCoordinator implements AgentHarnessApi {
 
   private appendSubagentUserMessage(threadId: string, message: string, metadata?: ChatMessageRecord["agentMessage"]) {
     const timestamp = now();
+    const run = this.activeRuns.get(threadId);
+    const anchor = metadata && run ? this.store.getMessage(run.assistantMessageId) : null;
+    const livePosition = this.liveAssistantTextOffsets.get(threadId);
     const record = this.store.upsertMessage({
       id: crypto.randomUUID(),
       threadId,
       role: "user",
       content: message,
       agentMessage: metadata,
+      steeredTurnId: anchor?.id,
+      steerTextOffset: anchor ? livePosition?.messageId === anchor.id ? livePosition.offset : anchor.content.length : undefined,
+      steerStreamOrder: anchor ? this.nextActivityOrder() : undefined,
       status: "completed",
       createdAt: timestamp,
       updatedAt: timestamp,

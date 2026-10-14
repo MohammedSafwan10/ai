@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, Copy, Pencil, Download, Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Pencil, Download, Maximize2, Minimize2, Minus, Plus, X, MessageCircle } from "lucide-react";
 import clsx from "clsx";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -37,6 +37,7 @@ const markdownComponents = {
 interface ChatMessageProps {
   message: ChatMessageRecord;
   readOnly?: boolean;
+  coordinationDetails?: boolean;
   onOpenSubagent?: (threadId: string) => void;
   inlineSteers?: ChatMessageRecord[];
   tools: ToolEventRecord[];
@@ -58,6 +59,7 @@ interface ChatMessageProps {
 function ChatMessageComponent({
   message,
   readOnly = false,
+  coordinationDetails = false,
   onOpenSubagent,
   inlineSteers = [],
   tools,
@@ -123,16 +125,13 @@ function ChatMessageComponent({
   const renderAssistantPart = (part: AssistantRenderPart) => {
     if (part.type === "thought") return <ThoughtPanel key={part.key} thought={part.thought} active={part.active} />;
     if (part.type === "tools") return <ToolTimeline key={part.key} tools={part.tools} subagents={subagents} messageStatus={message.status} defaultOpen={part.defaultOpen} onApprove={onApprove} onApproveAll={onApproveAll} onOpenSubagent={onOpenSubagent} />;
-    if (part.type === "steer") return <InlineSteerMessage key={part.key} message={part.message} />;
+    if (part.type === "steer") return <InlineSteerMessage key={part.key} message={part.message} subagents={subagents} onOpenSubagent={onOpenSubagent} coordinationDetails={coordinationDetails} />;
     const final = part.phase === "final_answer";
     return <div key={part.key} className={clsx(final ? "assistant-flow-text" : "assistant-activity-text", !final && runActive && message.status !== "failed" && "is-streaming", final && message.status === "failed" && "is-error", "markdown-body")}>
       <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} showPlanActions={showPlanActions} onImplementPlan={onImplementPlan} onSuggestPlanChanges={onSuggestPlanChanges} />
     </div>;
   };
-  if (message.agentMessage) return <details className="agent-coordination-line">
-    <summary title={`${message.agentMessage.senderLabel} → ${message.agentMessage.recipientLabel}`}><span className="agent-status-dot" />{message.agentMessage.senderLabel} sent a message to {message.agentMessage.recipientLabel} · {message.agentMessage.delivery === "delivered" ? "Delivered to context" : "Queued"}</summary>
-    <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown><button type="button" onClick={copyMessage} title="Copy message"><Copy size={13} /></button></div>
-  </details>;
+  if (message.agentMessage) return <AgentCoordinationLine message={message} subagents={subagents} onOpenSubagent={onOpenSubagent} details={coordinationDetails} />;
   return (
     <article className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
       <div className="message-stack">
@@ -182,7 +181,7 @@ function ChatMessageComponent({
                             );
                           }
                           if (part.type === "steer") {
-                            return <InlineSteerMessage key={part.key} message={part.message} />;
+                            return <InlineSteerMessage key={part.key} message={part.message} subagents={subagents} onOpenSubagent={onOpenSubagent} coordinationDetails={coordinationDetails} />;
                           }
                           return (
                             <div
@@ -264,6 +263,7 @@ export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.onEditMessage === next.onEditMessage &&
   previous.editDisabled === next.editDisabled &&
   previous.inlineSteers === next.inlineSteers &&
+  previous.coordinationDetails === next.coordinationDetails &&
   previous.tools === next.tools &&
   previous.subagents === next.subagents &&
   previous.activeRunStatus === next.activeRunStatus &&
@@ -316,9 +316,10 @@ export function buildAssistantRenderParts(
 ): AssistantRenderPart[] {
   const parts: AssistantRenderPart[] = [];
   const content = message.content || "";
+  const visibleTools = tools.filter((tool) => !(["send_message", "assign_task"].includes(tool.name) && tool.status === "done" && inlineSteers.some((item) => item.agentMessage?.outgoing && item.agentMessage.toolCallId === tool.callId)));
   const timelineItems = [
-    ...buildThoughtTimelineItems(message, tools, runActive),
-    ...tools.map((tool) => ({
+    ...buildThoughtTimelineItems(message, visibleTools, runActive),
+    ...visibleTools.map((tool) => ({
       type: "tool" as const,
       key: `tool-${tool.id}`,
       offset: tool.textOffset ?? content.length,
@@ -560,7 +561,20 @@ function timelineRank(item: AssistantTimelineItem) {
   return 2;
 }
 
-function InlineSteerMessage({ message }: { message: ChatMessageRecord }) {
+function AgentCoordinationLine({ message, subagents, onOpenSubagent, details = false }: { message: ChatMessageRecord; subagents: SubagentRecord[]; onOpenSubagent?: (threadId: string) => void; details?: boolean }) {
+  const metadata = message.agentMessage!;
+  const delivery = metadata.delivery === "delivered" ? "Delivered to context" : "Queued";
+  const target = metadata.outgoing ? metadata.recipientThreadId : metadata.senderThreadId;
+  const child = subagents.find((agent) => agent.threadId === target) ?? subagents.find((agent) => `${agent.agentNickname || agent.taskName}${agent.agentRole ? ` [${agent.agentRole}]` : ""}` === (metadata.outgoing ? metadata.recipientLabel : metadata.senderLabel));
+  const peer = (metadata.outgoing ? metadata.recipientLabel : metadata.senderLabel).replace(/ \[[^\]]+\]$/, "");
+  const label = <><MessageCircle size={13} /><span>{metadata.outgoing ? "Sent message to" : "Received message from"} {peer === "Parent" ? "parent" : peer}</span>{metadata.delivery === "queued" && <small>Queued</small>}</>;
+  const title = `${metadata.senderLabel} sent a message to ${metadata.recipientLabel} · ${delivery}`;
+  if (details) return <details className="agent-coordination-line"><summary title={title}>{label}</summary><div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown><button type="button" onClick={() => { void navigator.clipboard.writeText(message.content); }} title="Copy message"><Copy size={13} /></button></div></details>;
+  return child && onOpenSubagent ? <button type="button" className="agent-coordination-line agent-coordination-button" title={title} onClick={() => onOpenSubagent(child.threadId)}>{label}</button> : <div className="agent-coordination-line agent-coordination-label" title={title}>{label}</div>;
+}
+
+function InlineSteerMessage({ message, subagents = [], onOpenSubagent, coordinationDetails = false }: { message: ChatMessageRecord; subagents?: SubagentRecord[]; onOpenSubagent?: (threadId: string) => void; coordinationDetails?: boolean }) {
+  if (message.agentMessage) return <AgentCoordinationLine message={message} subagents={subagents} onOpenSubagent={onOpenSubagent} details={coordinationDetails} />;
   return (
     <div className="inline-steer-message" aria-label="Steering message">
       <span className="inline-steer-label">Steered</span>

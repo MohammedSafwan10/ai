@@ -325,6 +325,28 @@ describe("Security workspace runtime", () => {
     expect((await service.execute(call("security_finding_save", { ...args, reproduction: "Reproduce" }), context)).success).toBe(false);
   });
 
+  it("preserves evidence and reproduction on updates that omit optional fields", async () => {
+    const test = fixture(completeTransport({ events: [{ stream: "stdout", data: Buffer.from("retained evidence") }] }));
+    const service = test.service();
+    await service.execute(call("kali_exec", { argv: ["echo"] }), context);
+    const job = [...test.jobs.values()][0];
+    const saved = await service.execute(call("security_finding_save", { title: "Finding", description: "Observed", severity: "low", state: "observed", reproduction: "Synthetic reproduction", remediation: "Review boundary", evidenceJobIds: [job.id] }), context);
+    const id = (saved.data as { finding: SecurityFindingRecord }).finding.id;
+    const verified = await service.execute(call("security_finding_save", { id, title: "Finding", description: "Reviewed", state: "verified" }), context);
+    expect(verified.success).toBe(true);
+    expect(test.findings.get(id)).toMatchObject({ evidenceJobIds: [job.id], reproduction: "Synthetic reproduction", remediation: "Review boundary", severity: "low" });
+    const invalid = await service.execute(call("security_finding_save", { id, title: "Finding", description: "Reviewed", state: "verified", evidenceJobIds: [] }), context);
+    expect(invalid.success).toBe(false);
+    expect(test.findings.get(id)?.evidenceJobIds).toEqual([job.id]);
+    expect((await service.execute(call("security_finding_save", { id, title: "Finding", description: "Reviewed", state: "observed", evidenceJobIds: [] }), context)).success).toBe(true);
+    expect(test.findings.get(id)?.evidenceJobIds).toEqual([]);
+    test.findings.set(id, { ...test.findings.get(id)!, evidenceJobIds: [job.id] });
+    test.jobs.delete(job.id);
+    expect((await service.execute(call("security_finding_save", { id, title: "Finding", description: "Archived unresolved evidence", state: "stale" }), context)).success).toBe(true);
+    expect(test.findings.get(id)?.evidenceJobIds).toEqual([job.id]);
+    expect((await service.execute(call("security_finding_save", { id, title: "Finding", description: "Reviewed", state: "verified" }), context)).success).toBe(false);
+  });
+
   it("does not submit an already aborted request", async () => {
     const request = completeTransport();
     const test = fixture(request);
