@@ -8,6 +8,7 @@ import { Composer } from "./components/Composer";
 import { ChatMessage } from "./components/ChatMessage";
 import { SettingsPanel, SettingsScreen } from "./components/SettingsPanel";
 import { WorkspaceIdeShell } from "./components/WorkspaceIdeShell";
+import { SecurityBrowserPane } from "./features/security/SecurityBrowserPane";
 import { AppLauncher } from "./components/AppLauncher";
 import { ChatShell } from "./features/chat/ChatShell";
 import { CreateSecurityWorkspaceDialog, SecurityWorkspaceBadge, SecurityWorkspaceDetails, useSecurityWorkspace } from "./features/security/SecurityWorkspace";
@@ -169,7 +170,7 @@ export default function App() {
     // the running gate, the initial snapshot load (which restores persisted
     // browser_* tool events) looks like a brand-new browser action and pops
     // the panel open on every app launch.
-    if (!activeWorkspace || activeWorkspace.type === "security" || settingsOpen || ideCollapsedByUser || !running) return;
+    if (!activeWorkspace || settingsOpen || ideCollapsedByUser || !running) return;
     setIdeCollapsed(false);
     setWorkspacePanelRequest({ mode: "browser", key: Date.now() });
   }, [activeWorkspace?.id, ideCollapsedByUser, latestBrowserToolKey, running, settingsOpen]);
@@ -442,7 +443,7 @@ export default function App() {
         ref={mainWorkspaceRef}
         className={clsx(
           "main-workspace",
-          (ideCollapsed || isSecurityWorkspace) && "ide-collapsed",
+          ideCollapsed && "ide-collapsed",
           workspaceWidth > 0 && workspaceWidth < IDE_COMPACT_WIDTH && "ide-compact",
           ideResizing && "is-resizing",
         )}
@@ -740,7 +741,7 @@ export default function App() {
           />
         )}
       />
-      {!isSecurityWorkspace && <button
+      <button
         type="button"
         className="ide-resizer"
         aria-label="Resize workspace editor"
@@ -753,7 +754,8 @@ export default function App() {
           setIdeWidth(clampIdeWidth(width * 0.5, width));
         }}
         disabled={ideCollapsed}
-      />}
+      />
+      {isSecurityWorkspace && <SecurityBrowserPane workspace={activeWorkspace} hidden={ideCollapsed || settingsOpen} onClose={() => { setIdeCollapsed(true); setIdeCollapsedByUser(true); }} />}
       {!isSecurityWorkspace && <WorkspaceIdeShell
         workspace={activeWorkspace}
         reviewSession={reviewSession}
@@ -769,7 +771,7 @@ export default function App() {
           });
         }}
       />}
-      {ideCollapsed && !isSecurityWorkspace && (
+      {ideCollapsed && (
         <button
           type="button"
           className="ide-restore-button"
@@ -777,8 +779,8 @@ export default function App() {
             setIdeCollapsed(false);
             setIdeCollapsedByUser(false);
           }}
-          title="Show workspace"
-          aria-label="Show workspace"
+          title={isSecurityWorkspace ? "Show browser" : "Show workspace"}
+          aria-label={isSecurityWorkspace ? "Show browser" : "Show workspace"}
         >
           <PanelRightOpen size={16} />
         </button>
