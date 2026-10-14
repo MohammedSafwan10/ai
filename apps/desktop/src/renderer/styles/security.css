@@ -30,12 +30,13 @@
 .security-form-note, .security-quiet { margin: 0; color: var(--privora-muted); font-size: 12px; line-height: 1.6; }
 .security-error { margin: 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; line-height: 1.5; }
 .security-details-dialog { width: min(680px, calc(100vw - 32px)); }
-.security-details-content { padding: 22px; display: grid; gap: 26px; }
+.security-details-content { padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 26px; min-width: 0; }
+.security-details-content > section { min-width: 0; }
 .security-details-content section > .security-quiet { margin-top: 9px; }
 .security-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 9px; }
 .security-project-context { display: grid; grid-template-columns: 70px minmax(0, 1fr); font-size: 12px; gap: 9px; line-height: 1.6; margin: 16px 0 0; }
 .security-project-context dt { color: var(--privora-muted); }
-.security-project-context dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.security-project-context dd { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .security-job, .security-finding { border-top: 1px solid var(--privora-border); padding: 10px 0; }
 .security-job:first-of-type, .security-finding:first-of-type { margin-top: 9px; }
 .security-job summary, .security-finding summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; font-size: 12px; }

@@ -1385,6 +1385,12 @@ export class TurnCoordinator implements AgentHarnessApi {
             this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
             continue;
           }
+          if (noToolOutcome.action === "incomplete" && !options.assistantMessage.responseDisposition) {
+            const start = assistantText.length;
+            assistantText += `\n\n${noToolOutcome.message}`;
+            recordAssistantTextPart(options.assistantMessage, "final_answer", start, assistantText.length);
+            throw new Error(noToolOutcome.message);
+          }
           if (noToolOutcome.action === "recover" && !options.assistantMessage.responseDisposition) {
             recoveryAttempts += 1;
             history = [...history, textProviderMessage(noToolOutcome.message)];

@@ -10,9 +10,18 @@ export const resolveNoToolOutcome = (input: {
   iterationThought: string;
   afterToolResults: boolean;
   recoveryAttempts: number;
-}): { action: "recover"; message: string } | { action: "complete" } => {
+}): { action: "recover" | "incomplete"; message: string } | { action: "complete" } => {
   const text = input.iterationText.trim();
   const thought = input.iterationThought.trim();
+  // A promised follow-up after tool results is not evidence of completed work.
+  // Restrict this to an explicit trailing action; ordinary final answers and
+  // offers such as "let me know" must still finish normally.
+  const pendingAction = input.afterToolResults && /(?:^|[.!?\n]\s*)(?:let me|i['’]ll|i will)\s+(?!know\b|not\b)[^.!?\n]{0,80}\b(?:re-?run|run|retry|check|verify|inspect|fetch|write|save|execute|collect|compare)\b[^.!?\n]{0,180}[.!]?\s*$/i.test(text);
+  if (pendingAction) {
+    return input.recoveryAttempts >= MAX_RECOVERY_NUDGES
+      ? { action: "incomplete", message: "The model stopped after promising another check without executing it. Existing results were kept; the task is incomplete." }
+      : { action: "recover", message: "Your last response ended by promising another action, but no tool call was issued. Perform the next needed action with a complete tool call, or provide a final report explaining what remains incomplete and why. Do not repeat completed actions or end with another promise to continue." };
+  }
   if (text) return { action: "complete" };
   if (input.recoveryAttempts >= MAX_RECOVERY_NUDGES) return { action: "complete" };
   if (input.afterToolResults) {
