@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Check, ChevronLeft, ChevronRight, Copy, Maximize2, Minimize2, Pencil, Pin, Play, Plus, Search, Trash2, X } from "lucide-react";
+import { BookOpen, Check, ChevronLeft, ChevronRight, Copy, Maximize2, Minimize2, Pencil, Pin, Play, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import type { SavedPrompt, SavePromptInput, PromptPage, PromptQuery } from "../../../shared/promptLibrary";
 import "./promptLibrary.css";
 
@@ -14,6 +14,10 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
+  const filters = useRef<HTMLDivElement>(null);
+  const filterButton = useRef<HTMLButtonElement>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [categorySearch, setCategorySearch] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
   const [page, setPage] = useState<PromptPage>({ items: [], total: 0, categories: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -38,16 +42,23 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
   const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const dirty = Boolean(editor && JSON.stringify(editor) !== JSON.stringify(original));
+  const activeFilterCount = Number(Boolean(category)) + Number(scope !== "all") + Number(pinnedOnly);
   const selectPrompt = (id: string) => { if (dirty) { setError("Save your changes or cancel editing before selecting another prompt."); return; } setEditor(null); setOriginal(null); setSelectedId(id); setError(null); };
   const beginEdit = (value: SavePromptInput) => {
     if (dirty) { setError("Save your changes or cancel editing first."); return; }
-    setEditor(value); setOriginal(value); setDiscard(false); setRenaming(false); setError(null);
+    setEditor(value); setOriginal(value); setDiscard(false); setRenaming(false); setError(null); setFiltersOpen(false);
   };
   const close = () => { if (busy) return; if (dirty) { setDiscard(true); return; } onClose(); };
   const resetPage = () => { setOffset(0); setLoading(true); setSelected(null); };
   const reload = () => setRevision((value) => value + 1);
 
   useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const outside = (event: PointerEvent) => { if (!filters.current?.contains(event.target as Node)) setFiltersOpen(false); };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [filtersOpen]);
   useEffect(() => { if (query === search) return; const timer = setTimeout(() => { setSearch(query); setOffset(0); setLoading(true); }, 180); return () => clearTimeout(timer); }, [query, search]);
   useEffect(() => {
     let cancelled = false; setLoading(true); setSelected(null);
@@ -108,8 +119,21 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
     <div className="prompt-library-layout">
       <aside>
         <label className="prompt-library-search"><Search size={14} /><input type="search" autoFocus maxLength={300} disabled={filtersDisabled} placeholder="Search names and prompt text…" aria-label="Search prompts" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-        <div className="prompt-library-filters"><select disabled={filtersDisabled} aria-label="Filter category" value={category} onChange={(event) => { setCategory(event.target.value); resetPage(); }}><option value="">All categories</option>{page.categories.map((item) => <option key={item}>{item}</option>)}</select><select disabled={filtersDisabled} aria-label="Filter chat type" value={scope} onChange={(event) => { setScope(event.target.value as typeof scope); resetPage(); }}><option value="all">All chat types</option><option value="development">Normal chats{!remoteEnvironment ? " (current)" : ""}</option><option value="security">Security{remoteEnvironment ? " (current)" : ""}</option></select></div>
-        <div className="prompt-library-filters"><button type="button" disabled={filtersDisabled} aria-pressed={pinnedOnly} onClick={() => { setPinnedOnly((value) => !value); resetPage(); }}><Pin size={13} />Pinned</button><select disabled={filtersDisabled} aria-label="Sort prompts" value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); resetPage(); }}><option value="updated">Recently updated</option><option value="name">Name A–Z</option><option value="category">Category</option></select></div>
+        <div className="prompt-library-browse-toolbar">
+          <div ref={filters} className="prompt-library-filter-anchor" onKeyDown={(event) => { if (event.key === "Escape" && filtersOpen) { event.preventDefault(); event.stopPropagation(); setFiltersOpen(false); filterButton.current?.focus(); } }}>
+            <button ref={filterButton} type="button" disabled={filtersDisabled} aria-expanded={filtersOpen} aria-controls="prompt-library-filter-panel" onClick={() => setFiltersOpen((value) => !value)}><SlidersHorizontal size={14} />Filters{activeFilterCount > 0 && <span className="prompt-library-filter-count">{activeFilterCount}</span>}</button>
+            {filtersOpen && <div id="prompt-library-filter-panel" className="prompt-library-filter-panel" role="region" aria-label="Prompt filters and sorting">
+              <div className="prompt-library-filter-heading"><strong>Filters & sort</strong><button type="button" aria-label="Close filters" onClick={() => { setFiltersOpen(false); filterButton.current?.focus(); }}><X size={14} /></button></div>
+              <fieldset><legend>Chat type</legend><div className="prompt-library-choice-row">{(["all", "development", "security"] as const).map((value) => <button key={value} type="button" aria-pressed={scope === value} disabled={filtersDisabled} onClick={() => { if (scope !== value) { setScope(value); resetPage(); } }}>{scopeName(value)}</button>)}</div></fieldset>
+              <fieldset><legend>Sort by</legend><div className="prompt-library-options">{([{ value: "updated", label: "Recently updated" }, { value: "name", label: "Name A–Z" }, { value: "category", label: "Category" }] as const).map((option) => <button key={option.value} type="button" disabled={filtersDisabled} aria-pressed={sort === option.value} onClick={() => { if (sort !== option.value) { setSort(option.value); resetPage(); } }}><span>{option.label}</span>{sort === option.value && <Check size={13} />}</button>)}</div></fieldset>
+              <fieldset><legend>Category</legend><input type="search" aria-label="Find a category" placeholder="Find a category…" value={categorySearch} onChange={(event) => setCategorySearch(event.target.value)} /><div className="prompt-library-category-options"><button type="button" disabled={filtersDisabled} aria-pressed={!category} onClick={() => { if (category) { setCategory(""); resetPage(); } }}><span>All categories</span>{!category && <Check size={13} />}</button>{page.categories.filter((item) => item.toLowerCase().includes(categorySearch.toLowerCase())).map((item) => <button key={item} type="button" disabled={filtersDisabled} aria-pressed={category === item} onClick={() => { if (category !== item) { setCategory(item); resetPage(); } }}><span>{item}</span>{category === item && <Check size={13} />}</button>)}</div></fieldset>
+              <button type="button" disabled={filtersDisabled} aria-pressed={pinnedOnly} onClick={() => { setPinnedOnly((value) => !value); resetPage(); }}><Pin size={13} />Pinned prompts only{pinnedOnly && <Check size={13} />}</button>
+              <div className="prompt-library-filter-footer"><button type="button" disabled={filtersDisabled || (!activeFilterCount && sort === "updated")} onClick={() => { setCategory(""); setScope("all"); setPinnedOnly(false); setSort("updated"); setCategorySearch(""); resetPage(); }}>Reset</button><button type="button" onClick={() => { setFiltersOpen(false); filterButton.current?.focus(); }}>Done</button></div>
+            </div>}
+          </div>
+          <span className="prompt-library-sort-summary">{sort === "updated" ? "Recently updated" : sort === "name" ? "Name A–Z" : "By category"}</span>
+        </div>
+        {activeFilterCount > 0 && <div className="prompt-library-active-filters" aria-label="Active filters">{category && <span>{category}</span>}{scope !== "all" && <span>{scopeName(scope)}</span>}{pinnedOnly && <span>Pinned</span>}</div>}
         <div className="prompt-library-new"><button type="button" disabled={busy} onClick={() => beginEdit(blank())}><Plus size={14} />New prompt</button><button type="button" disabled={busy || !currentDraft.trim()} onClick={() => beginEdit({ ...blank(), content: currentDraft })}>Save draft</button></div>
         <p className="prompt-library-count" role="status">{loading ? "Searching…" : `${page.total.toLocaleString()} matching prompt${page.total === 1 ? "" : "s"}`}</p>
         <nav aria-label="Saved prompts" aria-busy={loading}>{loading ? <p>Loading…</p> : !page.items.length ? <p>No matching prompts.</p> : page.items.map((prompt) => <button type="button" key={prompt.id} className={selectedId === prompt.id && !editor ? "selected" : ""} disabled={busy} aria-current={selectedId === prompt.id ? "true" : undefined} onClick={() => selectPrompt(prompt.id)}><strong>{prompt.pinned && <Pin size={12} aria-label="Pinned" />}{prompt.title}</strong><small>{prompt.category} · {scopeName(prompt.workspaceType)}</small></button>)}</nav>
@@ -119,7 +143,8 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
         {editor ? <>
           <h3>{editor.id ? "Edit prompt" : "New prompt"}</h3>
           <label>Prompt name<input maxLength={120} disabled={busy} value={editor.title} onChange={(event) => setEditor({ ...editor, title: event.target.value })} /></label>
-          <div className="prompt-library-fields"><label>Category<input maxLength={60} disabled={busy} list="prompt-library-categories" value={editor.category} onChange={(event) => setEditor({ ...editor, category: event.target.value })} /><datalist id="prompt-library-categories">{page.categories.map((item) => <option key={item} value={item} />)}</datalist></label><label>Chat type<select disabled={busy} value={editor.workspaceType} onChange={(event) => setEditor({ ...editor, workspaceType: event.target.value as SavePromptInput["workspaceType"] })}><option value="all">All chats</option><option value="development">Normal chats</option><option value="security">Security</option></select></label></div>
+          <label>Category<input maxLength={60} disabled={busy} value={editor.category} onChange={(event) => setEditor({ ...editor, category: event.target.value })} /></label>
+          <fieldset className="prompt-library-editor-scope"><legend>Chat type</legend><div className="prompt-library-choice-row">{(["all", "development", "security"] as const).map((value) => <button key={value} type="button" disabled={busy} aria-pressed={editor.workspaceType === value} onClick={() => setEditor({ ...editor, workspaceType: value })}>{scopeName(value)}{value === (remoteEnvironment ? "security" : "development") ? " (current)" : ""}</button>)}</div></fieldset>
           <label className="prompt-library-body">Prompt<textarea maxLength={32_000} disabled={busy} value={editor.content} onChange={(event) => setEditor({ ...editor, content: event.target.value })} /></label>
           <footer><button type="button" disabled={busy} onClick={() => { if (dirty) setDiscard(true); else { setEditor(null); setOriginal(null); } }}>Cancel</button><span /><small>{editor.content.length.toLocaleString()} / 32,000</small><button type="button" disabled={busy || !editor.title.trim() || !editor.category.trim() || !editor.content.trim()} onClick={() => void save()}>{busy ? "Saving…" : "Save prompt"}</button></footer>
         </> : loading || detailLoading ? <p className="prompt-library-meta">Loading prompt…</p> : selected ? <>
