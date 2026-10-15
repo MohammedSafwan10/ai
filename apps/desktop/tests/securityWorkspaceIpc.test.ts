@@ -7,12 +7,12 @@ import type { BrowserSessionManager } from "../src/main/browser/BrowserSessionMa
 import type { NotesStore } from "../src/main/notes/NotesStore";
 import type { SecurityEnvironmentRecord, SecurityWorkspaceService } from "../src/shared/securityWorkspace";
 
-const mocked = vi.hoisted(() => ({ directory: "", handlers: new Map<string, (...args: unknown[]) => unknown>(), pick: vi.fn(), trash: vi.fn() }));
+const mocked = vi.hoisted(() => ({ directory: "", handlers: new Map<string, (...args: unknown[]) => unknown>(), pick: vi.fn(), trash: vi.fn(), openPath: vi.fn() }));
 vi.mock("electron", () => ({
   app: { isPackaged: false, getPath: () => mocked.directory },
   BrowserWindow: { getAllWindows: () => [] },
   ipcMain: { handle: (name: string, handler: (...args: unknown[]) => unknown) => mocked.handlers.set(name, handler), on: vi.fn() },
-  dialog: { showOpenDialog: mocked.pick }, Menu: {}, shell: { trashItem: mocked.trash },
+  dialog: { showOpenDialog: mocked.pick }, Menu: {}, shell: { trashItem: mocked.trash, openPath: mocked.openPath },
 }));
 import { DesktopStore } from "../src/main/db/store";
 import { registerIpc, type IpcState } from "../src/main/ipc/register";
@@ -25,7 +25,7 @@ const environment: SecurityEnvironmentRecord = { id: "kali", name: "Kali", host:
 const invoke = (name: string, ...args: unknown[]) => mocked.handlers.get(name)?.({}, ...args);
 beforeEach(() => {
   mocked.directory = fs.mkdtempSync(path.join(os.tmpdir(), "privora-security-ipc-"));
-  mocked.handlers.clear(); mocked.pick.mockReset(); mocked.trash.mockReset();
+  mocked.handlers.clear(); mocked.pick.mockReset(); mocked.trash.mockReset(); mocked.openPath.mockReset(); mocked.openPath.mockResolvedValue("");
   mocked.trash.mockImplementation(async (target: string) => { fs.renameSync(target, path.join(mocked.directory, "recycled-project")); });
   store = new DesktopStore(mocked.directory); store.saveSecurityEnvironment(environment);
   state = { activeThreadId: null, activeWorkspaceId: null };
@@ -35,6 +35,15 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("opens only the active project's main-process evidence folder", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const folder = path.join(mocked.directory, "reports");
+    service.ensureEvidenceFolder = vi.fn(async () => folder);
+    state.activeWorkspaceId = workspace.id;
+    await invoke(channels.openSecurityEvidenceFolder, workspace.id);
+    expect(mocked.openPath).toHaveBeenCalledWith(folder);
+    await expect(invoke(channels.openSecurityEvidenceFolder, "other-project")).rejects.toThrow("Choose this Security workspace");
+  });
   it("accepts child model choices and null resets through settings IPC", () => {
     const root = store.createThread(null);
     invoke(channels.saveSettings, { subagentModel: "gemini-3.7-flash" });

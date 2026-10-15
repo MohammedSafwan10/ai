@@ -282,6 +282,13 @@ export const registerIpc = (
     if (!store.getSecurityJob(id)) throw new Error("Security job not found.");
     return requireSecurityService().cancelJob(id);
   });
+  handle(channels.openSecurityEvidenceFolder, z.tuple([idSchema]), async (_event, workspaceId: string) => {
+    if (workspaceId !== state.activeWorkspaceId) throw new Error("Choose this Security workspace first.");
+    const folder = await requireSecurityService().ensureEvidenceFolder?.(workspaceId);
+    if (!folder) throw new Error("Automatic PC evidence storage is not configured.");
+    const failure = await shell.openPath(folder);
+    if (failure) throw new Error(failure);
+  });
   handle(channels.saveSecurityArtifact, z.tuple([idSchema, idSchema]), async (event, jobId: string, artifactId: string) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (workspace?.type !== "security") throw new Error("Choose a Security workspace first.");

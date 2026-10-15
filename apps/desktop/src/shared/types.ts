@@ -1769,6 +1769,7 @@ export interface PrivoraDesktopApi {
   createSecurityWorkspace(input: CreateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
   getSecurityWorkspaceState(workspaceId: string): Promise<SecurityWorkspaceState>;
   cancelSecurityJob(jobRecordId: string): Promise<SecurityJobRecord>;
+  openSecurityEvidenceFolder(workspaceId: string): Promise<void>;
   saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;
   debugEnabled: boolean;
   getSnapshot(): Promise<AppSnapshot>;

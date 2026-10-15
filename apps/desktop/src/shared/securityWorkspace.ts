@@ -61,6 +61,7 @@ export interface SecurityFindingRecord {
 }
 
 export interface SecurityWorkspaceState {
+  evidenceFolder?: string;
   environment: SecurityEnvironmentRecord | null;
   jobs: SecurityJobRecord[];
   findings: SecurityFindingRecord[];
@@ -70,5 +71,6 @@ export interface SecurityWorkspaceService {
   importEnvironmentProfile(profile: unknown): Promise<SecurityEnvironmentRecord>;
   checkEnvironment(id: string): Promise<SecurityEnvironmentRecord>;
   cancelJob(id: string): Promise<SecurityJobRecord>;
+  ensureEvidenceFolder?(workspaceId: string): Promise<string>;
   getWorkspaceState?(workspaceId: string): Promise<SecurityWorkspaceState>;
 }

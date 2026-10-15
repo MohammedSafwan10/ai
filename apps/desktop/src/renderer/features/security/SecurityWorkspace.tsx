@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, Copy, Download, File, FileUp, RefreshCw, Shield, Square, X } from "lucide-react";
+import { CheckCircle2, ChevronRight, Copy, Download, FolderOpen, File, FileUp, RefreshCw, Shield, Square, X } from "lucide-react";
 import type { DesktopAttachmentRecord, SecurityEnvironmentRecord, SecurityWorkspaceState, WorkspaceRecord } from "../../../shared/types";
 import { trustedArtifactUrl } from "./artifactAccess";
+import { securityConnectionStatus } from "../../../shared/securityConnection";
 
 const activeJobStates = new Set(["submitting", "queued", "running", "stop_requested", "unknown"]);
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const connectionLabel = (environment: SecurityEnvironmentRecord | null | undefined) => !environment ? "Loading" : environment.status === "connected" ? "Connected" : environment.status === "unchecked" ? "Not checked" : "Disconnected";
+const connectionLabel = (environment: SecurityEnvironmentRecord | null | undefined) => !environment ? "Loading" : securityConnectionStatus(environment) === "connected" ? "Connected" : securityConnectionStatus(environment) === "unchecked" ? "Needs check" : "Disconnected";
 const artifactSize = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
 export function useSecurityWorkspace(workspace: WorkspaceRecord | null, detailsOpen: boolean, visible: boolean) {
@@ -63,7 +64,7 @@ export function useSecurityWorkspace(workspace: WorkspaceRecord | null, detailsO
     setChecking(true);
     try {
       const environment = await window.privoraDesktop.checkSecurityEnvironment(id);
-      if (current === generation.current) setState((previous) => ({ environment, jobs: previous?.jobs || [], findings: previous?.findings || [] }));
+      if (current === generation.current) setState((previous) => ({ ...previous, environment, jobs: previous?.jobs || [], findings: previous?.findings || [] }));
       await refresh();
     } catch (failure) {
       if (current === generation.current) setError(errorText(failure));
@@ -81,7 +82,7 @@ export function SecurityWorkspaceBadge({ environment, checking, onOpen }: {
   const status = checking ? "Checking" : connectionLabel(environment);
   return <button type="button" className="security-workspace-badge" onClick={onOpen} aria-label={`Security workspace: ${environment?.name || "Kali"}, ${status}. Open environment and evidence`}>
     <Shield size={13} /><span>Security</span><span className="security-badge-separator">·</span><span className="security-badge-environment">{environment?.name || "Kali"}</span>
-    <span className={`security-connection-dot ${!checking && environment?.status === "connected" ? "connected" : ""}`} aria-hidden="true" /><span>{status}</span><ChevronRight size={12} />
+    <span className={`security-connection-dot ${!checking && environment && securityConnectionStatus(environment) === "connected" ? "connected" : ""}`} aria-hidden="true" /><span>{status}</span><ChevronRight size={12} />
   </button>;
 }
 
@@ -199,6 +200,7 @@ export function SecurityWorkspaceDetails({ workspace, state, error, checking, on
         {state?.environment?.error && <p className="security-error">{state.environment.error}</p>}
         <dl className="security-project-context"><dt>Objective</dt><dd>{workspace.security?.objective}</dd><dt>Scope</dt><dd>{workspace.security?.scope}</dd></dl>
       </section>
+      {state?.evidenceFolder && <section aria-label="Automatic PC evidence saves"><div className="security-section-heading"><h3>Reports & evidence on this PC</h3><button type="button" onClick={() => { void window.privoraDesktop.openSecurityEvidenceFolder(workspace.id).catch((failure) => setJobError(errorText(failure))); }}><FolderOpen size={14} />Open folder</button></div><p className="security-quiet" style={{ overflowWrap: "anywhere" }}>{state.evidenceFolder}</p><p className="security-quiet">Files collected with kali_artifact are saved here automatically. Files still only in Kali must be collected first. Earlier copies are kept.</p></section>}
       {(error || jobError) && <p className="security-error" role="alert">{jobError || error}</p>}
       {artifactSaved && <p className="security-quiet" role="status">{artifactSaved}</p>}
       <section aria-label="Remote jobs"><div className="security-section-heading"><h3>Jobs</h3><button type="button" onClick={() => void onRefresh()} aria-label="Refresh remote jobs"><RefreshCw size={14} /></button></div>

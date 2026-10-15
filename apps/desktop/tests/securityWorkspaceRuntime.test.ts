@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { SecurityWorkspaceService } from "../src/main/kali/service";
@@ -21,7 +24,7 @@ const fixture = (request: KaliRpcTransport["request"]) => {
   const jobs = new Map<string, SecurityJobRecord>();
   const findings = new Map<string, SecurityFindingRecord>();
   const publicEnvironment: SecurityEnvironmentRecord = { id: "kali", name: "Kali", host: environment.host, port: 2222, username: "privora", status: "unchecked" };
-  const workspace = { id: context.workspaceId, type: "security", security: { environmentId: "kali", objective: "local lab", scope: "VM only" } };
+  const workspace = { name: "Lab", id: context.workspaceId, type: "security", security: { environmentId: "kali", objective: "local lab", scope: "VM only" } };
   const store = {
     getWorkspace: (id: string) => id === workspace.id ? workspace : id === "development" ? { id, type: "development" } : null,
     getThread: (id: string) => ({ id, workspaceId: id === "thread-one" ? workspace.id : "development" }),
@@ -37,7 +40,7 @@ const fixture = (request: KaliRpcTransport["request"]) => {
     upsertSecurityFinding: (finding: SecurityFindingRecord) => { findings.set(finding.id, finding); },
     importAttachment: vi.fn((input) => ({ id: input.id, name: input.name, mimeType: input.mimeType, size: input.bytes.length, artifactId: "saved.bin", url: "privora-attachment://artifact/saved.bin", createdAt: input.createdAt })),
   };
-  const service = () => new SecurityWorkspaceService(store as unknown as DesktopStore, undefined, (config) => new KaliConnector(config, { request }));
+  const service = (root?: string) => new SecurityWorkspaceService(store as unknown as DesktopStore, undefined, (config) => new KaliConnector(config, { request }), root);
   return { jobs, findings, store, service };
 };
 
@@ -60,6 +63,55 @@ const completeTransport = (options: { events?: { stream: "stdout" | "stderr"; da
 };
 
 describe("Security workspace runtime", () => {
+  it("expires stale connection observations, deduplicates UI health probes and recovers after wake", async () => {
+    let offline = true;
+    const capabilities = { protocolVersion: 1, os: "Linux", architecture: "aarch64", pythonVersion: "3.14", jobRoot: environment.jobRoot, tools: {}, limits: { concurrentJobs: 4, outputBytes: 1_000_000, artifactBytes: 1_000_000 } };
+    const request = vi.fn<KaliRpcTransport["request"]>(async (_env, payload) => {
+      expect(payload.operation).toBe("capabilities");
+      if (offline) throw new KaliConnectionError("Sleeping Mac: connection timed out");
+      return capabilities;
+    });
+    const test = fixture(request); const service = test.service();
+    test.store.saveSecurityEnvironment({ ...test.store.getSecurityEnvironment(), status: "connected", lastCheckedAt: Date.now() - 40_000 });
+    const states = await Promise.all([service.getWorkspaceState(context.workspaceId), service.getWorkspaceState(context.workspaceId)]);
+    expect(states[0].environment?.status).toBe("unchecked");
+    await vi.waitFor(() => expect(test.store.getSecurityEnvironment().status).toBe("disconnected"));
+    // One probe with the connector's single read-only retry, not duplicate probes.
+    expect(request).toHaveBeenCalledTimes(2);
+    await service.getWorkspaceState(context.workspaceId);
+    expect(request).toHaveBeenCalledTimes(2);
+    offline = false;
+    test.store.saveSecurityEnvironment({ ...test.store.getSecurityEnvironment(), lastCheckedAt: Date.now() - 40_000 });
+    await service.getWorkspaceState(context.workspaceId);
+    await vi.waitFor(() => expect(test.store.getSecurityEnvironment().status).toBe("connected"));
+    expect(test.store.getSecurityEnvironment().error).toBeUndefined();
+    expect(test.jobs.size).toBe(0);
+    service.beginShutdown();
+  });
+  it("auto-saves collected files and retains internal evidence when the PC write fails", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "privora-artifact-auto-"));
+    try {
+      const bytes = Buffer.from("submitted report");
+      const base = completeTransport();
+      const test = fixture(async (env, payload) => payload.operation === "artifact" ? {
+        path: payload.path, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), data: bytes.toString("base64"),
+      } : base(env, payload));
+      const root = path.join(directory, "evidence");
+      const service = test.service(root);
+      await service.execute(call("kali_exec", { argv: ["echo"] }), context);
+      const job = [...test.jobs.values()][0];
+      const result = await service.execute(call("kali_artifact", { jobId: job.id, path: "report.md" }), context);
+      expect(result).toMatchObject({ success: true, data: { localSaved: true } });
+      expect(fs.readFileSync(String(result.data?.localPath))).toEqual(bytes);
+      expect((await service.getWorkspaceState(context.workspaceId)).evidenceFolder).toContain(root);
+      const blocked = path.join(directory, "blocked"); fs.writeFileSync(blocked, "not a directory");
+      const failed = await test.service(blocked).execute(call("kali_artifact", { jobId: job.id, path: "report.md" }), context);
+      expect(failed).toMatchObject({ success: false, data: { localSaved: false } });
+      expect(failed.error).toContain("Evidence retained in Privora");
+      expect(test.jobs.get(job.id)?.artifacts).toHaveLength(2);
+      expect(test.store.getSecurityEnvironment().status).not.toBe("error");
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
   it("peeks at running output without remote requests and follows only when requested", async () => {
     const request = completeTransport({ events: [{ stream: "stdout", data: Buffer.from("final output") }] });
     const test = fixture(request);

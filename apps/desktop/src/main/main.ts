@@ -554,7 +554,7 @@ if (!singleInstanceLock) {
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
     computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
-    securityService = new SecurityWorkspaceService(store, () => emitSnapshot());
+    securityService = new SecurityWorkspaceService(store, () => emitSnapshot(), undefined, path.join(app.getPath("documents"), "Privora Evidence"));
     harnessService = new InProcessAgentService(new AgentHarness(
       new TurnCoordinator(store, () => mainWindow, () => state, browserManager, notesStore, computerUseManager, securityService),
     ));

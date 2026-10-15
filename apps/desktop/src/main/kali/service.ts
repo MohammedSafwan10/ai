@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
+import { autoSaveSecurityEvidence, ensureSecurityEvidenceFolder, securityEvidenceFolder } from "../attachments/securityEvidenceAutoSave";
 import { setTimeout as delay } from "node:timers/promises";
 import type { DesktopStore } from "../db/store";
 import type { DesktopToolCall, ToolResult } from "../../shared/types";
@@ -9,6 +10,7 @@ import { KaliConnector, KaliConnectionError, KaliRequestError, buildKaliSshArgs 
 import { KaliOutputDecoder, kaliArtifactMime, kaliCommandPreview, requiredText } from "./tools";
 import { HeadTailOutputBuffer } from "../terminal/outputBuffer";
 import { redactSecrets } from "../security/redact";
+import { SECURITY_CONNECTION_MAX_AGE_MS, securityConnectionStatus } from "../../shared/securityConnection";
 
 export interface SecurityExecutionContext {
   workspaceId: string;
@@ -30,6 +32,7 @@ const digest = (value: string) => createHash("sha256").update(value).digest("hex
 export class SecurityWorkspaceService {
   private readonly active = new Map<string, { controller: AbortController; promise: Promise<SecurityJobRecord> }>();
   private readonly reconciling = new Map<string, Promise<SecurityWorkspaceState>>();
+  private readonly checking = new Map<string, Promise<SecurityEnvironmentRecord>>();
   private readonly lastReconciled = new Map<string, number>();
   private readonly pending = new Set<Promise<unknown>>();
   private closing = false;
@@ -39,6 +42,7 @@ export class SecurityWorkspaceService {
     private readonly store: SecurityStore,
     private readonly onChange?: () => void,
     private readonly connectorFactory: (environment: KaliEnvironment) => KaliConnector = (environment) => new KaliConnector(environment),
+    private readonly localEvidenceRoot?: string,
   ) {
     // A saved connection label does not establish that the VM is still online.
     for (const environment of store.listSecurityEnvironments()) {
@@ -164,7 +168,12 @@ export class SecurityWorkspaceService {
   }
 
   checkEnvironment(id: string): Promise<SecurityEnvironmentRecord> {
-    return this.track(this.check(id));
+    if (this.closing) return Promise.reject(new Error("Privora is stopping remote work before closing."));
+    const existing = this.checking.get(id);
+    if (existing) return existing;
+    const promise = this.track(this.check(id)).finally(() => this.checking.delete(id));
+    this.checking.set(id, promise);
+    return promise;
   }
 
   private async check(id: string): Promise<SecurityEnvironmentRecord> {
@@ -190,15 +199,32 @@ export class SecurityWorkspaceService {
 
   async getWorkspaceState(workspaceId: string): Promise<SecurityWorkspaceState> {
     const state = this.workspaceState(workspaceId);
+    const environment = state.environment;
+    if (!this.closing && environment && Date.now() - (environment.lastCheckedAt ?? 0) >= SECURITY_CONNECTION_MAX_AGE_MS) {
+      if (securityConnectionStatus(environment) === "unchecked" && environment.status === "connected") {
+        state.environment = { ...environment, status: "unchecked" };
+        this.store.saveSecurityEnvironment(state.environment);
+        this.changed();
+      }
+      // UI polling checks reachability only; it never submits or replays jobs.
+      void this.checkEnvironment(environment.id).catch(() => undefined);
+    }
     if (!this.closing && state.jobs.some((job) => !terminal(job.state)) && Date.now() - (this.lastReconciled.get(workspaceId) ?? 0) > 5000) {
       void this.reconcileWorkspace(workspaceId).catch(() => undefined);
     }
     return state;
   }
 
+  async ensureEvidenceFolder(workspaceId: string) {
+    const workspace = this.workspace(workspaceId);
+    if (!this.localEvidenceRoot) throw new Error("Automatic PC evidence storage is not configured.");
+    return ensureSecurityEvidenceFolder(this.localEvidenceRoot, workspace.id, workspace.name);
+  }
+
   private workspaceState(workspaceId: string): SecurityWorkspaceState {
     const workspace = this.workspace(workspaceId);
     return {
+      evidenceFolder: this.localEvidenceRoot ? securityEvidenceFolder(this.localEvidenceRoot, workspace.id, workspace.name) : undefined,
       environment: this.store.getSecurityEnvironment(workspace.security!.environmentId),
       jobs: this.store.listSecurityJobs(workspaceId), findings: this.store.listSecurityFindings(workspaceId),
     };
@@ -454,7 +480,20 @@ export class SecurityWorkspaceService {
     const attachment = this.store.importAttachment({ id: randomUUID(), name: redactSecrets(path.posix.basename(relative)),
       mimeType: kaliArtifactMime(relative, bytes), bytes, createdAt: Date.now() });
     this.persist({ ...job, artifacts: [...(job.artifacts ?? []), attachment], updatedAt: Date.now() });
-    return { success: true, output: `Evidence saved: ${attachment.name} (${artifact.size} bytes).`, data: { attachment, sha256: artifact.sha256, jobId: job.id } };
+    let localPath: string | undefined;
+    if (this.localEvidenceRoot) {
+      try {
+        const workspace = this.workspace(context.workspaceId);
+        localPath = await autoSaveSecurityEvidence({ root: this.localEvidenceRoot, workspaceId: workspace.id,
+          workspaceName: workspace.name, jobId: job.id, remotePath: relative,
+          name: attachment.name, sha256: artifact.sha256, bytes });
+      } catch (error) {
+        return { success: false, error: `Evidence retained in Privora, but automatic PC save failed: ${errorText(error)}`,
+          data: { attachment, sha256: artifact.sha256, jobId: job.id, localSaved: false } };
+      }
+    }
+    return { success: true, output: `Evidence saved: ${attachment.name} (${artifact.size} bytes).${localPath ? ` Automatically saved to PC: ${localPath}` : ""}`,
+      data: { attachment, sha256: artifact.sha256, jobId: job.id, ...(localPath ? { localPath, localSaved: true } : {}) } };
   }
 
   private finding(args: Record<string, unknown>, context: SecurityExecutionContext): ToolResult {

@@ -389,3 +389,19 @@ Do not include local runtime folders such as `.antigravitycli/` unless intention
 The root `.gitignore` excludes dependencies, build output, logs, Python caches,
 local `privora-kali*.json` profiles, dedicated Kali SSH keys/host pins, and SQLite
 runtime databases. Keep real machine profiles and credentials outside the repo.
+
+### Automatic local Security evidence copies
+
+Every file collected with `kali_artifact` is also saved automatically under
+`Documents/Privora Evidence`, in a separate project folder. Each collection keeps
+its original bytes and a manifest containing the source job ID, remote path and
+SHA-256 hash. Earlier copies are preserved. The Security project details show the
+folder and an **Open folder** action. Remote-only files must first be collected;
+this is not a VM folder sync. A PC write failure is reported while Privora retains
+its internal evidence copy. This does not enable general host tools in Security chats.
+
+While a Security workspace is visible, connection observations expire after 30
+seconds and UI polling schedules a throttled read-only reachability check. Stale
+observations show **Needs check**, SSH failures show **Disconnected**, and a
+successful check restores **Connected**. Unknown jobs still require reconciliation;
+connection recovery never resubmits a command automatically.

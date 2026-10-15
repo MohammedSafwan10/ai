@@ -23,7 +23,7 @@ export const kaliToolDefinitions = [
   tool("kali_job_output", "Peek at retained output and last observed state without waiting or contacting Kali. Set follow=true to reconnect and stream until completion; uncertain jobs are never replayed.",
     schema({ jobId, follow: { type: "boolean", description: "Follow output until completion. Default false returns the currently retained output immediately." } }, ["jobId"])),
   tool("kali_job_cancel", "Request cancellation of a job in this workspace and verify its actual state.", job),
-  tool("kali_artifact", "Retrieve a bounded file from this remote project, verify its hash, and save it as Privora evidence.",
+  tool("kali_artifact", "Retrieve a bounded file from this remote project, verify its hash, and save it as Privora evidence. When PC evidence storage is configured, also saves a local copy automatically and returns localPath.",
     schema({ jobId, path: text("Relative path within the remote project. Symlinks and traversal are rejected.") }, ["jobId", "path"])),
   tool("security_finding_list", "Read the findings and evidence references for this Security workspace.", schema({})),
   tool("security_finding_save", "Record or update a finding. Verified findings require reproducible evidence from this workspace; scanner output alone is not proof.",
