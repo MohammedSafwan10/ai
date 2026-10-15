@@ -370,7 +370,7 @@ small {
   align-items: center;
   gap: 6px;
   width: 100%;
-  border-radius: 12px;
+  border-radius: 7px;
   background: transparent;
   color: color-mix(in srgb, var(--privora-text) 70%, var(--privora-muted));
   font-size: 13px;
@@ -395,28 +395,15 @@ small {
   color: var(--privora-text);
 }
 
-.project-chevron {
-  flex: 0 0 auto;
-  opacity: 0;
-  transform: rotate(90deg);
-  transition: opacity 0.14s ease, transform 0.16s ease;
-}
-
-.project-group:hover .project-chevron,
-.project-name:focus-visible .project-chevron,
-.project-group.collapsed .project-chevron {
-  opacity: 0.72;
-}
-
-.project-group.collapsed .project-chevron {
-  transform: rotate(0deg);
-}
-
 .project-icon {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
 }
+.security-project-icon { fill: transparent; transition: fill 0.14s ease; }
+.security-project-icon.expanded { fill: color-mix(in srgb, currentColor 20%, transparent); }
+.sidebar-discard-run { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; line-height: 1.5; margin: 12px 0; }
+.sidebar-discard-run input { margin-top: 3px; flex: 0 0 auto; }
 
 .project-thread-list {
   display: grid;
@@ -469,7 +456,7 @@ small {
 .thread-row-wrap {
   position: relative;
   width: 100%;
-  border-radius: 14px;
+  border-radius: 7px;
 }
 
 .thread-row-wrap.menu-open {
@@ -488,6 +475,7 @@ small {
   font-weight: 400;
   line-height: 1.35;
   text-align: left;
+  border-radius: 7px;
 }
 
 .thread-rename-form {

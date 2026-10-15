@@ -19,6 +19,7 @@ export interface AgentHarnessApi {
   steerTurn(input: SteerTurnInput): Promise<SteerTurnResult>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): void;
+  clearInactiveRun(threadId: string): void;
   waitForIdle(): Promise<void>;
   answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;

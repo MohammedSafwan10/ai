@@ -1802,7 +1802,7 @@ export interface PrivoraDesktopApi {
   toggleThreadStar(threadId: string): Promise<ThreadRecord | null>;
   deleteThread(threadId: string): Promise<void>;
   selectWorkspace(): Promise<WorkspaceRecord | null>;
-  moveChat(input: { threadId: string; workspaceId: string }): Promise<ThreadRecord>;
+  moveChat(input: { threadId: string; workspaceId: string; discardStoppedRun?: boolean }): Promise<ThreadRecord>;
   reorderWorkspace(input: { id: string; targetId: string; position: "before" | "after" }): Promise<void>;
   removeWorkspace(workspaceId: string): Promise<WorkspaceRecord | null>;
   setActiveThread(threadId: string): Promise<void>;

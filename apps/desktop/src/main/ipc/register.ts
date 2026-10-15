@@ -241,7 +241,7 @@ export const registerIpc = (
   handle(channels.reorderWorkspace, z.tuple([z.object({ id: idSchema, targetId: idSchema, position: z.enum(["before", "after"]) }).strict()]), (_event, input) => {
     store.reorderWorkspace(input); emitSnapshot();
   });
-  handle(channels.moveChat, z.tuple([z.object({ threadId: idSchema, workspaceId: idSchema }).strict()]), (_event, input) => {
+  handle(channels.moveChat, z.tuple([z.object({ threadId: idSchema, workspaceId: idSchema, discardStoppedRun: z.boolean().optional() }).strict()]), (_event, input) => {
     ensureNotRewinding(input.threadId);
     if (rewindWorkspaces.has(input.workspaceId)) throw new Error("Wait for the destination project rewind to finish.");
     const ids = [input.threadId, ...store.listSubagents(input.threadId).map((child) => child.threadId)];
@@ -251,7 +251,8 @@ export const registerIpc = (
     const source = store.getWorkspace(store.getThread(input.threadId)?.workspaceId);
     if (runtime.getTerminalState()?.sessions.some((session) => session.running && [source?.path, destination.path].some((root) => root && (session.cwd === root || session.cwd.startsWith(root + path.sep))))) throw new Error("Stop running terminals in the source and destination projects before moving this chat.");
     assertWorkspaceDirectory(destination.path);
-    const updated = store.moveChat(input.threadId, input.workspaceId);
+    const updated = store.moveChat(input.threadId, input.workspaceId, input.discardStoppedRun);
+    ids.forEach((id) => runtime.clearInactiveRun(id));
     if (state.activeThreadId && ids.includes(state.activeThreadId)) state.activeWorkspaceId = input.workspaceId;
     emitSnapshot(); return updated;
   });

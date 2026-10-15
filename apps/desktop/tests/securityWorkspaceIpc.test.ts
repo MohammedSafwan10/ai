@@ -30,7 +30,7 @@ beforeEach(() => {
   store = new DesktopStore(mocked.directory); store.saveSecurityEnvironment(environment);
   state = { activeThreadId: null, activeWorkspaceId: null };
   service = { importEnvironmentProfile: vi.fn(async () => environment), checkEnvironment: vi.fn(async () => ({ ...environment, status: "connected" as const })), cancelJob: vi.fn(), };
-  registerIpc(store, { listActiveRuns: () => [], getActiveRun: () => null, getTerminalState: () => null } as unknown as AgentService, state, { clearWorkspaceProfileData: vi.fn() } as unknown as BrowserSessionManager, {} as NotesStore, undefined, { securityService: service });
+  registerIpc(store, { listActiveRuns: () => [], getActiveRun: () => null, getTerminalState: () => null, clearInactiveRun: vi.fn() } as unknown as AgentService, state, { clearWorkspaceProfileData: vi.fn() } as unknown as BrowserSessionManager, {} as NotesStore, undefined, { securityService: service });
 });
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 

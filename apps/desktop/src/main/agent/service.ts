@@ -12,6 +12,7 @@ export interface AgentService {
   steerTurn(input: SteerTurnInput): Promise<SteerTurnResult>;
   continueRun(threadId: string): Promise<void>;
   stopTurn(threadId: string): void;
+  clearInactiveRun(threadId: string): void;
   waitForIdle(): Promise<void>;
   answerRequestUserInput(input: RequestUserInputResponseInput): Promise<void>;
   decideApproval(input: ApprovalDecisionInput): Promise<void>;
@@ -41,6 +42,7 @@ export class InProcessAgentService implements AgentService {
   stopTurn(threadId: string) {
     this.harness.stopTurn(threadId);
   }
+  clearInactiveRun(threadId: string) { this.harness.clearInactiveRun(threadId); }
   waitForIdle() {
     return this.harness.waitForIdle();
   }

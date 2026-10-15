@@ -51,9 +51,32 @@ it("blocks pending children before making any ownership changes", () => {
 
 it("keeps a resumable run bound to its original workspace", () => {
   const a = normal("a"); const b = normal("b"); const thread = store.createThread(a.id);
+  store.upsertMessage({ id: "turn", threadId: thread.id, role: "assistant", content: "Partial work", status: "stopped", createdAt: 1, updatedAt: 1 });
   store.saveRunCheckpoint({ threadId: thread.id, assistantMessageId: "turn", workspaceRoot: a.path, history: [], assistantText: "", assistantThought: "", iteration: 1, toolCount: 0, recoveryAttempts: 0, lastProgressAt: 1, updatedAt: 1 });
   expect(() => store.moveChat(thread.id, b.id)).toThrow("resumable runs");
   expect(store.getRunCheckpoint(thread.id)?.workspaceRoot).toBe(a.path);
+  store.moveChat(thread.id, b.id, true);
+  expect(store.getThread(thread.id)?.workspaceId).toBe(b.id);
+  expect(store.getRunCheckpoint(thread.id)).toBeNull();
+  expect(store.getMessage("turn")?.content).toBe("Partial work");
+});
+
+it("does not let discard bypass unanswered questions or pending approvals", () => {
+  const a = normal("a"); const b = normal("b"); const thread = store.createThread(a.id);
+  store.upsertMessage({ id: "approval", threadId: thread.id, role: "assistant", content: "Waiting", status: "awaiting_approval", createdAt: 1, updatedAt: 1 });
+  store.saveRunCheckpoint({ threadId: thread.id, assistantMessageId: "approval", workspaceRoot: a.path, history: [], assistantText: "", assistantThought: "", iteration: 1, toolCount: 0, recoveryAttempts: 0, lastProgressAt: 1, updatedAt: 1 });
+  expect(() => store.moveChat(thread.id, b.id, true)).toThrow("pending approvals");
+  expect(store.getRunCheckpoint(thread.id)).not.toBeNull();
+  expect(store.getThread(thread.id)?.workspaceId).toBe(a.id);
+});
+
+it("cleans a completed checkpoint without asking to discard finished work", () => {
+  const a = normal("a"); const b = normal("b"); const thread = store.createThread(a.id);
+  store.upsertMessage({ id: "completed", threadId: thread.id, role: "assistant", content: "Done", status: "completed", createdAt: 1, updatedAt: 1 });
+  store.saveRunCheckpoint({ threadId: thread.id, assistantMessageId: "completed", workspaceRoot: a.path, history: [], assistantText: "Done", assistantThought: "", iteration: 1, toolCount: 0, recoveryAttempts: 0, lastProgressAt: 1, updatedAt: 1 });
+  store.moveChat(thread.id, b.id);
+  expect(store.getRunCheckpoint(thread.id)).toBeNull();
+  expect(store.getMessage("completed")?.content).toBe("Done");
 });
 
 it("persists relative project order without changing opening timestamps", () => {

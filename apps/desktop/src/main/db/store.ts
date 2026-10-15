@@ -363,7 +363,7 @@ export class DesktopStore {
       rest.forEach((item, sidebarOrder) => this.putRecord("workspaces", item.id, { ...item, sidebarOrder }, { path: item.path, updatedAt: item.lastOpenedAt }));
     });
   }
-  moveChat(threadId: string, workspaceId: string) {
+  moveChat(threadId: string, workspaceId: string, discardStoppedRun = false) {
     return this.transaction(() => {
       const root = this.getThread(threadId); const destination = this.getWorkspace(workspaceId);
       const source = this.getWorkspace(root?.workspaceId);
@@ -373,7 +373,18 @@ export class DesktopStore {
       const children = this.listSubagents(root.id);
       if (children.some((child) => ["pending", "running", "waiting"].includes(child.status))) throw new Error("Finish or close pending subagents before moving this chat.");
       const ids = [root.id, ...children.map((child) => child.threadId)];
-      if (ids.some((id) => this.getRunCheckpoint(id))) throw new Error("Finish or discard resumable runs and pending approvals before moving this chat.");
+      for (const id of ids) {
+        const checkpoint = this.getRunCheckpoint(id);
+        if (!checkpoint) continue;
+        const message = this.getMessage(checkpoint.assistantMessageId);
+        const unresolved = (checkpoint.pendingUserInput && !checkpoint.pendingUserInput.resolvedResult) || this.listToolEventsForMessage(id, checkpoint.assistantMessageId).some((tool) => ["preparing", "running", "awaiting_approval"].includes(tool.status));
+        if (unresolved || message?.status === "awaiting_approval") throw new Error("Resolve pending approvals, questions or unconfirmed tools in this chat before moving it. Cancel this dialog, open the chat and finish or stop that work.");
+        if (message?.status !== "completed") {
+          if (!message || !["stopped", "stalled", "failed"].includes(message.status)) throw new Error("Saved run state is unconfirmed. Open this chat and reconcile its run before moving it.");
+          if (!discardStoppedRun) throw new Error("This chat has saved progress for resumable runs. Cancel and resume the chat to finish, or explicitly discard stopped-run progress below before moving. History and files will remain saved.");
+        }
+        this.clearRunCheckpoint(id);
+      }
       if (ids.some((id) => this.listTurnUndos(id).some((undo) => ["undoing", "partially_undone"].includes(undo.status)))) throw new Error("Finish or reconcile file undo operations before moving this chat.");
       const at = now();
       for (const id of ids) {

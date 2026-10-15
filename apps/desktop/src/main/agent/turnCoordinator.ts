@@ -728,6 +728,14 @@ export class TurnCoordinator implements AgentHarnessApi {
     if (!run) this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
   }
 
+  clearInactiveRun(threadId: string) {
+    const run = this.activeRuns.get(threadId);
+    if (run && !["completed", "stopped", "stalled", "failed"].includes(run.phase)) throw new Error("Cannot clear an active run.");
+    if (this.store.getRunCheckpoint(threadId)) throw new Error("Saved run progress must be resolved before clearing runtime state.");
+    this.activeRuns.delete(threadId);
+    this.emit({ type: "turn.status_changed", threadId, run: null });
+  }
+
   async answerRequestUserInput(input: RequestUserInputResponseInput) {
     this.userInput.answer(input);
   }

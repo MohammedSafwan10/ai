@@ -1,10 +1,11 @@
-import { ChevronRight, Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Shield, Star, Trash2 } from "lucide-react";
+import { Edit3, Folder, FolderOpen, MoreHorizontal, Pencil, Search, Shield, Star, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ActiveRunState, ThreadRecord, WorkspaceRecord } from "../../shared/types";
 import { buildSidebarRows } from "../sidebarRows";
+import { promptSubmissionError } from "../features/chat/promptSubmission";
 
 interface SidebarProps {
   threads: ThreadRecord[];
@@ -21,7 +22,7 @@ interface SidebarProps {
   onToggleThreadStar: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void | Promise<void>;
   onRemoveWorkspace: (workspaceId: string) => void;
-  onMoveChat: (threadId: string, workspaceId: string) => Promise<void>;
+  onMoveChat: (threadId: string, workspaceId: string, discardStoppedRun?: boolean) => Promise<void>;
   onReorderWorkspace: (id: string, targetId: string, position: "before" | "after") => Promise<void>;
   footer?: ReactNode;
 }
@@ -167,7 +168,7 @@ export function Sidebar({
                     onEdit={onEditSecurityWorkspace}
                     onReorder={(direction) => { const visible = workspaces.filter((workspace) => filter === "all" || (filter === "security" ? workspace.type === "security" : workspace.type !== "security")); const index = visible.findIndex((workspace) => workspace.id === row.workspace.id); const target = visible[index + (direction === "before" ? -1 : 1)]; if (target) void organize(() => onReorderWorkspace(row.workspace.id, target.id, direction)); }}
                     icon={
-                      row.workspace.type === "security" ? <Shield size={15} /> : row.workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
+                      row.workspace.type === "security" ? <Shield size={15} className={collapsedGroups.has(row.workspace.id) ? "security-project-icon" : "security-project-icon expanded"} /> : collapsedGroups.has(row.workspace.id) ? <Folder size={15} /> : <FolderOpen size={15} />
                     }
                   />
                 ) : row.type === "empty-project" ? (
@@ -190,16 +191,17 @@ export function Sidebar({
         </div>
       </div>
       {footer && <div className="sidebar-footer">{footer}</div>}
-      {moveCandidate && createPortal(<MoveChatDialog thread={threads.find((thread) => thread.id === moveCandidate.threadId)} workspaces={workspaces} initialWorkspaceId={moveCandidate.workspaceId} onClose={() => setMoveCandidate(null)} onMove={async (threadId, workspaceId) => { await onMoveChat(threadId, workspaceId); setCollapsedGroups((current) => { const next = new Set(current); next.delete(workspaceId); return next; }); }} />, document.body)}
+      {moveCandidate && createPortal(<MoveChatDialog thread={threads.find((thread) => thread.id === moveCandidate.threadId)} workspaces={workspaces} initialWorkspaceId={moveCandidate.workspaceId} onClose={() => setMoveCandidate(null)} onMove={async (threadId, workspaceId, discardStoppedRun) => { await onMoveChat(threadId, workspaceId, discardStoppedRun); setCollapsedGroups((current) => { const next = new Set(current); next.delete(workspaceId); return next; }); }} />, document.body)}
     </aside>
   );
 }
 
-function MoveChatDialog({ thread, workspaces, initialWorkspaceId, onClose, onMove }: { thread?: ThreadRecord; workspaces: WorkspaceRecord[]; initialWorkspaceId?: string; onClose: () => void; onMove: (threadId: string, workspaceId: string) => Promise<void> }) {
+function MoveChatDialog({ thread, workspaces, initialWorkspaceId, onClose, onMove }: { thread?: ThreadRecord; workspaces: WorkspaceRecord[]; initialWorkspaceId?: string; onClose: () => void; onMove: (threadId: string, workspaceId: string, discardStoppedRun?: boolean) => Promise<void> }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [selected, setSelected] = useState(initialWorkspaceId ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discardStoppedRun, setDiscardStoppedRun] = useState(false);
   useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
   const destinations = workspaces.filter((workspace) => workspace.type !== "security" && workspace.id !== thread?.workspaceId);
   return <dialog ref={dialog} className="sidebar-move-dialog" aria-labelledby="move-chat-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
@@ -208,7 +210,8 @@ function MoveChatDialog({ thread, workspaces, initialWorkspaceId, onClose, onMov
     <fieldset disabled={busy}><legend>Destination project</legend><div className="sidebar-move-projects">{destinations.map((workspace) => <label key={workspace.id}><input type="radio" name="move-chat-project" value={workspace.id} checked={selected === workspace.id} onChange={() => setSelected(workspace.id)} /><span>{workspace.name}<small>{workspace.path}</small></span></label>)}{!destinations.length && <p>Add another normal project folder first.</p>}</div></fieldset>
     <p>Security chats remain in their original project to keep scope, jobs and evidence together.</p>
     {error && <p className="sidebar-organization-error" role="alert">{error}</p>}
-    <footer><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="button" disabled={busy || !thread || !destinations.some((workspace) => workspace.id === selected)} onClick={() => { if (!thread) return; setBusy(true); setError(null); void onMove(thread.id, selected).then(onClose).catch((failure) => setError(failure instanceof Error ? failure.message : String(failure))).finally(() => setBusy(false)); }}>{busy ? "Moving…" : "Move chat"}</button></footer>
+    {(discardStoppedRun || error?.includes("resumable runs")) && <label className="sidebar-discard-run"><input type="checkbox" checked={discardStoppedRun} disabled={busy} onChange={(event) => setDiscardStoppedRun(event.target.checked)} /><span>Discard saved stopped-run progress and move. Chat history and files stay saved, but this run cannot be resumed. Pending approvals and unconfirmed tools still block the move.</span></label>}
+    <footer><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="button" disabled={busy || !thread || !destinations.some((workspace) => workspace.id === selected)} onClick={() => { if (!thread) return; setBusy(true); setError(null); void onMove(thread.id, selected, discardStoppedRun).then(onClose).catch((failure) => setError(promptSubmissionError(failure))).finally(() => setBusy(false)); }}>{busy ? "Moving…" : discardStoppedRun ? "Discard stopped run & move" : "Move chat"}</button></footer>
   </dialog>;
 }
 
@@ -267,8 +270,8 @@ function ProjectRow({
         className={clsx("project-name", active && "active")}
         onClick={() => onToggle(id)}
         title={collapsed ? `Show ${title}` : `Hide ${title}`}
+        aria-expanded={!collapsed}
       >
-        <ChevronRight className="project-chevron" size={13} />
         {icon && <span className="project-icon">{icon}</span>}
         <span>{title}</span>
       </button>

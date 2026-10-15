@@ -18,6 +18,7 @@ export class AgentHarness implements AgentHarnessApi {
   stopTurn(threadId: string) {
     return this.coordinator.stopTurn(threadId);
   }
+  clearInactiveRun(threadId: string) { this.coordinator.clearInactiveRun(threadId); }
   waitForIdle() {
     return this.coordinator.waitForIdle();
   }
