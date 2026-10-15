@@ -38,6 +38,10 @@ describe("security workspace IPC", () => {
   it("validates and persists prompt-library actions without running an agent", () => {
     const saved = invoke(channels.savePrompt, { title: "Prepare", category: "Investigation", workspaceType: "all", content: "Read lessons only." }) as { id: string };
     expect(invoke(channels.listSavedPrompts)).toEqual(expect.arrayContaining([expect.objectContaining({ id: saved.id, content: "Read lessons only." })]));
+    invoke(channels.updatePromptMetadata, { id: saved.id, title: "New name", pinned: true });
+    expect(invoke(channels.getSavedPrompt, saved.id)).toMatchObject({ title: "New name", pinned: true, content: "Read lessons only." });
+    expect(invoke(channels.querySavedPrompts, { pinnedOnly: true, limit: 10 })).toMatchObject({ total: 1, items: [expect.objectContaining({ id: saved.id })] });
+    expect(() => invoke(channels.querySavedPrompts, { limit: 1000 })).toThrow();
     expect(() => invoke(channels.savePrompt, { title: "", category: "General", workspaceType: "all", content: "Text" })).toThrow();
     invoke(channels.deleteSavedPrompt, saved.id);
     expect(store.listSavedPrompts().some((item) => item.id === saved.id)).toBe(false);

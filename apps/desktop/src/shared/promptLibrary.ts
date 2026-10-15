@@ -6,6 +6,7 @@ export const savePromptSchema = z.object({
   category: z.string().trim().min(1).max(60),
   workspaceType: z.enum(["all", "development", "security"]),
   content: z.string().trim().min(1).max(32_000),
+  pinned: z.boolean().optional(),
 }).strict();
 export type SavePromptInput = z.infer<typeof savePromptSchema>;
 export interface SavedPrompt extends Omit<SavePromptInput, "id"> {
@@ -13,6 +14,21 @@ export interface SavedPrompt extends Omit<SavePromptInput, "id"> {
   createdAt: number;
   updatedAt: number;
 }
+export type PromptSummary = Omit<SavedPrompt, "content">;
+export const promptQuerySchema = z.object({
+  query: z.string().max(300).optional(), category: z.string().max(60).optional(),
+  scope: z.enum(["all", "development", "security"]).optional(), pinnedOnly: z.boolean().optional(),
+  sort: z.enum(["name", "updated", "category"]).optional(),
+  offset: z.number().int().min(0).max(10_000).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+}).strict();
+export type PromptQuery = z.infer<typeof promptQuerySchema>;
+export interface PromptPage { items: PromptSummary[]; total: number; categories: string[] }
+export const promptMetadataSchema = z.object({
+  id: z.string().min(1).max(100), title: z.string().trim().min(1).max(120).optional(),
+  pinned: z.boolean().optional(), category: z.string().trim().min(1).max(60).optional(),
+}).strict();
+export type PromptMetadataInput = z.infer<typeof promptMetadataSchema>;
 
 export const preparationPrompt: SavePromptInput = {
   id: "investigation-preparation",

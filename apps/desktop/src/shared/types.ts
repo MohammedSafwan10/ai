@@ -1,5 +1,5 @@
 import type { AgentHarnessMode, CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
-import type { SavedPrompt, SavePromptInput } from "./promptLibrary";
+import type { SavedPrompt, SavePromptInput, PromptQuery, PromptPage, PromptMetadataInput } from "./promptLibrary";
 import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 export type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityFindingRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 
@@ -1774,6 +1774,9 @@ export interface PrivoraDesktopApi {
   saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;
   debugEnabled: boolean;
   listSavedPrompts(): Promise<SavedPrompt[]>;
+  querySavedPrompts(input: PromptQuery): Promise<PromptPage>;
+  getSavedPrompt(id: string): Promise<SavedPrompt | null>;
+  updatePromptMetadata(input: PromptMetadataInput): Promise<SavedPrompt>;
   savePrompt(input: SavePromptInput): Promise<SavedPrompt>;
   deleteSavedPrompt(id: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;

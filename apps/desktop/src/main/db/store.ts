@@ -24,7 +24,7 @@ import type {
   WorkspaceRecord,
 } from "../../shared/types";
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
-import { preparationPrompt, savePromptSchema, type SavePromptInput, type SavedPrompt } from "../../shared/promptLibrary";
+import { preparationPrompt, savePromptSchema, promptQuerySchema, promptMetadataSchema, type SavePromptInput, type SavedPrompt, type PromptQuery, type PromptPage, type PromptSummary, type PromptMetadataInput } from "../../shared/promptLibrary";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
 import { isCompactionSourceCurrent } from "../agent/compactionState";
@@ -122,10 +122,38 @@ export class DesktopStore {
   }
 
   listSavedPrompts() { return this.all<SavedPrompt>("SELECT payload FROM kv WHERE scope = 'saved_prompts' ORDER BY key").sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)); }
+  getSavedPrompt(id: string) { return this.getKv<SavedPrompt>("saved_prompts", id); }
+  querySavedPrompts(input: PromptQuery): PromptPage {
+    const query = promptQuerySchema.parse(input);
+    const clauses = ["scope = 'saved_prompts'"]; const values: unknown[] = [];
+    if (query.query?.trim()) {
+      const escaped = query.query.trim().replace(/[\\%_]/g, (value) => `\\${value}`);
+      clauses.push("(json_extract(payload, '$.title') LIKE ? ESCAPE '\\' OR json_extract(payload, '$.category') LIKE ? ESCAPE '\\' OR json_extract(payload, '$.content') LIKE ? ESCAPE '\\')");
+      values.push(...Array(3).fill(`%${escaped}%`));
+    }
+    if (query.category) { clauses.push("json_extract(payload, '$.category') = ?"); values.push(query.category); }
+    if (query.scope && query.scope !== "all") { clauses.push("json_extract(payload, '$.workspaceType') IN ('all', ?)"); values.push(query.scope); }
+    if (query.pinnedOnly) clauses.push("json_extract(payload, '$.pinned') = 1");
+    const where = clauses.join(" AND ");
+    const order = query.sort === "updated" ? "json_extract(payload, '$.updatedAt') DESC"
+      : query.sort === "category" ? "json_extract(payload, '$.category') COLLATE NOCASE, json_extract(payload, '$.title') COLLATE NOCASE"
+      : "json_extract(payload, '$.title') COLLATE NOCASE";
+    return {
+      items: this.all<PromptSummary>(`SELECT json_remove(payload, '$.content') AS payload FROM kv WHERE ${where} ORDER BY COALESCE(json_extract(payload, '$.pinned'), 0) DESC, ${order}, key LIMIT ? OFFSET ?`, ...values, query.limit ?? 50, query.offset ?? 0),
+      total: this.count(`SELECT COUNT(*) AS count FROM kv WHERE ${where}`, ...values),
+      categories: this.all<{ category: string }>("SELECT DISTINCT json_object('category', json_extract(payload, '$.category')) AS payload FROM kv WHERE scope = 'saved_prompts' ORDER BY json_extract(payload, '$.category') COLLATE NOCASE").map((item) => item.category),
+    };
+  }
+  updatePromptMetadata(input: PromptMetadataInput) {
+    const parsed = promptMetadataSchema.parse(input); const existing = this.getSavedPrompt(parsed.id);
+    if (!existing) throw new Error("Saved prompt not found.");
+    return this.savePrompt({ id: existing.id, title: parsed.title ?? existing.title, category: parsed.category ?? existing.category,
+      workspaceType: existing.workspaceType, content: existing.content, pinned: parsed.pinned ?? existing.pinned });
+  }
   savePrompt(input: SavePromptInput): SavedPrompt {
     const parsed = savePromptSchema.parse(input);
     const existing = parsed.id ? this.getKv<SavedPrompt>("saved_prompts", parsed.id) : null;
-    if (!existing && this.count("SELECT COUNT(*) AS count FROM kv WHERE scope = 'saved_prompts'") >= 200) throw new Error("Prompt library is full (200 prompts). Remove a prompt before adding another.");
+    if (!existing && this.count("SELECT COUNT(*) AS count FROM kv WHERE scope = 'saved_prompts'") >= 10_000) throw new Error("Prompt library is full (10,000 prompts). Remove a prompt before adding another.");
     const timestamp = now();
     const record: SavedPrompt = { ...parsed, id: parsed.id || crypto.randomUUID(), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     this.putKv("saved_prompts", record.id, record);

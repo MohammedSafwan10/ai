@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { z } from "zod";
-import { savePromptSchema } from "../../shared/promptLibrary";
+import { savePromptSchema, promptQuerySchema, promptMetadataSchema } from "../../shared/promptLibrary";
 import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
@@ -143,6 +143,9 @@ export const registerIpc = (
   };
 
   handle(channels.listSavedPrompts, z.tuple([]), () => store.listSavedPrompts());
+  handle(channels.querySavedPrompts, z.tuple([promptQuerySchema]), (_event, input) => store.querySavedPrompts(input));
+  handle(channels.getSavedPrompt, z.tuple([idSchema]), (_event, id: string) => store.getSavedPrompt(id));
+  handle(channels.updatePromptMetadata, z.tuple([promptMetadataSchema]), (_event, input) => store.updatePromptMetadata(input));
   handle(channels.savePrompt, z.tuple([savePromptSchema]), (_event, input) => store.savePrompt(input));
   handle(channels.deleteSavedPrompt, z.tuple([idSchema]), (_event, id: string) => store.deleteSavedPrompt(id));
   handle(channels.getSnapshot, z.tuple([]), () => {

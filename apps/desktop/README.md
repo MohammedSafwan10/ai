@@ -125,6 +125,11 @@ normal model and permissions. Direct Run requires an empty composer and an idle,
 available chat. Prompts stay locally in Privora's database across restarts. The
 investigation-preparation prompt is included once and can be edited or deleted.
 Saving a prompt does not load it automatically or add file access permissions.
+Use the header's expand button for full-screen browsing. Prompts have editable
+names and categories, quick Rename, Duplicate, and Pin actions. Search includes
+stored prompt text; filtering and sorting run in the database with 50 summaries
+per page, and only the selected prompt's body is loaded. Up to 10,000 prompts can
+be stored. Unsaved content edits require saving or explicit discard before leaving.
 
 Open the composer's model menu and choose **Subagent model** to select a separate
 model for new children, including Reviewer Swarm. **Same as parent** is the default.
