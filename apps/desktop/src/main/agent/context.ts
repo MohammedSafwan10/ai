@@ -209,6 +209,7 @@ export const buildRuntimeContext = (store: DesktopStore, threadId: string, works
   return [
     "Runtime context:",
     `- Workspace root: ${workspaceRoot}`,
+    thread?.lastWorkspaceMove ? `- This chat moved from ${thread.lastWorkspaceMove.fromPath} to ${thread.lastWorkspaceMove.toPath}. Earlier history and evidence may refer to the previous project. Files were not moved; verify current paths. Old approvals do not authorize work in this project.` : "",
     threadTitleInstruction,
     `- Workspace profile: ${formatProfile(profile)}`,
     "- Terminal protocol: start commands with exec_command. Prefer argv arrays for exact execution; use cmd strings only for shell syntax. Default tty:true gives native PTY fidelity and resize; use tty:false for reliable pipe stdin/stdout/stderr and close_stdin EOF. If a session_id is returned, the process is still running; use write_stdin with empty chars to poll, non-empty chars to interact, close_stdin to close pipe input, terminal_read for retained output, terminal_resize for PTY resize, terminal_list for sessions, or terminal_stop to stop it.",

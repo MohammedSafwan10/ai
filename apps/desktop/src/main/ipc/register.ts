@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { assertWorkspaceDirectory } from "../workspace/availability";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { z } from "zod";
@@ -236,6 +237,23 @@ export const registerIpc = (
     if (!store.getThread(threadId)) throw new Error("Thread not found.");
     state.activeThreadId = threadId;
     state.activeWorkspaceId = store.getThread(threadId)?.workspaceId ?? state.activeWorkspaceId;
+  });
+  handle(channels.reorderWorkspace, z.tuple([z.object({ id: idSchema, targetId: idSchema, position: z.enum(["before", "after"]) }).strict()]), (_event, input) => {
+    store.reorderWorkspace(input); emitSnapshot();
+  });
+  handle(channels.moveChat, z.tuple([z.object({ threadId: idSchema, workspaceId: idSchema }).strict()]), (_event, input) => {
+    ensureNotRewinding(input.threadId);
+    if (rewindWorkspaces.has(input.workspaceId)) throw new Error("Wait for the destination project rewind to finish.");
+    const ids = [input.threadId, ...store.listSubagents(input.threadId).map((child) => child.threadId)];
+    if (ids.some(hasBlockingRun)) throw new Error("Stop and finish active chat and subagent runs before moving this chat.");
+    const destination = store.getWorkspace(input.workspaceId);
+    if (!destination) throw new Error("Destination project no longer exists.");
+    const source = store.getWorkspace(store.getThread(input.threadId)?.workspaceId);
+    if (runtime.getTerminalState()?.sessions.some((session) => session.running && [source?.path, destination.path].some((root) => root && (session.cwd === root || session.cwd.startsWith(root + path.sep))))) throw new Error("Stop running terminals in the source and destination projects before moving this chat.");
+    assertWorkspaceDirectory(destination.path);
+    const updated = store.moveChat(input.threadId, input.workspaceId);
+    if (state.activeThreadId && ids.includes(state.activeThreadId)) state.activeWorkspaceId = input.workspaceId;
+    emitSnapshot(); return updated;
   });
 
   handle(channels.selectWorkspace, z.tuple([]), async () => {

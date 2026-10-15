@@ -73,6 +73,7 @@ export interface WorkspaceRecord {
   path: string;
   name: string;
   lastOpenedAt: number;
+  sidebarOrder?: number;
   type?: "development" | "security";
   security?: SecurityWorkspaceConfig;
 }
@@ -891,6 +892,7 @@ export interface ThreadRecord {
   titleSource?: ThreadTitleSource;
   titleUpdatedAt?: number;
   workspaceId: string | null;
+  lastWorkspaceMove?: { fromPath: string; toPath: string; at: number };
   model?: string;
   subagentModel?: string | null;
   subagentReasoningEffort?: ReasoningEffort | null;
@@ -1800,6 +1802,8 @@ export interface PrivoraDesktopApi {
   toggleThreadStar(threadId: string): Promise<ThreadRecord | null>;
   deleteThread(threadId: string): Promise<void>;
   selectWorkspace(): Promise<WorkspaceRecord | null>;
+  moveChat(input: { threadId: string; workspaceId: string }): Promise<ThreadRecord>;
+  reorderWorkspace(input: { id: string; targetId: string; position: "before" | "after" }): Promise<void>;
   removeWorkspace(workspaceId: string): Promise<WorkspaceRecord | null>;
   setActiveThread(threadId: string): Promise<void>;
   startTurn(input: StartTurnInput): Promise<void>;

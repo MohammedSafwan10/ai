@@ -18,6 +18,8 @@ export const channels = {
   deleteThread: "desktop:deleteThread",
   setActiveThread: "desktop:setActiveThread",
   selectWorkspace: "desktop:selectWorkspace",
+  moveChat: "desktop:moveChat",
+  reorderWorkspace: "desktop:reorderWorkspace",
   importKaliEnvironmentProfile: "desktop:importKaliEnvironmentProfile",
   listSecurityEnvironments: "desktop:listSecurityEnvironments",
   checkSecurityEnvironment: "desktop:checkSecurityEnvironment",

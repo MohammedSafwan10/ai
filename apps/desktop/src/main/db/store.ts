@@ -351,7 +351,42 @@ export class DesktopStore {
     this.putRecord("workspaces", workspace.id, workspace, { path: workspace.path, updatedAt: workspace.lastOpenedAt });
     return workspace;
   }
-  listWorkspaces() { return this.all<WorkspaceRecord>("SELECT payload FROM workspaces ORDER BY updated_at DESC").map((item) => ({ ...item, type: item.type || "development" as const })); }
+  listWorkspaces() { return this.all<WorkspaceRecord>("SELECT payload FROM workspaces ORDER BY updated_at DESC").map((item) => ({ ...item, type: item.type || "development" as const })).sort((a, b) => (a.sidebarOrder ?? Number.MAX_SAFE_INTEGER) - (b.sidebarOrder ?? Number.MAX_SAFE_INTEGER)); }
+  reorderWorkspace(input: { id: string; targetId: string; position: "before" | "after" }) {
+    this.transaction(() => {
+      const ordered = this.listWorkspaces();
+      const source = ordered.find((item) => item.id === input.id);
+      if (!source || !ordered.some((item) => item.id === input.targetId)) throw new Error("Project no longer exists.");
+      if (input.id === input.targetId) return;
+      const rest = ordered.filter((item) => item.id !== input.id);
+      rest.splice(rest.findIndex((item) => item.id === input.targetId) + (input.position === "after" ? 1 : 0), 0, source);
+      rest.forEach((item, sidebarOrder) => this.putRecord("workspaces", item.id, { ...item, sidebarOrder }, { path: item.path, updatedAt: item.lastOpenedAt }));
+    });
+  }
+  moveChat(threadId: string, workspaceId: string) {
+    return this.transaction(() => {
+      const root = this.getThread(threadId); const destination = this.getWorkspace(workspaceId);
+      const source = this.getWorkspace(root?.workspaceId);
+      if (!root || root.hidden || !source || !destination) throw new Error("Chat or project no longer exists.");
+      if (source.type === "security" || destination.type === "security") throw new Error("Security chats stay in their original project to preserve scope, Kali jobs and evidence. Start a new chat in the destination Security project.");
+      if (source.id === destination.id) return root;
+      const children = this.listSubagents(root.id);
+      if (children.some((child) => ["pending", "running", "waiting"].includes(child.status))) throw new Error("Finish or close pending subagents before moving this chat.");
+      const ids = [root.id, ...children.map((child) => child.threadId)];
+      if (ids.some((id) => this.getRunCheckpoint(id))) throw new Error("Finish or discard resumable runs and pending approvals before moving this chat.");
+      if (ids.some((id) => this.listTurnUndos(id).some((undo) => ["undoing", "partially_undone"].includes(undo.status)))) throw new Error("Finish or reconcile file undo operations before moving this chat.");
+      const at = now();
+      for (const id of ids) {
+        const thread = this.getThread(id);
+        if (!thread || thread.workspaceId !== source.id) throw new Error("Chat tree has inconsistent project ownership.");
+        this.putThread({ ...thread, workspaceId, lastWorkspaceMove: { fromPath: source.path, toPath: destination.path, at }, updatedAt: at });
+        this.run("DELETE FROM approval_scopes WHERE thread_id = ?", id);
+      }
+      children.forEach((child) => this.putSubagent({ ...child, workspaceId, updatedAt: at }));
+      this.putKv("chat_project_moves", `${root.id}:${crypto.randomUUID()}`, { threadId, fromWorkspaceId: source.id, toWorkspaceId: workspaceId, at });
+      return this.getThread(threadId)!;
+    });
+  }
   getWorkspace(id: string | null | undefined): WorkspaceRecord | null { const item = id ? this.one<WorkspaceRecord>("SELECT payload FROM workspaces WHERE id = ?", id) : null; return item ? { ...item, type: item.type || "development" } : null; }
   createSecurityWorkspace(input: CreateSecurityWorkspaceInput): WorkspaceRecord {
     if (!this.getSecurityEnvironment(input.environmentId)) throw new Error("Security environment not found.");

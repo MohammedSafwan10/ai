@@ -25,6 +25,7 @@ export class TurnUndoCoordinator {
     if (message.steeredTurnId) throw new Error("Edit the original prompt for this turn; a steer cannot undo only part of a turn.");
     const thread = this.store.getThread(message.threadId);
     if (!thread) throw new Error("Chat is no longer available.");
+    if (thread.lastWorkspaceMove && message.createdAt <= thread.lastWorkspaceMove.at) throw new Error("This message belongs to the chat’s previous project. Rewinding across a project move is disabled to protect files in both folders.");
     const removed = [message, ...this.store.listMessagesAfter(thread.id, message.id)];
     const allChildren = this.store.listSubagents(thread.id);
     const roots = allChildren.filter((agent) => agent.parentThreadId === thread.id && removed.some((item) => item.id === agent.parentMessageId));
@@ -86,6 +87,9 @@ export class TurnUndoCoordinator {
   }
 
   prepare(messageId: string): TurnUndoRecord | null {
+    const original = this.store.getMessage(messageId);
+    const moved = original && this.store.getThread(original.threadId)?.lastWorkspaceMove;
+    if (moved && original.createdAt <= moved.at) return null;
     const existing = this.store.getTurnUndo(messageId);
     if (existing && existing.status !== "available" && existing.status !== "failed") return existing;
 
@@ -115,6 +119,9 @@ export class TurnUndoCoordinator {
   }
 
   async undo(messageId: string): Promise<TurnUndoRecord | null> {
+    const message = this.store.getMessage(messageId);
+    const moved = message && this.store.getThread(message.threadId)?.lastWorkspaceMove;
+    if (moved && message.createdAt <= moved.at) throw new Error("This turn belongs to the previous project. Undo across a project move is disabled to protect both folders.");
     const prepared = this.prepare(messageId);
     if (!prepared) return null;
     if (this.isThreadBusy(prepared.threadId)) {

@@ -77,6 +77,17 @@ describe("security workspace IPC", () => {
     invoke(channels.updateSecurityWorkspace, { workspaceId: workspace.id, expectedRevision: 1, scope: "Revised fixtures" });
     expect(store.getWorkspace(workspace.id)?.security).toMatchObject({ revision: 2, scope: "Revised fixtures", evidenceFolderName: "Original" });
   });
+  it("moves an idle normal chat and updates the active project, but blocks active runs", async () => {
+    const sourcePath = path.join(mocked.directory, "source"); const destinationPath = path.join(mocked.directory, "destination");
+    fs.mkdirSync(sourcePath); fs.mkdirSync(destinationPath);
+    const a = store.upsertWorkspace(sourcePath); const b = store.upsertWorkspace(destinationPath); const thread = store.createThread(a.id);
+    state.activeThreadId = thread.id; state.activeWorkspaceId = a.id;
+    invoke(channels.moveChat, { threadId: thread.id, workspaceId: b.id });
+    expect(state.activeWorkspaceId).toBe(b.id);
+    registerIpc(store, { listActiveRuns: () => [{ threadId: thread.id, status: "running" }], getActiveRun: () => null, getTerminalState: () => null } as unknown as AgentService, state, {} as BrowserSessionManager, {} as NotesStore);
+    expect(() => invoke(channels.moveChat, { threadId: thread.id, workspaceId: a.id })).toThrow("active chat");
+    expect(store.getThread(thread.id)?.workspaceId).toBe(b.id);
+  });
   it("reads a child transcript without switching chats and rejects another chat tree", async () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
     const root = store.createThread(workspace.id); const other = store.createThread(workspace.id);

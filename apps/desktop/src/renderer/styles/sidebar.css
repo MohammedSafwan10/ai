@@ -184,6 +184,30 @@ small {
   background: color-mix(in srgb, var(--privora-text) 16%, transparent);
 }
 
+.sidebar-type-filter { display: flex; gap: 3px; padding: 0 4px; }
+.sidebar-type-filter button { flex: 1; min-width: 0; padding: 4px 7px; border-radius: 7px; color: var(--privora-muted); font-size: 11px; background: transparent; border: 1px solid transparent; }
+.sidebar-type-filter button[aria-pressed="true"] { background: color-mix(in srgb, var(--privora-text) 8%, transparent); color: var(--privora-text); }
+.sidebar-type-filter button:hover { border-color: var(--privora-border); }
+.sidebar-organization-error { color: var(--error, #ed7777); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; padding: 6px; }
+.sidebar-organization-error button { background: transparent; color: inherit; float: right; }
+.sidebar-dragging .sidebar-drop-before::before, .sidebar-dragging .sidebar-drop-after::after { content: ""; position: absolute; left: 4px; right: 4px; height: 2px; background: var(--privora-text); pointer-events: none; z-index: 2; }
+.sidebar-dragging .sidebar-drop-before::before { top: 0; }
+.sidebar-dragging .sidebar-drop-after::after { bottom: 0; }
+.sidebar-dragging .sidebar-drop-inside { border-radius: 9px; box-shadow: inset 0 0 0 1px var(--privora-muted); background: color-mix(in srgb, var(--privora-text) 8%, transparent); }
+.sidebar-move-dialog { width: min(460px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow-y: auto; padding: 22px; border: 1px solid var(--privora-border); border-radius: 14px; color: var(--privora-text); background: var(--privora-bg); }
+.sidebar-move-dialog::backdrop { background: #0008; }
+.sidebar-move-dialog h2 { margin: 0 0 10px; font-size: 17px; }
+.sidebar-move-dialog p { font-size: 12px; color: var(--privora-muted); line-height: 1.6; }
+.sidebar-move-dialog .sidebar-move-title { color: var(--privora-text); overflow-wrap: anywhere; }
+.sidebar-move-dialog fieldset { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.sidebar-move-dialog legend { font-size: 12px; margin-bottom: 8px; }
+.sidebar-move-projects { max-height: 220px; overflow-y: auto; display: grid; gap: 4px; }
+.sidebar-move-projects label { display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 8px; background: color-mix(in srgb, var(--privora-text) 5%, transparent); font-size: 13px; }
+.sidebar-move-projects label span { min-width: 0; overflow-wrap: anywhere; }
+.sidebar-move-projects small { display: block; color: var(--privora-muted); margin-top: 3px; font-size: 11px; }
+.sidebar-move-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.sidebar-move-dialog footer button { border: 1px solid var(--privora-border); border-radius: 8px; padding: 7px 12px; color: var(--privora-text); background: color-mix(in srgb, var(--privora-text) 6%, transparent); }
+
 .sidebar-footer {
   position: relative;
   margin-top: auto;

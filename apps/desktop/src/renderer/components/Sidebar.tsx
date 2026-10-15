@@ -21,6 +21,8 @@ interface SidebarProps {
   onToggleThreadStar: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void | Promise<void>;
   onRemoveWorkspace: (workspaceId: string) => void;
+  onMoveChat: (threadId: string, workspaceId: string) => Promise<void>;
+  onReorderWorkspace: (id: string, targetId: string, position: "before" | "after") => Promise<void>;
   footer?: ReactNode;
 }
 
@@ -39,14 +41,29 @@ export function Sidebar({
   onToggleThreadStar,
   onDeleteThread,
   onRemoveWorkspace,
+  onMoveChat,
+  onReorderWorkspace,
   footer,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "security" | "normal">(() => { try { const saved = localStorage.getItem("privora.sidebar.filter"); return saved === "security" || saved === "normal" ? saved : "all"; } catch { return "all"; } });
+  const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const [moveCandidate, setMoveCandidate] = useState<{ threadId: string; workspaceId?: string } | null>(null);
+  const drag = useRef<{ type: "project" | "chat"; id: string } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dropMark, setDropMark] = useState<{ key: string; position: "before" | "after" | "inside" } | null>(null);
+  useEffect(() => {
+    if (!dragging) return;
+    const clear = () => { drag.current = null; setDragging(false); setDropMark(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
+    window.addEventListener("dragend", clear); window.addEventListener("drop", clear); window.addEventListener("blur", clear); window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("dragend", clear); window.removeEventListener("drop", clear); window.removeEventListener("blur", clear); window.removeEventListener("keydown", escape); };
+  }, [dragging]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const projectListRef = useRef<HTMLDivElement | null>(null);
   const rows = useMemo(
-    () => buildSidebarRows({ threads, workspaces, collapsedGroups, query }),
-    [collapsedGroups, query, threads, workspaces],
+    () => buildSidebarRows({ threads, workspaces, collapsedGroups, query, filter }),
+    [collapsedGroups, query, threads, workspaces, filter],
   );
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -69,6 +86,7 @@ export function Sidebar({
     });
   };
 
+  const organize = async (operation: () => Promise<void>) => { setOrganizationError(null); try { await operation(); } catch (error) { setOrganizationError(error instanceof Error ? error.message : String(error)); } };
   return (
     <aside className="sidebar">
       <div className="sidebar-window-spacer" aria-hidden="true" />
@@ -92,7 +110,9 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="project-list" ref={projectListRef}>
+      <div className="sidebar-type-filter" role="group" aria-label="Filter projects">{(["all", "security", "normal"] as const).map((type) => <button type="button" key={type} aria-pressed={filter === type} onClick={() => { setFilter(type); try { localStorage.setItem("privora.sidebar.filter", type); } catch { /* Keep the session preference when storage is unavailable. */ } }}>{type === "all" ? "All" : type === "security" ? "Security" : "Normal"}</button>)}</div>
+      {organizationError && <div className="sidebar-organization-error" role="alert">{organizationError}<button type="button" onClick={() => setOrganizationError(null)} aria-label="Dismiss organization error">×</button></div>}
+      <div className={clsx("project-list", dragging && "sidebar-dragging")} ref={projectListRef}>
         <div className="sidebar-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
           {rowVirtualizer.getVirtualItems().map((virtualItem) => {
             const row = rows[virtualItem.index];
@@ -100,7 +120,37 @@ export function Sidebar({
             return (
               <div
                 key={row.key}
-                className="sidebar-virtual-row"
+                className={clsx("sidebar-virtual-row", dropMark?.key === row.key && `sidebar-drop-${dropMark.position}`)}
+                draggable={row.type === "project" || (row.type === "thread" && workspaces.find((workspace) => workspace.id === row.workspaceId)?.type !== "security" && !activeRunsByThread[row.thread.id])}
+                onDragStart={(event) => {
+                  if ((event.target as HTMLElement).closest("input, .thread-menu-button, .project-menu-button") || row.type === "empty-project") { event.preventDefault(); return; }
+                  drag.current = { type: row.type === "project" ? "project" : "chat", id: row.type === "project" ? row.workspace.id : row.thread.id };
+                  event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-privora-sidebar", JSON.stringify(drag.current)); setDragging(true); setOrganizationError(null);
+                }}
+                onDragEnd={() => { drag.current = null; setDragging(false); setDropMark(null); }}
+                onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropMark(null); }}
+                onDragOver={(event) => {
+                  const item = drag.current; if (!item) return;
+                  const scroller = projectListRef.current;
+                  if (scroller) { const area = scroller.getBoundingClientRect(); if (event.clientY < area.top + 28) scroller.scrollTop -= 12; else if (event.clientY > area.bottom - 28) scroller.scrollTop += 12; }
+                  if (item.type === "project") {
+                    if (row.type !== "project" || row.workspace.id === item.id) return;
+                    event.preventDefault(); const bounds = event.currentTarget.getBoundingClientRect();
+                    setDropMark({ key: row.key, position: event.clientY < bounds.top + bounds.height / 2 ? "before" : "after" });
+                  } else {
+                    const targetId = row.type === "project" ? row.workspace.id : row.workspaceId;
+                    if (workspaces.find((workspace) => workspace.id === targetId)?.type === "security" || threads.find((thread) => thread.id === item.id)?.workspaceId === targetId) return;
+                    event.preventDefault(); setDropMark({ key: row.key, position: "inside" });
+                  }
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault(); const item = drag.current; const mark = dropMark;
+                  drag.current = null; setDragging(false); setDropMark(null);
+                  if (!item || mark?.key !== row.key) return;
+                  if (item.type === "project" && row.type === "project" && mark.position !== "inside") void organize(() => onReorderWorkspace(item.id, row.workspace.id, mark.position as "before" | "after"));
+                  else if (item.type === "chat") setMoveCandidate({ threadId: item.id, workspaceId: row.type === "project" ? row.workspace.id : row.workspaceId });
+                }}
                 data-index={virtualItem.index}
                 ref={rowVirtualizer.measureElement}
                 style={{ transform: `translateY(${virtualItem.start}px)` }}
@@ -115,6 +165,7 @@ export function Sidebar({
                     onToggle={toggleGroup}
                     onRemove={onRemoveWorkspace}
                     onEdit={onEditSecurityWorkspace}
+                    onReorder={(direction) => { const visible = workspaces.filter((workspace) => filter === "all" || (filter === "security" ? workspace.type === "security" : workspace.type !== "security")); const index = visible.findIndex((workspace) => workspace.id === row.workspace.id); const target = visible[index + (direction === "before" ? -1 : 1)]; if (target) void organize(() => onReorderWorkspace(row.workspace.id, target.id, direction)); }}
                     icon={
                       row.workspace.type === "security" ? <Shield size={15} /> : row.workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
                     }
@@ -130,6 +181,7 @@ export function Sidebar({
                   onRename={onRenameThread}
                   onToggleStar={onToggleThreadStar}
                   onDelete={onDeleteThread}
+                  onMove={workspaces.find((workspace) => workspace.id === row.workspaceId)?.type === "security" ? undefined : () => setMoveCandidate({ threadId: row.thread.id })}
                 />
                 )}
               </div>
@@ -138,8 +190,26 @@ export function Sidebar({
         </div>
       </div>
       {footer && <div className="sidebar-footer">{footer}</div>}
+      {moveCandidate && createPortal(<MoveChatDialog thread={threads.find((thread) => thread.id === moveCandidate.threadId)} workspaces={workspaces} initialWorkspaceId={moveCandidate.workspaceId} onClose={() => setMoveCandidate(null)} onMove={async (threadId, workspaceId) => { await onMoveChat(threadId, workspaceId); setCollapsedGroups((current) => { const next = new Set(current); next.delete(workspaceId); return next; }); }} />, document.body)}
     </aside>
   );
+}
+
+function MoveChatDialog({ thread, workspaces, initialWorkspaceId, onClose, onMove }: { thread?: ThreadRecord; workspaces: WorkspaceRecord[]; initialWorkspaceId?: string; onClose: () => void; onMove: (threadId: string, workspaceId: string) => Promise<void> }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [selected, setSelected] = useState(initialWorkspaceId ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
+  const destinations = workspaces.filter((workspace) => workspace.type !== "security" && workspace.id !== thread?.workspaceId);
+  return <dialog ref={dialog} className="sidebar-move-dialog" aria-labelledby="move-chat-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
+    <h2 id="move-chat-title">Move chat</h2><p className="sidebar-move-title">{thread?.title ?? "Chat no longer available"}</p>
+    <p>History and completed subagents move with the chat. Files stay in their original folders. Previous approvals won’t carry over, and rewinding messages from the previous project will be disabled.</p>
+    <fieldset disabled={busy}><legend>Destination project</legend><div className="sidebar-move-projects">{destinations.map((workspace) => <label key={workspace.id}><input type="radio" name="move-chat-project" value={workspace.id} checked={selected === workspace.id} onChange={() => setSelected(workspace.id)} /><span>{workspace.name}<small>{workspace.path}</small></span></label>)}{!destinations.length && <p>Add another normal project folder first.</p>}</div></fieldset>
+    <p>Security chats remain in their original project to keep scope, jobs and evidence together.</p>
+    {error && <p className="sidebar-organization-error" role="alert">{error}</p>}
+    <footer><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="button" disabled={busy || !thread || !destinations.some((workspace) => workspace.id === selected)} onClick={() => { if (!thread) return; setBusy(true); setError(null); void onMove(thread.id, selected).then(onClose).catch((failure) => setError(failure instanceof Error ? failure.message : String(failure))).finally(() => setBusy(false)); }}>{busy ? "Moving…" : "Move chat"}</button></footer>
+  </dialog>;
 }
 
 function ProjectRow({
@@ -150,6 +220,7 @@ function ProjectRow({
   onToggle,
   onRemove,
   onEdit,
+  onReorder,
   icon,
   security = false,
 }: {
@@ -160,6 +231,7 @@ function ProjectRow({
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onEdit?: (id: string, renameOnly: boolean) => void;
+  onReorder: (direction: "before" | "after") => void;
   icon?: ReactNode;
   security?: boolean;
 }) {
@@ -228,6 +300,7 @@ function ProjectRow({
             </>
           ) : (
             <>
+            <button type="button" onClick={() => { setMenuOpen(false); onReorder("before"); }}>Move project up</button><button type="button" onClick={() => { setMenuOpen(false); onReorder("after"); }}>Move project down</button>
             {security && onEdit && <><button type="button" onClick={() => { setMenuOpen(false); onEdit(id, true); }}><Pencil size={15} /><span>Rename project</span></button><button type="button" onClick={() => { setMenuOpen(false); onEdit(id, false); }}><Edit3 size={15} /><span>Edit objective & scope</span></button></>}
             <button type="button" className="danger" onClick={() => setConfirmRemove(true)}>
               <Trash2 size={15} />
@@ -250,6 +323,7 @@ function ThreadButton({
   onRename,
   onToggleStar,
   onDelete,
+  onMove,
 }: {
   thread: ThreadRecord;
   active: boolean;
@@ -258,6 +332,7 @@ function ThreadButton({
   onRename: (threadId: string, title: string) => void;
   onToggleStar: (threadId: string) => void;
   onDelete: (threadId: string) => void | Promise<void>;
+  onMove?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -382,6 +457,7 @@ function ThreadButton({
                 <Trash2 size={15} />
                 <span>Delete</span>
               </button>
+              <button type="button" disabled={!onMove || Boolean(run)} title={!onMove ? "Security chats stay with their project’s scope and evidence." : run ? "Finish the current run before moving this chat." : "Move this chat to another normal project"} onClick={() => { setMenuOpen(false); onMove?.(); }}><Folder size={15} /><span>Move to project…</span></button>
             </>
           )}
         </div>,

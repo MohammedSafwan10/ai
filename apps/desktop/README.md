@@ -9,6 +9,8 @@ See the [Security workspace documentation](docs/security-workspace/README.md) fo
 ## What It Does
 
 - Opens local workspaces and keeps project-scoped chats.
+- Filters the sidebar by All, Security, or Normal projects. Drag project headers to reorder them, or use Move project up/down in the project menu; ordering and the filter are remembered.
+- Moves idle normal chats between normal projects by dragging onto a destination project or using Move to project in the chat menu. A confirmation explains that files stay put, previous approvals are revoked, and old messages cannot be rewound in the new folder. Completed subagents move with the chat. Active/resumable work blocks moves; Security chats remain bound to their original scope, jobs, and evidence.
 - Lets the agent inspect files, search with ripgrep, edit files, run commands, and verify changes.
 - Shows live agent activity as readable tool/check rows instead of raw logs.
 - Supports approval gates for risky actions and reusable approval scopes.

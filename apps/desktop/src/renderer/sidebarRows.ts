@@ -10,11 +10,13 @@ export const buildSidebarRows = ({
   workspaces,
   collapsedGroups,
   query,
+  filter = "all",
 }: {
   threads: ThreadRecord[];
   workspaces: WorkspaceRecord[];
   collapsedGroups: Set<string>;
   query: string;
+  filter?: "all" | "security" | "normal";
 }): SidebarVirtualRow[] => {
   const needle = query.trim().toLowerCase();
   const visibleThreads = needle
@@ -28,7 +30,7 @@ export const buildSidebarRows = ({
     threadsByWorkspace.set(thread.workspaceId, group);
   });
 
-  return workspaces.flatMap((workspace) => {
+  return workspaces.filter((workspace) => filter === "all" || (filter === "security" ? workspace.type === "security" : workspace.type !== "security")).flatMap((workspace) => {
     const workspaceThreads = threadsByWorkspace.get(workspace.id) || [];
     const rows: SidebarVirtualRow[] = [{
       type: "project",

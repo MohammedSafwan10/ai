@@ -418,6 +418,8 @@ export default function App() {
           await window.privoraDesktop.selectWorkspace();
           await refresh();
         }}
+        onMoveChat={async (threadId, workspaceId) => { await window.privoraDesktop.moveChat({ threadId, workspaceId }); await refresh(); }}
+        onReorderWorkspace={async (id, targetId, position) => { await window.privoraDesktop.reorderWorkspace({ id, targetId, position }); await refresh(); }}
         onCreateSecurityWorkspace={() => setCreateSecurityOpen(true)}
         onEditSecurityWorkspace={(workspaceId, renameOnly) => setEditingSecurity({ workspaceId, renameOnly })}
         onNewThread={async () => {
