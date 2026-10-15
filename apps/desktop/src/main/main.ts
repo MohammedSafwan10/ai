@@ -12,6 +12,7 @@ import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
 import { channels } from "./ipc/channels";
 import { installRendererDiagnostics } from "./diagnostics";
+import { writeRendererFailure } from "./rendererFailureLog";
 import { resolveAppIconPath } from "./resources";
 import { checkForUpdates, getUpdateServiceStatus, installDownloadedUpdate, installUpdateService } from "./updateService";
 import { decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
@@ -98,6 +99,7 @@ const emitPrivoraEvent = (payload: Parameters<typeof envelopePrivoraEvent>[0]) =
 
 const emitSnapshot = () => {
   if (!store || !harnessService) return;
+  store.saveActiveSelection(state.activeThreadId, state.activeWorkspaceId);
   const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
   snapshot.activeRun = state.activeThreadId ? harnessService.getActiveRun(state.activeThreadId) : null;
   snapshot.activeRuns = harnessService.listActiveRuns();
@@ -479,17 +481,26 @@ const createWindow = async () => {
   completionBadgeTimer.unref();
 
   mainWindow.webContents.on("console-message", (details) => {
+    if (details.level === "error") writeRendererFailure(app.getPath("userData"), "console-error", details.message);
     if (!MAIN_WINDOW_VITE_DEV_SERVER_URL || (details.level !== "warning" && details.level !== "error")) return;
     console.warn(`[renderer:${details.level}] ${details.message} (${details.sourceId}:${details.lineNumber})`);
   });
 
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    writeRendererFailure(app.getPath("userData"), "load-failed", `${errorCode} ${errorDescription} ${validatedURL}`);
     console.error(`[renderer:load-failed] ${errorCode} ${errorDescription} ${validatedURL}`);
   });
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error(`[renderer:gone] ${details.reason}`);
+    writeRendererFailure(app.getPath("userData"), "renderer-gone", `${details.reason} (exit ${details.exitCode})`);
+    const failedWindow = mainWindow;
+    if (!failedWindow || failedWindow.isDestroyed() || isQuitting) return;
+    void dialog.showMessageBox(failedWindow, { type: "error", title: "Privora interface stopped", message: "The interface process stopped.", detail: "Background work may still be running. Reload the interface, then check task status before retrying. Reloading does not request cancellation or replay of jobs.", buttons: ["Reload interface", "Later"], defaultId: 0, cancelId: 1 }).then(({ response }) => {
+      if (response === 0 && !failedWindow.isDestroyed()) failedWindow.webContents.reload();
+    }).catch(() => undefined);
   });
+  mainWindow.on("unresponsive", () => writeRendererFailure(app.getPath("userData"), "unresponsive", "Main interface became unresponsive; cause not established."));
   installWindowShortcuts(mainWindow);
   installTextContextMenu(mainWindow);
   setWindowZoom(mainWindow, getDefaultZoomFactor(mainWindow));
@@ -569,10 +580,8 @@ if (!singleInstanceLock) {
         ...(store?.listBrowserWorkspaceIds() || []),
       ])),
     );
-    const workspaces = store.listWorkspaces();
     store.onUnreadCompletionsChanged = updateCompletionBadge;
-    state.activeWorkspaceId = workspaces[0]?.id ?? null;
-    state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
+    Object.assign(state, store.restoreActiveSelection());
     computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
     securityService = new SecurityWorkspaceService(store, () => emitSnapshot(), undefined, path.join(app.getPath("documents"), "Privora Evidence"));
     harnessService = new InProcessAgentService(new AgentHarness(

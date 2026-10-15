@@ -1,7 +1,7 @@
 import type { DesktopStore } from "../../db/store";
 import type { ActiveRunState, AgentRunCheckpointRecord, ChatMessageRecord } from "../../../shared/types";
 import { toActiveRunState, type AgentRunTracker } from "../runState";
-import { appendToolResults } from "../providers/types";
+import { appendToolResults, type ProviderMessage } from "../providers/types";
 
 export class RunRecoveryService {
   constructor(private store: DesktopStore) {}
@@ -20,7 +20,9 @@ export class RunRecoveryService {
       updatedAt: checkpoint.updatedAt,
       iteration: checkpoint.iteration,
       toolCount: checkpoint.toolCount,
-      reason: message.status === "awaiting_approval"
+      reason: checkpoint.interruptedAt
+        ? "Interrupted when Privora closed. Progress saved. Resume to reconcile unfinished work before continuing."
+        : message.status === "awaiting_approval"
         ? "Waiting for approval."
         : message.status === "stalled"
         ? "The model connection stalled."
@@ -35,6 +37,36 @@ export class RunRecoveryService {
 
   save(checkpoint: AgentRunCheckpointRecord) {
     return this.store.saveRunCheckpoint(checkpoint);
+  }
+
+  /** Startup only: never auto-execute, cancel, or replay potentially delivered work. */
+  recoverInterruptedRuns() {
+    for (const checkpoint of this.store.listRunCheckpoints()) {
+      const message = this.store.getMessage(checkpoint.assistantMessageId);
+      if (!message || ["completed", "failed", "stopped", "stalled", "awaiting_approval"].includes(message.status)) continue;
+      const at = Date.now();
+      let history = checkpoint.history as ProviderMessage[];
+      const parts = history.flatMap((item) => item.parts ?? []);
+      const answered = new Set(parts.filter((part) => part.type === "function_response").map((part) => part.id));
+      const events = this.store.listToolEventsForMessage(checkpoint.threadId, checkpoint.assistantMessageId);
+      const reason = "Privora restarted while this tool was pending. Execution outcome is unconfirmed. Reconcile persisted jobs and actual state before retrying; do not blindly replay changes.";
+      const interrupted = events.filter((event) => event.status === "running" || event.status === "preparing").map((event) => ({ ...event, status: "stopped" as const, output: reason, result: { success: false, error: reason, data: { interrupted: true, requiresReconciliation: true } }, endedAt: at, updatedAt: at }));
+      const seen = new Set<string>();
+      for (const part of parts) {
+        if (part.type !== "function_call" || answered.has(part.id) || seen.has(part.id)) continue;
+        seen.add(part.id);
+        const event = events.find((item) => item.callId === part.id);
+        const response = event?.status === "done" && event.result ? event.result : { success: false, error: reason, data: { interrupted: true, requiresReconciliation: true } };
+        history = appendToolResults(history, [{ id: part.id, name: part.name, response }]);
+      }
+      history = [...history, { role: "user", content: "Runtime recovery notice: Privora restarted. Continue the previously authorized task from retained evidence. Inspect unfinished job states before retrying any tool or state-changing operation. Queued agent messages remain pending until their recipient resumes; send_message does not start an idle child, while assign_task starts a follow-up." }];
+      this.store.commitRecoveryState(interrupted, { ...checkpoint, history, interruptedAt: at, updatedAt: at }, { ...message, status: "stopped", updatedAt: at });
+    }
+    for (const agent of this.store.listSubagents()) {
+      if (!["pending", "running", "waiting"].includes(agent.status)) continue;
+      if (this.activeRun(agent.threadId)?.status === "awaiting_approval") continue;
+      this.store.updateSubagent(agent.threadId, { status: "stopped", lastPreview: "Interrupted when Privora closed. Resume saved progress or assign a follow-up task." });
+    }
   }
 
   clear(threadId: string) {

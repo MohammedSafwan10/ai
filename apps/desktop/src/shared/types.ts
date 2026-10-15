@@ -1279,6 +1279,7 @@ export interface GeneratedImageEventRecord {
 }
 
 export interface AgentRunCheckpointRecord {
+  interruptedAt?: number;
   version?: 1;
   threadId: string;
   assistantMessageId: string;
@@ -1782,6 +1783,7 @@ export interface PrivoraDesktopApi {
   createSecurityWorkspace(input: CreateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
   updateSecurityWorkspace(input: UpdateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
   getSecurityWorkspaceState(workspaceId: string): Promise<SecurityWorkspaceState>;
+  recordSecurityReportEvent(id: string, expectedUpdatedAt: number, kind: import("./securityWorkspace").SecurityReportEvent["kind"], reference: string): Promise<import("./securityWorkspace").SecurityFindingRecord>;
   cancelSecurityJob(jobRecordId: string): Promise<SecurityJobRecord>;
   openSecurityEvidenceFolder(workspaceId: string): Promise<void>;
   saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;

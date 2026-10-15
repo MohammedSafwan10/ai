@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApprovalCoordinator } from "../src/main/agent/harness/approvalCoordinator";
+import { RunRecoveryService } from "../src/main/agent/harness/runRecoveryService";
 import { DesktopStore } from "../src/main/db/store";
 import type { AgentRunCheckpointRecord, ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
 import { toActiveRunState, type AgentRunTracker } from "../src/main/agent/runState";
@@ -24,6 +25,26 @@ afterEach(() => {
 });
 
 describe("approval restore", () => {
+  it("recovers interrupted work without replay, keeps completed results and preserves queued messages", () => {
+    const db = createStore(); const root = db.createThread(null);
+    const message = { ...chatMessage("interrupted", root.id, "Saved progress"), status: "executing_tool" as const };
+    db.upsertMessage(message);
+    const saved = checkpoint(root.id, message.id, tempDir);
+    saved.history = [{ role: "assistant", content: "", parts: [{ type: "function_call", id: "pending", name: "kali_exec", arguments: { argv: ["test"] } }, { type: "function_call", id: "finished", name: "kali_job_status", arguments: {} }] }];
+    db.saveRunCheckpoint(saved);
+    db.upsertToolEvent({ ...toolEvent("pending-event", root.id, message.id, "pending", "group"), status: "running" });
+    db.upsertToolEvent({ ...toolEvent("finished-event", root.id, message.id, "finished", "group"), status: "done", result: { success: true, output: "Retained successful result" } });
+    db.upsertMessage({ id: "queued", threadId: root.id, role: "user", content: "Review evidence", status: "completed", createdAt: 1, updatedAt: 1, agentMessage: { id: "coordination", senderThreadId: "child", senderLabel: "Reviewer", recipientLabel: "Parent", delivery: "queued" } });
+    const recovery = new RunRecoveryService(db); recovery.recoverInterruptedRuns();
+    expect(recovery.activeRun(root.id)).toMatchObject({ status: "stopped", resumable: true, reason: expect.stringContaining("Interrupted when Privora closed") });
+    const recovered = db.getRunCheckpoint(root.id)!;
+    const history = JSON.stringify(recovered.history);
+    expect(history).toContain("requiresReconciliation"); expect(history).toContain("Retained successful result");
+    expect(db.getToolEvent("finished-event")?.status).toBe("done");
+    expect(db.getMessage("queued")?.agentMessage?.delivery).toBe("queued");
+    recovery.recoverInterruptedRuns();
+    expect(db.getRunCheckpoint(root.id)?.history).toEqual(recovered.history);
+  });
   it("restores grouped pending approvals with provider call ids after runtime loss", () => {
     const db = createStore();
     const workspace = db.upsertWorkspace(tempDir);

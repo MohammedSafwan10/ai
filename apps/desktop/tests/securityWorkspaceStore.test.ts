@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KaliEnvironment } from "../src/shared/kali";
 import type { SecurityEnvironmentRecord, SecurityJobRecord } from "../src/shared/securityWorkspace";
+import { reportCheckLabels, type SecurityFindingRecord, type SecurityReportReview } from "../src/shared/securityWorkspace";
 
 const encryption = vi.hoisted(() => ({ available: true }));
 vi.mock("electron", () => ({
@@ -31,6 +32,34 @@ beforeEach(() => { encryption.available = true; directory = fs.mkdtempSync(path.
 afterEach(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
 
 describe("security workspace persistence", () => {
+  it("restores the actual selected chat rather than sidebar order, with safe deletion fallback", () => {
+    const workspace = securityWorkspace(); const lastOpen = store.createThread(workspace.id); const first = store.createThread(workspace.id);
+    store.saveActiveSelection(lastOpen.id, workspace.id);
+    store.close(); store = new DesktopStore(directory);
+    expect(store.restoreActiveSelection()).toEqual({ activeThreadId: lastOpen.id, activeWorkspaceId: workspace.id });
+    store.deleteThread(lastOpen.id);
+    expect(store.restoreActiveSelection()).toEqual({ activeThreadId: first.id, activeWorkspaceId: workspace.id });
+    const projectless = store.createThread(null); store.saveActiveSelection(projectless.id, null);
+    expect(store.restoreActiveSelection()).toEqual({ activeThreadId: projectless.id, activeWorkspaceId: null });
+  });
+  it("persists operator submission and triage history without changing technical verification", () => {
+    const workspace = securityWorkspace(); const author = store.createThread(workspace.id); const reviewer = store.createThread(workspace.id);
+    const repro = { ...jobFor(workspace.id, author.id), id: "repro", state: "succeeded" as const, artifacts: [{ id: "report", artifactId: "report.md", name: "report.md", mimeType: "text/markdown", size: 2000, url: "privora-attachment://artifact/report.md", createdAt: 1 }] };
+    store.upsertSecurityJob(repro); store.upsertSecurityJob({ ...repro, id: "review", threadId: reviewer.id });
+    const report: SecurityReportReview = { status: "ready_for_review", basedOnUpdatedAt: 2, scopeRevision: workspace.security?.revision ?? 0, authorThreadId: author.id, checks: Object.fromEntries(Object.keys(reportCheckLabels).map((key) => [key, { notes: "Recorded proof", jobIds: [key === "independentReview" ? "review" : "repro"] }])) as SecurityReportReview["checks"], unresolved: [], reportJobId: "repro", reportArtifactId: "report.md" };
+    const finding: SecurityFindingRecord = { id: "finding", workspaceId: workspace.id, title: "Impact", description: "Observed", state: "verified", severity: "low", reproduction: "Exact replay", remediation: "Boundary", evidenceJobIds: ["repro"], createdAt: 1, updatedAt: 2, report };
+    store.upsertSecurityFinding(finding);
+    expect(() => store.recordSecurityReportEvent(finding.id, 1, "submitted", "submission-url")).toThrow("changed");
+    expect(() => store.recordSecurityReportEvent(finding.id, 2, "not_applicable", "triage reply")).toThrow("before its triage");
+    store.recordSecurityReportEvent(finding.id, 2, "submitted", "submission-url");
+    store.recordSecurityReportEvent(finding.id, 2, "not_applicable", "Triage: insufficient proof");
+    store.close(); store = new DesktopStore(directory);
+    expect(store.getSecurityFinding(finding.id)).toMatchObject({ state: "verified", reportEvents: [{ kind: "submitted", findingUpdatedAt: 2 }, { kind: "not_applicable", reference: "Triage: insufficient proof" }] });
+    const changed = { ...store.getSecurityFinding(finding.id)!, updatedAt: 3, description: "Corrected claim" };
+    store.upsertSecurityFinding(changed);
+    expect(() => store.recordSecurityReportEvent(finding.id, 3, "submitted", "resubmission")).toThrow("Complete report review");
+    expect(store.getSecurityFinding(finding.id)?.reportEvents).toHaveLength(2);
+  });
   it("preserves existing missing evidence references without accepting new missing or verified evidence", () => {
     const workspace = securityWorkspace(); const thread = store.createThread(workspace.id);
     store.upsertSecurityJob(jobFor(workspace.id, thread.id));

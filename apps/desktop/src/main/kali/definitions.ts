@@ -1,5 +1,6 @@
 import type { DesktopToolCall } from "../../shared/types";
 import type { CollaborationMode } from "../../shared/models";
+import { reportCheckLabels } from "../../shared/securityWorkspace";
 
 const text = (description: string) => ({ type: "string", description });
 const strings = (description: string) => ({ type: "array", items: { type: "string" }, description });
@@ -37,6 +38,14 @@ export const kaliToolDefinitions = [
       reproduction: text("Procedure and observed result supporting verification."),
       remediation: text("Concrete corrective action."),
       evidenceJobIds: strings("Persisted job IDs containing evidence; all must belong to this workspace. Required for a new verified finding. Omit on an update to preserve its existing IDs; an explicit empty array clears IDs only for non-verified findings."),
+      expectedUpdatedAt: { type: "number", description: "Current finding.updatedAt from security_finding_list. Required when updating a report review; stale versions are rejected." },
+      report: schema({
+        status: { type: "string", enum: ["draft", "ready_for_review"], description: "Ready is gated on all recorded checks and retained evidence; it never means accepted or submitted." },
+        checks: schema(Object.fromEntries(Object.entries(reportCheckLabels).map(([key, label]) => [key, schema({ notes: text(`${label}. Explain what was actually checked and the result; do not invent evidence.`), jobIds: strings("Successful workspace jobs retaining the supporting transcripts or artifacts. Independent review must include a different chat/subagent's job.") }, ["notes", "jobIds"])])), Object.keys(reportCheckLabels)),
+        unresolved: strings("Every unresolved objection or missing proof. Nonempty blocks readiness."),
+        reportJobId: text("Job owning the collected, self-contained redacted report artifact. Empty for an incomplete draft."),
+        reportArtifactId: text("artifactId returned by kali_artifact for the complete report including actual request/response/control transcripts and explicit prerequisites."),
+      }, ["status", "checks", "unresolved", "reportJobId", "reportArtifactId"]),
     }, ["title", "description", "severity", "state"])),
 ] as const;
 

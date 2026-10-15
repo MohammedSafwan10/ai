@@ -13,6 +13,8 @@ import { HeadTailOutputBuffer } from "../terminal/outputBuffer";
 import { redactSecrets } from "../security/redact";
 import { listSecurityKnowledge, readSecurityKnowledge } from "./knowledge";
 import { SECURITY_CONNECTION_MAX_AGE_MS, securityConnectionStatus } from "../../shared/securityConnection";
+import { assessReportReadiness } from "../../shared/reportReadiness";
+import { reportReviewInputSchema } from "./reportReview";
 
 export interface SecurityExecutionContext {
   workspaceId: string;
@@ -419,7 +421,7 @@ export class SecurityWorkspaceService {
           return this.result(job, true);
         }
         case "kali_artifact": return await this.artifact(args, context);
-        case "security_finding_list": return { success: true, data: { findings: this.store.listSecurityFindings(workspace.id) } };
+        case "security_finding_list": return { success: true, data: { findings: this.store.listSecurityFindings(workspace.id).map((finding) => ({ ...finding, reportReadiness: assessReportReadiness(finding, this.store.listSecurityJobs(workspace.id), workspace.security?.revision ?? 0) })) } };
         case "security_finding_save": return this.finding(args, context);
         default: throw new Error("Unsupported Security tool.");
       }
@@ -513,6 +515,7 @@ export class SecurityWorkspaceService {
     const id = args.id === undefined ? randomUUID() : requiredText(args.id, "finding ID", 100);
     const existing = this.store.getSecurityFinding(id);
     if (existing && existing.workspaceId !== context.workspaceId) throw new Error("Finding belongs to another workspace.");
+    if (args.report !== undefined && existing && args.expectedUpdatedAt !== existing.updatedAt) throw new Error("Finding changed or expectedUpdatedAt missing. Read security_finding_list and review the current version first.");
     const severity = args.severity ?? existing?.severity ?? "info";
     const state = args.state ?? existing?.state ?? "candidate";
     if (!["info", "low", "medium", "high", "critical"].includes(String(severity)) || !["candidate", "observed", "verified", "rejected", "stale"].includes(String(state))) throw new Error("Invalid finding severity or state.");
@@ -529,10 +532,22 @@ export class SecurityWorkspaceService {
       description: redactSecrets(requiredText(args.description, "finding description")),
       severity: severity as SecurityFindingRecord["severity"], state: state as SecurityFindingRecord["state"], reproduction,
       remediation: typeof args.remediation === "string" ? redactSecrets(args.remediation).slice(0, 20_000) : existing?.remediation ?? "",
-      evidenceJobIds, createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
+      evidenceJobIds, createdAt: existing?.createdAt ?? Date.now(), updatedAt: Math.max(Date.now(), (existing?.updatedAt ?? 0) + 1),
+      report: existing?.report, reportHistory: existing?.reportHistory, reportEvents: existing?.reportEvents,
     };
+    if (args.report !== undefined) {
+      const input = reportReviewInputSchema.parse(args.report);
+      const checks = Object.fromEntries(Object.entries(input.checks).map(([key, check]) => [key, { ...check, notes: redactSecrets(check.notes) }])) as typeof input.checks;
+      record.report = { ...input, checks, unresolved: input.unresolved.map(redactSecrets), basedOnUpdatedAt: record.updatedAt, authorThreadId: existing?.report?.authorThreadId ?? context.threadId, scopeRevision: this.workspace(context.workspaceId).security?.revision ?? 0 };
+      // Validate even draft references, so foreign-project IDs cannot enter a report.
+      const references = [...Object.values(checks).flatMap((check) => check.jobIds), ...(input.reportJobId ? [input.reportJobId] : [])];
+      for (const jobId of references) this.scopedJob(jobId, context);
+      const readiness = assessReportReadiness(record, this.store.listSecurityJobs(context.workspaceId), record.report.scopeRevision);
+      if (input.status === "ready_for_review" && !readiness.ready) throw new Error(`Report is not ready for user review: ${readiness.gaps.join(" ")} No finding was changed.`);
+      record.reportHistory = [...(existing?.reportHistory ?? []), ...(existing?.report ? [existing.report] : [])];
+    }
     this.store.upsertSecurityFinding(record);
     this.changed();
-    return { success: true, data: { finding: record } };
+    return { success: true, data: { finding: record, reportReadiness: assessReportReadiness(record, this.store.listSecurityJobs(context.workspaceId), this.workspace(context.workspaceId).security?.revision ?? 0) } };
   }
 }

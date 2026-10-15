@@ -10,6 +10,7 @@ import type { DesktopStore } from "../src/main/db/store";
 import type { DesktopToolCall } from "../src/shared/types";
 import type { KaliEnvironment, KaliJob } from "../src/shared/kali";
 import type { SecurityEnvironmentRecord, SecurityFindingRecord, SecurityJobRecord } from "../src/shared/securityWorkspace";
+import { reportCheckLabels } from "../src/shared/securityWorkspace";
 
 const environment: KaliEnvironment = {
   id: "kali", host: "kali.example", port: 2222, username: "privora",
@@ -63,6 +64,30 @@ const completeTransport = (options: { events?: { stream: "stdout" | "stderr"; da
 };
 
 describe("Security workspace runtime", () => {
+  it("gates report readiness, rejects stale/foreign review input and preserves review history", async () => {
+    const test = fixture(completeTransport({ events: [{ stream: "stdout", data: Buffer.from("actual fixture transcript") }] }));
+    const service = test.service();
+    await service.execute(call("kali_exec", { argv: ["echo"] }), context);
+    const job = [...test.jobs.values()][0];
+    test.jobs.set("review", { ...job, id: "review", threadId: "independent-review" });
+    const args = { title: "Finding", description: "Impact", state: "verified", reproduction: "Replay exact report steps", evidenceJobIds: [job.id] };
+    const report = { status: "ready_for_review", checks: Object.fromEntries(Object.keys(reportCheckLabels).map((key) => [key, { notes: "Evidence checked", jobIds: [key === "independentReview" ? "review" : job.id] }])), unresolved: [], reportJobId: job.id, reportArtifactId: "report.md" };
+    const missing = await service.execute(call("security_finding_save", { ...args, report }), context);
+    expect(missing.success).toBe(false); expect(missing.error).toContain("Collect the complete report"); expect(test.findings.size).toBe(0);
+    test.jobs.set(job.id, { ...job, artifacts: [{ id: "attachment", artifactId: "report.md", name: "report.md", mimeType: "text/markdown", size: 3000, createdAt: 1, url: "privora-attachment://artifact/report.md" }] });
+    const saved = await service.execute(call("security_finding_save", { ...args, report }), context);
+    expect(saved.success).toBe(true); expect(saved.data).toMatchObject({ reportReadiness: { ready: true } });
+    const finding = [...test.findings.values()][0];
+    expect((await service.execute(call("security_finding_save", { ...args, id: finding.id, report }), context)).error).toContain("expectedUpdatedAt");
+    test.jobs.set("foreign", { ...job, id: "foreign", workspaceId: "elsewhere" });
+    expect((await service.execute(call("security_finding_save", { ...args, id: finding.id, expectedUpdatedAt: finding.updatedAt, report: { ...report, reportJobId: "foreign" } }), context)).success).toBe(false);
+    const edited = await service.execute(call("security_finding_save", { ...args, id: finding.id, description: "Corrected impact" }), context);
+    expect(edited.data).toMatchObject({ reportReadiness: { ready: false } });
+    const current = test.findings.get(finding.id)!;
+    const reviewed = await service.execute(call("security_finding_save", { ...args, id: finding.id, description: "Corrected impact", expectedUpdatedAt: current.updatedAt, report }), context);
+    expect(reviewed.data).toMatchObject({ reportReadiness: { ready: true }, finding: { reportHistory: [finding.report] } });
+    service.beginShutdown();
+  });
   it("expires stale connection observations, deduplicates UI health probes and recovers after wake", async () => {
     let offline = true;
     const capabilities = { protocolVersion: 1, os: "Linux", architecture: "aarch64", pythonVersion: "3.14", jobRoot: environment.jobRoot, tools: {}, limits: { concurrentJobs: 4, outputBytes: 1_000_000, artifactBytes: 1_000_000 } };

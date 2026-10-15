@@ -67,6 +67,35 @@ export interface SecurityFindingRecord {
   evidenceJobIds: string[];
   createdAt: number;
   updatedAt: number;
+  report?: SecurityReportReview;
+  reportHistory?: SecurityReportReview[];
+  reportEvents?: SecurityReportEvent[];
+}
+
+export const reportCheckLabels = {
+  preconditions: "Roles, memberships, versions and preconditions",
+  reproduction: "Exact report steps replayed on a fresh fixture",
+  transcripts: "Redacted requests, responses and negative controls",
+  impact: "Concrete unauthorized impact and intended behavior",
+  policy: "Current scope, exclusions and known issues checked",
+  independentReview: "Independent review and objections resolved",
+} as const;
+export type SecurityReportCheck = keyof typeof reportCheckLabels;
+export interface SecurityReportReview {
+  status: "draft" | "ready_for_review";
+  basedOnUpdatedAt: number;
+  authorThreadId: string;
+  scopeRevision: number;
+  checks: Record<SecurityReportCheck, { notes: string; jobIds: string[] }>;
+  unresolved: string[];
+  reportJobId: string;
+  reportArtifactId: string;
+}
+export interface SecurityReportEvent {
+  kind: "submitted" | "accepted" | "not_applicable" | "duplicate" | "informative" | "withdrawn";
+  reference: string;
+  at: number;
+  findingUpdatedAt: number;
 }
 
 export interface SecurityWorkspaceState {

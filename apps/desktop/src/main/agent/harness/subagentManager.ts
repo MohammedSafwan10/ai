@@ -175,8 +175,10 @@ export class SubagentManager {
       success: true,
       output: alreadyRunning && triggerTurn
         ? `Queued task for ${formatSubagentLabel(agent)}. It will run after the current child turn finishes.`
+        : !triggerTurn && !alreadyRunning
+        ? `Message queued for ${formatSubagentLabel(agent)}, which is idle (${agent.status}). It will not run automatically. Use assign_task to start a follow-up, or resume its saved turn. Do not wait for this message to be processed while the recipient is idle.`
         : `${triggerTurn ? "Assigned task to" : "Sent message to"} ${formatSubagentLabel(agent)}.`,
-      data: subagentToolData(agent),
+      data: { ...subagentToolData(agent), delivery: "queued", recipientActive: alreadyRunning, requiresFollowUp: !triggerTurn && !alreadyRunning },
     };
   }
 

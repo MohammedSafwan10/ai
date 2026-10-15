@@ -125,6 +125,7 @@ export const registerIpc = (
 
   const emitSnapshot = () => {
     ensureThread();
+    store.saveActiveSelection(state.activeThreadId, state.activeWorkspaceId);
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     snapshot.activeRuns = runtime.listActiveRuns();
@@ -152,6 +153,7 @@ export const registerIpc = (
   handle(channels.deleteSavedPrompt, z.tuple([idSchema]), (_event, id: string) => store.deleteSavedPrompt(id));
   handle(channels.getSnapshot, z.tuple([]), () => {
     ensureThread();
+    store.saveActiveSelection(state.activeThreadId, state.activeWorkspaceId);
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     snapshot.activeRuns = runtime.listActiveRuns();
@@ -236,7 +238,8 @@ export const registerIpc = (
   handle(channels.setActiveThread, z.tuple([idSchema]), (_event, threadId: string) => {
     if (!store.getThread(threadId)) throw new Error("Thread not found.");
     state.activeThreadId = threadId;
-    state.activeWorkspaceId = store.getThread(threadId)?.workspaceId ?? state.activeWorkspaceId;
+    state.activeWorkspaceId = store.getThread(threadId)!.workspaceId;
+    store.saveActiveSelection(state.activeThreadId, state.activeWorkspaceId);
   });
   handle(channels.markChatCompletionRead, z.tuple([z.object({ threadId: idSchema, completionId: idSchema }).strict()]), (event, input) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -329,6 +332,13 @@ export const registerIpc = (
     if (workspace?.type !== "security" || !workspace.security) throw new Error("Security workspace not found.");
     if (options?.securityService?.getWorkspaceState) return options.securityService.getWorkspaceState(workspaceId);
     return { environment: store.getSecurityEnvironment(workspace.security.environmentId), jobs: store.listSecurityJobs(workspaceId), findings: store.listSecurityFindings(workspaceId) };
+  });
+  handle(channels.recordSecurityReportEvent, z.tuple([idSchema, z.number().int().nonnegative(), z.enum(["submitted", "accepted", "not_applicable", "duplicate", "informative", "withdrawn"]), z.string().trim().min(1).max(2000)]), (_event, id, expectedUpdatedAt, kind, reference) => {
+    const finding = store.getSecurityFinding(id);
+    if (!finding || finding.workspaceId !== state.activeWorkspaceId) throw new Error("Choose this finding's Security workspace first.");
+    const result = store.recordSecurityReportEvent(id, expectedUpdatedAt, kind, reference);
+    emitSnapshot();
+    return result;
   });
   handle(channels.cancelSecurityJob, z.tuple([idSchema]), (_event, id: string) => {
     if (!store.getSecurityJob(id)) throw new Error("Security job not found.");

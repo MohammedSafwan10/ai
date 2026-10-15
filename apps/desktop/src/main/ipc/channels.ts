@@ -27,6 +27,7 @@ export const channels = {
   createSecurityWorkspace: "desktop:createSecurityWorkspace",
   updateSecurityWorkspace: "desktop:updateSecurityWorkspace",
   getSecurityWorkspaceState: "desktop:getSecurityWorkspaceState",
+  recordSecurityReportEvent: "desktop:recordSecurityReportEvent",
   cancelSecurityJob: "desktop:cancelSecurityJob",
   openSecurityEvidenceFolder: "desktop:openSecurityEvidenceFolder",
   saveSecurityArtifact: "desktop:saveSecurityArtifact",

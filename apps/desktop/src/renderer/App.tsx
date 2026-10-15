@@ -593,6 +593,8 @@ export default function App() {
             </button>
           )}
           {resumable && activeThread && (
+            <div className="run-recovery-notice" role="status">
+              <p>{snapshot.activeRun?.reason || "Saved progress is available."}</p>
             <button
               type="button"
               className="continue-run-button"
@@ -604,6 +606,7 @@ export default function App() {
               <RotateCw size={14} />
               <span>Resume</span>
             </button>
+            </div>
           )}
           {queuedPrompts.length > 0 && (
             <div className={queuePaused ? "queued-prompts is-paused" : "queued-prompts"} aria-label="Queued prompts">

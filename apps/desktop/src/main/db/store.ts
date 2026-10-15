@@ -26,6 +26,9 @@ import type {
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
 import { reorderPinnedPromptSchema, type ReorderPinnedPromptInput } from "../../shared/promptLibrary";
 import type { UpdateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
+import type { SecurityReportEvent } from "../../shared/securityWorkspace";
+import { assessReportReadiness } from "../../shared/reportReadiness";
+import { redactSecrets } from "../security/redact";
 import { preparationPrompt, savePromptSchema, promptQuerySchema, promptMetadataSchema, type SavePromptInput, type SavedPrompt, type PromptQuery, type PromptPage, type PromptSummary, type PromptMetadataInput } from "../../shared/promptLibrary";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
@@ -181,6 +184,22 @@ export class DesktopStore {
   close() {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     this.db.close();
+  }
+
+  saveActiveSelection(activeThreadId: string | null, activeWorkspaceId: string | null) {
+    const selection = { activeThreadId, activeWorkspaceId };
+    const previous = this.getKv<typeof selection>("navigation", "last_active");
+    if (previous?.activeThreadId !== activeThreadId || previous?.activeWorkspaceId !== activeWorkspaceId) this.putKv("navigation", "last_active", selection);
+  }
+  restoreActiveSelection() {
+    const saved = this.getKv<{ activeThreadId: string | null; activeWorkspaceId: string | null }>("navigation", "last_active");
+    const threads = this.listThreads();
+    const selected = threads.find((thread) => thread.id === saved?.activeThreadId);
+    if (selected) return { activeThreadId: selected.id, activeWorkspaceId: selected.workspaceId };
+    const workspace = saved?.activeWorkspaceId ? this.getWorkspace(saved.activeWorkspaceId) : null;
+    const fallback = threads.find((thread) => workspace ? thread.workspaceId === workspace.id : saved && saved.activeWorkspaceId === null ? thread.workspaceId === null : true);
+    const activeWorkspaceId = fallback?.workspaceId ?? workspace?.id ?? this.listWorkspaces()[0]?.id ?? null;
+    return { activeThreadId: fallback?.id ?? this.createThread(activeWorkspaceId).id, activeWorkspaceId: fallback ? fallback.workspaceId : activeWorkspaceId };
   }
 
   snapshot(activeThreadId: string | null, activeWorkspaceId: string | null): AppSnapshot {
@@ -475,11 +494,24 @@ export class DesktopStore {
       const job = this.getSecurityJob(id);
       return job ? job.workspaceId !== record.workspaceId : record.state === "verified" || !existing?.evidenceJobIds.includes(id);
     })) throw new Error("Finding evidence must belong to the same workspace; only existing unresolved IDs can be preserved on non-verified updates.");
+    if (record.report?.basedOnUpdatedAt === record.updatedAt && record.report.status === "ready_for_review") {
+      const readiness = assessReportReadiness(record, this.listSecurityJobs(record.workspaceId), this.getWorkspace(record.workspaceId)?.security?.revision ?? 0);
+      if (!readiness.ready) throw new Error(`Report is not ready: ${readiness.gaps.join(" ")}`);
+    }
     this.putRecord("security_findings", record.id, record, { workspaceId: record.workspaceId, updatedAt: record.updatedAt });
     return record;
   }
   getSecurityFinding(id: string) { return this.one<SecurityFindingRecord>("SELECT payload FROM security_findings WHERE id = ?", id); }
   listSecurityFindings(workspaceId: string) { return this.all<SecurityFindingRecord>("SELECT payload FROM security_findings WHERE workspace_id = ? ORDER BY updated_at DESC, id", workspaceId); }
+  recordSecurityReportEvent(id: string, expectedUpdatedAt: number, kind: SecurityReportEvent["kind"], reference: string) {
+    const finding = this.getSecurityFinding(id);
+    if (!finding || finding.updatedAt !== expectedUpdatedAt) throw new Error("Finding changed. Refresh before recording report status.");
+    if (kind === "submitted" && !assessReportReadiness(finding, this.listSecurityJobs(finding.workspaceId), this.getWorkspace(finding.workspaceId)?.security?.revision ?? 0).ready) throw new Error("Complete report review before recording submission.");
+    if (kind !== "submitted" && !finding.reportEvents?.some((event) => event.kind === "submitted")) throw new Error("Record the submission before its triage outcome.");
+    const record = { ...finding, reportEvents: [...(finding.reportEvents ?? []), { kind, reference: redactSecrets(reference), at: Date.now(), findingUpdatedAt: finding.updatedAt }] };
+    this.upsertSecurityFinding(record);
+    return record;
+  }
   removeWorkspace(workspaceId: string) {
     const workspace = this.getWorkspace(workspaceId);
     if (!workspace) return null;

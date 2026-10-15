@@ -16,3 +16,44 @@ References to consult when relevant (program rules take precedence):
 - https://docs.bugcrowd.com/researchers/reporting-managing-submissions/reporting-a-bug/
 - https://github.com/bugcrowd/vulnerability-rating-taxonomy
 - https://owasp.org/projects/web-security-testing-guide
+
+## Report preparation and readiness
+
+Use the program's own submission template first. Bugcrowd's official reporting guidance recommends a concise descriptive title, the affected target, an appropriate VRT classification, an overview, walkthrough/PoC, illustrative evidence and demonstrated impact. Its LevelUp reporting guidance emphasizes complete reproduction and impact specific to the actual finding. These practices reduce missing information; they do not guarantee acceptance.
+
+Suggested Markdown description:
+
+```markdown
+## Overview
+[Actor and starting permission] can [demonstrated unauthorized action] on [specific asset], exposing/changing [verified data or behavior].
+
+## Affected asset and prerequisites
+- Exact URL/component, tested version/build/edition, configuration and test date.
+- Accounts A/B: roles, organization/team/channel memberships, ownership and explicit grants.
+- Setup from a clean fixture, including every required field. Use synthetic data and token placeholders.
+
+## Walkthrough and PoC
+1. Set up the accounts and fixture exactly as above.
+2. Execute the complete request/command (method, path, headers and body where applicable).
+3. Identify the specific returned field/action proving the boundary violation.
+4. Repeat with the negative control and authorized account for comparison.
+
+## Vulnerability evidence
+Embed redacted actual request/response or command transcripts, with clear account labels and expected versus observed results. Attach the replay script and helpful screenshots/video. Readers must not need Privora job access.
+
+## Demonstrated impact
+Explain who gains what unauthorized capability, why the documented permission model forbids it, and the smallest observed impact. Separate demonstrated results from possible extensions.
+
+## Limitations and policy checks
+State required privileges, explicit grants, supported configurations, current scope/exclusions/known issues, and unresolved questions. Cite relevant official documentation.
+
+## Suggested remediation
+Describe the affected authorization boundary without claiming an untested fix works.
+```
+
+Before readiness, replay the exact draft steps rather than a different working script. A denial at one endpoint and success at another do not alone prove unauthorized access: evaluate the object's intended permissions, membership, sharing and grants. Do not assume missing evidence was the sole cause of a false-positive decision.
+
+Save the complete redacted report with kali_artifact and record the structured report checks using security_finding_save. Its ready_for_review gate requires successful retained evidence, no unresolved objections and independent review evidence from another chat/subagent. Delegate only when authorized. Omit unavailable proof and retain draft status instead of fabricating it. Readiness checks record completeness, not security validity. Preserve original reports and evidence; save corrections as new artifacts. Only the operator records submission and confirmed triage outcomes in the project UI.
+
+Additional reporting reference (consulted 2026-10-15):
+- https://www.bugcrowd.com/resources/levelup/how-to-write-excellent-reports-techniques-that-save-triagers-time-and-mistakes-that-should-be-avoided-in-reports/

@@ -28,6 +28,16 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("explicitly tells the model when a queued message cannot wake a completed recipient", async () => {
+    const store = createStore(); const root = store.createThread(null);
+    const agent = createSubagent(store, root.id, "reviewer", "/root/reviewer");
+    store.updateSubagent(agent.threadId, { status: "completed" });
+    let started = false;
+    const manager = new SubagentManager(store, subagentPorts({ startExistingSubagentTurn: () => { started = true; } }));
+    const result = await manager.execute({ id: "send", name: "send_message", arguments: { target: agent.id, message: "Closing pass" } }, { workspaceRoot: tempDir, parentThreadId: root.id, parentMessageId: "message", signal: new AbortController().signal });
+    expect(result.output).toContain("will not run automatically");
+    expect(result.data).toMatchObject({ requiresFollowUp: true, recipientActive: false }); expect(started).toBe(false);
+  });
   it("resolves child reasoning independently and supports explicit inheritance", () => {
     const store = createStore();
     const root = store.createThread(null);

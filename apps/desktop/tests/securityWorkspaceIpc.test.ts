@@ -36,6 +36,23 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("persists explicit chat navigation and clears the old project for a projectless chat", () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const lab = store.createThread(workspace.id); const plain = store.createThread(null);
+    state.activeWorkspaceId = workspace.id; state.activeThreadId = lab.id;
+    invoke(channels.setActiveThread, plain.id);
+    expect(state.activeWorkspaceId).toBeNull();
+    expect(store.restoreActiveSelection()).toEqual({ activeThreadId: plain.id, activeWorkspaceId: null });
+  });
+  it("keeps outcome recording operator-only and scoped to the selected Security project", () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    store.upsertSecurityFinding({ id: "finding", workspaceId: workspace.id, title: "Candidate", description: "No proof", state: "candidate", severity: "info", reproduction: "", remediation: "", evidenceJobIds: [], createdAt: 1, updatedAt: 2 });
+    expect(() => invoke(channels.recordSecurityReportEvent, "finding", 2, "submitted", "url")).toThrow("Choose this finding");
+    state.activeWorkspaceId = workspace.id;
+    expect(() => invoke(channels.recordSecurityReportEvent, "finding", 2, "submitted", "url")).toThrow("Complete report review");
+    expect(() => invoke(channels.recordSecurityReportEvent, "finding", 2, "accepted", "")).toThrow();
+    expect(store.getSecurityFinding("finding")?.reportEvents).toBeUndefined();
+  });
   it("acknowledges a completion only in the focused active chat", () => {
     const thread = store.createThread(null); state.activeThreadId = thread.id;
     store.upsertMessage({ id: "completion", threadId: thread.id, role: "assistant", content: "Done", status: "completed", createdAt: 1, updatedAt: 1 });

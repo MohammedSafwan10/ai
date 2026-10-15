@@ -362,6 +362,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     this.contextManager = new ContextManager(store);
     this.recovery = new RunRecoveryService(store);
     this.recovery.recoverInterruptedUserInputs();
+    this.recovery.recoverInterruptedRuns();
     this.approvals = new ApprovalCoordinator(store);
     this.projection = new HarnessProjectionService(store, this, getActiveIds);
     this.verification = new VerificationEngine(store, {

@@ -53,6 +53,14 @@
 .security-job-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 10px; color: var(--privora-muted); margin-bottom: 9px; }
 .security-job-actions { display: flex; gap: 6px; }
 .security-finding-evidence { display: grid; gap: 6px; }
+.security-report-readiness { margin-top: 16px; padding: 12px; border: 1px solid var(--privora-border); border-radius: 8px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.security-report-readiness h4 { margin: 0; }
+.security-report-readiness ul { padding-left: 18px; }
+.security-report-readiness dl > div { margin-top: 10px; }
+.security-report-readiness dt { font-weight: 600; }
+.security-report-readiness dd { margin: 2px 0 0; white-space: pre-wrap; }
+.security-report-status label { display: grid; gap: 4px; margin: 10px 0; }
+.security-report-status input, .security-report-status select { min-width: 0; width: 100%; box-sizing: border-box; padding: 8px; background: var(--privora-bg); color: inherit; border: 1px solid var(--privora-border); border-radius: 5px; }
 .security-finding-evidence button { justify-content: flex-start; overflow-wrap: anywhere; text-align: left; }
 .security-artifacts { display: grid; gap: 6px; margin-top: 10px; }
 .security-artifact { display: flex; gap: 5px; }
