@@ -117,6 +117,15 @@ Reviewer reports are fed back to the parent model before the final response. The
 
 ## Subagents and Long Conversations
 
+The book button beside the composer opens the **Prompt library**, available in
+normal and Security chats. Search or filter saved prompts by category and chat
+type; create, edit, delete, or save your current draft. **Insert** appends without
+discarding the draft, **Copy** copies the text, and **Run** uses the selected chat's
+normal model and permissions. Direct Run requires an empty composer and an idle,
+available chat. Prompts stay locally in Privora's database across restarts. The
+investigation-preparation prompt is included once and can be edited or deleted.
+Saving a prompt does not load it automatically or add file access permissions.
+
 Open the composer's model menu and choose **Subagent model** to select a separate
 model for new children, including Reviewer Swarm. **Same as parent** is the default.
 The choice is saved for this chat and as the default for new chats. Existing children

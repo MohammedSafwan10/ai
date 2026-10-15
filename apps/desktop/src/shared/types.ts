@@ -1,4 +1,5 @@
 import type { AgentHarnessMode, CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
+import type { SavedPrompt, SavePromptInput } from "./promptLibrary";
 import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 export type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityFindingRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 
@@ -1772,6 +1773,9 @@ export interface PrivoraDesktopApi {
   openSecurityEvidenceFolder(workspaceId: string): Promise<void>;
   saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;
   debugEnabled: boolean;
+  listSavedPrompts(): Promise<SavedPrompt[]>;
+  savePrompt(input: SavePromptInput): Promise<SavedPrompt>;
+  deleteSavedPrompt(id: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   getSubagentHistory(input: { parentThreadId: string; threadId: string; before?: string }): Promise<{ page: ThreadHistoryPage; run: ActiveRunState | null; pendingInput: RequestUserInputRequestRecord | null; sequence: number }>;
   getThreadHistoryPage(input: ThreadHistoryPageInput): Promise<ThreadHistoryPage>;

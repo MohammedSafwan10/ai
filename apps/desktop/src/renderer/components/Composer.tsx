@@ -5,6 +5,9 @@ import { createPortal } from "react-dom";
 import { findModelOption, getModelProviderGroups, withDiscoveredGoModels, type ModelOption, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 import { ContextMeter } from "./ContextMeter";
+import { PromptLibrary } from "../features/chat/PromptLibrary";
+import { canRunSavedPrompt, insertSavedPrompt } from "../../shared/promptLibrary";
+import { BookOpen } from "lucide-react";
 
 interface ComposerProps {
   settings: SettingsRecord;
@@ -66,6 +69,8 @@ export function Composer({
   onDraftConsumed,
 }: ComposerProps) {
   const [value, setValue] = useState("");
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
+  useEffect(() => { setPromptLibraryOpen(false); }, [activeThreadId]);
   const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
   const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -216,20 +221,21 @@ export function Composer({
     el.style.height = `${Math.min(maxHeight, Math.max(52, el.scrollHeight))}px`;
   }, [expanded, value]);
 
-  const submit = async () => {
-    const expandedValue = expandPastedBlocks(value, pastedBlocks);
+  const submit = async (savedText?: string): Promise<boolean> => {
+    if (savedText !== undefined && !canRunSavedPrompt({ disabled, running, submitting, blocked: Boolean(inputDisabledReason), draft: value, attachments: attachments.length, mentions: contextMentions.length })) return false;
+    const expandedValue = savedText ?? expandPastedBlocks(value, pastedBlocks);
     const trimmed = expandedValue.trim();
-    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled || inputDisabledReason) return;
+    if ((!trimmed && attachments.length === 0 && contextMentions.length === 0) || disabled || inputDisabledReason) return false;
     if (trimmed.length > MAX_PROMPT_CHARS) {
       setSubmitError(`Prompt is ${trimmed.length.toLocaleString()} characters. Keep it under ${MAX_PROMPT_CHARS.toLocaleString()} characters.`);
       setExpanded(true);
-      return;
+      return false;
     }
     if (attachments.length > 0 && !activeModel.supportsImageInput) {
       setSubmitError(`${activeModel.label} is text-only. Remove the images or switch to a vision model.`);
-      return;
+      return false;
     }
-    if (submitting) return;
+    if (submitting) return false;
     setSubmitting(true);
     const submittedAttachments = attachments;
     const submittedMentions = contextMentions;
@@ -248,7 +254,7 @@ export function Composer({
     }
     if (accepted === false) {
       setSubmitError("Privora could not start that turn. Your draft was kept.");
-      return;
+      return false;
     }
     setValue("");
     setAttachments([]);
@@ -261,6 +267,7 @@ export function Composer({
     setExpanded(false);
     setHistoryCursor(null);
     lastHistoryTextRef.current = null;
+    return true;
   };
 
   const detectMentionToken = (nextValue: string, cursor: number) => {
@@ -610,6 +617,7 @@ export function Composer({
       <div className="composer-toolbar">
         <div className="toolbar-left">
           <div className="toolbar-primary">
+            <button type="button" className="icon-tool-button" title="Prompt library" aria-label="Open prompt library" onClick={() => { closeComposerPopovers(); setPromptLibraryOpen(true); }}><BookOpen size={17} /></button>
             <div className="menu-anchor">
             <button
               type="button"
@@ -867,6 +875,19 @@ export function Composer({
           </button>
         </div>
       </div>
+      {promptLibraryOpen && createPortal(<PromptLibrary
+        currentDraft={expandPastedBlocks(value, pastedBlocks)}
+        remoteEnvironment={remoteEnvironment}
+        canRun={canRunSavedPrompt({ disabled, running, submitting, blocked: Boolean(inputDisabledReason), draft: value, attachments: attachments.length, mentions: contextMentions.length })}
+        onClose={() => setPromptLibraryOpen(false)}
+        onInsert={(text) => {
+          const next = insertSavedPrompt(value, text);
+          if (next.length > MAX_PROMPT_CHARS) { setSubmitError("The combined draft is too long. Shorten it before inserting a saved prompt."); return; }
+          setValue(next); setHistoryCursor(null); setPromptLibraryOpen(false);
+          window.setTimeout(() => textareaRef.current?.focus(), 0);
+        }}
+        onRun={(text) => submit(text)}
+      />, document.body)}
     </form>
   );
 }

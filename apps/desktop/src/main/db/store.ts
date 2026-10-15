@@ -24,6 +24,7 @@ import type {
   WorkspaceRecord,
 } from "../../shared/types";
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
+import { preparationPrompt, savePromptSchema, type SavePromptInput, type SavedPrompt } from "../../shared/promptLibrary";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
 import { isCompactionSourceCurrent } from "../agent/compactionState";
@@ -112,7 +113,25 @@ export class DesktopStore {
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
     this.createSchema();
     this.ensureDefaultSettings();
+    this.transaction(() => {
+      if (!this.getKv("prompt_library", "seeded_v1")) {
+        this.savePrompt(preparationPrompt);
+        this.putKv("prompt_library", "seeded_v1", true);
+      }
+    });
   }
+
+  listSavedPrompts() { return this.all<SavedPrompt>("SELECT payload FROM kv WHERE scope = 'saved_prompts' ORDER BY key").sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)); }
+  savePrompt(input: SavePromptInput): SavedPrompt {
+    const parsed = savePromptSchema.parse(input);
+    const existing = parsed.id ? this.getKv<SavedPrompt>("saved_prompts", parsed.id) : null;
+    if (!existing && this.count("SELECT COUNT(*) AS count FROM kv WHERE scope = 'saved_prompts'") >= 200) throw new Error("Prompt library is full (200 prompts). Remove a prompt before adding another.");
+    const timestamp = now();
+    const record: SavedPrompt = { ...parsed, id: parsed.id || crypto.randomUUID(), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    this.putKv("saved_prompts", record.id, record);
+    return record;
+  }
+  deleteSavedPrompt(id: string) { this.run("DELETE FROM kv WHERE scope = 'saved_prompts' AND key = ?", id); }
 
   close() {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

@@ -1,4 +1,7 @@
 export const channels = {
+  listSavedPrompts: "desktop:listSavedPrompts",
+  savePrompt: "desktop:savePrompt",
+  deleteSavedPrompt: "desktop:deleteSavedPrompt",
   getSnapshot: "desktop:getSnapshot",
   getSubagentHistory: "desktop:getSubagentHistory",
   getThreadHistoryPage: "desktop:getThreadHistoryPage",

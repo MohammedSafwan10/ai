@@ -1,0 +1,36 @@
+.prompt-library { width: min(900px, calc(100vw - 40px)); height: min(660px, 84vh); max-height: 84vh; padding: 0; border: 1px solid var(--privora-border); border-radius: 16px; background: var(--privora-surface); color: var(--privora-text); box-shadow: 0 24px 80px #0005; }
+.prompt-library::backdrop { background: #0007; }
+.prompt-library[open] { display: flex; flex-direction: column; }
+.prompt-library > header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px; border-bottom: 1px solid var(--privora-border); }
+.prompt-library h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 16px; }
+.prompt-library header p, .prompt-library-meta, .prompt-library-hint { color: var(--privora-muted); font-size: 12px; line-height: 1.5; }
+.prompt-library header p { margin: 6px 0 0; }
+.prompt-library button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--privora-border); border-radius: 7px; padding: 7px 9px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 12px; }
+.prompt-library button:hover { background: var(--privora-surface-faint); }
+.prompt-library button:disabled { opacity: .45; cursor: default; }
+.prompt-library input, .prompt-library textarea, .prompt-library select { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid var(--privora-border); border-radius: 7px; background: var(--privora-surface); color: inherit; font: inherit; font-size: 12px; }
+.prompt-library-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }
+.prompt-library aside { display: flex; flex-direction: column; min-height: 0; gap: 12px; padding: 16px; border-right: 1px solid var(--privora-border); }
+.prompt-library-search { display: flex; align-items: center; gap: 7px; }
+.prompt-library-search svg { flex-shrink: 0; color: var(--privora-muted); }
+.prompt-library-filters, .prompt-library-new, .prompt-library-fields { display: flex; gap: 8px; }
+.prompt-library-filters select { font-size: 11px; }
+.prompt-library nav { overflow-y: auto; min-height: 0; }
+.prompt-library nav button { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; text-align: left; width: 100%; margin-bottom: 5px; padding: 12px; border-color: transparent; }
+.prompt-library nav button.selected { background: var(--privora-surface-faint); border-color: var(--privora-border); }
+.prompt-library nav strong { font-weight: 500; overflow-wrap: anywhere; }
+.prompt-library nav small { color: var(--privora-muted); font-size: 11px; }
+.prompt-library-detail { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; padding: 20px; overflow-y: auto; }
+.prompt-library-detail h3 { font-size: 15px; margin: 0; overflow-wrap: anywhere; }
+.prompt-library-detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.prompt-library-detail label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.prompt-library-fields > label { flex: 1; min-width: 0; }
+.prompt-library-body { flex: 1; min-height: 120px; }
+.prompt-library-body textarea { flex: 1; resize: vertical; min-height: 150px; line-height: 1.6; }
+.prompt-library-detail pre { flex: 1; margin: 0; min-height: 80px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; }
+.prompt-library-meta, .prompt-library-hint { margin: 0; }
+.prompt-library footer { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-top: auto; }
+.prompt-library footer > span { flex: 1; }
+.prompt-library-error { margin: 0; flex-shrink: 0; padding: 8px 20px; color: var(--danger, #e77); font-size: 12px; }
+.prompt-library-empty { margin: auto; text-align: center; color: var(--privora-muted); }
+@media (max-width: 650px) { .prompt-library-layout { grid-template-columns: 1fr; overflow: auto; } .prompt-library aside { max-height: 230px; border-right: 0; border-bottom: 1px solid var(--privora-border); } .prompt-library-detail { min-height: 300px; overflow: visible; } }
