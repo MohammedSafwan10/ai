@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { BrowserCdpClient } from "../src/main/browser/browserCdp";
 
 describe("browser CDP lifecycle", () => {
+  it("bounds an unresponsive protocol command", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new BrowserCdpClient({ isDestroyed: () => false, debugger: { isAttached: () => true, sendCommand: () => new Promise(() => {}) } } as never);
+      const result = expect(client.enableNetwork()).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await result;
+    } finally { vi.useRealTimers(); }
+  });
   it("re-enables protocol domains after an external debugger detach", async () => {
     let attached = false;
     const sendCommand = vi.fn(async () => ({}));

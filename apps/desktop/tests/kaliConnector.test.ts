@@ -21,6 +21,16 @@ const page = (events: KaliOutputEvent[] = [], state: KaliJob["state"] = "running
 });
 
 describe("Kali connector", () => {
+  it("cancels a pending capability read without retrying it", async () => {
+    const request = vi.fn(() => new Promise(() => {}));
+    const connector = new KaliConnector(environment, { request });
+    const controller = new AbortController();
+    const result = expect(connector.capabilities([], controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await result;
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]).toHaveLength(3);
+  });
   it("pins SSH identity and never places a job command in SSH shell arguments", async () => {
     const request = vi.fn().mockResolvedValue(job);
     const connector = new KaliConnector(environment, { request });

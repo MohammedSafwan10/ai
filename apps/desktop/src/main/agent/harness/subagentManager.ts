@@ -265,8 +265,9 @@ export const resolveNewSubagentSettings = (
   const root = store.getThread(store.rootAgentThread(parentThreadId));
   const preference = root?.subagentModel !== undefined ? root.subagentModel : store.getSettings().subagentModel;
   const model = getModelOption(preference || parentModel);
+  const effort = (root?.subagentReasoningEffort !== undefined ? root.subagentReasoningEffort : store.getSettings().subagentReasoningEffort) ?? parentReasoning;
   return {
     model: model.id,
-    reasoningEffort: model.reasoningEfforts.includes(parentReasoning) ? parentReasoning : model.defaultReasoningEffort,
+    reasoningEffort: model.reasoningEfforts.includes(effort) ? effort : model.defaultReasoningEffort,
   };
 };

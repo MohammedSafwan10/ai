@@ -19,6 +19,7 @@ import type { ComputerUseManager } from "../../computer/ComputerUseManager";
 import { ImageGenerationManager } from "../../imageGeneration/ImageGenerationManager";
 
 export interface ToolExecutionContext {
+  securityWorkspace?: boolean;
   workspaceId?: string;
   workspaceRoot: string;
   signal: AbortSignal;

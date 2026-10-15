@@ -1,5 +1,7 @@
 import type { AgentHarnessMode, CollaborationMode, ModelRuntimeBudgetMode, PermissionMode, ReasoningEffort } from "./models";
 import type { SavedPrompt, SavePromptInput, PromptQuery, PromptPage, PromptMetadataInput } from "./promptLibrary";
+import type { ReorderPinnedPromptInput } from "./promptLibrary";
+import type { UpdateSecurityWorkspaceInput } from "./securityWorkspace";
 import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 export type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityFindingRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 
@@ -862,6 +864,7 @@ export interface SettingsRecord {
   id: "default";
   model: string;
   subagentModel?: string | null;
+  subagentReasoningEffort?: ReasoningEffort | null;
   reasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   collaborationMode: CollaborationMode;
@@ -890,6 +893,7 @@ export interface ThreadRecord {
   workspaceId: string | null;
   model?: string;
   subagentModel?: string | null;
+  subagentReasoningEffort?: ReasoningEffort | null;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;
@@ -1495,6 +1499,8 @@ export type DesktopToolName =
   | "kali_job_cancel"
   | "kali_artifact"
   | "security_finding_list"
+  | "security_knowledge_list"
+  | "security_knowledge_read"
   | "security_finding_save"
   | "context_compaction"
   | "request_user_input"
@@ -1718,6 +1724,7 @@ export interface ApprovalDecisionInput {
 export interface SaveSettingsInput {
   model?: string;
   subagentModel?: string | null;
+  subagentReasoningEffort?: ReasoningEffort | null;
   reasoningEffort?: ReasoningEffort;
   permissionMode?: PermissionMode;
   collaborationMode?: CollaborationMode;
@@ -1736,6 +1743,7 @@ export interface SaveThreadSettingsInput {
   threadId: string;
   model?: string;
   subagentModel?: string | null;
+  subagentReasoningEffort?: ReasoningEffort | null;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;
@@ -1768,6 +1776,7 @@ export interface PrivoraDesktopApi {
   listSecurityEnvironments(): Promise<SecurityEnvironmentRecord[]>;
   checkSecurityEnvironment(id: string): Promise<SecurityEnvironmentRecord>;
   createSecurityWorkspace(input: CreateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
+  updateSecurityWorkspace(input: UpdateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
   getSecurityWorkspaceState(workspaceId: string): Promise<SecurityWorkspaceState>;
   cancelSecurityJob(jobRecordId: string): Promise<SecurityJobRecord>;
   openSecurityEvidenceFolder(workspaceId: string): Promise<void>;
@@ -1775,6 +1784,7 @@ export interface PrivoraDesktopApi {
   debugEnabled: boolean;
   listSavedPrompts(): Promise<SavedPrompt[]>;
   querySavedPrompts(input: PromptQuery): Promise<PromptPage>;
+  reorderPinnedPrompt(input: ReorderPinnedPromptInput): Promise<void>;
   getSavedPrompt(id: string): Promise<SavedPrompt | null>;
   updatePromptMetadata(input: PromptMetadataInput): Promise<SavedPrompt>;
   savePrompt(input: SavePromptInput): Promise<SavedPrompt>;

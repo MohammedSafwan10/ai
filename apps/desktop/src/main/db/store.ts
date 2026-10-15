@@ -24,6 +24,8 @@ import type {
   WorkspaceRecord,
 } from "../../shared/types";
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
+import { reorderPinnedPromptSchema, type ReorderPinnedPromptInput } from "../../shared/promptLibrary";
+import type { UpdateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
 import { preparationPrompt, savePromptSchema, promptQuerySchema, promptMetadataSchema, type SavePromptInput, type SavedPrompt, type PromptQuery, type PromptPage, type PromptSummary, type PromptMetadataInput } from "../../shared/promptLibrary";
 import { GEMINI_37_FLASH_MODEL_ID, normalizeModelId } from "../../shared/models";
 import { ArtifactStore, type StoredBinaryArtifact, type StoredTextArtifact } from "./artifactStore";
@@ -139,7 +141,7 @@ export class DesktopStore {
       : query.sort === "category" ? "json_extract(payload, '$.category') COLLATE NOCASE, json_extract(payload, '$.title') COLLATE NOCASE"
       : "json_extract(payload, '$.title') COLLATE NOCASE";
     return {
-      items: this.all<PromptSummary>(`SELECT json_remove(payload, '$.content') AS payload FROM kv WHERE ${where} ORDER BY COALESCE(json_extract(payload, '$.pinned'), 0) DESC, ${order}, key LIMIT ? OFFSET ?`, ...values, query.limit ?? 50, query.offset ?? 0),
+      items: this.all<PromptSummary>(`SELECT json_remove(payload, '$.content') AS payload FROM kv WHERE ${where} ORDER BY COALESCE(json_extract(payload, '$.pinned'), 0) DESC, CASE WHEN json_extract(payload, '$.pinned') = 1 THEN COALESCE(json_extract(payload, '$.pinnedOrder'), 2147483647) ELSE 0 END, ${order}, key LIMIT ? OFFSET ?`, ...values, query.limit ?? 50, query.offset ?? 0),
       total: this.count(`SELECT COUNT(*) AS count FROM kv WHERE ${where}`, ...values),
       categories: this.all<{ category: string }>("SELECT DISTINCT json_object('category', json_extract(payload, '$.category')) AS payload FROM kv WHERE scope = 'saved_prompts' ORDER BY json_extract(payload, '$.category') COLLATE NOCASE").map((item) => item.category),
     };
@@ -150,12 +152,26 @@ export class DesktopStore {
     return this.savePrompt({ id: existing.id, title: parsed.title ?? existing.title, category: parsed.category ?? existing.category,
       workspaceType: existing.workspaceType, content: existing.content, pinned: parsed.pinned ?? existing.pinned });
   }
+  reorderPinnedPrompt(input: ReorderPinnedPromptInput) {
+    const parsed = reorderPinnedPromptSchema.parse(input);
+    this.transaction(() => {
+      const items = this.all<PromptSummary>("SELECT json_remove(payload, '$.content') AS payload FROM kv WHERE scope = 'saved_prompts' AND json_extract(payload, '$.pinned') = 1 ORDER BY COALESCE(json_extract(payload, '$.pinnedOrder'), 2147483647), json_extract(payload, '$.updatedAt') DESC, key");
+      const source = items.find((item) => item.id === parsed.id);
+      if (!source || !items.some((item) => item.id === parsed.targetId)) throw new Error("Both prompts must still exist and be pinned.");
+      if (parsed.id === parsed.targetId) return;
+      const ordered = items.filter((item) => item.id !== parsed.id);
+      ordered.splice(ordered.findIndex((item) => item.id === parsed.targetId) + (parsed.position === "after" ? 1 : 0), 0, source);
+      ordered.forEach((item, index) => {
+        this.run("UPDATE kv SET payload = json_set(payload, '$.pinnedOrder', ?) WHERE scope = 'saved_prompts' AND key = ?", index, item.id);
+      });
+    });
+  }
   savePrompt(input: SavePromptInput): SavedPrompt {
     const parsed = savePromptSchema.parse(input);
     const existing = parsed.id ? this.getKv<SavedPrompt>("saved_prompts", parsed.id) : null;
     if (!existing && this.count("SELECT COUNT(*) AS count FROM kv WHERE scope = 'saved_prompts'") >= 10_000) throw new Error("Prompt library is full (10,000 prompts). Remove a prompt before adding another.");
     const timestamp = now();
-    const record: SavedPrompt = { ...parsed, id: parsed.id || crypto.randomUUID(), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    const record: SavedPrompt = { ...parsed, ...(parsed.pinned && existing?.pinnedOrder !== undefined ? { pinnedOrder: existing.pinnedOrder } : {}), id: parsed.id || crypto.randomUUID(), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     this.putKv("saved_prompts", record.id, record);
     return record;
   }
@@ -217,6 +233,7 @@ export class DesktopStore {
       ...current,
       model: input.model ? normalizeModelId(input.model) : current.model,
       subagentModel: input.subagentModel === undefined ? current.subagentModel ?? null : input.subagentModel ? normalizeModelId(input.subagentModel) : null,
+      subagentReasoningEffort: input.subagentReasoningEffort === undefined ? current.subagentReasoningEffort ?? null : input.subagentReasoningEffort,
       reasoningEffort: input.reasoningEffort ?? current.reasoningEffort,
       permissionMode: input.permissionMode ?? current.permissionMode,
       collaborationMode: input.collaborationMode ?? current.collaborationMode,
@@ -357,6 +374,25 @@ export class DesktopStore {
     });
     return publicRecord;
   }
+  updateSecurityWorkspace(input: UpdateSecurityWorkspaceInput): WorkspaceRecord {
+    return this.transaction(() => {
+      const workspace = this.getWorkspace(input.workspaceId);
+      if (workspace?.type !== "security" || !workspace.security) throw new Error("Security project not found.");
+      if (input.expectedRevision !== (workspace.security.revision ?? 0)) throw new Error("Project changed while you were editing. Reopen the editor and try again.");
+      for (const [field, limit] of [["name", 200], ["objective", 12_000], ["scope", 12_000]] as const) {
+        const value = input[field];
+        if (value !== undefined && (!value.trim() || value.trim().length > limit)) throw new Error(`Invalid project ${field}.`);
+      }
+      const updated: WorkspaceRecord = { ...workspace, name: input.name?.trim() ?? workspace.name,
+        security: { ...workspace.security, objective: input.objective?.trim() ?? workspace.security.objective,
+          scope: input.scope?.trim() ?? workspace.security.scope, revision: (workspace.security.revision ?? 0) + 1,
+          evidenceFolderName: workspace.security.evidenceFolderName ?? workspace.name } };
+      // Retain original boundaries and revisions independently of chat rewinds.
+      this.putKv("security_project_edits", `${workspace.id}:${updated.security!.revision}`, { workspaceId: workspace.id, editedAt: now(), before: { name: workspace.name, ...workspace.security }, after: { name: updated.name, ...updated.security } });
+      this.putRecord("workspaces", workspace.id, updated, { path: workspace.path, updatedAt: workspace.lastOpenedAt });
+      return updated;
+    });
+  }
   getSecurityEnvironment(id: string) { return this.getKv<SecurityEnvironmentRecord>("security_environments", id); }
   listSecurityEnvironments() { return this.all<SecurityEnvironmentRecord>("SELECT payload FROM kv WHERE scope = 'security_environments' ORDER BY key"); }
   getSecurityEnvironmentConfig(id: string): KaliEnvironment | null {
@@ -417,7 +453,7 @@ export class DesktopStore {
     const thread: ThreadRecord = {
       id: crypto.randomUUID(), title: options.title?.trim() || PLACEHOLDER_THREAD_TITLE,
       titleSource: options.title?.trim() ? "agent" : "placeholder", titleUpdatedAt: timestamp, workspaceId,
-      model: normalizeModelId(settings.model), subagentModel: settings.subagentModel ?? null, reasoningEffort: settings.reasoningEffort, collaborationMode: settings.collaborationMode, agentHarnessMode: settings.agentHarnessMode,
+      model: normalizeModelId(settings.model), subagentModel: settings.subagentModel ?? null, subagentReasoningEffort: settings.subagentReasoningEffort ?? null, reasoningEffort: settings.reasoningEffort, collaborationMode: settings.collaborationMode, agentHarnessMode: settings.agentHarnessMode,
       hidden: options.hidden === true, createdAt: timestamp, updatedAt: timestamp,
     };
     this.putThread(thread);
@@ -429,9 +465,9 @@ export class DesktopStore {
     const timestamp = now(); this.putThread({ ...thread, title: trimmed, titleSource: source, titleUpdatedAt: timestamp, updatedAt: timestamp });
     return this.getThread(threadId);
   }
-  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "subagentModel" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
+  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "subagentModel" | "subagentReasoningEffort" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
     const thread = this.getThread(threadId); if (!thread) return null;
-    this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, subagentModel: input.subagentModel === undefined ? thread.subagentModel : input.subagentModel ? normalizeModelId(input.subagentModel) : null, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, agentHarnessMode: input.agentHarnessMode ?? thread.agentHarnessMode, updatedAt: now() });
+    this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, subagentModel: input.subagentModel === undefined ? thread.subagentModel : input.subagentModel ? normalizeModelId(input.subagentModel) : null, subagentReasoningEffort: input.subagentReasoningEffort === undefined ? thread.subagentReasoningEffort : input.subagentReasoningEffort, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, agentHarnessMode: input.agentHarnessMode ?? thread.agentHarnessMode, updatedAt: now() });
     return this.getThread(threadId);
   }
   updatePlaceholderThreadTitle(threadId: string, title: string, source: Extract<ThreadTitleSource, "agent" | "fallback">) {

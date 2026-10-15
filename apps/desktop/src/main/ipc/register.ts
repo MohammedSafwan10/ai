@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { z } from "zod";
-import { savePromptSchema, promptQuerySchema, promptMetadataSchema } from "../../shared/promptLibrary";
+import { savePromptSchema, promptQuerySchema, promptMetadataSchema, reorderPinnedPromptSchema } from "../../shared/promptLibrary";
 import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
@@ -144,6 +144,7 @@ export const registerIpc = (
 
   handle(channels.listSavedPrompts, z.tuple([]), () => store.listSavedPrompts());
   handle(channels.querySavedPrompts, z.tuple([promptQuerySchema]), (_event, input) => store.querySavedPrompts(input));
+  handle(channels.reorderPinnedPrompt, z.tuple([reorderPinnedPromptSchema]), (_event, input) => store.reorderPinnedPrompt(input));
   handle(channels.getSavedPrompt, z.tuple([idSchema]), (_event, id: string) => store.getSavedPrompt(id));
   handle(channels.updatePromptMetadata, z.tuple([promptMetadataSchema]), (_event, input) => store.updatePromptMetadata(input));
   handle(channels.savePrompt, z.tuple([savePromptSchema]), (_event, input) => store.savePrompt(input));
@@ -278,6 +279,24 @@ export const registerIpc = (
     state.activeThreadId = thread.id;
     emitSnapshot();
     return workspace;
+  });
+  handle(channels.updateSecurityWorkspace, z.tuple([z.object({
+    workspaceId: idSchema, expectedRevision: z.number().int().min(0),
+    name: z.string().trim().min(1).max(200).optional(),
+    objective: z.string().trim().min(1).max(12_000).optional(),
+    scope: z.string().trim().min(1).max(12_000).optional(),
+  }).strict().refine((input) => input.name !== undefined || input.objective !== undefined || input.scope !== undefined, "No project changes supplied.")]), (_event, input) => {
+    const workspace = store.getWorkspace(input.workspaceId);
+    if (workspace?.type !== "security") throw new Error("Security project not found.");
+    if (rewindWorkspaces.has(workspace.id)) throw new Error("Wait for the edit rewind to finish.");
+    const boundariesChanged = (input.objective !== undefined && input.objective !== workspace.security?.objective) || (input.scope !== undefined && input.scope !== workspace.security?.scope);
+    if (boundariesChanged) {
+      if (runtime.listActiveRuns().some((run) => store.getThread(run.threadId)?.workspaceId === workspace.id && hasBlockingRun(run.threadId))) throw new Error("Stop active project runs before changing objective or scope.");
+      if (store.listSecurityJobs(workspace.id).some((job) => ["submitting", "queued", "running", "unknown", "stop_requested"].includes(job.state))) throw new Error("Finish or reconcile project jobs before changing objective or scope.");
+    }
+    const updated = store.updateSecurityWorkspace(input);
+    emitSnapshot();
+    return updated;
   });
   handle(channels.getSecurityWorkspaceState, z.tuple([idSchema]), async (_event, workspaceId: string) => {
     const workspace = store.getWorkspace(workspaceId);
@@ -1178,6 +1197,7 @@ const searchContextMentionsInputSchema = z.object({
 });
 
 const saveSettingsInputSchema = z.object({
+  subagentReasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
   model: z.string().max(160).optional(),
   subagentModel: z.string().min(1).max(160).nullable().optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
@@ -1195,6 +1215,7 @@ const saveSettingsInputSchema = z.object({
 });
 
 const saveThreadSettingsInputSchema = z.object({
+  subagentReasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
   threadId: idSchema,
   model: z.string().max(160).optional(),
   subagentModel: z.string().min(1).max(160).nullable().optional(),

@@ -151,9 +151,37 @@ export function CreateSecurityWorkspaceDialog({ onClose, onCreated }: { onClose:
   </SecurityDialog>;
 }
 
-export function SecurityWorkspaceDetails({ workspace, state, error, checking, onCheck, onRefresh, onClose }: {
+export function EditSecurityWorkspaceDialog({ workspace, renameOnly, onClose, onSaved }: { workspace: WorkspaceRecord; renameOnly: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [expectedRevision] = useState(workspace.security?.revision ?? 0);
+  const [name, setName] = useState(workspace.name);
+  const [objective, setObjective] = useState(workspace.security?.objective ?? "");
+  const [scope, setScope] = useState(workspace.security?.scope ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      await window.privoraDesktop.updateSecurityWorkspace({ workspaceId: workspace.id, expectedRevision, name,
+        ...(renameOnly ? {} : { objective, scope }) });
+      await onSaved(); onClose();
+    } catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
+  };
+  return <SecurityDialog title={renameOnly ? "Rename Security project" : "Edit Security project"} onClose={() => { if (!busy) onClose(); }} wide={!renameOnly}>
+    <form className="security-project-form" onSubmit={(event) => void save(event)}>
+      <label>Project name<input autoFocus value={name} maxLength={200} required disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
+      {!renameOnly && <><label>Objective<textarea value={objective} maxLength={12000} rows={4} required disabled={busy} onChange={(event) => setObjective(event.target.value)} /></label><label>Scope<textarea value={scope} maxLength={12000} rows={7} required disabled={busy} onChange={(event) => setScope(event.target.value)} /></label><p className="security-form-note">Stop project runs and reconcile outstanding jobs before changing these boundaries. Changes apply to future turns; earlier revisions and evidence are retained.</p></>}
+      <p className="security-form-note">The connection, project files and existing evidence folder stay the same.</p>
+      {error && <p className="security-error" role="alert">{error}</p>}
+      <footer><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" disabled={busy || !name.trim() || (!renameOnly && (!objective.trim() || !scope.trim()))}>{busy ? "Saving…" : "Save changes"}</button></footer>
+    </form>
+  </SecurityDialog>;
+}
+
+export function SecurityWorkspaceDetails({ workspace, state, error, checking, onCheck, onRefresh, onClose, onEdit }: {
   workspace: WorkspaceRecord; state: SecurityWorkspaceState | null; error: string | null; checking: boolean;
   onCheck: () => Promise<void>; onRefresh: () => Promise<void>; onClose: () => void;
+  onEdit?: () => void;
 }) {
   const [stopping, setStopping] = useState<Set<string>>(new Set());
   const [jobError, setJobError] = useState<string | null>(null);
@@ -195,6 +223,7 @@ export function SecurityWorkspaceDetails({ workspace, state, error, checking, on
   };
   return <SecurityDialog title={workspace.name} onClose={onClose} wide>
     <div className="security-details-content">
+      {onEdit && <button type="button" onClick={onEdit}>Edit project</button>}
       <section aria-label="Kali environment"><div className="security-section-heading"><h3>{state?.environment?.name || "Kali environment"}</h3><button type="button" disabled={checking} onClick={() => void onCheck()}><RefreshCw size={14} className={checking ? "spin" : undefined} />{checking ? "Checking…" : "Check connection"}</button></div>
         {state?.environment && <p className="security-quiet">{state.environment.username}@{state.environment.host}:{state.environment.port} · {checking ? "Checking" : connectionLabel(state.environment)}{state.environment.capabilities ? ` · ${state.environment.capabilities.architecture}` : ""}</p>}
         {state?.environment?.error && <p className="security-error">{state.environment.error}</p>}

@@ -90,7 +90,13 @@ export class BrowserCdpClient {
   }
 
   private send(method: string, params?: Record<string, unknown>) {
-    return this.contents.debugger.sendCommand(method, params);
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Browser protocol ${method} timed out after 10000ms.`)), 10_000);
+      Promise.resolve().then(() => this.contents.debugger.sendCommand(method, params)).then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); },
+      );
+    });
   }
 }
 

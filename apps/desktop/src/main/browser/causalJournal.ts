@@ -36,6 +36,12 @@ export interface BrowserActionFinding {
   finding: string;
 }
 
+export const networkEntryCounts = (entries: BrowserNetworkEntry[]) => ({
+  failedRequestCount: entries.filter((entry) => !entry.blockedByShields && (entry.failed || (entry.status || 0) >= 400)).length,
+  abortedRequestCount: entries.filter((entry) => /ERR_ABORTED/i.test(entry.errorText || "")).length,
+  shieldsBlockedRequestCount: entries.filter((entry) => entry.blockedByShields).length,
+});
+
 export interface BrowserPageSummary {
   url: string;
   title: string;
@@ -57,6 +63,8 @@ export class CausalJournal {
   private consoleEntries: BrowserConsoleEntry[] = [];
   private networkEntries: BrowserNetworkEntry[] = [];
   private findings: BrowserActionFinding[] = [];
+  private consoleHistory: BrowserConsoleEntry[] = [];
+  private networkHistory: BrowserNetworkEntry[] = [];
   private active: ActiveAction | null = null;
 
   constructor(private workspaceId: string) {}
@@ -77,6 +85,7 @@ export class CausalJournal {
         timestamp: Date.now(),
       },
     ].slice(-MAX_CONSOLE);
+    this.consoleHistory = [...this.consoleHistory, this.consoleEntries[this.consoleEntries.length - 1]].slice(-MAX_CONSOLE);
   }
 
   recordRequest(entry: BrowserNetworkEntry) {
@@ -88,6 +97,7 @@ export class CausalJournal {
         errorText: entry.errorText ? redactSensitiveText(entry.errorText, 500) : undefined,
       },
     ].slice(-MAX_NETWORK);
+    this.networkHistory = [...this.networkHistory.filter((item) => item.id !== entry.id), this.networkEntries[this.networkEntries.length - 1]].slice(-MAX_NETWORK);
   }
 
   clearPageEvidence() {
@@ -134,12 +144,12 @@ export class CausalJournal {
     return record;
   }
 
-  recentConsole() {
-    return this.consoleEntries.slice(-20);
+  recentConsole(acrossNavigations = false) {
+    return (acrossNavigations ? this.consoleHistory : this.consoleEntries).slice(-20);
   }
 
-  recentNetwork() {
-    return this.networkEntries.slice(-40);
+  recentNetwork(acrossNavigations = false) {
+    return (acrossNavigations ? this.networkHistory : this.networkEntries).slice(-40);
   }
 
   recentFindings() {

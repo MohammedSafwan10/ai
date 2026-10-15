@@ -15,7 +15,7 @@ import { ChatShell } from "./features/chat/ChatShell";
 import { SubagentsPanel } from "./features/chat/SubagentsPanel";
 import { useBrowserOcclusion } from "./features/browser/useBrowserOcclusion";
 import { RequestUserInputPanel } from "./components/RequestUserInputPanel";
-import { CreateSecurityWorkspaceDialog, SecurityWorkspaceBadge, SecurityWorkspaceDetails, useSecurityWorkspace } from "./features/security/SecurityWorkspace";
+import { CreateSecurityWorkspaceDialog, EditSecurityWorkspaceDialog, SecurityWorkspaceBadge, SecurityWorkspaceDetails, useSecurityWorkspace } from "./features/security/SecurityWorkspace";
 import { useMessageAutoScroll } from "./features/chat/useMessageAutoScroll";
 import { usePromptQueue, type QueuedPrompt } from "./features/chat/usePromptQueue";
 import { splitComposerSettingsForPersistence } from "./features/chat/settingsPersistence";
@@ -42,6 +42,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createSecurityOpen, setCreateSecurityOpen] = useState(false);
+  const [editingSecurity, setEditingSecurity] = useState<{ workspaceId: string; renameOnly: boolean } | null>(null);
   const [securityDetailsOpen, setSecurityDetailsOpen] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [subagentRequest, setSubagentRequest] = useState<{ threadId: string; key: number } | null>(null);
@@ -91,10 +92,11 @@ export default function App() {
     ...snapshot.settings,
     model: activeThread?.model || snapshot.settings.model,
     subagentModel: activeThread?.subagentModel !== undefined ? activeThread.subagentModel : snapshot.settings.subagentModel,
+    subagentReasoningEffort: activeThread?.subagentReasoningEffort !== undefined ? activeThread.subagentReasoningEffort : snapshot.settings.subagentReasoningEffort,
     reasoningEffort: activeThread?.reasoningEffort || snapshot.settings.reasoningEffort,
     collaborationMode: activeThread?.collaborationMode || snapshot.settings.collaborationMode,
     agentHarnessMode: activeThread?.agentHarnessMode || snapshot.settings.agentHarnessMode,
-  }), [activeThread?.subagentModel, activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
+  }), [activeThread?.subagentReasoningEffort, activeThread?.subagentModel, activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
   const lastToolUpdatedAt = useMemo(
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
@@ -236,7 +238,7 @@ export default function App() {
     const { globalSettings, threadSettings } = splitComposerSettingsForPersistence(settings);
     try {
       if (Object.keys(globalSettings).length > 0) await window.privoraDesktop.saveSettings(globalSettings);
-      if (activeThread && (threadSettings.subagentModel !== undefined || threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
+      if (activeThread && (threadSettings.subagentReasoningEffort !== undefined || threadSettings.subagentModel !== undefined || threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
         await window.privoraDesktop.saveThreadSettings({
           threadId: activeThread.id,
           ...threadSettings,
@@ -417,6 +419,7 @@ export default function App() {
           await refresh();
         }}
         onCreateSecurityWorkspace={() => setCreateSecurityOpen(true)}
+        onEditSecurityWorkspace={(workspaceId, renameOnly) => setEditingSecurity({ workspaceId, renameOnly })}
         onNewThread={async () => {
           await window.privoraDesktop.createThread(activeWorkspace?.id ?? null);
           await refresh();
@@ -808,7 +811,8 @@ export default function App() {
       )}
       </div>
       {createSecurityOpen && <CreateSecurityWorkspaceDialog onClose={() => setCreateSecurityOpen(false)} onCreated={refresh} />}
-      {securityDetailsOpen && isSecurityWorkspace && <SecurityWorkspaceDetails workspace={activeWorkspace} state={securityWorkspace.state} error={securityWorkspace.error} checking={securityWorkspace.checking} onCheck={securityWorkspace.check} onRefresh={securityWorkspace.refresh} onClose={() => setSecurityDetailsOpen(false)} />}
+      {editingSecurity && snapshot.workspaces.some((item) => item.id === editingSecurity.workspaceId) && <EditSecurityWorkspaceDialog key={editingSecurity.workspaceId} workspace={snapshot.workspaces.find((item) => item.id === editingSecurity.workspaceId)!} renameOnly={editingSecurity.renameOnly} onClose={() => setEditingSecurity(null)} onSaved={async () => { await refresh(); await securityWorkspace.refresh(); }} />}
+      {securityDetailsOpen && isSecurityWorkspace && <SecurityWorkspaceDetails workspace={activeWorkspace} state={securityWorkspace.state} error={securityWorkspace.error} checking={securityWorkspace.checking} onCheck={securityWorkspace.check} onRefresh={securityWorkspace.refresh} onClose={() => setSecurityDetailsOpen(false)} onEdit={() => { setSecurityDetailsOpen(false); setEditingSecurity({ workspaceId: activeWorkspace.id, renameOnly: false }); }} />}
     </div>
   );
 }

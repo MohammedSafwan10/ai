@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
+import { waitWithAbort } from "../abort";
 import { autoSaveSecurityEvidence, ensureSecurityEvidenceFolder, securityEvidenceFolder } from "../attachments/securityEvidenceAutoSave";
 import { setTimeout as delay } from "node:timers/promises";
 import type { DesktopStore } from "../db/store";
@@ -10,6 +11,7 @@ import { KaliConnector, KaliConnectionError, KaliRequestError, buildKaliSshArgs 
 import { KaliOutputDecoder, kaliArtifactMime, kaliCommandPreview, requiredText } from "./tools";
 import { HeadTailOutputBuffer } from "../terminal/outputBuffer";
 import { redactSecrets } from "../security/redact";
+import { listSecurityKnowledge, readSecurityKnowledge } from "./knowledge";
 import { SECURITY_CONNECTION_MAX_AGE_MS, securityConnectionStatus } from "../../shared/securityConnection";
 
 export interface SecurityExecutionContext {
@@ -218,13 +220,13 @@ export class SecurityWorkspaceService {
   async ensureEvidenceFolder(workspaceId: string) {
     const workspace = this.workspace(workspaceId);
     if (!this.localEvidenceRoot) throw new Error("Automatic PC evidence storage is not configured.");
-    return ensureSecurityEvidenceFolder(this.localEvidenceRoot, workspace.id, workspace.name);
+    return ensureSecurityEvidenceFolder(this.localEvidenceRoot, workspace.id, workspace.security?.evidenceFolderName ?? workspace.name);
   }
 
   private workspaceState(workspaceId: string): SecurityWorkspaceState {
     const workspace = this.workspace(workspaceId);
     return {
-      evidenceFolder: this.localEvidenceRoot ? securityEvidenceFolder(this.localEvidenceRoot, workspace.id, workspace.name) : undefined,
+      evidenceFolder: this.localEvidenceRoot ? securityEvidenceFolder(this.localEvidenceRoot, workspace.id, workspace.security?.evidenceFolderName ?? workspace.name) : undefined,
       environment: this.store.getSecurityEnvironment(workspace.security!.environmentId),
       jobs: this.store.listSecurityJobs(workspaceId), findings: this.store.listSecurityFindings(workspaceId),
     };
@@ -375,16 +377,27 @@ export class SecurityWorkspaceService {
 
   private async executeOpen(call: DesktopToolCall, context: SecurityExecutionContext): Promise<ToolResult> {
     try {
+      context.signal?.throwIfAborted();
       this.requireOpen();
       const workspace = this.workspace(context.workspaceId);
       const thread = this.store.getThread(context.threadId);
       if (thread?.workspaceId !== workspace.id) throw new Error("Thread does not belong to this Security workspace.");
       const args = call.arguments;
       switch (call.name) {
+        case "security_knowledge_list": {
+          if (!this.localEvidenceRoot) throw new Error("The shared evidence folder is not configured.");
+          const result = await waitWithAbort(listSecurityKnowledge(this.localEvidenceRoot, args.query === undefined ? "" : args.query as string, args.limit === undefined ? 50 : args.limit as number), context.signal);
+          return { success: true, output: `${result.notice}\n${result.items.map((item) => `${item.path} (${item.bytes} bytes)`).join("\n") || "No matching collected documents found. This is separate from this project's findings store."}${result.truncated ? "\nListing bounded; narrow query to locate more documents." : ""}`, data: result };
+        }
+        case "security_knowledge_read": {
+          if (!this.localEvidenceRoot) throw new Error("The shared evidence folder is not configured.");
+          const result = await waitWithAbort(readSecurityKnowledge(this.localEvidenceRoot, requiredText(args.path, "knowledge path", 2000), args.offset as number | undefined, args.maxChars as number | undefined), context.signal);
+          return { success: true, output: `${result.notice}\n\n${result.text}${result.nextOffset !== undefined ? `\nContinue at offset=${result.nextOffset}.` : ""}`, data: result };
+        }
         case "kali_capabilities": {
           const tools = args.tools ?? [];
           if (!Array.isArray(tools) || tools.length > 64 || tools.some((tool) => typeof tool !== "string" || !/^[a-zA-Z0-9_.+-]{1,64}$/.test(tool))) throw new Error("Invalid tool list.");
-          const capabilities = await this.connector(workspace.security!.environmentId).capabilities(tools as string[]);
+          const capabilities = await this.connector(workspace.security!.environmentId).capabilities(tools as string[], context.signal);
           this.connected(workspace.security!.environmentId);
           return { success: true, output: redactSecrets(JSON.stringify(capabilities)), data: { capabilities } };
         }
@@ -485,7 +498,7 @@ export class SecurityWorkspaceService {
       try {
         const workspace = this.workspace(context.workspaceId);
         localPath = await autoSaveSecurityEvidence({ root: this.localEvidenceRoot, workspaceId: workspace.id,
-          workspaceName: workspace.name, jobId: job.id, remotePath: relative,
+          workspaceName: workspace.security?.evidenceFolderName ?? workspace.name, jobId: job.id, remotePath: relative,
           name: attachment.name, sha256: artifact.sha256, bytes });
       } catch (error) {
         return { success: false, error: `Evidence retained in Privora, but automatic PC save failed: ${errorText(error)}`,

@@ -688,9 +688,11 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "browser_extract",
-    description: "Extract bounded, redacted current-page content for research or QA: visible_text, main_text, links, tables, forms, or metadata. Does not read cookies, storage, headers, or input values.",
+    description: "Extract bounded, redacted current-page content. Long visible_text/main_text pages support offset/maxChars paging; follow nextOffset with the same mode/tab instead of scrolling. Does not read cookies, storage, headers, or input values.",
     parameters: schema({
       mode: textProperty("Extraction mode: visible_text, main_text, links, tables, forms, or metadata. Default visible_text."),
+      offset: numberProperty("Character offset for text modes; default 0. Use nextOffset to continue."),
+      maxChars: numberProperty("Text window length, 500–8000; default 4000."),
       tabId: textProperty("Optional browser tab id. Defaults to active tab."),
     }, []),
   },

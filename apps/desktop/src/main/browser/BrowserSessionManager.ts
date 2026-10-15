@@ -1,14 +1,15 @@
 import fs from "node:fs/promises";
+import { waitWithAbort } from "../abort";
 import fsSync from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, shell, session as electronSession, WebContentsView, type DownloadItem, type Event, type Rectangle, type WebContents } from "electron";
 import { BrowserCdpClient, type BrowserSnapshotOptions } from "./browserCdp";
-import { buildBrowserExtractScript, browserExtractionOutput, normalizeExtractMode, sanitizeBrowserExtraction, type BrowserExtractMode, type BrowserExtractionResult } from "./browserExtraction";
+import { buildBrowserExtractScript, browserExtractionOutput, normalizeExtractMode, normalizeBrowserExtractOptions, sanitizeBrowserExtraction, type BrowserExtractOptions, type BrowserExtractMode, type BrowserExtractionResult } from "./browserExtraction";
 import { browserOriginDecision, compactUrl, installBrowserSessionSecurity, installBrowserWebContentsSecurity, normalizeBrowserUrl, redactSensitiveText, safeExactBrowserUrl, shouldRestorePersistedBrowserUrl, type BrowserControlScope } from "./browserSecurity";
 import { hideBrowserCursorOverlay, showBrowserCursorOverlay, type BrowserCursorBox, type BrowserCursorPoint } from "./browserCursorOverlay";
-import { CausalJournal, pageSummary, type BrowserActionFinding, type BrowserNetworkEntry } from "./causalJournal";
+import { CausalJournal, networkEntryCounts, pageSummary, type BrowserActionFinding, type BrowserNetworkEntry } from "./causalJournal";
 import { inspectDevBridge } from "./devBridge";
 import { BrowserNetworkPipeline } from "./shields/BrowserNetworkPipeline";
 import { ShieldsManager } from "./shields/ShieldsManager";
@@ -82,6 +83,9 @@ interface BrowserSessionRecord {
   state: BrowserPanelStateRecord;
   createdAt: number;
   updatedAt: number;
+  capturePromise?: Promise<void>;
+  networkCaptureStartedAt?: number;
+  networkCaptureError?: string;
 }
 
 interface BrowserElementRef {
@@ -170,6 +174,7 @@ export class BrowserSessionManager {
   }
 
   async openUrl(workspaceId: string, rawUrl: string, options: OpenOptions = { scope: "user" }) {
+    options.signal?.throwIfAborted();
     const url = normalizeBrowserUrl(rawUrl);
     const decision = browserOriginDecision(url, options.scope);
     if (!decision.allowed) throw new Error(decision.reason || "Browser navigation is not allowed.");
@@ -183,6 +188,8 @@ export class BrowserSessionManager {
       this.updateState(session, { viewport: session.viewport });
     }
     this.clearPageEvidence(session);
+    await waitWithAbort(this.ensureBrowserCapture(session), options.signal);
+    options.signal?.throwIfAborted();
     try {
       await loadUrlWithGuards(session.view.webContents, url, options.signal);
     } catch (error) {
@@ -288,6 +295,7 @@ export class BrowserSessionManager {
   async navigate(workspaceId: string, direction: "back" | "forward" | "reload" | "stop", tabId?: string) {
     const session = this.ensureSession(workspaceId, tabId);
     const contents = session.view.webContents;
+    if (direction !== "stop") await this.ensureBrowserCapture(session);
     if (direction === "back" && contents.navigationHistory.canGoBack()) {
       this.clearPageEvidence(session);
       contents.navigationHistory.goBack();
@@ -339,22 +347,26 @@ export class BrowserSessionManager {
   async inspect(workspaceId: string, kind: string, tabId?: string) {
     const session = this.ensureSession(workspaceId, tabId);
     if (kind === "console") {
-      const consoleEntries = session.journal.recentConsole();
+      const consoleEntries = session.journal.recentConsole(true);
       const shields = this.shields.stateFor(workspaceId, session.view.webContents.getURL(), session.view.webContents.id);
       const shieldsRelated = classifyShieldsRelatedConsole(consoleEntries, shields.recentBlocked);
       return {
         output: [
-          consoleEntries.map((entry) => `${entry.level}: ${entry.message}`).join("\n") || "No recent console messages.",
+          `Console capture since ${new Date(session.createdAt).toISOString()}; last ${consoleEntries.length} retained entries across tab navigations (maximum 20). Capture is not retroactive.`,
+          consoleEntries.map((entry) => `${entry.level}: ${entry.message}`).join("\n") || "No console messages in the retained capture window; this does not prove the page logged nothing.",
           shieldsRelated.length ? `\nLikely Shields-related console entries: ${shieldsRelated.length}` : "",
         ].filter(Boolean).join("\n"),
-        data: { console: consoleEntries, shieldsRelatedConsole: shieldsRelated },
+        data: { console: consoleEntries, shieldsRelatedConsole: shieldsRelated, capture: { since: session.createdAt, retainedAcrossNavigations: true, limit: 20 } },
       };
     }
     if (kind === "network") {
-      const requests = session.journal.recentNetwork();
+      await this.ensureBrowserCapture(session);
+      const requests = session.journal.recentNetwork(true);
+      const retainedCounts = networkEntryCounts(requests);
+      const currentPageCounts = networkEntryCounts(session.journal.recentNetwork());
       return {
-        output: requests.map((entry) => `${entry.method} ${entry.url} ${entry.status || entry.errorText || ""}`.trim()).join("\n") || "No recent network requests.",
-        data: { requests },
+        output: `${session.networkCaptureError ? `Network capture unavailable: ${session.networkCaptureError}. Earlier retained entries may still be shown.` : `Network capture active since ${new Date(session.networkCaptureStartedAt!).toISOString()}; last ${requests.length} retained requests across tab navigations (maximum 40). Capture is not retroactive.`}\nRetained-window failures: ${retainedCounts.failedRequestCount}; aborted transfers: ${retainedCounts.abortedRequestCount}; Shields-blocked: ${retainedCounts.shieldsBlockedRequestCount}. Current-page failures now: ${currentPageCounts.failedRequestCount}. browser_open counts describe its current-page window at response time. HTTP status records response headers; a later transfer abort can coexist with status 200 and is not proof of a server defect.\n${requests.map((entry) => `${entry.method} ${entry.url}${entry.status !== undefined ? ` HTTP ${entry.status}` : ""}${entry.failed ? " failed" : ""}${entry.errorText ? ` ${entry.errorText}` : ""}${entry.blockedByShields ? " blocked by Shields" : ""}`.trim()).join("\n") || "No requests captured in this window; this does not prove the page made no requests."}`,
+        data: { requests, retainedCounts, currentPageCounts, countScope: "Retained counts cover the returned cross-navigation entries; currentPageCounts cover the current-page window at inspection time. Aborted transfers overlap failures; Shields blocks are excluded from failures.", capture: { available: !session.networkCaptureError, since: session.networkCaptureStartedAt, error: session.networkCaptureError, retainedAcrossNavigations: true, limit: 40 } },
       };
     }
     if (kind === "dom") {
@@ -379,10 +391,10 @@ export class BrowserSessionManager {
     throw new Error(`Unknown browser inspect kind: ${kind}`);
   }
 
-  async extract(workspaceId: string, modeInput: unknown, tabId?: string) {
+  async extract(workspaceId: string, modeInput: unknown, tabId?: string, options: BrowserExtractOptions = {}) {
     const session = this.ensureSession(workspaceId, tabId);
     const mode = normalizeExtractMode(modeInput);
-    const result = await this.extractPage(session, mode);
+    const result = await this.extractPage(session, mode, normalizeBrowserExtractOptions(options));
     return {
       output: browserExtractionOutput(result),
       data: result as unknown as Record<string, unknown>,
@@ -1015,7 +1027,7 @@ export class BrowserSessionManager {
       const session = this.createTab(workspaceId, { activate: tab.id === persisted?.activeTabId, id: tab.id, createdAt: tab.createdAt });
       const restoreUrl = tab.url && shouldRestorePersistedBrowserUrl(tab.url) ? tab.url : "";
       if (restoreUrl) {
-        void session.view.webContents.loadURL(restoreUrl).catch(() => undefined);
+        void this.ensureBrowserCapture(session).then(() => session.view.webContents.loadURL(restoreUrl)).catch(() => undefined);
       }
       session.state = {
         ...session.state,
@@ -1079,6 +1091,7 @@ export class BrowserSessionManager {
       updatedAt: timestamp,
     };
     this.installContentsListeners(session);
+    void this.ensureBrowserCapture(session);
     this.workspaceTabs.set(workspaceId, [...currentTabs, session]);
     if (options.activate) this.switchTab(workspaceId, session.id);
     else this.persistWorkspace(workspaceId);
@@ -1356,6 +1369,22 @@ export class BrowserSessionManager {
     session.refs.clear();
   }
 
+  private ensureBrowserCapture(session: BrowserSessionRecord): Promise<void> {
+    if (session.capturePromise) return session.capturePromise;
+    const promise = (async () => {
+      try {
+        const reattaching = !session.cdp.isAttached();
+        await session.cdp.enableNetwork();
+        if (reattaching || !session.networkCaptureStartedAt || session.networkCaptureError) session.networkCaptureStartedAt = Date.now();
+        session.networkCaptureError = undefined;
+      } catch (error) { session.networkCaptureError = redactSensitiveText(error instanceof Error ? error.message : String(error), 300); }
+      // Native console events remain captured even when CDP Runtime is unavailable.
+      await session.cdp.enableRuntime().catch(() => undefined);
+    })().finally(() => { session.capturePromise = undefined; });
+    session.capturePromise = promise;
+    return promise;
+  }
+
   private async replayWorkflow(workspaceId: string, workflow: Pick<BrowserWorkflowRecord, "id" | "steps" | "assertions">, options: { agentApproved: boolean; newTab: boolean }) {
     const run = this.workflows.beginRun(workspaceId, workflow.id);
     this.replayingWorkflows.add(workspaceId);
@@ -1472,7 +1501,7 @@ export class BrowserSessionManager {
       return { success: true, output: `Saved screenshot: ${result.screenshotPath}`, data: result as unknown as Record<string, unknown> };
     }
     if (step.action === "browser_extract") {
-      const result = await this.extract(workspaceId, args.mode);
+      const result = await this.extract(workspaceId, args.mode, undefined, { offset: args.offset as number | undefined, maxChars: args.maxChars as number | undefined });
       return { success: true, output: result.output, data: result.data };
     }
     if (step.action === "browser_evidence") {
@@ -1815,14 +1844,14 @@ export class BrowserSessionManager {
     const text = String(input.text || "").trim();
     if (!text) throw new Error("browser_open_link needs a link ref or visible text.");
     const result = await session.view.webContents.executeJavaScript(buildFindLinkByTextScript(text), true) as { text?: string; href?: string } | null;
-    if (!result?.href) throw new Error(`No visible link matched "${redactSensitiveText(text, 120)}". Capture a snapshot or use browser_extract mode=links.`);
+    if (!result?.href) throw new Error(`No visible link matched "${redactSensitiveText(text, 120)}". Plain headings and buttons are not links: use a fresh snapshot and browser_act for those, or browser_extract with offsets to read later text.`);
     return { text: redactSensitiveText(result.text || text, 180), href: String(result.href) };
   }
 
-  private async extractPage(session: BrowserSessionRecord, mode: BrowserExtractMode) {
+  private async extractPage(session: BrowserSessionRecord, mode: BrowserExtractMode, options: BrowserExtractOptions = {}) {
     this.ensureOpenPage(session);
     const raw = await session.view.webContents.executeJavaScript(buildBrowserExtractScript(mode), true) as BrowserExtractionResult;
-    return sanitizeBrowserExtraction(raw);
+    return sanitizeBrowserExtraction(raw, options);
   }
 
   private async analyzeForms(session: BrowserSessionRecord) {
@@ -2203,7 +2232,7 @@ const emptyWorkflowPanelState = () => ({
 });
 
 const countRealFailedRequests = (entries: BrowserNetworkEntry[]) =>
-  entries.filter((entry) => !entry.blockedByShields && (entry.failed || (entry.status || 0) >= 400)).length;
+  networkEntryCounts(entries).failedRequestCount;
 
 const normalizeShieldsMode = (value: unknown) => {
   const mode = String(value || "standard").trim().toLowerCase();

@@ -84,6 +84,7 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
+  const [subagentEffortOpen, setSubagentEffortOpen] = useState(false);
   const [modelPickerTarget, setModelPickerTarget] = useState<"chat" | "subagent">("chat");
   const [modelSearch, setModelSearch] = useState("");
   const [goModelIds, setGoModelIds] = useState<string[]>([]);
@@ -95,6 +96,7 @@ export function Composer({
   const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = findModelOption(settings.model) ?? unavailableModel(settings.model);
   const subagentModel = settings.subagentModel ? findModelOption(settings.subagentModel) ?? unavailableModel(settings.subagentModel) : null;
+  const childModel = subagentModel ?? activeModel;
   const activeReasoningOptions = reasoningOptions.filter((option) => activeModel.reasoningEfforts.includes(option.id));
   const modelProviderGroups = useMemo(
     () => withDiscoveredGoModels(getModelProviderGroups(), goModelIds),
@@ -125,6 +127,7 @@ export function Composer({
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
   const toggleMenu = (menu: ComposerMenu) => {
+    setSubagentEffortOpen(false);
     setModelPickerTarget("chat");
     setActiveMenu((current) => {
       const next = current === menu ? null : menu;
@@ -778,11 +781,11 @@ export function Composer({
             </button>
             {activeMenu === "model" && (
               <>
-              <div className={clsx("floating-menu model-reasoning-menu", modelSubmenuOpen && "submenu-open")}>
+              <div className={clsx("floating-menu model-reasoning-menu", (modelSubmenuOpen || subagentEffortOpen) && "submenu-open")}>
                 <button
                   type="button"
                   className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "chat" && "active")}
-                  onFocus={() => { setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
+                  onFocus={() => { setSubagentEffortOpen(false); setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
                   onClick={() => { setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
                 >
                   <span>{modelDisplayLabel(activeModel.label)}</span>
@@ -792,12 +795,13 @@ export function Composer({
                   type="button"
                   className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "subagent" && "active")}
                   title="Choose the model for new subagents. Existing children keep their assigned model."
-                  onFocus={() => { setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
+                  onFocus={() => { setSubagentEffortOpen(false); setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
                   onClick={() => { setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
                 >
                   <span className="subagent-model-label"><span>Subagent model</span><small>{subagentModel ? modelDisplayLabel(subagentModel.label) : "Same as parent"}</small></span>
                   <ChevronRight size={17} />
                 </button>
+                <button type="button" className={clsx("model-branch-row", subagentEffortOpen && "active")} onClick={() => { setSubagentEffortOpen(true); setModelSubmenuOpen(false); }} title="Choose reasoning effort for new subagents; existing children keep their settings."><span className="subagent-model-label"><span>Subagent reasoning</span><small>{settings.subagentReasoningEffort ? reasoningLabel(settings.subagentReasoningEffort, childModel) : "Same as parent"}</small></span><ChevronRight size={17} /></button>
                 <div className="composer-menu-divider" />
                 {activeReasoningOptions.map((option) => (
                   <button
@@ -813,7 +817,8 @@ export function Composer({
                   </button>
                 ))}
               </div>
-              {modelSubmenuOpen && (
+              {subagentEffortOpen && <div className="floating-menu model-picker-submenu"><button type="button" onClick={() => setSubagentEffortOpen(false)}><ChevronLeft size={15} /><span>Subagent reasoning</span></button><button type="button" onClick={() => { onSettings({ subagentReasoningEffort: null }); setActiveMenu(null); }}><span>Same as parent</span>{!settings.subagentReasoningEffort && <Check size={14} />}</button>{reasoningOptions.filter((option) => childModel.reasoningEfforts.includes(option.id)).map((option) => <button type="button" key={option.id} onClick={() => { onSettings({ subagentReasoningEffort: option.id }); setActiveMenu(null); }}><span>{reasoningLabel(option.id, childModel)}</span>{settings.subagentReasoningEffort === option.id && <Check size={14} />}</button>)}</div>}
+              {modelSubmenuOpen && !subagentEffortOpen && (
                 <div
                   className="floating-menu model-picker-submenu"
                 >
@@ -839,7 +844,7 @@ export function Composer({
                           type="button"
                           title={`${model.supportsImageInput ? "Supports image input" : "Text input only"} · ${formatTokenCount(model.contextWindowTokens)} context · ${formatTokenCount(model.maxOutputTokens)} max output`}
                           onClick={() => {
-                            if (modelPickerTarget === "subagent") onSettings({ subagentModel: model.id });
+                            if (modelPickerTarget === "subagent") onSettings({ subagentModel: model.id, ...(settings.subagentReasoningEffort && !model.reasoningEfforts.includes(settings.subagentReasoningEffort) ? { subagentReasoningEffort: null } : {}) });
                             else onSettings({
                               model: model.id,
                               reasoningEffort: model.reasoningEfforts.includes(settings.reasoningEffort)

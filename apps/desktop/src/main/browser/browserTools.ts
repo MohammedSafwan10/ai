@@ -1,7 +1,9 @@
 import type { DesktopToolCall, ToolResult } from "../../shared/types";
 import type { BrowserSessionManager } from "./BrowserSessionManager";
+import { isSecurityWorkspaceToolAllowed } from "../kali/definitions";
 
 export interface BrowserToolContext {
+  securityWorkspace?: boolean;
   workspaceId?: string;
   workspaceRoot: string;
   signal: AbortSignal;
@@ -76,7 +78,7 @@ export class BrowserToolExecutor {
         result = await this.formSubmit(args, resolvedContext);
         break;
       case "browser_capabilities":
-        result = this.capabilities();
+        result = this.capabilities(context.securityWorkspace === true);
         break;
       case "browser_workflow":
         result = await this.workflow(args, resolvedContext);
@@ -106,14 +108,15 @@ export class BrowserToolExecutor {
     return result;
   }
 
-  private capabilities(): ToolResult {
-    const toolGroups = {
+  private capabilities(securityWorkspace = false): ToolResult {
+    const advertised = {
       core: ["browser_open", "browser_open_link", "browser_snapshot", "browser_act", "browser_trace", "browser_verify"],
       evidence: ["browser_inspect", "browser_extract", "browser_wait", "browser_screenshot", "browser_evidence", "browser_search"],
       tabsDownloadsPdf: ["browser_tab", "browser_downloads", "browser_shields", "browser_pdf"],
       forms: ["browser_form_analyze", "browser_form_fill", "browser_form_validate", "browser_form_submit"],
       workflows: ["browser_workflow", "browser_assert", "browser_evidence_vault", "browser_diagnose"],
     };
+    const toolGroups = Object.fromEntries(Object.entries(advertised).map(([group, tools]) => [group, securityWorkspace ? tools.filter(isSecurityWorkspaceToolAllowed) : tools])) as typeof advertised;
     return {
       success: true,
       output: [
@@ -127,6 +130,8 @@ export class BrowserToolExecutor {
       data: {
         available: true,
         toolGroups,
+        workspaceType: securityWorkspace ? "security" : "development",
+        unavailable: securityWorkspace ? Object.values(advertised).flat().filter((name) => !isSecurityWorkspaceToolAllowed(name)) : [],
         notes: [
           "Existing browser tools operate on the active tab unless tabId is provided.",
           "Full access skips normal browser approvals; hard browser security blocks remain.",
@@ -164,6 +169,7 @@ export class BrowserToolExecutor {
         tabs: result.tabs,
         consoleErrorCount: result.consoleErrorCount,
         failedRequestCount: result.failedRequestCount,
+        diagnosticCountScope: "Current-page retained entries at browser_open response time; excludes Shields-blocked requests. Later browser_inspect can include earlier navigations and newer events.",
       },
     };
   }
@@ -222,7 +228,7 @@ export class BrowserToolExecutor {
   }
 
   private async extract(args: Record<string, unknown>, context: ResolvedBrowserToolContext) {
-    const result = await this.manager.extract(context.workspaceId, args.mode, typeof args.tabId === "string" ? args.tabId : undefined);
+    const result = await this.manager.extract(context.workspaceId, args.mode, typeof args.tabId === "string" ? args.tabId : undefined, { offset: args.offset as number | undefined, maxChars: args.maxChars as number | undefined });
     return { success: true, output: result.output, data: result.data };
   }
 

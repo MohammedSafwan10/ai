@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { CausalJournal } from "../src/main/browser/causalJournal";
+import { CausalJournal, networkEntryCounts } from "../src/main/browser/causalJournal";
 
 describe("causal journal", () => {
+  it("counts failures consistently while distinguishing aborts and Shields blocks", () => {
+    const base = { method: "GET", url: "https://example.com", startedAt: 1 };
+    const entries = [
+      { ...base, id: "partial", status: 200, failed: true, errorText: "net::ERR_ABORTED" },
+      { ...base, id: "http", status: 500 },
+      { ...base, id: "blocked", failed: true, blockedByShields: true },
+      { ...base, id: "success", status: 200 },
+    ];
+    expect(networkEntryCounts(entries)).toEqual({ failedRequestCount: 2, abortedRequestCount: 1, shieldsBlockedRequestCount: 1 });
+    const journal = new CausalJournal("workspace");
+    entries.forEach((entry) => journal.recordRequest(entry));
+    journal.clearPageEvidence();
+    expect(networkEntryCounts(journal.recentNetwork()).failedRequestCount).toBe(0);
+    expect(networkEntryCounts(journal.recentNetwork(true)).failedRequestCount).toBe(2);
+  });
   it("builds compact causal findings from console and network evidence", async () => {
     const journal = new CausalJournal("workspace");
     journal.recordConsole({
@@ -41,6 +56,8 @@ describe("causal journal", () => {
 
     expect(journal.recentConsole()).toEqual([]);
     expect(journal.recentNetwork()).toEqual([]);
+    expect(journal.recentConsole(true)).toHaveLength(1);
+    expect(journal.recentNetwork(true)).toHaveLength(1);
   });
 
   it("deduplicates near-identical console evidence", () => {

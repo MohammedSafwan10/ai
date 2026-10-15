@@ -18,6 +18,15 @@ export interface SecurityWorkspaceConfig {
   environmentId: string;
   objective: string;
   scope: string;
+  revision?: number;
+  evidenceFolderName?: string;
+}
+export interface UpdateSecurityWorkspaceInput {
+  workspaceId: string;
+  expectedRevision: number;
+  name?: string;
+  objective?: string;
+  scope?: string;
 }
 
 export interface CreateSecurityWorkspaceInput extends SecurityWorkspaceConfig {

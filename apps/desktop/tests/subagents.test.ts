@@ -28,6 +28,14 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("resolves child reasoning independently and supports explicit inheritance", () => {
+    const store = createStore();
+    const root = store.createThread(null);
+    store.updateThreadSettings(root.id, { subagentReasoningEffort: "low" });
+    expect(resolveNewSubagentSettings(store, root.id, "gpt-5.6-sol", "high").reasoningEffort).toBe("low");
+    store.updateThreadSettings(root.id, { subagentReasoningEffort: null });
+    expect(resolveNewSubagentSettings(store, root.id, "gpt-5.6-sol", "high").reasoningEffort).toBe("high");
+  });
   it("anchors sent coordination at the current sender turn and retains routing metadata", async () => {
     const store = createStore(); const workspace = store.upsertWorkspace(tempDir); const root = store.createThread(workspace.id);
     const child = createSubagent(store, root.id, "reviewer", "/root/reviewer");

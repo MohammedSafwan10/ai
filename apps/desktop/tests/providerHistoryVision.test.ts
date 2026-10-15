@@ -18,7 +18,7 @@ describe("provider history image sanitization", () => {
   });
 
   it("omits stale image parts for text-only models", () => {
-    const sanitized = sanitizeProviderHistoryForModel(history, "deepseek/deepseek-v4-flash");
+    const sanitized = sanitizeProviderHistoryForModel(history, "opencode-go/glm-5.2");
     expect(sanitized[0].parts?.some((part) => part.type === "image")).toBe(false);
     expect(sanitized[0].content).toContain("does not support image input");
   });

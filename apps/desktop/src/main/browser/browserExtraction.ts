@@ -7,6 +7,10 @@ export interface BrowserExtractionResult {
   url: string;
   title: string;
   text?: string;
+  offset?: number;
+  nextOffset?: number;
+  totalChars?: number;
+  truncated?: boolean;
   links?: Array<{ text: string; href: string; title?: string }>;
   tables?: Array<{ caption: string; columns: string[]; rows: string[][] }>;
   forms?: Array<{
@@ -16,6 +20,13 @@ export interface BrowserExtractionResult {
   }>;
   metadata?: Record<string, unknown>;
 }
+export interface BrowserExtractOptions { offset?: number; maxChars?: number }
+export const normalizeBrowserExtractOptions = (input: BrowserExtractOptions = {}) => {
+  const offset = input.offset ?? 0; const maxChars = input.maxChars ?? 4000;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 500_000) throw new Error("Extraction offset must be an integer between 0 and 500000.");
+  if (!Number.isSafeInteger(maxChars) || maxChars < 500 || maxChars > 8000) throw new Error("Extraction maxChars must be an integer between 500 and 8000.");
+  return { offset, maxChars };
+};
 
 export const normalizeExtractMode = (value: unknown): BrowserExtractMode => {
   const mode = String(value || "visible_text").trim().toLowerCase();
@@ -26,11 +37,16 @@ export const normalizeExtractMode = (value: unknown): BrowserExtractMode => {
 export const buildBrowserExtractScript = (mode: BrowserExtractMode) =>
   `(${BROWSER_EXTRACT_SCRIPT})(${JSON.stringify(mode)})`;
 
-export const sanitizeBrowserExtraction = (raw: BrowserExtractionResult): BrowserExtractionResult => ({
+export const sanitizeBrowserExtraction = (raw: BrowserExtractionResult, options: BrowserExtractOptions = {}): BrowserExtractionResult => {
+  const { offset, maxChars } = normalizeBrowserExtractOptions(options);
+  // Redact before slicing so a chunk boundary cannot split a secret around the redactor.
+  const text = raw.text === undefined ? undefined : redactSensitiveText(raw.text, 500_000);
+  return ({
   mode: normalizeExtractMode(raw.mode),
   url: compactUrl(String(raw.url || "")),
   title: redactSensitiveText(String(raw.title || ""), 240),
-  text: raw.text ? redactSensitiveText(raw.text, 12_000) : undefined,
+  text: text?.slice(offset, offset + maxChars),
+  ...(text !== undefined ? { offset, totalChars: text.length, nextOffset: offset + maxChars < text.length ? offset + maxChars : undefined, truncated: offset + maxChars < text.length } : {}),
   links: raw.links?.slice(0, 80).map((link) => ({
     text: redactSensitiveText(String(link.text || ""), 240),
     href: compactExtractedHref(String(link.href || "")),
@@ -56,10 +72,11 @@ export const sanitizeBrowserExtraction = (raw: BrowserExtractionResult): Browser
     })),
   })),
   metadata: sanitizeMetadata(raw.metadata),
-});
+  });
+};
 
 export const browserExtractionOutput = (result: BrowserExtractionResult) => {
-  if (result.text) return result.text;
+  if (result.text !== undefined) return `${result.text}\n\n[Text characters ${result.offset ?? 0}–${(result.offset ?? 0) + result.text.length} of ${result.totalChars ?? result.text.length}.${result.nextOffset !== undefined ? ` Continue with browser_extract offset=${result.nextOffset}, same mode and tab. Scrolling does not advance this text window.` : " End of extracted text."}]`;
   if (result.links?.length) {
     return result.links.map((link) => `- ${link.text || "(untitled)"} — ${link.href}`).join("\n");
   }
@@ -123,7 +140,7 @@ const BROWSER_EXTRACT_SCRIPT = String.raw`
     const style = window.getComputedStyle(el);
     return rect.width > 1 && rect.height > 1 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0.02;
   };
-  const textOf = (el, limit = 12000) => compact(el && (el.innerText || el.textContent), limit);
+  const textOf = (el, limit = 500000) => String(el && (el.innerText || el.textContent) || "").replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").trim().slice(0, limit);
   const absolute = (value) => {
     try { return new URL(value || "", location.href).toString(); } catch { return String(value || ""); }
   };
@@ -135,14 +152,13 @@ const BROWSER_EXTRACT_SCRIPT = String.raw`
     return compact(aria || labelledBy || id?.innerText || wrapping?.innerText || "", 180);
   };
   const visibleText = () => {
-    const text = textOf(document.body, 12000);
-    return text.split(/\n+/).map((line) => compact(line, 500)).filter(Boolean).slice(0, 240).join("\n");
+    return textOf(document.body);
   };
   const mainText = () => {
     const candidates = Array.from(document.querySelectorAll("article, main, [role='main'], section, .content, #content"));
     const ranked = candidates
       .filter(visible)
-      .map((el) => ({ el, text: textOf(el, 14000) }))
+      .slice(0, 80).map((el) => ({ el, text: textOf(el) }))
       .filter((item) => item.text.length > 80)
       .sort((a, b) => b.text.length - a.text.length);
     return ranked[0]?.text || visibleText();

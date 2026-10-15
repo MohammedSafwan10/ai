@@ -130,6 +130,9 @@ names and categories, quick Rename, Duplicate, and Pin actions. Search includes
 stored prompt text; filtering and sorting run in the database with 50 summaries
 per page, and only the selected prompt's body is loaded. Up to 10,000 prompts can
 be stored. Unsaved content edits require saving or explicit discard before leaving.
+Drag pinned prompt rows above or below each other to save a manual order. Keyboard
+users can focus a pinned row and press Alt+Up or Alt+Down within the current page.
+Pinned order is preserved across rename, sorting and restart.
 
 Open the composer's model menu and choose **Subagent model** to select a separate
 model for new children, including Reviewer Swarm. **Same as parent** is the default.

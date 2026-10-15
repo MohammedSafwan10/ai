@@ -64,6 +64,18 @@ describe("security workspace IPC", () => {
     invoke(channels.saveThreadSettings, { threadId: root.id, subagentModel: null });
     expect(store.getThread(root.id)?.subagentModel).toBeNull();
     expect(() => invoke(channels.saveThreadSettings, { threadId: root.id, subagentModel: "" })).toThrow();
+    invoke(channels.saveThreadSettings, { threadId: root.id, subagentReasoningEffort: "high" });
+    expect(store.getThread(root.id)?.subagentReasoningEffort).toBe("high");
+    invoke(channels.saveThreadSettings, { threadId: root.id, subagentReasoningEffort: null });
+    expect(store.getThread(root.id)?.subagentReasoningEffort).toBeNull();
+  });
+  it("renames projects without moving evidence and rejects stale boundary edits", () => {
+    const workspace = store.createSecurityWorkspace({ name: "Original", objective: "Inspect", scope: "Local fixtures", environmentId: "kali" });
+    invoke(channels.updateSecurityWorkspace, { workspaceId: workspace.id, expectedRevision: 0, name: "Renamed" });
+    expect(store.getWorkspace(workspace.id)).toMatchObject({ name: "Renamed", path: workspace.path, security: { revision: 1, evidenceFolderName: "Original", scope: "Local fixtures" } });
+    expect(() => invoke(channels.updateSecurityWorkspace, { workspaceId: workspace.id, expectedRevision: 0, scope: "Changed" })).toThrow("changed while");
+    invoke(channels.updateSecurityWorkspace, { workspaceId: workspace.id, expectedRevision: 1, scope: "Revised fixtures" });
+    expect(store.getWorkspace(workspace.id)?.security).toMatchObject({ revision: 2, scope: "Revised fixtures", evidenceFolderName: "Original" });
   });
   it("reads a child transcript without switching chats and rejects another chat tree", async () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });

@@ -4,6 +4,7 @@ export const splitComposerSettingsForPersistence = (settings: SaveSettingsInput)
   const threadSettings = {
     model: settings.model,
     subagentModel: settings.subagentModel,
+    subagentReasoningEffort: settings.subagentReasoningEffort,
     reasoningEffort: settings.reasoningEffort,
     collaborationMode: settings.collaborationMode,
     agentHarnessMode: settings.agentHarnessMode,

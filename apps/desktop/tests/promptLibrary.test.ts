@@ -15,6 +15,25 @@ const open = () => {
 afterEach(() => { store?.close(); store = undefined; if (directory) fs.rmSync(directory, { recursive: true, force: true }); directory = ""; });
 
 describe("saved prompt library", () => {
+  it("keeps manually ordered pinned prompts across edits, sorting and restart", () => {
+    const db = open();
+    const make = (title: string) => db.savePrompt({ title, category: "Workflow", workspaceType: "all", content: `Do ${title}`, pinned: true });
+    const first = make("Prepare"); const second = make("Research"); const third = make("Investigate");
+    const other = db.savePrompt({ title: "Unpinned", category: "Workflow", workspaceType: "all", content: "Do not change" });
+    db.reorderPinnedPrompt({ id: second.id, targetId: first.id, position: "after" });
+    db.reorderPinnedPrompt({ id: third.id, targetId: second.id, position: "after" });
+    const ids = () => db.querySavedPrompts({ pinnedOnly: true, sort: "name" }).items.map((item) => item.id);
+    expect(ids()).toEqual([first.id, second.id, third.id]);
+    db.reorderPinnedPrompt({ id: third.id, targetId: first.id, position: "before" });
+    db.updatePromptMetadata({ id: third.id, title: "Renamed" });
+    expect(ids()).toEqual([third.id, first.id, second.id]);
+    expect(db.getSavedPrompt(third.id)?.content).toBe("Do Investigate");
+    expect(() => db.reorderPinnedPrompt({ id: other.id, targetId: first.id, position: "before" })).toThrow("pinned");
+    expect(ids()).toEqual([third.id, first.id, second.id]);
+    db.close(); store = new DesktopStore(directory);
+    expect(store.querySavedPrompts({ pinnedOnly: true }).items.map((item) => item.id)).toEqual([third.id, first.id, second.id]);
+    expect(store.getSavedPrompt(other.id)?.pinnedOrder).toBeUndefined();
+  });
   it("paginates a large library without returning prompt bodies and keeps search literal", () => {
     const db = open();
     for (let index = 0; index < 1200; index++) db.savePrompt({ title: `Prompt ${String(index).padStart(4, "0")}`, category: index % 2 ? "Security" : "Development", workspaceType: index % 2 ? "security" : "development", content: `Long stored instructions ${"x".repeat(2000)} ${index === 800 ? "specific needle 10%_literal" : ""}`, pinned: index === 900 });

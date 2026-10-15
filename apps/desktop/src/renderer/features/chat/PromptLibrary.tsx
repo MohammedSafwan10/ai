@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Check, ChevronLeft, ChevronRight, Copy, Maximize2, Minimize2, Pencil, Pin, Play, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { BookOpen, Check, ChevronLeft, ChevronRight, Copy, GripVertical, Maximize2, Minimize2, Pencil, Pin, Play, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import type { SavedPrompt, SavePromptInput, PromptPage, PromptQuery } from "../../../shared/promptLibrary";
 import "./promptLibrary.css";
 
@@ -41,6 +41,8 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const draggedId = useRef<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
   const dirty = Boolean(editor && JSON.stringify(editor) !== JSON.stringify(original));
   const activeFilterCount = Number(Boolean(category)) + Number(scope !== "all") + Number(pinnedOnly);
   const selectPrompt = (id: string) => { if (dirty) { setError("Save your changes or cancel editing before selecting another prompt."); return; } setEditor(null); setOriginal(null); setSelectedId(id); setError(null); };
@@ -110,6 +112,12 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
     catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
   };
   const filtersDisabled = busy || Boolean(editor);
+  const reorder = async (id: string, targetId: string, position: "before" | "after") => {
+    if (busy || editor || loading || id === targetId) return;
+    setBusy(true); setError(null); setDropTarget(null);
+    try { await window.privoraDesktop.reorderPinnedPrompt({ id, targetId, position }); reload(); }
+    catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
+  };
   const scopeName = (value: string) => value === "all" ? "All chats" : value === "security" ? "Security" : "Normal chats";
 
   return <dialog ref={dialog} className={`prompt-library${fullscreen ? " prompt-library-fullscreen" : ""}`} aria-labelledby="prompt-library-title" onCancel={(event) => { event.preventDefault(); close(); }}>
@@ -136,7 +144,18 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
         {activeFilterCount > 0 && <div className="prompt-library-active-filters" aria-label="Active filters">{category && <span>{category}</span>}{scope !== "all" && <span>{scopeName(scope)}</span>}{pinnedOnly && <span>Pinned</span>}</div>}
         <div className="prompt-library-new"><button type="button" disabled={busy} onClick={() => beginEdit(blank())}><Plus size={14} />New prompt</button><button type="button" disabled={busy || !currentDraft.trim()} onClick={() => beginEdit({ ...blank(), content: currentDraft })}>Save draft</button></div>
         <p className="prompt-library-count" role="status">{loading ? "Searching…" : `${page.total.toLocaleString()} matching prompt${page.total === 1 ? "" : "s"}`}</p>
-        <nav aria-label="Saved prompts" aria-busy={loading}>{loading ? <p>Loading…</p> : !page.items.length ? <p>No matching prompts.</p> : page.items.map((prompt) => <button type="button" key={prompt.id} className={selectedId === prompt.id && !editor ? "selected" : ""} disabled={busy} aria-current={selectedId === prompt.id ? "true" : undefined} onClick={() => selectPrompt(prompt.id)}><strong>{prompt.pinned && <Pin size={12} aria-label="Pinned" />}{prompt.title}</strong><small>{prompt.category} · {scopeName(prompt.workspaceType)}</small></button>)}</nav>
+        <nav aria-label="Saved prompts" aria-busy={loading}>{loading ? <p>Loading…</p> : !page.items.length ? <p>No matching prompts.</p> : page.items.map((prompt) => <button
+          type="button" key={prompt.id}
+          className={`${selectedId === prompt.id && !editor ? "selected" : ""} ${dropTarget?.id === prompt.id ? `prompt-drop-${dropTarget.position}` : ""}`}
+          disabled={busy} aria-current={selectedId === prompt.id ? "true" : undefined}
+          draggable={Boolean(prompt.pinned) && !filtersDisabled}
+          title={prompt.pinned ? "Drag to reorder pinned prompts. Keyboard: Alt + Up or Down." : undefined}
+          onDragStart={(event) => { if (!prompt.pinned || filtersDisabled) { event.preventDefault(); return; } draggedId.current = prompt.id; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", prompt.id); }}
+          onDragOver={(event) => { if (!draggedId.current || !prompt.pinned || filtersDisabled || draggedId.current === prompt.id) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; const bounds = event.currentTarget.getBoundingClientRect(); setDropTarget({ id: prompt.id, position: event.clientY < bounds.top + bounds.height / 2 ? "before" : "after" }); }}
+          onDrop={(event) => { const id = draggedId.current; if (!id || !prompt.pinned || filtersDisabled) return; event.preventDefault(); const bounds = event.currentTarget.getBoundingClientRect(); void reorder(id, prompt.id, event.clientY < bounds.top + bounds.height / 2 ? "before" : "after"); draggedId.current = null; setDropTarget(null); }}
+          onDragEnd={() => { draggedId.current = null; setDropTarget(null); }}
+          onKeyDown={(event) => { if (!event.altKey || !prompt.pinned || filtersDisabled || !["ArrowUp", "ArrowDown"].includes(event.key)) return; event.preventDefault(); const pinned = page.items.filter((item) => item.pinned); const index = pinned.findIndex((item) => item.id === prompt.id); const target = pinned[index + (event.key === "ArrowUp" ? -1 : 1)]; if (target) void reorder(prompt.id, target.id, event.key === "ArrowUp" ? "before" : "after"); }}
+          onClick={() => selectPrompt(prompt.id)}><strong>{prompt.pinned && <GripVertical size={13} className="prompt-drag-grip" aria-label="Pinned; draggable" />}{prompt.title}</strong><small>{prompt.category} · {scopeName(prompt.workspaceType)}</small></button>)}</nav>
         <div className="prompt-library-pagination"><button type="button" disabled={filtersDisabled || loading || offset === 0} aria-label="Previous prompt page" onClick={() => { setOffset((value) => Math.max(0, value - PAGE_SIZE)); setLoading(true); }}><ChevronLeft size={15} /></button><span>{page.total ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, page.total)} of ${page.total.toLocaleString()}` : "0 prompts"}</span><button type="button" disabled={filtersDisabled || loading || offset + PAGE_SIZE >= page.total} aria-label="Next prompt page" onClick={() => { setOffset((value) => value + PAGE_SIZE); setLoading(true); }}><ChevronRight size={15} /></button></div>
       </aside>
       <section className="prompt-library-detail">

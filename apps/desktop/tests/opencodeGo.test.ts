@@ -109,7 +109,7 @@ describe("opencode go model discovery", () => {
     expect(flash).toMatchObject({
       id: "opencode-go/deepseek-v4.1-flash",
       provider: "opencode-go",
-      supportsImageInput: false,
+      supportsImageInput: true,
       upstreamModelId: "deepseek-v4.1-flash",
     });
     const vision = synthesizeGoModelOption("deepseek-v4.1-flash-vision-exp");
@@ -151,6 +151,8 @@ describe("opencode go model discovery", () => {
 
   it("marks native-vision models from every verified family", () => {
     const vision = [
+      "opencode-go/deepseek-v4.1-flash",
+      "opencode-go/glm-5.3-flash",
       "opencode-go/kimi-k3",
       "opencode-go/kimi-k2.7-code",
       "opencode-go/muse-spark-1.3-contributor",
@@ -161,17 +163,22 @@ describe("opencode go model discovery", () => {
       "opencode-go/qwen3.7-plus",
       "opencode-go/qwen3.5-plus",
       "opencode-go/qwen3.8-flash",
+      "opencode-go/qwen3.8-max",
       "opencode-go/mimo-v2.5",
+      "opencode-go/mimo-v2.6-flash",
+      "opencode-go/mimo-v2.6-pro",
+      "opencode-go/longcat-2.5-preview-free",
     ];
     for (const id of vision) {
       expect(synthesizeGoModelOption(id)?.supportsImageInput, id).toBe(true);
     }
     const textOnly = [
-      "opencode-go/deepseek-v4.1-flash",
       "opencode-go/glm-5.2",
       "opencode-go/glm-5.3",
       "opencode-go/qwen3.7-max",
-      "opencode-go/qwen3.8-max",
+      "opencode-go/mimo-v2.5-pro",
+      "opencode-go/mimo-future-unverified",
+      "opencode-go/glm-5.3-flash-future-unverified",
       "opencode-go/minimax-m2.7",
       "opencode-go/longcat-2.0",
       "opencode-go/hy3",
@@ -180,6 +187,34 @@ describe("opencode go model discovery", () => {
     for (const id of textOnly) {
       expect(synthesizeGoModelOption(id)?.supportsImageInput, id).toBe(false);
     }
+  });
+
+  it("retains verified image capabilities when static and discovered Go options are merged", () => {
+    const ids = ["deepseek-v4.1-flash", "glm-5.3-flash", "qwen3.8-max", "mimo-v2.6-flash", "mimo-v2.6-pro", "longcat-2.5-preview-free"];
+    const group = withDiscoveredGoModels(getModelProviderGroups(), ids).find((entry) => entry.id === "opencode-go");
+    for (const id of ids) {
+      expect(getModelOption(`opencode-go/${id}`).supportsImageInput, id).toBe(true);
+      expect(group?.models.find((model) => model.upstreamModelId === id)?.supportsImageInput, id).toBe(true);
+    }
+  });
+
+  it.each(["opencode-go/glm-5.3-flash", "opencode-go/deepseek-v4.1-flash"])("forwards screenshot bytes on the verified chat route for %s", async (model) => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => sseResponseWith([]));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await new OpenCodeGoAdapter().stream(goOptions({ model, messages: [{
+        role: "user", content: "Describe the screenshot", parts: [
+          { type: "text", text: "Describe the screenshot" },
+          { type: "image", name: "screenshot.png", mimeType: "image/png", data: "c2NyZWVuc2hvdA==" },
+        ],
+      }] }));
+      expect(fetchMock.mock.calls[0][0]).toBe("https://opencode.ai/zen/go/v1/chat/completions");
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+      expect(body.messages.find((message: { role: string }) => message.role === "user").content).toEqual([
+        { type: "text", text: "Describe the screenshot" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,c2NyZWVuc2hvdA==" } },
+      ]);
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("uses verified 1M-class context windows", () => {

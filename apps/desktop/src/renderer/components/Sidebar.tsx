@@ -14,6 +14,7 @@ interface SidebarProps {
   activeWorkspace: WorkspaceRecord | null;
   onSelectWorkspace: () => void;
   onCreateSecurityWorkspace?: () => void;
+  onEditSecurityWorkspace?: (workspaceId: string, renameOnly: boolean) => void;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
   onRenameThread: (threadId: string, title: string) => void;
@@ -31,6 +32,7 @@ export function Sidebar({
   activeWorkspace,
   onSelectWorkspace,
   onCreateSecurityWorkspace,
+  onEditSecurityWorkspace,
   onNewThread,
   onSelectThread,
   onRenameThread,
@@ -112,6 +114,7 @@ export function Sidebar({
                     security={row.workspace.type === "security"}
                     onToggle={toggleGroup}
                     onRemove={onRemoveWorkspace}
+                    onEdit={onEditSecurityWorkspace}
                     icon={
                       row.workspace.type === "security" ? <Shield size={15} /> : row.workspace.id === activeWorkspace?.id ? <FolderOpen size={15} /> : <Folder size={15} />
                     }
@@ -146,6 +149,7 @@ function ProjectRow({
   collapsed,
   onToggle,
   onRemove,
+  onEdit,
   icon,
   security = false,
 }: {
@@ -155,6 +159,7 @@ function ProjectRow({
   collapsed: boolean;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
+  onEdit?: (id: string, renameOnly: boolean) => void;
   icon?: ReactNode;
   security?: boolean;
 }) {
@@ -222,10 +227,13 @@ function ProjectRow({
               </button>
             </>
           ) : (
+            <>
+            {security && onEdit && <><button type="button" onClick={() => { setMenuOpen(false); onEdit(id, true); }}><Pencil size={15} /><span>Rename project</span></button><button type="button" onClick={() => { setMenuOpen(false); onEdit(id, false); }}><Edit3 size={15} /><span>Edit objective & scope</span></button></>}
             <button type="button" className="danger" onClick={() => setConfirmRemove(true)}>
               <Trash2 size={15} />
               <span>Remove project</span>
             </button>
+            </>
           )}
         </div>,
         document.body,

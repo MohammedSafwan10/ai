@@ -36,7 +36,7 @@ interface OpenCodeGoFamily {
   reasoningEfforts: ReasoningEffort[];
   defaultReasoningEffort: ReasoningEffort;
   // Family-wide vision default. Per-id overrides below win for mixed
-  // families (e.g. Qwen Max is text-only while Plus/Flash see images).
+  // families (e.g. Qwen3.7 Max is text-only, while Qwen3.8 Max sees images).
   vision: boolean;
   visionIds?: string[];
   novisionIds?: string[];
@@ -68,7 +68,7 @@ const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
     reasoningEfforts: ["none", "high", "xhigh"],
     defaultReasoningEffort: "high",
     vision: false,
-    visionIds: ["deepseek-v4-flash-vision-exp"],
+    visionIds: ["deepseek-v4.1-flash", "deepseek-v4-flash-vision-exp"],
   },
   {
     // Kimi vision verified: MoonViT native image+video, 1M ctx (K3/K2.7/K2.6).
@@ -81,7 +81,8 @@ const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
     vision: true,
   },
   {
-    // GLM-5 base line is text-only; vision lives in GLM-5V-Turbo (not on Go).
+    // Go's GLM-5.3 Flash supports images; 5.2 and non-Flash 5.3 remain text-only.
+    // https://github.com/anomalyco/models.dev/tree/dev/providers/opencode-go/models
     prefixes: ["glm-"],
     route: "chat",
     contextWindowTokens: 1_048_576,
@@ -89,9 +90,10 @@ const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
     reasoningEfforts: ["none", "high"],
     defaultReasoningEffort: "high",
     vision: false,
+    visionIds: ["glm-5.3-flash"],
   },
   {
-    // Only mimo-v2.5 documents image input; siblings stay text-only.
+    // Verified Go vision IDs only; MiMo V2.5 Pro and LongCat 2.0 remain text-only.
     prefixes: ["mimo-", "longcat-", "hy", "omen-"],
     route: "chat",
     contextWindowTokens: 262_144,
@@ -99,7 +101,7 @@ const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
     reasoningEfforts: ["none", "medium"],
     defaultReasoningEffort: "none",
     vision: false,
-    visionIds: ["mimo-v2.5"],
+    visionIds: ["mimo-v2.5", "mimo-v2.6-flash", "mimo-v2.6-pro", "longcat-2.5-preview-free"],
   },
   {
     // Per https://ai.developer.meta.com/docs/reasoning: minimal → xhigh
@@ -134,7 +136,7 @@ const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
     vision: true,
   },
   {
-    // Qwen Max is text-only; Plus/Flash are native vision-language (1M ctx).
+    // Qwen3.7 Max is text-only; Qwen3.8 Max and verified Plus/Flash see images.
     // MiniMax M3 is native multimodal (1M ctx); M2.7/M2.5 unverified.
     prefixes: ["minimax-", "qwen"],
     route: "messages",
@@ -143,7 +145,7 @@ const OPENCODE_GO_FAMILIES: OpenCodeGoFamily[] = [
     reasoningEfforts: ["none", "medium"],
     defaultReasoningEffort: "medium",
     vision: false,
-    visionIds: ["minimax-m3", "qwen3.5-plus", "qwen3.6-plus", "qwen3.7-plus", "qwen3.8-flash"],
+    visionIds: ["minimax-m3", "qwen3.5-plus", "qwen3.6-plus", "qwen3.7-plus", "qwen3.8-flash", "qwen3.8-max"],
   },
 ];
 

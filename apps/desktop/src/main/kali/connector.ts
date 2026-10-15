@@ -9,6 +9,7 @@ import {
 } from "../../shared/kali";
 import { HeadTailOutputBuffer } from "../terminal/outputBuffer";
 import { redactSecrets } from "../security/redact";
+import { waitWithAbort } from "../abort";
 
 const RPC_LIMIT = 2 * 1024 * 1024;
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
@@ -38,7 +39,7 @@ export class KaliRequestError extends Error {
 }
 
 export interface KaliRpcTransport {
-  request(environment: KaliEnvironment, request: Record<string, unknown>): Promise<unknown>;
+  request(environment: KaliEnvironment, request: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 }
 
 export const buildKaliSshArgs = (environment: KaliEnvironment) => {
@@ -81,7 +82,8 @@ const verifyHostPin = async (environment: KaliEnvironment) => {
 };
 
 export class OpenSshKaliTransport implements KaliRpcTransport {
-  async request(environment: KaliEnvironment, request: Record<string, unknown>): Promise<unknown> {
+  async request(environment: KaliEnvironment, request: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
     let args: string[];
     try {
       args = buildKaliSshArgs(environment);
@@ -92,6 +94,7 @@ export class OpenSshKaliTransport implements KaliRpcTransport {
     const payload = JSON.stringify({ ...request, version: KALI_PROTOCOL_VERSION }) + "\n";
     if (Buffer.byteLength(payload) > 128 * 1024) throw new KaliRequestError("Kali request exceeds 128 KiB.", true);
     return new Promise((resolve, reject) => {
+      signal?.throwIfAborted();
       const child = spawn(environment.sshExecutable ?? "ssh", args, {
         shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
       });
@@ -103,6 +106,7 @@ export class OpenSshKaliTransport implements KaliRpcTransport {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         if (error) {
           child.kill();
           reject(error);
@@ -113,6 +117,8 @@ export class OpenSshKaliTransport implements KaliRpcTransport {
         child.kill();
         finish(new KaliConnectionError("SSH request timed out."));
       }, 10_000);
+      const onAbort = () => finish(new DOMException("SSH read cancelled.", "AbortError"));
+      signal?.addEventListener("abort", onAbort, { once: true });
       child.stdout.on("data", (data: Buffer) => {
         length += data.length;
         if (length > RPC_LIMIT) {
@@ -167,22 +173,23 @@ export class KaliConnector {
     this.environment = { ...environment };
   }
 
-  private async call(operation: string, fields: Record<string, unknown> = {}) {
+  private async call(operation: string, fields: Record<string, unknown> = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const request = { ...fields, operation, version: KALI_PROTOCOL_VERSION };
     try {
-      return await this.transport.request(this.environment, request);
+      return await waitWithAbort(this.transport.request(this.environment, request, signal), signal);
     } catch (error) {
       // Retry retained-state reads only. Submit/cancel must not be replayed
       // automatically when their delivery is uncertain.
-      if (!(error instanceof KaliConnectionError) || !error.connectionLost ||
+      if (signal?.aborted || !(error instanceof KaliConnectionError) || !error.connectionLost ||
           !["capabilities", "lookup", "inspect", "output", "artifact"].includes(operation)) throw error;
-      await delay(250);
-      return this.transport.request(this.environment, request);
+      await delay(250, undefined, { signal });
+      return waitWithAbort(this.transport.request(this.environment, request, signal), signal);
     }
   }
 
-  async capabilities(tools: string[] = []): Promise<KaliCapabilities> {
-    const value = await this.call("capabilities", { tools });
+  async capabilities(tools: string[] = [], signal?: AbortSignal): Promise<KaliCapabilities> {
+    const value = await this.call("capabilities", { tools }, signal);
     if (!record(value) || value.protocolVersion !== KALI_PROTOCOL_VERSION ||
         typeof value.os !== "string" || typeof value.architecture !== "string" ||
         typeof value.pythonVersion !== "string" || typeof value.jobRoot !== "string" ||

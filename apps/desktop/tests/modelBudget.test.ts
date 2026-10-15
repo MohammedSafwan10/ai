@@ -42,7 +42,7 @@ describe("desktop model metadata and runtime budgets", () => {
       contextWindowTokens: 1_048_576,
       maxOutputTokens: 131_072,
       defaultOutputTokens: 16_384,
-      supportsImageInput: false,
+      supportsImageInput: true,
     });
     expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free")).toMatchObject({
       contextWindowTokens: 262_144,

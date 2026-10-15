@@ -963,11 +963,9 @@
 }
 
 .history-load-control {
-  position: sticky;
-  top: 10px;
-  z-index: 4;
+  position: static;
   display: block;
-  margin: 0 auto;
+  margin: 8px auto 12px;
   padding: 6px 10px;
   border: 1px solid var(--privora-border);
   border-radius: 6px;

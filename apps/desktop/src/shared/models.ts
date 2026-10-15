@@ -125,7 +125,7 @@ const modelOptions: ModelOption[] = [
     label: "DeepSeek V4.1 Flash (Go)",
     provider: "opencode-go",
     supportsTools: true,
-    supportsImageInput: false,
+    supportsImageInput: true,
     supportsReasoning: true,
     reasoningEfforts: ["none", "high", "xhigh"],
     defaultReasoningEffort: "high",

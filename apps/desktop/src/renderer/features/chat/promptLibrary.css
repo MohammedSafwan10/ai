@@ -9,6 +9,11 @@
 .prompt-library-count { margin: 0; font-size: 11px; color: var(--privora-muted); }
 .prompt-library nav { flex: 1; }
 .prompt-library nav strong svg { margin-right: 6px; }
+.prompt-library nav button[draggable="true"] { cursor: grab; }
+.prompt-library nav button[draggable="true"]:active { cursor: grabbing; }
+.prompt-library nav button.prompt-drop-before { box-shadow: inset 0 2px 0 var(--privora-text); }
+.prompt-library nav button.prompt-drop-after { box-shadow: inset 0 -2px 0 var(--privora-text); }
+.prompt-library .prompt-drag-grip { color: var(--privora-muted); flex-shrink: 0; }
 .prompt-library-pagination { display: flex; align-items: center; justify-content: space-between; gap: 7px; font-size: 11px; color: var(--privora-muted); }
 .prompt-library-discard { display: flex; gap: 8px; padding: 10px 20px; align-items: center; flex-wrap: wrap; font-size: 12px; border-bottom: 1px solid var(--privora-border); }
 .prompt-library button[aria-pressed="true"] { background: var(--privora-surface-faint); color: var(--privora-text); border-color: currentColor; }

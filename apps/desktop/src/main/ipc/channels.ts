@@ -1,6 +1,7 @@
 export const channels = {
   listSavedPrompts: "desktop:listSavedPrompts",
   querySavedPrompts: "desktop:querySavedPrompts",
+  reorderPinnedPrompt: "desktop:reorderPinnedPrompt",
   getSavedPrompt: "desktop:getSavedPrompt",
   updatePromptMetadata: "desktop:updatePromptMetadata",
   savePrompt: "desktop:savePrompt",
@@ -21,6 +22,7 @@ export const channels = {
   listSecurityEnvironments: "desktop:listSecurityEnvironments",
   checkSecurityEnvironment: "desktop:checkSecurityEnvironment",
   createSecurityWorkspace: "desktop:createSecurityWorkspace",
+  updateSecurityWorkspace: "desktop:updateSecurityWorkspace",
   getSecurityWorkspaceState: "desktop:getSecurityWorkspaceState",
   cancelSecurityJob: "desktop:cancelSecurityJob",
   openSecurityEvidenceFolder: "desktop:openSecurityEvidenceFolder",

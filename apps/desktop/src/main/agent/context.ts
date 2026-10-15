@@ -523,6 +523,8 @@ const estimateMessageTokens = (message: ProviderMessage) => {
 };
 
 const compactStructuredValue = (value: unknown, budget: { remaining: number }, depth = 0): unknown => {
+  // Match JSON semantics: absent object properties are omitted; array slots are null.
+  if (value === undefined) return null;
   if (budget.remaining <= 0) return "[truncated]";
   if (value === null || typeof value === "number" || typeof value === "boolean") {
     budget.remaining -= String(value).length;
@@ -541,7 +543,7 @@ const compactStructuredValue = (value: unknown, budget: { remaining: number }, d
   }
   if (typeof value === "object") {
     const output: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined).slice(0, 100)) {
       budget.remaining -= key.length;
       output[key] = compactStructuredValue(item, budget, depth + 1);
       if (budget.remaining <= 0) break;

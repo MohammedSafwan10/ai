@@ -11,6 +11,7 @@ export const savePromptSchema = z.object({
 export type SavePromptInput = z.infer<typeof savePromptSchema>;
 export interface SavedPrompt extends Omit<SavePromptInput, "id"> {
   id: string;
+  pinnedOrder?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -29,6 +30,11 @@ export const promptMetadataSchema = z.object({
   pinned: z.boolean().optional(), category: z.string().trim().min(1).max(60).optional(),
 }).strict();
 export type PromptMetadataInput = z.infer<typeof promptMetadataSchema>;
+export const reorderPinnedPromptSchema = z.object({
+  id: z.string().min(1).max(100), targetId: z.string().min(1).max(100),
+  position: z.enum(["before", "after"]),
+}).strict();
+export type ReorderPinnedPromptInput = z.infer<typeof reorderPinnedPromptSchema>;
 
 export const preparationPrompt: SavePromptInput = {
   id: "investigation-preparation",

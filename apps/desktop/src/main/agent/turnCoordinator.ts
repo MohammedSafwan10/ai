@@ -1977,6 +1977,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       this.emit({ type: "image.started", image: imageStartEvent(call, threadId, messageId) });
     }
     const result = await this.tools.execute(call, {
+      securityWorkspace: this.store.getWorkspace(this.store.getThread(threadId)?.workspaceId)?.type === "security",
       workspaceId: this.store.getThread(threadId)?.workspaceId || "",
       workspaceRoot,
       signal: controller.signal,
