@@ -228,7 +228,7 @@ function ChatMessageComponent({
         </div>
         {showMessageActions && (
           <div className="message-actions" aria-label="Message actions">
-            <button type="button" title="Copy" className={copied ? "success" : undefined} onClick={copyMessage}>
+            <button type="button" title={copied ? "Copied" : "Copy"} aria-label={copied ? "Copied" : "Copy message"} className={clsx("message-action-button", copied && "success")} onClick={copyMessage}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
             {isUser && !message.agentMessage && !message.steeredTurnId && onEditMessage && (
@@ -562,6 +562,20 @@ function timelineRank(item: AssistantTimelineItem) {
 }
 
 function AgentCoordinationLine({ message, subagents, onOpenSubagent, details = false }: { message: ChatMessageRecord; subagents: SubagentRecord[]; onOpenSubagent?: (threadId: string) => void; details?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const copyCoordinationMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
   const metadata = message.agentMessage!;
   const delivery = metadata.delivery === "delivered" ? "Delivered to context" : "Queued";
   const target = metadata.outgoing ? metadata.recipientThreadId : metadata.senderThreadId;
@@ -569,7 +583,7 @@ function AgentCoordinationLine({ message, subagents, onOpenSubagent, details = f
   const peer = (metadata.outgoing ? metadata.recipientLabel : metadata.senderLabel).replace(/ \[[^\]]+\]$/, "");
   const label = <><MessageCircle size={13} /><span>{metadata.outgoing ? "Sent message to" : "Received message from"} {peer === "Parent" ? "parent" : peer}</span>{metadata.delivery === "queued" && <small>Queued</small>}</>;
   const title = `${metadata.senderLabel} sent a message to ${metadata.recipientLabel} · ${delivery}`;
-  if (details) return <details className="agent-coordination-line"><summary title={title}>{label}</summary><div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown><button type="button" onClick={() => { void navigator.clipboard.writeText(message.content); }} title="Copy message"><Copy size={13} /></button></div></details>;
+  if (details) return <details className="agent-coordination-line"><summary title={title}>{label}</summary><div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown><button type="button" className={clsx("message-action-button", copied && "success")} onClick={() => { void copyCoordinationMessage(); }} title={copied ? "Copied" : "Copy"} aria-label={copied ? "Copied" : "Copy message"}>{copied ? <Check size={14} /> : <Copy size={14} />}</button></div></details>;
   return child && onOpenSubagent ? <button type="button" className="agent-coordination-line agent-coordination-button" title={title} onClick={() => onOpenSubagent(child.threadId)}>{label}</button> : <div className="agent-coordination-line agent-coordination-label" title={title}>{label}</div>;
 }
 

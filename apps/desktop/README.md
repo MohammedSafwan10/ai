@@ -14,7 +14,7 @@ See the [Security workspace documentation](docs/security-workspace/README.md) fo
 - Supports approval gates for risky actions and reusable approval scopes.
 - Keeps file diffs, hashes, warnings, and undo metadata for review.
 - Provides Plan Mode for research/planning without mutating the workspace.
-- Provides Reviewer Swarm mode for automatic read-only review by two model-inheriting subagents before the final answer.
+- Provides Reviewer Swarm mode for automatic read-only review by two read-only subagents before the final answer.
 - Shows active and completed subagents, live child transcripts, and visible parent/child coordination messages.
 - Compacts long conversations with preserved operator instructions, evidence references, operational state, validated checkpoints, and restart recovery.
 - Stores settings, threads, workspaces, secrets, and recovery metadata locally.
@@ -111,11 +111,18 @@ In Plan Mode, mutating tools and risky terminal actions are blocked. When a prop
 
 Reviewer Swarm is an optional composer mode for higher-confidence turns.
 
-When enabled, the main agent works normally. After qualifying tool work completes, Privora launches exactly two read-only reviewer subagents. They inherit the parent thread's model/provider and reasoning effort, run with nested swarms disabled, and inspect the turn for request satisfaction, bugs/regressions, missing tests, security risks, and data-loss risks.
+When enabled, the main agent works normally. After qualifying tool work completes, Privora launches exactly two read-only reviewer subagents. They use the chat's Subagent model choice (Same as parent by default), inherit a compatible reasoning effort, run with nested swarms disabled, and inspect the turn for request satisfaction, bugs/regressions, missing tests, security risks, and data-loss risks.
 
 Reviewer reports are fed back to the parent model before the final response. The parent writes the user-facing final answer naturally from those reports instead of relying on local keyword or regex pass/fail parsing. Reviewer startup failures or timeouts are surfaced as verification risk rather than deadlocking the parent turn.
 
 ## Subagents and Long Conversations
+
+Open the composer's model menu and choose **Subagent model** to select a separate
+model for new children, including Reviewer Swarm. **Same as parent** is the default.
+The choice is saved for this chat and as the default for new chats. Existing children
+keep their assigned model on follow-up. The selected provider needs its usual
+credentials or account access. Reasoning uses the parent's effort when supported,
+otherwise the child model's default. Nested children follow the root chat's choice.
 
 The Subagents panel separates active, completed, and needs-attention agents.
 Open a child to follow its streamed conversation and tool activity. Inline events

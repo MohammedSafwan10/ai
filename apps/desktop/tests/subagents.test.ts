@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { reviewerReadOnlyBlockReason, VerificationEngine, type VerificationEnginePorts } from "../src/main/agent/harness/verificationEngine";
-import { SubagentManager, resolveSubagentModel, type SubagentManagerPorts } from "../src/main/agent/harness/subagentManager";
+import { SubagentManager, resolveSubagentModel, resolveNewSubagentSettings, type SubagentManagerPorts } from "../src/main/agent/harness/subagentManager";
 import { ToolCallCoordinator } from "../src/main/agent/harness/toolCallCoordinator";
 import { TurnRegistry } from "../src/main/agent/harness/turnRegistry";
 import { DesktopStore } from "../src/main/db/store";
@@ -146,7 +146,56 @@ describe("subagent topology", () => {
     expect(store.getThread(agent.threadId)?.model).toBe("gpt-5.6-sol");
   });
 
-  it("uses the current parent model for child turns", () => {
+  it("uses the operator child model, clamps effort and pins it through follow-ups", async () => {
+    const store = createStore();
+    const workspace = store.upsertWorkspace(tempDir);
+    const root = store.createThread(workspace.id);
+    store.updateThreadSettings(root.id, { model: "gpt-5.6-sol", subagentModel: "gemini-3.7-flash" });
+    const manager = new SubagentManager(store, subagentPorts());
+    const result = await manager.execute({ id: "spawn", name: "spawn_agent", arguments: { taskName: "research", message: "Read the code", model: "gpt-5.6-sol" } }, {
+      workspaceRoot: workspace.path, parentThreadId: root.id, parentMessageId: "turn",
+      parentRun: runTracker(root.id, "turn", { model: "gpt-5.6-sol", reasoningEffort: "xhigh" }), signal: new AbortController().signal,
+    });
+    expect(result.success).toBe(true);
+    const [agent] = store.listDirectSubagents(root.id);
+    expect(agent).toMatchObject({ model: "gemini-3.7-flash" });
+    expect(agent.reasoningEffort).not.toBe("xhigh");
+    expect(store.getThread(agent.threadId)?.model).toBe("gemini-3.7-flash");
+    store.updateThreadSettings(root.id, { model: "gpt-5.6-sol", subagentModel: null });
+    expect(resolveSubagentModel(store, agent)).toBe("gemini-3.7-flash");
+    expect(resolveNewSubagentSettings(store, root.id, "gpt-5.6-sol", "high").model).toBe("gpt-5.6-sol");
+  });
+
+  it("persists defaults and explicit Same as parent independently across chats and restart", () => {
+    let store = createStore();
+    store.saveSettings({ subagentModel: "gemini-3.7-flash" });
+    const workspace = store.upsertWorkspace(tempDir);
+    const first = store.createThread(workspace.id); const second = store.createThread(workspace.id);
+    store.updateThreadSettings(first.id, { subagentModel: null });
+    store.saveSettings({ subagentModel: "gpt-5.6-sol" });
+    store.close(); currentStore = new DesktopStore(tempDir); store = currentStore;
+    expect(store.getSettings().subagentModel).toBe("gpt-5.6-sol");
+    expect(store.getThread(first.id)?.subagentModel).toBeNull();
+    expect(store.getThread(second.id)?.subagentModel).toBe("gemini-3.7-flash");
+    expect(resolveNewSubagentSettings(store, first.id, "gpt-5.6-sol", "high").model).toBe("gpt-5.6-sol");
+    expect(resolveNewSubagentSettings(store, second.id, "gpt-5.6-sol", "high").model).toBe("gemini-3.7-flash");
+    expect(store.createThread(workspace.id).subagentModel).toBe("gpt-5.6-sol");
+  });
+
+  it("applies the root choice to nested children rather than unrelated global defaults", () => {
+    const store = createStore(); const workspace = store.upsertWorkspace(tempDir);
+    const root = store.createThread(workspace.id);
+    store.updateThreadSettings(root.id, { subagentModel: "gemini-3.7-flash" });
+    const child = createSubagent(store, root.id, "research", "/root/research");
+    store.saveSettings({ subagentModel: "gpt-5.6-sol" });
+    expect(resolveNewSubagentSettings(store, child.threadId, "gpt-5.6-sol", "high").model).toBe("gemini-3.7-flash");
+    store.updateThreadSettings(root.id, { subagentModel: null });
+    expect(resolveNewSubagentSettings(store, child.threadId, "gpt-5.6-sol", "high").model).toBe("gpt-5.6-sol");
+    store.updateThreadSettings(root.id, { subagentModel: "removed-model" });
+    expect(() => resolveNewSubagentSettings(store, child.threadId, "gpt-5.6-sol", "high")).toThrow("Unknown or removed model");
+  });
+
+  it("keeps a legacy child saved model when the parent model changes", () => {
     const store = createStore();
     store.saveSettings({ model: "gemini-3.7-flash" });
     const workspace = store.upsertWorkspace(tempDir);
@@ -165,7 +214,7 @@ describe("subagent topology", () => {
       prompt: "Child task",
       model: "gemini-3.7-flash",
     });
-    expect(resolveSubagentModel(store, agent)).toBe("gpt-5.6-sol");
+    expect(resolveSubagentModel(store, agent)).toBe("gemini-3.7-flash");
   });
 
   it("separates direct children from descendants and does not include the parent as its own child", () => {
@@ -295,7 +344,7 @@ describe("subagent waiting", () => {
 });
 
 describe("reviewer swarm harness", () => {
-  it("starts exactly two read-only reviewers that inherit the parent model and reasoning effort", async () => {
+  it.each([null, "gemini-3.7-flash"])("starts two read-only reviewers using child model preference %s", async (subagentModel) => {
     const store = createStore();
     store.saveSettings({ model: "gemini-3.7-flash", agentHarnessMode: "review_swarm" });
     const workspace = store.upsertWorkspace(tempDir);
@@ -305,6 +354,7 @@ describe("reviewer swarm harness", () => {
       reasoningEffort: "high",
       collaborationMode: "default",
       agentHarnessMode: "review_swarm",
+      subagentModel,
     });
     store.upsertToolEvent({
       id: "parent-edit",
@@ -352,7 +402,7 @@ describe("reviewer swarm harness", () => {
     expect(feedback).toContain("Reviewer Swarm reports are ready.");
     expect(feedback).toContain("Write only the user-facing final response.");
     expect(feedback).toContain("No blocking issues found.");
-    expect(reviewers.map((agent) => agent.model)).toEqual(["gpt-5.6-sol", "gpt-5.6-sol"]);
+    expect(reviewers.map((agent) => agent.model)).toEqual([subagentModel || "gpt-5.6-sol", subagentModel || "gpt-5.6-sol"]);
     expect(reviewers.map((agent) => agent.reasoningEffort)).toEqual(["high", "high"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.agentHarnessMode)).toEqual(["standard", "standard"]);
     expect(reviewers.map((agent) => store.getThread(agent.threadId)?.collaborationMode)).toEqual(["default", "default"]);

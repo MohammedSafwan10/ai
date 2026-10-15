@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { splitComposerSettingsForPersistence } from "../src/renderer/features/chat/settingsPersistence";
 
 describe("composer settings persistence", () => {
+  it("carries a child model and explicit inheritance reset through both save paths", () => {
+    for (const subagentModel of ["gemini-3.7-flash", null]) {
+      const result = splitComposerSettingsForPersistence({ subagentModel });
+      expect(result.globalSettings).toEqual({ subagentModel });
+      expect(result.threadSettings.subagentModel).toBe(subagentModel);
+    }
+  });
   it("saves model and reasoning as global defaults for new chats", () => {
     const { globalSettings, threadSettings } = splitComposerSettingsForPersistence({
       model: "gpt-5.6-sol",

@@ -18,6 +18,7 @@ import {
   subagentToolData,
 } from "../harness/support/subagentRuntime";
 import { delay } from "../harness/support/errors";
+import type { ReasoningEffort } from "../../../shared/models";
 import { getModelOption } from "../../../shared/models";
 
 const MAX_LIVE_SUBAGENTS_PER_PARENT = 3;
@@ -118,6 +119,10 @@ export class SubagentManager {
     if (!forkTurns.valid) return { success: false, error: "forkTurns must be none, all, or a positive integer string." };
     const usedNicknames = new Set(this.store.listDirectSubagents(context.parentThreadId).map((agent) => (agent.agentNickname || "").toLowerCase()).filter(Boolean));
     const thread = this.store.getThread(context.parentThreadId);
+    const selection = resolveNewSubagentSettings(this.store, context.parentThreadId,
+      context.parentRun?.model || parentAgent?.model || thread?.model || settings.model,
+      parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort)
+        || role?.reasoningEffort || context.parentRun?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort);
     const agent = this.store.createSubagent({
       parentThreadId: context.parentThreadId,
       parentMessageId: context.parentMessageId,
@@ -127,9 +132,7 @@ export class SubagentManager {
       agentRole: role?.name,
       agentNickname: pickSubagentNickname(role, usedNicknames, taskName),
       prompt: message,
-      model: getModelOption(context.parentRun?.model || parentAgent?.model || thread?.model || settings.model).id,
-      reasoningEffort: parseReasoningEffort(call.arguments.reasoningEffort || call.arguments.reasoning_effort)
-        || role?.reasoningEffort || context.parentRun?.reasoningEffort || thread?.reasoningEffort || settings.reasoningEffort,
+      ...selection,
     });
     this.ports.startSubagentTurn(agent, context.workspaceRoot, message, role, forkTurns.value);
     this.ports.emitSnapshot();
@@ -249,5 +252,21 @@ export const resolveSubagentModel = (
 ) => {
   const parentAgent = store.getSubagentByThread(agent.parentThreadId);
   const parentThread = store.getThread(agent.parentThreadId);
-  return getModelOption(parentAgent?.model || parentThread?.model || agent.model || store.getSettings().model).id;
+  return getModelOption(agent.model || parentAgent?.model || parentThread?.model || store.getSettings().model).id;
+};
+
+/** Operator-selected child model applies to new children throughout this chat tree. */
+export const resolveNewSubagentSettings = (
+  store: DesktopStore,
+  parentThreadId: string,
+  parentModel: string,
+  parentReasoning: ReasoningEffort,
+) => {
+  const root = store.getThread(store.rootAgentThread(parentThreadId));
+  const preference = root?.subagentModel !== undefined ? root.subagentModel : store.getSettings().subagentModel;
+  const model = getModelOption(preference || parentModel);
+  return {
+    model: model.id,
+    reasoningEffort: model.reasoningEfforts.includes(parentReasoning) ? parentReasoning : model.defaultReasoningEffort,
+  };
 };

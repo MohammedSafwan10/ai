@@ -79,6 +79,7 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
+  const [modelPickerTarget, setModelPickerTarget] = useState<"chat" | "subagent">("chat");
   const [modelSearch, setModelSearch] = useState("");
   const [goModelIds, setGoModelIds] = useState<string[]>([]);
   const goFetchedRef = useRef(false);
@@ -88,6 +89,7 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = findModelOption(settings.model) ?? unavailableModel(settings.model);
+  const subagentModel = settings.subagentModel ? findModelOption(settings.subagentModel) ?? unavailableModel(settings.subagentModel) : null;
   const activeReasoningOptions = reasoningOptions.filter((option) => activeModel.reasoningEfforts.includes(option.id));
   const modelProviderGroups = useMemo(
     () => withDiscoveredGoModels(getModelProviderGroups(), goModelIds),
@@ -101,7 +103,7 @@ export function Composer({
       return terms.every((term) => text.includes(term) || compact.includes(term.replace(/[^a-z0-9]/g, "")));
     }) })).filter((group) => group.models.length > 0);
   }, [modelProviderGroups, modelSearch]);
-  useEffect(() => { if (activeMenu !== "model") setModelSearch(""); }, [activeMenu]);
+  useEffect(() => { setModelSearch(""); }, [activeMenu, modelPickerTarget]);
   useEffect(() => {
     if (activeMenu !== "model" || !settings.opencodeGoApiKeyStored || goFetchedRef.current) return;
     goFetchedRef.current = true;
@@ -118,9 +120,10 @@ export function Composer({
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
   const toggleMenu = (menu: ComposerMenu) => {
+    setModelPickerTarget("chat");
     setActiveMenu((current) => {
       const next = current === menu ? null : menu;
-      setModelSubmenuOpen(next === "model");
+      setModelSubmenuOpen(false);
       return next;
     });
     setMentionToken(null);
@@ -770,11 +773,21 @@ export function Composer({
               <div className={clsx("floating-menu model-reasoning-menu", modelSubmenuOpen && "submenu-open")}>
                 <button
                   type="button"
-                  className={clsx("model-branch-row", modelSubmenuOpen && "active")}
-                  onFocus={() => setModelSubmenuOpen(true)}
-                  onClick={() => setModelSubmenuOpen((open) => !open)}
+                  className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "chat" && "active")}
+                  onFocus={() => { setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
+                  onClick={() => { setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
                 >
                   <span>{modelDisplayLabel(activeModel.label)}</span>
+                  <ChevronRight size={17} />
+                </button>
+                <button
+                  type="button"
+                  className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "subagent" && "active")}
+                  title="Choose the model for new subagents. Existing children keep their assigned model."
+                  onFocus={() => { setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
+                  onClick={() => { setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
+                >
+                  <span className="subagent-model-label"><span>Subagent model</span><small>{subagentModel ? modelDisplayLabel(subagentModel.label) : "Same as parent"}</small></span>
                   <ChevronRight size={17} />
                 </button>
                 <div className="composer-menu-divider" />
@@ -802,8 +815,9 @@ export function Composer({
                     onClick={() => setModelSubmenuOpen(false)}
                   >
                     <ChevronLeft size={15} />
-                    <span>Model and effort</span>
+                    <span>{modelPickerTarget === "subagent" ? "Subagent model" : "Model and effort"}</span>
                   </button>
+                  {modelPickerTarget === "subagent" && <button type="button" onClick={() => { onSettings({ subagentModel: null }); setActiveMenu(null); }}><span>Same as parent</span>{!settings.subagentModel && <Check size={14} />}</button>}
                   <div className="model-picker-search">
                     <input type="search" autoFocus aria-label="Search models" placeholder="Search models…" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } }} />
                   </div>
@@ -817,7 +831,8 @@ export function Composer({
                           type="button"
                           title={`${model.supportsImageInput ? "Supports image input" : "Text input only"} · ${formatTokenCount(model.contextWindowTokens)} context · ${formatTokenCount(model.maxOutputTokens)} max output`}
                           onClick={() => {
-                            onSettings({
+                            if (modelPickerTarget === "subagent") onSettings({ subagentModel: model.id });
+                            else onSettings({
                               model: model.id,
                               reasoningEffort: model.reasoningEfforts.includes(settings.reasoningEffort)
                                 ? settings.reasoningEffort
@@ -830,7 +845,7 @@ export function Composer({
                           <span className={clsx("model-capability", model.supportsImageInput ? "vision" : "text-only")}>
                             {model.supportsImageInput ? <Eye size={13} /> : <ImageOff size={13} />}
                           </span>
-                          {activeModel.id === model.id && <Check size={14} />}
+                          {(modelPickerTarget === "subagent" ? settings.subagentModel === model.id : activeModel.id === model.id) && <Check size={14} />}
                         </button>
                       ))}
                     </div>

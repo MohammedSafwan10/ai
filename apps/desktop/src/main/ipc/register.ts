@@ -1165,6 +1165,7 @@ const searchContextMentionsInputSchema = z.object({
 
 const saveSettingsInputSchema = z.object({
   model: z.string().max(160).optional(),
+  subagentModel: z.string().min(1).max(160).nullable().optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
@@ -1182,6 +1183,7 @@ const saveSettingsInputSchema = z.object({
 const saveThreadSettingsInputSchema = z.object({
   threadId: idSchema,
   model: z.string().max(160).optional(),
+  subagentModel: z.string().min(1).max(160).nullable().optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),

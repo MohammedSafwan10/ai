@@ -1,3 +1,4 @@
+import { resolveNewSubagentSettings } from "./subagentManager";
 import type { DesktopStore } from "../../db/store";
 import type { AgentHarnessMode, CollaborationMode, ReasoningEffort } from "../../../shared/models";
 import type { ChatMessageRecord, DesktopToolCall, PrivoraEventPayload, SubagentRecord } from "../../../shared/types";
@@ -125,8 +126,9 @@ export class VerificationEngine {
         agentRole: "reviewer",
         agentNickname: lens.nickname,
         prompt,
-        model: input.model || thread?.model || this.store.getSettings().model,
-        reasoningEffort: input.reasoningEffort || thread?.reasoningEffort || this.store.getSettings().reasoningEffort,
+        ...resolveNewSubagentSettings(this.store, input.threadId,
+          input.model || thread?.model || this.store.getSettings().model,
+          input.reasoningEffort || thread?.reasoningEffort || this.store.getSettings().reasoningEffort),
       });
       this.store.updateThreadSettings(agent.threadId, {
         model: agent.model,

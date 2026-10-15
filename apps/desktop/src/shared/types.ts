@@ -860,6 +860,7 @@ export type ThreadTitleSource = "placeholder" | "agent" | "user" | "fallback";
 export interface SettingsRecord {
   id: "default";
   model: string;
+  subagentModel?: string | null;
   reasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   collaborationMode: CollaborationMode;
@@ -887,6 +888,7 @@ export interface ThreadRecord {
   titleUpdatedAt?: number;
   workspaceId: string | null;
   model?: string;
+  subagentModel?: string | null;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;
@@ -1714,6 +1716,7 @@ export interface ApprovalDecisionInput {
 
 export interface SaveSettingsInput {
   model?: string;
+  subagentModel?: string | null;
   reasoningEffort?: ReasoningEffort;
   permissionMode?: PermissionMode;
   collaborationMode?: CollaborationMode;
@@ -1731,6 +1734,7 @@ export interface SaveSettingsInput {
 export interface SaveThreadSettingsInput {
   threadId: string;
   model?: string;
+  subagentModel?: string | null;
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;

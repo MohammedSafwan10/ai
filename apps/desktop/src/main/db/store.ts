@@ -152,6 +152,7 @@ export class DesktopStore {
       appwriteProjectId: defaultSettings().appwriteProjectId,
       privoraGatewayFunctionId: defaultSettings().privoraGatewayFunctionId,
       model: normalizeModelId(stored.model),
+      subagentModel: stored.subagentModel ? normalizeModelId(stored.subagentModel) : null,
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
       deepseekApiKeyStored: Boolean(this.getSecret("deepseek_api_key")),
@@ -168,6 +169,7 @@ export class DesktopStore {
       ...defaultSettings(),
       ...current,
       model: input.model ? normalizeModelId(input.model) : current.model,
+      subagentModel: input.subagentModel === undefined ? current.subagentModel ?? null : input.subagentModel ? normalizeModelId(input.subagentModel) : null,
       reasoningEffort: input.reasoningEffort ?? current.reasoningEffort,
       permissionMode: input.permissionMode ?? current.permissionMode,
       collaborationMode: input.collaborationMode ?? current.collaborationMode,
@@ -368,7 +370,7 @@ export class DesktopStore {
     const thread: ThreadRecord = {
       id: crypto.randomUUID(), title: options.title?.trim() || PLACEHOLDER_THREAD_TITLE,
       titleSource: options.title?.trim() ? "agent" : "placeholder", titleUpdatedAt: timestamp, workspaceId,
-      model: normalizeModelId(settings.model), reasoningEffort: settings.reasoningEffort, collaborationMode: settings.collaborationMode, agentHarnessMode: settings.agentHarnessMode,
+      model: normalizeModelId(settings.model), subagentModel: settings.subagentModel ?? null, reasoningEffort: settings.reasoningEffort, collaborationMode: settings.collaborationMode, agentHarnessMode: settings.agentHarnessMode,
       hidden: options.hidden === true, createdAt: timestamp, updatedAt: timestamp,
     };
     this.putThread(thread);
@@ -380,9 +382,9 @@ export class DesktopStore {
     const timestamp = now(); this.putThread({ ...thread, title: trimmed, titleSource: source, titleUpdatedAt: timestamp, updatedAt: timestamp });
     return this.getThread(threadId);
   }
-  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
+  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "subagentModel" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
     const thread = this.getThread(threadId); if (!thread) return null;
-    this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, agentHarnessMode: input.agentHarnessMode ?? thread.agentHarnessMode, updatedAt: now() });
+    this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, subagentModel: input.subagentModel === undefined ? thread.subagentModel : input.subagentModel ? normalizeModelId(input.subagentModel) : null, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, agentHarnessMode: input.agentHarnessMode ?? thread.agentHarnessMode, updatedAt: now() });
     return this.getThread(threadId);
   }
   updatePlaceholderThreadTitle(threadId: string, title: string, source: Extract<ThreadTitleSource, "agent" | "fallback">) {
@@ -585,7 +587,7 @@ export class DesktopStore {
     const normalized = target.trim().toLowerCase(); if (!normalized) return null;
     return this.listSubagents(parentThreadId).find((agent) => [agent.id, agent.threadId, agent.taskName, agent.agentPath, agent.agentNickname || ""].some((value) => value.toLowerCase() === normalized)) || null;
   }
-  updateSubagent(threadId: string, patch: Partial<Pick<SubagentRecord, "status" | "finalMessage" | "lastPreview" | "closedAt" | "agentNickname" | "agentRole">>) {
+  updateSubagent(threadId: string, patch: Partial<Pick<SubagentRecord, "status" | "finalMessage" | "lastPreview" | "closedAt" | "agentNickname" | "agentRole" | "model" | "reasoningEffort">>) {
     const agent = this.getSubagentByThread(threadId) || this.one<SubagentRecord>("SELECT payload FROM subagents WHERE id = ?", threadId);
     if (!agent) return null; const updated = { ...agent, ...patch, updatedAt: now() }; this.putSubagent(updated); return updated;
   }

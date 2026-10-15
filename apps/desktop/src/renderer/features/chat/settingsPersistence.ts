@@ -3,6 +3,7 @@ import type { SaveSettingsInput } from "../../../shared/types";
 export const splitComposerSettingsForPersistence = (settings: SaveSettingsInput) => {
   const threadSettings = {
     model: settings.model,
+    subagentModel: settings.subagentModel,
     reasoningEffort: settings.reasoningEffort,
     collaborationMode: settings.collaborationMode,
     agentHarnessMode: settings.agentHarnessMode,

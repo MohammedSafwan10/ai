@@ -93,6 +93,8 @@ export const subagentToolData = (agent: SubagentRecord) => ({
   nickname: agent.agentNickname,
   role: agent.agentRole,
   status: agent.status,
+  model: agent.model,
+  reasoningEffort: agent.reasoningEffort,
   finalMessage: agent.finalMessage,
   lastPreview: agent.lastPreview,
 });

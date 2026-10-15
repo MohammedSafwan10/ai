@@ -2198,6 +2198,13 @@ export class TurnCoordinator implements AgentHarnessApi {
     this.activeRuns.set(agent.threadId, run);
     this.emitRun(run);
     const inheritedModel = resolveSubagentModel(this.store, agent);
+    const childModel = getModelOption(inheritedModel);
+    const childReasoning = agent.reasoningEffort && childModel.reasoningEfforts.includes(agent.reasoningEffort)
+      ? agent.reasoningEffort : childModel.defaultReasoningEffort;
+    if (agent.model !== inheritedModel || agent.reasoningEffort !== childReasoning) {
+      this.store.updateSubagent(agent.threadId, { model: inheritedModel, reasoningEffort: childReasoning });
+      this.store.updateThreadSettings(agent.threadId, { model: inheritedModel, reasoningEffort: childReasoning });
+    }
     const subagentBudget = resolveModelRuntimeBudget(inheritedModel, "normal");
     const history = [
       subagentInstructionMessage(agent, role, forkTurns),
@@ -2217,7 +2224,7 @@ export class TurnCoordinator implements AgentHarnessApi {
       recoveryAttempts: 0,
       parentThreadId: agent.parentThreadId,
       model: inheritedModel,
-      reasoningEffort: agent.reasoningEffort,
+      reasoningEffort: childReasoning,
       readOnlyTools: isReadOnlySubagentTask(agent.taskName),
     }).catch((error) => {
       this.store.updateSubagent(agent.threadId, {

@@ -90,10 +90,11 @@ export default function App() {
   const activeThreadSettings = useMemo(() => ({
     ...snapshot.settings,
     model: activeThread?.model || snapshot.settings.model,
+    subagentModel: activeThread?.subagentModel !== undefined ? activeThread.subagentModel : snapshot.settings.subagentModel,
     reasoningEffort: activeThread?.reasoningEffort || snapshot.settings.reasoningEffort,
     collaborationMode: activeThread?.collaborationMode || snapshot.settings.collaborationMode,
     agentHarnessMode: activeThread?.agentHarnessMode || snapshot.settings.agentHarnessMode,
-  }), [activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
+  }), [activeThread?.subagentModel, activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
   const lastToolUpdatedAt = useMemo(
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
@@ -235,7 +236,7 @@ export default function App() {
     const { globalSettings, threadSettings } = splitComposerSettingsForPersistence(settings);
     try {
       if (Object.keys(globalSettings).length > 0) await window.privoraDesktop.saveSettings(globalSettings);
-      if (activeThread && (threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
+      if (activeThread && (threadSettings.subagentModel !== undefined || threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
         await window.privoraDesktop.saveThreadSettings({
           threadId: activeThread.id,
           ...threadSettings,

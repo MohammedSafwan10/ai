@@ -458,23 +458,34 @@
   transform: translateY(0);
 }
 
-.message-actions button {
+.message-actions button,
+.message-action-button {
   display: inline-grid;
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   place-items: center;
+  border: 0;
   border-radius: 5px;
   background: transparent;
-  color: inherit;
+  color: var(--privora-muted);
   padding: 0;
+  cursor: pointer;
 }
 
 .message-actions button:hover,
-.message-actions button.active {
+.message-actions button.active,
+.message-action-button:hover {
   color: var(--privora-text);
+  background: var(--privora-surface-faint);
 }
 
-.message-actions button.success {
+.message-action-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.message-actions button.success,
+.message-action-button.success {
   color: var(--ok);
 }
 

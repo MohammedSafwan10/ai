@@ -35,6 +35,16 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("accepts child model choices and null resets through settings IPC", () => {
+    const root = store.createThread(null);
+    invoke(channels.saveSettings, { subagentModel: "gemini-3.7-flash" });
+    expect(store.getSettings().subagentModel).toBe("gemini-3.7-flash");
+    invoke(channels.saveThreadSettings, { threadId: root.id, subagentModel: "gpt-5.6-sol" });
+    expect(store.getThread(root.id)?.subagentModel).toBe("gpt-5.6-sol");
+    invoke(channels.saveThreadSettings, { threadId: root.id, subagentModel: null });
+    expect(store.getThread(root.id)?.subagentModel).toBeNull();
+    expect(() => invoke(channels.saveThreadSettings, { threadId: root.id, subagentModel: "" })).toThrow();
+  });
   it("reads a child transcript without switching chats and rejects another chat tree", async () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
     const root = store.createThread(workspace.id); const other = store.createThread(workspace.id);
