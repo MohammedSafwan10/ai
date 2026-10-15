@@ -1,4 +1,5 @@
 import type { BrowserWindow } from "electron";
+import { assertWorkspaceDirectory } from "../workspace/availability";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
 import { assertModelSupportsReasoningEffort, getModelOption, getProviderForModel, resolveModelRuntimeBudget, type AgentHarnessMode, type CollaborationMode, type ReasoningEffort } from "../../shared/models";
@@ -477,12 +478,13 @@ export class TurnCoordinator implements AgentHarnessApi {
 
   private async startTurnImpl(input: StartTurnInput) {
     const releaseStart = this.turnRegistry.begin(input.threadId, () => this.isThreadBusy(input.threadId));
-    this.discardResumableRun(input.threadId);
     const thread = this.store.getThread(input.threadId);
     try {
       if (!thread) throw new Error("Thread not found.");
       const workspace = this.store.getWorkspace(thread.workspaceId);
       if (!workspace) throw new Error("Select a workspace before starting the desktop agent.");
+      assertWorkspaceDirectory(workspace.path);
+      this.discardResumableRun(input.threadId);
       const settings = this.store.getSettings();
       const effectiveModel = getModelOption(input.model || thread.model || settings.model).id;
       const effectiveReasoning = input.reasoningEffort || thread.reasoningEffort || settings.reasoningEffort;

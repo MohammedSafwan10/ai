@@ -86,6 +86,10 @@
   color: color-mix(in srgb, var(--danger) 78%, var(--privora-text));
 }
 
+.workspace-recovery-note { margin-top: 8px; color: var(--privora-muted); line-height: 1.5; }
+.workspace-recovery-note p { margin: 0 0 8px; }
+.workspace-recovery-button { padding: 6px 10px; border: 1px solid var(--privora-border); border-radius: 8px; background: var(--privora-surface); color: var(--privora-text); }
+
 .queued-prompt {
   display: flex;
   align-items: center;

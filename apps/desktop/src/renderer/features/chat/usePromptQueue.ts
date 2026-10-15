@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContextMentionRecord, DesktopAttachmentRecord, StartTurnInput, SteerTurnInput, SteerTurnResult } from "../../../shared/types";
-import { beginPromptSubmission } from "./promptSubmission";
+import { beginPromptSubmission, promptSubmissionError } from "./promptSubmission";
 
 type TurnSettings = Pick<StartTurnInput, "model" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">;
 
@@ -126,11 +126,12 @@ export const usePromptQueue = ({
       startTurn({ threadId: activeThreadId, prompt, attachments, contextMentions, ...turnSettings }));
     if (!submission) return false;
     void submission
+      .then(() => { if (currentThreadRef.current === activeThreadId) setSteerError(null); })
       .catch((error) => {
         console.error(error);
         setQueuedPrompts((current) => [{ id: crypto.randomUUID(), prompt, attachments, contextMentions, turnSettings }, ...current]);
         setQueuePaused(true);
-        if (currentThreadRef.current === activeThreadId) setSteerError("Could not send the message. It remains in the paused queue.");
+        if (currentThreadRef.current === activeThreadId) setSteerError(promptSubmissionError(error));
       })
       .finally(() => {
         setSubmissionVersion((version) => version + 1);
@@ -147,10 +148,10 @@ export const usePromptQueue = ({
     }));
     if (!submission) return;
     setQueuedPrompts(rest);
-    void submission.catch(() => {
+    void submission.then(() => { if (currentThreadRef.current === activeThreadId) setSteerError(null); }).catch((error) => {
       setQueuedPrompts((current) => [next, ...current]);
       setQueuePaused(true);
-      if (currentThreadRef.current === activeThreadId) setSteerError("Could not send the queued message. The queue is paused.");
+      if (currentThreadRef.current === activeThreadId) setSteerError(promptSubmissionError(error));
     }).finally(() => setSubmissionVersion((version) => version + 1));
   }, [activeThreadId, queuePaused, queuedPrompts, resumableBlocked, running, setQueuedPrompts, setQueuePaused, startTurn, submissionVersion]);
 
@@ -163,9 +164,10 @@ export const usePromptQueue = ({
     if (!submission) return;
     setQueuePaused(false);
     setQueuedPrompts((current) => current.filter((candidate) => candidate.id !== item.id));
-    void submission.catch(() => {
+    void submission.then(() => { if (currentThreadRef.current === activeThreadId) setSteerError(null); }).catch((error) => {
       setQueuedPrompts((current) => [item, ...current]);
       setQueuePaused(true);
+      if (currentThreadRef.current === activeThreadId) setSteerError(promptSubmissionError(error));
     }).finally(() => setSubmissionVersion((version) => version + 1));
   }, [activeThreadId, running, setQueuedPrompts, setQueuePaused, startTurn]);
 

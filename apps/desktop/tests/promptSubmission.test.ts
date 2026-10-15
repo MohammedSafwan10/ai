@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { beginPromptSubmission } from "../src/renderer/features/chat/promptSubmission";
+import { beginPromptSubmission, promptSubmissionError } from "../src/renderer/features/chat/promptSubmission";
 
 const deferred = () => {
   let resolve!: () => void;
@@ -9,6 +9,10 @@ const deferred = () => {
 };
 
 describe("prompt submission ownership", () => {
+  it("retains the actionable send failure while removing Electron transport wording", () => {
+    expect(promptSubmissionError(new Error("Error invoking remote method 'desktop:startTurn': Error: Workspace folder is missing: D:\\old. Restore the folder."))).toBe("Workspace folder is missing: D:\\old. Restore the folder.");
+    expect(promptSubmissionError(null)).toContain("Could not send");
+  });
   it("prevents a queued send from racing a direct send before running is observed", async () => {
     const pending = new Set<string>();
     const first = deferred();

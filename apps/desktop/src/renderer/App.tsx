@@ -603,8 +603,10 @@ export default function App() {
           )}
           {queuedPrompts.length > 0 && (
             <div className={queuePaused ? "queued-prompts is-paused" : "queued-prompts"} aria-label="Queued prompts">
-              {queuePaused && <div className="queued-prompt-note">Queue paused after stop</div>}
-              {steerError && <div className="queued-prompt-note is-error">{steerError} Prompt kept in queue.</div>}
+              {queuePaused && <div className="queued-prompt-note">Queue paused</div>}
+              {steerError && <div className="queued-prompt-note is-error" role="alert">{steerError} Your message is saved in this chat’s queue.
+                {steerError.includes("Workspace folder") && <div className="workspace-recovery-note"><p>Restore the original folder to continue in this chat. To work in another project, copy or edit the queued message first, then choose its folder. Choosing a different project opens that project’s chats.</p><button type="button" className="workspace-recovery-button" onClick={() => { void window.privoraDesktop.selectWorkspace().then(() => refresh()).catch(console.error); }}>Choose project folder</button></div>}
+              </div>}
               {queuedHead && (
                 <div className="queued-prompt">
                   <span className="queued-prompt-index">1</span>

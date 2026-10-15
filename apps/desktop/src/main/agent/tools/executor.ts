@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { assertWorkspaceDirectory } from "../../workspace/availability";
 import { readGitHead } from "../rewindGit";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -100,6 +101,10 @@ export class DesktopToolExecutor {
   }
 
   async execute(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
+    if (call.name.startsWith("desktop_") || call.name === "exec_command") {
+      try { assertWorkspaceDirectory(context.workspaceRoot); }
+      catch (error) { return { success: false, error: error instanceof Error ? error.message : "Workspace folder is unavailable.", data: { code: "WORKSPACE_UNAVAILABLE", workspaceRoot: context.workspaceRoot } }; }
+    }
     const mutating = ["desktop_edit_file", "desktop_write_file", "desktop_apply_patch", "desktop_delete_path", "desktop_rename_path"].includes(call.name);
     const head = mutating ? await readGitHead(context.workspaceRoot) : undefined;
     const result = await this.executeWithoutCheckpoint(call, context);

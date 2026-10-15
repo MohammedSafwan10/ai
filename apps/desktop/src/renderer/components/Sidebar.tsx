@@ -53,9 +53,9 @@ export function Sidebar({
     getScrollElement: () => projectListRef.current,
     estimateSize: (index) => {
       const row = rows[index];
-      if (row?.type === "project") return 39;
-      if (row?.type === "empty-project") return 30;
-      return 40;
+      if (row?.type === "project") return 32;
+      if (row?.type === "empty-project") return 26;
+      return 32;
     },
     overscan: 8,
     getItemKey: (index) => rows[index]?.key || index,
