@@ -637,7 +637,7 @@ export const desktopToolDefinitions = [
     name: "browser_open_link",
     description: "Open a visible page link directly by browser_snapshot ref or visible link text. Prefer this over a synthetic click for dynamic sites such as YouTube/search results when the goal is navigation.",
     parameters: schema({
-      ref: textProperty("Link ref from browser_snapshot, such as b3."),
+      ref: textProperty("Exact opaque link ref from browser_snapshot. Copy the entire ref and use the same tabId; refs expire on navigation or reload."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Visible link text to match when a ref is unavailable."),
       href: textProperty("Exact href returned by browser_extract mode=links."),
@@ -648,7 +648,7 @@ export const desktopToolDefinitions = [
   {
     type: "function",
     name: "browser_snapshot",
-    description: "Capture a concise accessibility-oriented snapshot of the current built-in browser page. Use refs from this output with browser_act.",
+    description: "Capture a concise accessibility-oriented snapshot of the current built-in browser page. Copy complete opaque refs into browser_act with the same tabId. Navigation and reload invalidate refs; capture a new snapshot afterward.",
     parameters: schema({
       depth: numberProperty("Optional snapshot depth, 1-8. Default 5."),
       includeBoxes: boolProperty("If true, include element bounding boxes."),
@@ -662,7 +662,7 @@ export const desktopToolDefinitions = [
     description: "Interact with the current built-in browser page using a snapshot ref or x/y coordinate. Prefer refs from browser_snapshot.",
     parameters: schema({
       action: textProperty("Action: click, type, fill, press, scroll, select, or resize. Use fill to replace existing field text; type appends."),
-      ref: textProperty("Element ref from browser_snapshot, such as b1."),
+      ref: textProperty("Exact opaque element ref from browser_snapshot. Copy the entire ref and use the same tabId. Never reconstruct a ref or reuse one after navigation."),
       targetRef: textProperty("Alias for ref."),
       text: textProperty("Text to type for action=type."),
       key: textProperty("Key to press for action=press, such as Enter or Escape."),

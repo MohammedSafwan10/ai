@@ -159,6 +159,7 @@ export class BrowserToolExecutor {
       output: `Opened ${result.url}`,
       data: {
         workspaceId: result.workspaceId,
+        tabId: result.tabId,
         url: result.url,
         title: result.title,
         loading: result.loading,
@@ -199,6 +200,7 @@ export class BrowserToolExecutor {
         url: result.url,
         title: result.title,
         snapshot: result.snapshot,
+        tabId: result.tabId,
       },
     };
   }
@@ -303,6 +305,7 @@ export class BrowserToolExecutor {
       data: {
         tabs: result.tabs,
         activeTabId: result.activeTabId,
+          createdTabId: "createdTabId" in result ? result.createdTabId : undefined,
       },
     };
   }

@@ -105,6 +105,11 @@ export class CausalJournal {
     this.networkEntries = [];
   }
 
+  removeRequest(id: string) {
+    this.networkEntries = this.networkEntries.filter((entry) => entry.id !== id);
+    this.networkHistory = this.networkHistory.filter((entry) => entry.id !== id);
+  }
+
   begin(action: string, before: BrowserPageSummary, includeScreenshot = false) {
     const active: ActiveAction = {
       id: crypto.randomUUID(),

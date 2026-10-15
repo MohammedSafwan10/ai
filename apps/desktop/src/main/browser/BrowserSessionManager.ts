@@ -77,6 +77,7 @@ interface BrowserSessionRecord {
   bounds: Rectangle;
   viewport: { width: number; height: number };
   refs: Map<string, BrowserElementRef>;
+  refPrefix?: string;
   forms: BrowserFormRecord[];
   network: Map<string, BrowserNetworkEntry>;
   approvedAgentOrigins: Set<string>;
@@ -178,6 +179,7 @@ export class BrowserSessionManager {
     const url = normalizeBrowserUrl(rawUrl);
     const decision = browserOriginDecision(url, options.scope);
     if (!decision.allowed) throw new Error(decision.reason || "Browser navigation is not allowed.");
+    if (options.newTab) this.ensureWorkspaceTabs(workspaceId, false);
     const session = options.newTab
       ? this.createTab(workspaceId, { activate: true })
       : this.ensureSession(workspaceId, options.tabId);
@@ -204,18 +206,18 @@ export class BrowserSessionManager {
         this.syncAttachment(session);
         this.updateStateFromContents(session);
         this.updateState(session, { lastFinding: `Opened ${compactUrl(session.view.webContents.getURL())} after a soft load abort.` });
-        return session.state;
+        return { ...session.state, tabId: session.id };
       }
       session.journal.recordConsole({ level: "error", message });
       this.updateStateFromContents(session);
       this.updateState(session, { lastFinding: message, loading: false });
       this.syncAttachment(session);
       if (options.throwOnLoadFailure) throw new Error(message);
-      return session.state;
+      return { ...session.state, tabId: session.id };
     }
     this.syncAttachment(session);
     this.updateStateFromContents(session);
-    return session.state;
+    return { ...session.state, tabId: session.id };
   }
 
   async openLink(workspaceId: string, input: BrowserOpenLinkInput, options: { agentApproved?: boolean; signal?: AbortSignal } = {}) {
@@ -230,7 +232,7 @@ export class BrowserSessionManager {
       scope: options.agentApproved ? "user" : "agent",
       rememberAgentApproval: options.agentApproved,
       throwOnLoadFailure: true,
-      tabId: input.tabId,
+      tabId: session.id,
       newTab: input.newTab,
       signal: options.signal,
     });
@@ -242,6 +244,7 @@ export class BrowserSessionManager {
         url: state.url,
         title: state.title,
         activeTabId: state.activeTabId,
+        tabId: state.tabId,
       },
     };
   }
@@ -330,6 +333,7 @@ export class BrowserSessionManager {
     }
     this.updateStateFromContents(session);
     return {
+      tabId: session.id,
       url: session.state.url,
       title: session.state.title,
       snapshot,
@@ -346,6 +350,7 @@ export class BrowserSessionManager {
 
   async inspect(workspaceId: string, kind: string, tabId?: string) {
     const session = this.ensureSession(workspaceId, tabId);
+    const scope = () => ({ tabId: session.id, url: compactUrl(session.view.webContents.getURL()) });
     if (kind === "console") {
       const consoleEntries = session.journal.recentConsole(true);
       const shields = this.shields.stateFor(workspaceId, session.view.webContents.getURL(), session.view.webContents.id);
@@ -356,7 +361,7 @@ export class BrowserSessionManager {
           consoleEntries.map((entry) => `${entry.level}: ${entry.message}`).join("\n") || "No console messages in the retained capture window; this does not prove the page logged nothing.",
           shieldsRelated.length ? `\nLikely Shields-related console entries: ${shieldsRelated.length}` : "",
         ].filter(Boolean).join("\n"),
-        data: { console: consoleEntries, shieldsRelatedConsole: shieldsRelated, capture: { since: session.createdAt, retainedAcrossNavigations: true, limit: 20 } },
+        data: { ...scope(), console: consoleEntries, shieldsRelatedConsole: shieldsRelated, capture: { since: session.createdAt, retainedAcrossNavigations: true, limit: 20 } },
       };
     }
     if (kind === "network") {
@@ -366,26 +371,26 @@ export class BrowserSessionManager {
       const currentPageCounts = networkEntryCounts(session.journal.recentNetwork());
       return {
         output: `${session.networkCaptureError ? `Network capture unavailable: ${session.networkCaptureError}. Earlier retained entries may still be shown.` : `Network capture active since ${new Date(session.networkCaptureStartedAt!).toISOString()}; last ${requests.length} retained requests across tab navigations (maximum 40). Capture is not retroactive.`}\nRetained-window failures: ${retainedCounts.failedRequestCount}; aborted transfers: ${retainedCounts.abortedRequestCount}; Shields-blocked: ${retainedCounts.shieldsBlockedRequestCount}. Current-page failures now: ${currentPageCounts.failedRequestCount}. browser_open counts describe its current-page window at response time. HTTP status records response headers; a later transfer abort can coexist with status 200 and is not proof of a server defect.\n${requests.map((entry) => `${entry.method} ${entry.url}${entry.status !== undefined ? ` HTTP ${entry.status}` : ""}${entry.failed ? " failed" : ""}${entry.errorText ? ` ${entry.errorText}` : ""}${entry.blockedByShields ? " blocked by Shields" : ""}`.trim()).join("\n") || "No requests captured in this window; this does not prove the page made no requests."}`,
-        data: { requests, retainedCounts, currentPageCounts, countScope: "Retained counts cover the returned cross-navigation entries; currentPageCounts cover the current-page window at inspection time. Aborted transfers overlap failures; Shields blocks are excluded from failures.", capture: { available: !session.networkCaptureError, since: session.networkCaptureStartedAt, error: session.networkCaptureError, retainedAcrossNavigations: true, limit: 40 } },
+        data: { ...scope(), requests, retainedCounts, currentPageCounts, countScope: "Retained counts cover the returned cross-navigation entries; currentPageCounts cover the current-page window at inspection time. Aborted transfers overlap failures; Shields blocks are excluded from failures.", capture: { available: !session.networkCaptureError, since: session.networkCaptureStartedAt, error: session.networkCaptureError, retainedAcrossNavigations: true, limit: 40 } },
       };
     }
     if (kind === "dom") {
       const dom = await session.cdp.domSnapshot();
-      return { output: dom, data: { dom } };
+      return { output: dom, data: { ...scope(), dom } };
     }
     if (kind === "screenshot") {
       const actionId = session.journal.begin("Captured screenshot", pageSummary(session.view.webContents), true);
       const finding = await session.journal.finish(session.view.webContents, pageSummary(session.view.webContents));
       return {
         output: finding?.screenshotPath || "Screenshot capture failed.",
-        data: { actionId, screenshotPath: finding?.screenshotPath },
+        data: { ...scope(), actionId, screenshotPath: finding?.screenshotPath },
       };
     }
     if (kind === "source") {
       const devBridge = await inspectDevBridge(session.cdp).catch(() => ({ available: false, tools: [] }));
       return {
         output: devBridge.available ? JSON.stringify(devBridge, null, 2).slice(0, 4000) : "No Privora DevBridge data is available on this page.",
-        data: { devBridge },
+        data: { ...scope(), devBridge },
       };
     }
     throw new Error(`Unknown browser inspect kind: ${kind}`);
@@ -478,6 +483,7 @@ export class BrowserSessionManager {
     const pageViewport = await this.pageViewport(session);
     const exactUrl = safeExactBrowserUrl(session.view.webContents.getURL());
     const data = {
+      tabId: session.id,
       url: exactUrl,
       displayUrl: compactUrl(session.view.webContents.getURL()),
       title: redactSensitiveText(session.view.webContents.getTitle(), 240),
@@ -520,7 +526,7 @@ export class BrowserSessionManager {
         tabId: options.tabId,
         signal: control.signal,
       });
-      targetTabId = opened.activeTabId;
+      targetTabId = opened.tabId;
       await waitForBrowserSettle(this.ensureSession(workspaceId, targetTabId).view.webContents, 850);
     }
     const session = this.ensureSession(workspaceId, targetTabId);
@@ -544,8 +550,9 @@ export class BrowserSessionManager {
   }
 
   async tab(workspaceId: string, input: BrowserTabInput, options: { agentApproved?: boolean; signal?: AbortSignal } = {}) {
-    this.ensureSession(workspaceId);
+    if (input.action !== "new") this.ensureSession(workspaceId);
     if (input.action === "new") {
+      this.ensureWorkspaceTabs(workspaceId, false);
       if (input.url) {
         const decision = browserOriginDecision(input.url, options.agentApproved ? "user" : "agent");
         if (!decision.allowed) throw new Error(decision.reason || "Browser navigation is not allowed.");
@@ -558,7 +565,8 @@ export class BrowserSessionManager {
         throwOnLoadFailure: true,
         signal: options.signal,
       });
-      return this.ensureSession(workspaceId).state;
+      this.updateStateFromContents(tab);
+      return { ...tab.state, createdTabId: tab.id };
     }
     if (input.action === "switch") {
       if (!input.tabId) throw new Error("browser_tab switch requires tabId.");
@@ -571,7 +579,9 @@ export class BrowserSessionManager {
     if (input.action === "close_all_except") {
       return this.closeAllTabsExcept(workspaceId, input.tabId).state;
     }
-    return this.ensureSession(workspaceId).state;
+    const current = this.ensureSession(workspaceId);
+    this.updateStateFromContents(current);
+    return current.state;
   }
 
   async downloadAction(workspaceId: string, input: BrowserDownloadInput) {
@@ -935,10 +945,15 @@ export class BrowserSessionManager {
       });
     }
     const last = session.journal.lastFinding();
-    const recentErrors = session.journal.recentConsole().filter((entry) => entry.level === "error").slice(-4);
+    const blockedRequests = session.journal.recentNetwork().filter((entry) => entry.blockedByShields);
+    const allErrors = session.journal.recentConsole().filter((entry) => entry.level === "error");
+    const shieldsConsole = allErrors.filter((entry) => /ERR_BLOCKED_BY_CLIENT/i.test(entry.message) && blockedRequests.some((request) => compactUrl(entry.sourceId || "") === request.url || entry.message.includes(request.url)));
+    const recentErrors = allErrors.filter((entry) => !shieldsConsole.includes(entry)).slice(-4);
     const recentFailures = session.journal.recentNetwork().filter((entry) => !entry.blockedByShields && (entry.failed || (entry.status || 0) >= 400)).slice(-4);
     const passed = recentErrors.length === 0 && recentFailures.length === 0;
     return {
+      tabId: session.id,
+      url: compactUrl(session.view.webContents.getURL()),
       passed,
       output: passed
         ? `Verified ${compactUrl(session.view.webContents.getURL())}; no recent console or network failures captured.`
@@ -946,6 +961,9 @@ export class BrowserSessionManager {
       lastFinding: last,
       consoleErrors: recentErrors,
       failedRequests: recentFailures,
+      shieldsBlockedRequests: blockedRequests,
+      shieldsRelatedConsole: shieldsConsole,
+      captureScope: "Current-page window for the returned tabId. Confirmed Shields blocks are reported separately and excluded from page failures.",
     };
   }
 
@@ -1015,12 +1033,13 @@ export class BrowserSessionManager {
     return this.createTab(workspaceId, { activate: true });
   }
 
-  private ensureWorkspaceTabs(workspaceId: string) {
+  private ensureWorkspaceTabs(workspaceId: string, createInitial = true) {
     if (this.workspaceTabs.has(workspaceId)) return;
     const persisted = this.loadPersistedWorkspace?.(workspaceId);
     const tabs = (persisted?.tabs || []).slice(0, MAX_BROWSER_TABS);
     if (tabs.length === 0) {
-      this.createTab(workspaceId, { activate: true });
+      if (createInitial) this.createTab(workspaceId, { activate: true });
+      else this.workspaceTabs.set(workspaceId, []);
       return;
     }
     tabs.forEach((tab) => {
@@ -1233,8 +1252,13 @@ export class BrowserSessionManager {
     record: BrowserShieldsBlockedRequestRecord,
     details: Electron.OnBeforeRequestListenerDetails,
   ) {
-    const tab = this.findTabByWebContentsId(workspaceId, details.webContentsId) || this.sessions.get(workspaceId);
+    const tab = this.findTabByWebContentsId(workspaceId, details.webContentsId);
     if (!tab) return;
+    const existingFailure = [...tab.network.values()].find((entry) => compactUrl(entry.url) === compactUrl(record.url) && /ERR_BLOCKED_BY_CLIENT/i.test(entry.errorText || "") && Math.abs(entry.startedAt - record.timestamp) < 3000);
+    if (existingFailure) {
+      const correlated = { ...existingFailure, blockedByShields: true, blockedReason: record.blockedReason, ruleSource: record.ruleSource };
+      tab.network.set(correlated.id, correlated); tab.journal.recordRequest(correlated); this.updateFailedRequestCount(tab); return;
+    }
     const entry: BrowserNetworkEntry = {
       id: `shields:${record.id}`,
       url: record.url,
@@ -1261,7 +1285,7 @@ export class BrowserSessionManager {
     });
     contents.on("did-stop-loading", () => this.updateStateFromContents(session));
     contents.on("did-navigate", () => this.updateStateFromContents(session));
-    contents.on("did-navigate-in-page", () => this.updateStateFromContents(session));
+    contents.on("did-navigate-in-page", (_event, _url, isMainFrame) => { if (isMainFrame) this.invalidatePageRefs(session); this.updateStateFromContents(session); });
     contents.on("did-fail-load", (_event, _code, description, validatedURL) => {
       session.journal.recordConsole({ level: "error", message: `Load failed: ${description} ${validatedURL}` });
       this.updateStateFromContents(session);
@@ -1336,11 +1360,14 @@ export class BrowserSessionManager {
         method: "GET",
         startedAt: Date.now(),
       };
+      const blocked = /ERR_BLOCKED_BY_CLIENT/i.test(String(params.errorText || "")) ? this.shields.recentBlocked(session.view.webContents.id).find((record) => compactUrl(record.url) === compactUrl(entryBase.url) && Math.abs(record.timestamp - entryBase.startedAt) < 3000) : undefined;
+      if (blocked) { session.network.delete(`shields:${blocked.id}`); session.journal.removeRequest(`shields:${blocked.id}`); }
       const entry = {
         ...entryBase,
         failed: true,
         errorText: String(params.errorText || "failed"),
         endedAt: Date.now(),
+        ...(blocked ? { blockedByShields: true, blockedReason: blocked.blockedReason, ruleSource: blocked.ruleSource } : {}),
       };
       session.network.set(id, entry);
       session.journal.recordRequest(entry);
@@ -1365,8 +1392,11 @@ export class BrowserSessionManager {
       forms: [],
       shields: this.shields.stateFor(session.workspaceId, session.view.webContents.getURL(), session.view.webContents.id),
     });
-    session.forms = [];
-    session.refs.clear();
+    this.invalidatePageRefs(session);
+  }
+
+  private invalidatePageRefs(session: BrowserSessionRecord) {
+    session.forms = []; session.refs.clear(); session.refPrefix = crypto.randomUUID();
   }
 
   private ensureBrowserCapture(session: BrowserSessionRecord): Promise<void> {
@@ -1586,7 +1616,7 @@ export class BrowserSessionManager {
       return { id: assertion.id, kind: assertion.kind, passed: errors.length === 0, finding: errors.length === 0 ? "No console errors." : `${errors.length} console error(s) captured.` };
     }
     if (assertion.kind === "no_failed_requests") {
-      const failures = Array.isArray(data.requests) ? data.requests.filter((entry) => /"failed":true|"status":[45]\d\d/.test(JSON.stringify(entry))) : [];
+      const failures = Array.isArray(data.requests) ? data.requests.filter((entry) => !(entry as BrowserNetworkEntry).blockedByShields && /"failed":true|"status":[45]\d\d/.test(JSON.stringify(entry))) : [];
       return { id: assertion.id, kind: assertion.kind, passed: failures.length === 0, finding: failures.length === 0 ? "No failed requests." : `${failures.length} failed request(s) captured.` };
     }
     throw new Error(`Unsupported assertion kind ${assertion.kind}.`);
@@ -1787,7 +1817,12 @@ export class BrowserSessionManager {
       updatedAt: Date.now(),
     };
     this.persistWorkspace(session.workspaceId);
-    if (this.sessions.get(session.workspaceId)?.id === session.id) this.emitState(session.state);
+    const active = this.sessions.get(session.workspaceId);
+    if (active?.id === session.id) this.emitState(session.state);
+    else if (active) {
+      active.state = { ...active.state, activeTabId: active.id, tabs: session.state.tabs, updatedAt: Date.now() };
+      this.emitState(active.state);
+    }
   }
 
   private tabRecords(workspaceId: string): BrowserTabRecord[] {
@@ -1818,10 +1853,13 @@ export class BrowserSessionManager {
   }
 
   private async collectInteractiveSnapshot(session: BrowserSessionRecord, options: BrowserSnapshotOptions) {
+    const prefix = session.refPrefix ??= crypto.randomUUID();
     const result = await session.view.webContents.executeJavaScript(SNAPSHOT_SCRIPT, true) as { lines: string[]; refs: BrowserElementRef[] };
-    session.refs = new Map(result.refs.map((item) => [item.ref, sanitizeBrowserElementRef(item)]));
+    if (prefix !== session.refPrefix) throw new Error("Page navigated during the snapshot. Capture a fresh browser_snapshot.");
+    const scopedRef = (ref: string) => `${ref}-${prefix}`;
+    session.refs = new Map(result.refs.map((item) => { const ref = scopedRef(item.ref); return [ref, sanitizeBrowserElementRef({ ...item, ref })]; }));
     const maxDepth = Math.max(1, Math.min(8, Number(options.depth) || 5));
-    const lines = result.lines.slice(0, Math.max(40, maxDepth * 60));
+    const lines = result.lines.slice(0, Math.max(40, maxDepth * 60)).map((line) => line.replace(/\[ref=(b\d+)\]/g, (_match, ref: string) => `[ref=${scopedRef(ref)}]`));
     if (options.includeBoxes) {
       return lines.join("\n");
     }
@@ -2006,6 +2044,7 @@ export class BrowserSessionManager {
 
   private pointForInput(session: BrowserSessionRecord, input: BrowserActionInput) {
     const ref = input.ref ? session.refs.get(input.ref) : null;
+    if (input.ref && !ref) throw new Error(`Browser ref ${input.ref} is stale. Capture a fresh browser_snapshot; coordinates cannot override a stale ref.`);
     if (ref) return { x: Math.round(ref.x + ref.width / 2), y: Math.round(ref.y + ref.height / 2) };
     if (Number.isFinite(input.x) && Number.isFinite(input.y)) return { x: Math.round(input.x || 0), y: Math.round(input.y || 0) };
     throw new Error("Browser action needs a snapshot ref or x/y coordinate.");
@@ -2152,7 +2191,7 @@ export class BrowserSessionManager {
   }
 
   private async captureEvidenceScreenshot(workspaceId: string, session: BrowserSessionRecord): Promise<{ screenshotPath?: string; error?: string }> {
-    const primary = await this.screenshot(workspaceId, { mode: "viewport" }).catch((error: unknown) => ({ error }));
+    const primary = await this.screenshot(workspaceId, { mode: "viewport", tabId: session.id }).catch((error: unknown) => ({ error }));
     if ("screenshotPath" in primary && typeof primary.screenshotPath === "string") {
       return { screenshotPath: primary.screenshotPath };
     }
