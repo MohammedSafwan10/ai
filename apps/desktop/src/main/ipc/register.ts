@@ -238,6 +238,13 @@ export const registerIpc = (
     state.activeThreadId = threadId;
     state.activeWorkspaceId = store.getThread(threadId)?.workspaceId ?? state.activeWorkspaceId;
   });
+  handle(channels.markChatCompletionRead, z.tuple([z.object({ threadId: idSchema, completionId: idSchema }).strict()]), (event, input) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !window.isFocused() || window.isMinimized() || !window.isVisible() || state.activeThreadId !== input.threadId) return false;
+    const marked = store.markChatCompletionRead(input.threadId, input.completionId);
+    if (marked) emitSnapshot();
+    return marked;
+  });
   handle(channels.reorderWorkspace, z.tuple([z.object({ id: idSchema, targetId: idSchema, position: z.enum(["before", "after"]) }).strict()]), (_event, input) => {
     store.reorderWorkspace(input); emitSnapshot();
   });

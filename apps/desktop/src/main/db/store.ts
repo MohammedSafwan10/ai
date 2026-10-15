@@ -101,6 +101,7 @@ export class DesktopStore {
   private readonly artifacts: ArtifactStore;
   private readonly statements = new Map<string, StatementSync>();
   private aiCreditSummary: AiCreditSummaryRecord | undefined;
+  onUnreadCompletionsChanged?: () => void;
 
   constructor(userDataPath = app.getPath("userData")) {
     fs.mkdirSync(userDataPath, { recursive: true });
@@ -523,6 +524,23 @@ export class DesktopStore {
     const thread = this.getThread(threadId); if (!thread) return null;
     this.putThread({ ...thread, starred: !thread.starred, updatedAt: now() }); return this.getThread(threadId);
   }
+  recordChatCompletion(threadId: string, completionId: string) {
+    const thread = this.getThread(threadId); const message = this.getMessage(completionId);
+    if (!thread || thread.hidden || message?.threadId !== threadId || message.role !== "assistant" || message.status !== "completed" || thread.lastReadCompletionId === completionId || thread.unreadCompletionId === completionId) return false;
+    const latest = this.getMessage(thread.unreadCompletionId || thread.lastReadCompletionId || "");
+    if (latest && latest.createdAt > message.createdAt) return false;
+    this.putThread({ ...thread, unreadCompletionId: completionId });
+    this.onUnreadCompletionsChanged?.(); return true;
+  }
+  markChatCompletionRead(threadId: string, completionId: string) {
+    const thread = this.getThread(threadId);
+    if (!thread || thread.unreadCompletionId !== completionId) return false;
+    this.putThread({ ...thread, unreadCompletionId: undefined, lastReadCompletionId: completionId });
+    this.onUnreadCompletionsChanged?.(); return true;
+  }
+  unreadCompletionCount() {
+    return this.count("SELECT COUNT(*) AS count FROM threads t JOIN messages m ON m.id = json_extract(t.payload, '$.unreadCompletionId') WHERE t.hidden = 0 AND json_extract(m.payload, '$.status') = 'completed'");
+  }
   deleteThread(threadId: string) { this.transaction(() => this.removeThreadRecords(threadId)); this.pruneArtifacts(); }
   listThreads() { return this.all<ThreadRecord>("SELECT payload FROM threads WHERE hidden = 0 ORDER BY starred DESC, updated_at DESC").map(normalizeLoadedThreadTitle); }
   getThread(threadId: string) { const thread = this.one<ThreadRecord>("SELECT payload FROM threads WHERE id = ?", threadId); return thread ? normalizeLoadedThreadTitle(thread) : null; }
@@ -784,6 +802,8 @@ export class DesktopStore {
       this.run(`DELETE FROM tool_events WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
       this.run(`DELETE FROM turn_undos WHERE thread_id = ? AND message_id IN (${placeholders(ids.length)})`, threadId, ...ids);
       this.run(`DELETE FROM messages WHERE id IN (${placeholders(ids.length)})`, ...ids);
+      const thread = this.getThread(threadId);
+      if (thread?.unreadCompletionId && ids.includes(thread.unreadCompletionId)) this.putThread({ ...thread, unreadCompletionId: undefined });
       this.touchThread(threadId);
     });
     this.pruneArtifacts(); return { removedMessages: ids.length, removedToolEvents, removedTurnUndos };

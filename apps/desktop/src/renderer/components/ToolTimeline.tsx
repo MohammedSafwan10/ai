@@ -1,4 +1,5 @@
 import { toolFailureLabel } from "../../shared/toolFailure";
+import { AgentAvatar } from "./AgentAvatar";
 import { Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -151,7 +152,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
       {onOpenSubagent && normalizedTools.filter((tool) => tool.name === "spawn_agent").flatMap((tool) => subagentsForTool(tool, subagents)).map((agent) => {
         const live = ["pending", "running", "waiting"].includes(agent.status);
         const label = agent.status === "completed" ? "finished" : live ? "started working" : agent.status;
-        return <button key={agent.id} type="button" className="agent-spawn-line" title={`${agent.status}: ${agent.lastPreview || agent.prompt}`} onClick={() => onOpenSubagent(agent.threadId)}><span className={`agent-status-dot ${live ? "live" : agent.status}`} />{formatSubagentName(agent)} {label}</button>;
+          return <button key={agent.id} type="button" className="agent-spawn-line" title={`${agent.status}: ${agent.lastPreview || agent.prompt}`} onClick={() => onOpenSubagent(agent.threadId)}><AgentAvatar id={agent.threadId} small /><span>{formatSubagentName(agent)} <span className="agent-inline-state">{label}</span></span></button>;
       })}
       <button
         className="tool-summary"
@@ -357,7 +358,7 @@ function SubagentInspector({ tool, subagents, onOpen }: { tool: ToolEventRecord;
             {onOpen && <button type="button" className="subagent-open-chat" onClick={() => onOpen(agent.threadId)}>Open {formatSubagentName(agent)} · {agent.status}</button>}
             {showHeading && (
               <div className="subagent-inspector-head">
-                <span className={clsx("subagent-dot", agent.status)} />
+                  <AgentAvatar id={agent.threadId} small />
                 <strong>{formatSubagentName(agent)}</strong>
                 <code>{agent.status}</code>
               </div>

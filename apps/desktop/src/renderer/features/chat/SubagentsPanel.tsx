@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Bot, PanelRightClose, Square } from "lucide-react";
 import type { ActiveRunState, AppSnapshot, ChatMessageRecord, PrivoraEventEnvelope, PrivoraEventPayload, SubagentRecord, ThreadHistoryPage, ToolEventRecord } from "../../../shared/types";
 import { ChatMessage } from "../../components/ChatMessage";
+import { AgentAvatar } from "../../components/AgentAvatar";
+import { relativeAgentTime } from "./agentIdentity";
 import { RequestUserInputPanel } from "../../components/RequestUserInputPanel";
 import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
@@ -39,6 +41,8 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const [error, setError] = useState("");
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [reload, setReload] = useState(0);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { if (hidden) return; setNow(Date.now()); const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, [hidden]);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const agents = snapshot.subagents;
@@ -69,8 +73,8 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const live = (item: SubagentRecord) => isActiveTurnStatus(status(item)) || ["pending", "waiting"].includes(status(item));
   const groups = [
     { title: "Active", rows: agents.filter(live) },
-    { title: "Done", rows: agents.filter((item) => !live(item) && item.status === "completed") },
-    { title: "Needs attention", rows: agents.filter((item) => !live(item) && item.status !== "completed") },
+    { title: "Finished", rows: agents.filter((item) => !live(item) && ["completed", "closed"].includes(item.status)) },
+    { title: "Needs attention", rows: agents.filter((item) => !live(item) && !["completed", "closed"].includes(item.status)) },
   ];
   const inlineMessages = transcript ? groupInlineMessages(transcript.page.messages, transcript.page.toolEvents) : null;
   const approve = (callId: string, approved: boolean) => {
@@ -90,18 +94,18 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   return <aside className="workspace-ide subagents-pane" aria-label="Subagents" style={hidden ? { display: "none" } : undefined}>
     <header className="workspace-ide-topbar">
       {selected ? <button className="workspace-icon-button" onClick={() => setSelected(null)} aria-label="Back to subagents"><ArrowLeft size={16} /></button> : <Bot size={16} />}
-      <strong>{agent ? name(agent) : "Subagents"}</strong>
+      {agent && <AgentAvatar id={agent.threadId} small />}<strong>{agent ? name(agent) : "Subagents"}</strong>
       <div className="workspace-ide-mode-spacer" />
       {transcript?.run && selected && <button className="workspace-icon-button" onClick={() => { void window.privoraDesktop.stopTurn(selected).catch((reason: unknown) => setError(String(reason))); }} aria-label="Stop this agent"><Square size={14} /></button>}
       <button className="workspace-icon-button" onClick={onClose} aria-label="Close subagents panel"><PanelRightClose size={16} /></button>
     </header>
-    {agent && <div className="agent-panel-meta"><div>{status(agent)} · {agent.model} · {agent.reasoningEffort}</div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
+    {agent && <div className="agent-panel-meta"><div><span className={`agent-state ${live(agent) ? "live" : agent.status}`}>{status(agent).replace(/_/g, " ")}</span> · {agent.model} · {agent.reasoningEffort}</div><div className="agent-panel-times">Created <time dateTime={new Date(agent.createdAt).toISOString()} title={new Date(agent.createdAt).toLocaleString()}>{relativeAgentTime(agent.createdAt, now)}</time> · Updated <time dateTime={new Date(agent.updatedAt).toISOString()} title={new Date(agent.updatedAt).toLocaleString()}>{relativeAgentTime(agent.updatedAt, now)}</time></div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
     <div className="agent-panel-scroll" ref={scroller} onScroll={() => { const el = scroller.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {error && <div role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
-      {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title} · {group.rows.length}</h3>
+      {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title}<span>{group.rows.length}</span></h3>
         {!group.rows.length && <p>No {group.title.toLowerCase()} subagents</p>}
-        {group.rows.map((item) => <button className="agent-row" key={item.id} onClick={() => setSelected(item.threadId)}>
-          <span className={`agent-status-dot ${live(item) ? "live" : item.status}`} /><span><strong>{name(item)}</strong><small>{status(item)}</small><span className="agent-row-preview">{item.lastPreview || item.prompt}</span></span>
+        {[...group.rows].sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id)).map((item) => <button className="agent-row" key={item.id} title={item.lastPreview || item.prompt} onClick={() => setSelected(item.threadId)}>
+          <AgentAvatar id={item.threadId} /><span className="agent-row-body"><strong>{name(item)}</strong><span className="agent-row-subtitle"><span className={`agent-state ${live(item) ? "live" : item.status}`}>{status(item).replace(/_/g, " ")}</span>{item.agentRole && <span> · {item.agentRole}</span>}</span>{live(item) && <span className="agent-row-preview">{item.lastPreview || item.prompt}</span>}</span><time className="agent-row-time" dateTime={new Date(item.updatedAt).toISOString()} title={`Last updated ${new Date(item.updatedAt).toLocaleString()}`}>{relativeAgentTime(item.updatedAt, now)}</time>
         </button>)}
       </section>)}
       {selected && !transcript && !error && <p role="status">Loading agent chat…</p>}

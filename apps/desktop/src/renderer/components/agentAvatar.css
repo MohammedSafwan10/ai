@@ -1,0 +1,18 @@
+.agent-avatar { --agent-ink: #9d9bea; display: inline-grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; color: var(--agent-ink); border-radius: 8px; background: color-mix(in srgb, var(--agent-ink) 9%, transparent); }
+.agent-avatar svg { width: 20px; height: 20px; }
+.agent-avatar.small { width: 18px; height: 18px; border-radius: 4px; background: transparent; }
+.agent-avatar.small svg { width: 16px; height: 16px; }
+.agent-tint-0 { --agent-ink: #a9a0ed; }
+.agent-tint-1 { --agent-ink: #77b3e7; }
+.agent-tint-2 { --agent-ink: #6ec8c0; }
+.agent-tint-3 { --agent-ink: #d8af68; }
+.agent-tint-4 { --agent-ink: #dc94b0; }
+.agent-tint-5 { --agent-ink: #9ac47c; }
+.agent-tint-6 { --agent-ink: #dd9a78; }
+:root[data-theme="light"] .agent-tint-0 { --agent-ink: #7560b5; }
+:root[data-theme="light"] .agent-tint-1 { --agent-ink: #397daf; }
+:root[data-theme="light"] .agent-tint-2 { --agent-ink: #27877f; }
+:root[data-theme="light"] .agent-tint-3 { --agent-ink: #987024; }
+:root[data-theme="light"] .agent-tint-4 { --agent-ink: #ac557b; }
+:root[data-theme="light"] .agent-tint-5 { --agent-ink: #597f35; }
+:root[data-theme="light"] .agent-tint-6 { --agent-ink: #ab633e; }

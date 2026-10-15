@@ -1,4 +1,5 @@
 import { groupInlineMessages } from "./features/chat/inlineMessages";
+import { useCompletionRead } from "./features/chat/useCompletionRead";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDown, BookOpen, Bug, ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, FileSearch, GitBranch, Layers, ListChecks, MessageSquareMore, PackageCheck, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Pencil, Play, Recycle, RotateCw, ShieldAlert, Terminal, Wand2, X } from "lucide-react";
@@ -126,6 +127,7 @@ export default function App() {
     onLoadOlder: loadOlderMessages,
     settingsOpen,
   });
+  useCompletionRead(activeThread, messages, scrollerRef, settingsOpen || historyLoading);
 
   const toolsByMessage = useMemo(() => {
     const map = new Map<string, typeof snapshot.toolEvents>();

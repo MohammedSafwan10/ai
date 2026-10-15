@@ -2614,6 +2614,7 @@ export class TurnCoordinator implements AgentHarnessApi {
   }
 
   private emit(event: PrivoraEventPayload) {
+    if (event.type === "turn.completed") this.store.recordChatCompletion(event.threadId, event.turnId);
     this.events.emit(event);
   }
 

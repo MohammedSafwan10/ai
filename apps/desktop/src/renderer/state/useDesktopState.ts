@@ -256,6 +256,7 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
       if (next.activeRun) activeRunsByThread[next.activeRun.threadId] = next.activeRun;
       if (activeRunsByThread[event.threadId]?.assistantMessageId === event.turnId) delete activeRunsByThread[event.threadId];
       next = { ...next, activeRunsByThread, activeRuns: Object.values(activeRunsByThread), activeRun: next.activeThreadId ? activeRunsByThread[next.activeThreadId] || null : null,
+        threads: event.type === "turn.completed" ? next.threads.map((thread) => thread.id === event.threadId && thread.lastReadCompletionId !== event.turnId ? { ...thread, unreadCompletionId: event.turnId } : thread) : next.threads,
         messages: event.message?.threadId === next.activeThreadId ? upsertById(next.messages, event.message) : next.messages,
         runEventSequences: { ...next.runEventSequences, [event.threadId]: envelope.sequence },
         pendingUserInputsByThread, pendingUserInput: next.activeThreadId ? pendingUserInputsByThread[next.activeThreadId] || null : null,

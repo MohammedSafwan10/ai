@@ -68,6 +68,7 @@ const api: PrivoraDesktopApi = {
   toggleThreadStar: (threadId: string) => ipcRenderer.invoke(channels.toggleThreadStar, threadId),
   deleteThread: (threadId: string) => ipcRenderer.invoke(channels.deleteThread, threadId),
   selectWorkspace: () => ipcRenderer.invoke(channels.selectWorkspace),
+  markChatCompletionRead: (input) => ipcRenderer.invoke(channels.markChatCompletionRead, input),
   moveChat: (input) => ipcRenderer.invoke(channels.moveChat, input),
   reorderWorkspace: (input) => ipcRenderer.invoke(channels.reorderWorkspace, input),
   importKaliEnvironmentProfile: () => ipcRenderer.invoke(channels.importKaliEnvironmentProfile),

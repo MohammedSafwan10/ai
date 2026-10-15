@@ -9,6 +9,7 @@ See the [Security workspace documentation](docs/security-workspace/README.md) fo
 ## What It Does
 
 - Opens local workspaces and keeps project-scoped chats.
+- Unread completed responses show a dot beside their chat and a Windows taskbar counter (1–9, then 9+). Each chat counts once; hidden subagent completions do not increase the counter. Read state persists across restarts. A completion is acknowledged after its end is visible in the focused chat for a second; focusing the app or reading another chat does not clear it. Stopped runs, failures and approvals are not completion badges. Windows taskbar settings can hide overlays.
 - Browser snapshot refs are opaque and scoped to the tab and page lifetime; navigation, reload, and main-frame SPA route changes invalidate them. Browser results identify target tabs separately from the UI’s active tab. Evidence capture stays on its requested tab, and confirmed Shields blocks are reported separately from page failures.
 - Filters the sidebar by All, Security, or Normal projects. Drag project headers to reorder them, or use Move project up/down in the project menu; ordering and the filter are remembered.
 - Moves idle normal chats between normal projects by dragging onto a destination project or using Move to project in the chat menu. A confirmation explains that files stay put, previous approvals are revoked, and old messages cannot be rewound in the new folder. Completed subagents move with the chat. Active/resumable work blocks moves; Security chats remain bound to their original scope, jobs, and evidence.

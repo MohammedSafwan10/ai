@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import { AgentAvatar } from "./AgentAvatar";
 import remarkGfm from "remark-gfm";
 import { Check, ChevronDown, Copy, Pencil, Download, Maximize2, Minimize2, Minus, Plus, X, MessageCircle } from "lucide-react";
 import clsx from "clsx";
@@ -133,7 +134,7 @@ function ChatMessageComponent({
   };
   if (message.agentMessage) return <AgentCoordinationLine message={message} subagents={subagents} onOpenSubagent={onOpenSubagent} details={coordinationDetails} />;
   return (
-    <article className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
+    <article data-completion-message={message.id} className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
       <div className="message-stack">
         <div className={clsx("message-bubble", isUser && "markdown-body")}>
           {isUser ? (
@@ -581,8 +582,9 @@ function AgentCoordinationLine({ message, subagents, onOpenSubagent, details = f
   const target = metadata.outgoing ? metadata.recipientThreadId : metadata.senderThreadId;
   const child = subagents.find((agent) => agent.threadId === target) ?? subagents.find((agent) => `${agent.agentNickname || agent.taskName}${agent.agentRole ? ` [${agent.agentRole}]` : ""}` === (metadata.outgoing ? metadata.recipientLabel : metadata.senderLabel));
   const peer = (metadata.outgoing ? metadata.recipientLabel : metadata.senderLabel).replace(/ \[[^\]]+\]$/, "");
-  const label = <><MessageCircle size={13} /><span>{metadata.outgoing ? "Sent message to" : "Received message from"} {peer === "Parent" ? "parent" : peer}</span>{metadata.delivery === "queued" && <small>Queued</small>}</>;
-  const title = `${metadata.senderLabel} sent a message to ${metadata.recipientLabel} · ${delivery}`;
+  const identity = child?.threadId || (metadata.outgoing ? metadata.recipientThreadId : metadata.senderThreadId);
+  const label = <>{identity ? <AgentAvatar id={identity} small /> : <MessageCircle size={13} />}<span>{metadata.outgoing ? "Sent message to" : "Received message from"} {peer === "Parent" ? "parent" : peer}</span>{metadata.delivery === "queued" && <small>Queued</small>}</>;
+  const title = `${metadata.senderLabel} sent a message to ${metadata.recipientLabel} · ${delivery} · ${new Date(message.createdAt).toLocaleString()}`;
   if (details) return <details className="agent-coordination-line"><summary title={title}>{label}</summary><div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown><button type="button" className={clsx("message-action-button", copied && "success")} onClick={() => { void copyCoordinationMessage(); }} title={copied ? "Copied" : "Copy"} aria-label={copied ? "Copied" : "Copy message"}>{copied ? <Check size={14} /> : <Copy size={14} />}</button></div></details>;
   return child && onOpenSubagent ? <button type="button" className="agent-coordination-line agent-coordination-button" title={title} onClick={() => onOpenSubagent(child.threadId)}>{label}</button> : <div className="agent-coordination-line agent-coordination-label" title={title}>{label}</div>;
 }

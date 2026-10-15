@@ -7,10 +7,10 @@ import type { BrowserSessionManager } from "../src/main/browser/BrowserSessionMa
 import type { NotesStore } from "../src/main/notes/NotesStore";
 import type { SecurityEnvironmentRecord, SecurityWorkspaceService } from "../src/shared/securityWorkspace";
 
-const mocked = vi.hoisted(() => ({ directory: "", handlers: new Map<string, (...args: unknown[]) => unknown>(), pick: vi.fn(), trash: vi.fn(), openPath: vi.fn() }));
+const mocked = vi.hoisted(() => ({ directory: "", focused: false, handlers: new Map<string, (...args: unknown[]) => unknown>(), pick: vi.fn(), trash: vi.fn(), openPath: vi.fn() }));
 vi.mock("electron", () => ({
   app: { isPackaged: false, getPath: () => mocked.directory },
-  BrowserWindow: { getAllWindows: () => [] },
+  BrowserWindow: { getAllWindows: () => [], fromWebContents: () => ({ isFocused: () => mocked.focused, isMinimized: () => false, isVisible: () => true }) },
   ipcMain: { handle: (name: string, handler: (...args: unknown[]) => unknown) => mocked.handlers.set(name, handler), on: vi.fn() },
   dialog: { showOpenDialog: mocked.pick }, Menu: {}, shell: { trashItem: mocked.trash, openPath: mocked.openPath },
 }));
@@ -24,6 +24,7 @@ let state: IpcState;
 const environment: SecurityEnvironmentRecord = { id: "kali", name: "Kali", host: "192.168.1.13", port: 2222, username: "privora", status: "unchecked" };
 const invoke = (name: string, ...args: unknown[]) => mocked.handlers.get(name)?.({}, ...args);
 beforeEach(() => {
+  mocked.focused = false;
   mocked.directory = fs.mkdtempSync(path.join(os.tmpdir(), "privora-security-ipc-"));
   mocked.handlers.clear(); mocked.pick.mockReset(); mocked.trash.mockReset(); mocked.openPath.mockReset(); mocked.openPath.mockResolvedValue("");
   mocked.trash.mockImplementation(async (target: string) => { fs.renameSync(target, path.join(mocked.directory, "recycled-project")); });
@@ -35,6 +36,18 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("acknowledges a completion only in the focused active chat", () => {
+    const thread = store.createThread(null); state.activeThreadId = thread.id;
+    store.upsertMessage({ id: "completion", threadId: thread.id, role: "assistant", content: "Done", status: "completed", createdAt: 1, updatedAt: 1 });
+    store.recordChatCompletion(thread.id, "completion");
+    expect(invoke(channels.markChatCompletionRead, { threadId: thread.id, completionId: "completion" })).toBe(false);
+    expect(store.unreadCompletionCount()).toBe(1);
+    mocked.focused = true; state.activeThreadId = "another-chat";
+    expect(invoke(channels.markChatCompletionRead, { threadId: thread.id, completionId: "completion" })).toBe(false);
+    state.activeThreadId = thread.id;
+    expect(invoke(channels.markChatCompletionRead, { threadId: thread.id, completionId: "completion" })).toBe(true);
+    expect(store.unreadCompletionCount()).toBe(0);
+  });
   it("validates and persists prompt-library actions without running an agent", () => {
     const saved = invoke(channels.savePrompt, { title: "Prepare", category: "Investigation", workspaceType: "all", content: "Read lessons only." }) as { id: string };
     expect(invoke(channels.listSavedPrompts)).toEqual(expect.arrayContaining([expect.objectContaining({ id: saved.id, content: "Read lessons only." })]));

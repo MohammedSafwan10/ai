@@ -901,6 +901,8 @@ export interface ThreadRecord {
   agentHarnessMode?: AgentHarnessMode;
   hidden?: boolean;
   starred?: boolean;
+  unreadCompletionId?: string;
+  lastReadCompletionId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -1802,6 +1804,7 @@ export interface PrivoraDesktopApi {
   toggleThreadStar(threadId: string): Promise<ThreadRecord | null>;
   deleteThread(threadId: string): Promise<void>;
   selectWorkspace(): Promise<WorkspaceRecord | null>;
+  markChatCompletionRead(input: { threadId: string; completionId: string }): Promise<boolean>;
   moveChat(input: { threadId: string; workspaceId: string; discardStoppedRun?: boolean }): Promise<ThreadRecord>;
   reorderWorkspace(input: { id: string; targetId: string; position: "before" | "after" }): Promise<void>;
   removeWorkspace(workspaceId: string): Promise<WorkspaceRecord | null>;

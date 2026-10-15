@@ -412,6 +412,7 @@ function ThreadButton({
       ) : (
         <button className="thread-row" onClick={onClick} title={thread.title}>
           <span className="thread-title-line">
+            {thread.unreadCompletionId && <span className="chat-unread-dot" role="img" aria-label="Unread completed response" title="New completed response" />}
             {thread.starred && <Star size={12} fill="currentColor" />}
             <span className={clsx(run && isLiveRun(run) && "active-text-shimmer")}>{thread.title}</span>
           </span>

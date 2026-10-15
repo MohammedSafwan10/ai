@@ -7,6 +7,7 @@ import { NotesStore } from "./notes/NotesStore";
 import { TurnCoordinator } from "./agent/turnCoordinator";
 import { AgentHarness } from "./agent/harness/agentHarness";
 import { envelopePrivoraEvent } from "./agent/harness/eventBus";
+import { completionBadgeBitmap } from "./notifications/completionBadge";
 import { InProcessAgentService, type AgentService } from "./agent/service";
 import { registerIpc, type IpcState } from "./ipc/register";
 import { channels } from "./ipc/channels";
@@ -182,6 +183,18 @@ const getDefaultZoomFactor = (window?: BrowserWindow | null) => {
   return LARGE_ZOOM_FACTOR;
 };
 const appIcon = () => nativeImage.createFromPath(resolveAppIconPath());
+let lastCompletionBadgeCount = -1;
+const updateCompletionBadge = () => {
+  if (!store || !mainWindow || mainWindow.isDestroyed()) return;
+  const count = store.unreadCompletionCount();
+  if (count === lastCompletionBadgeCount) return;
+  lastCompletionBadgeCount = count;
+  if (process.platform === "win32") {
+    const badge = count ? completionBadgeBitmap(count) : null;
+    try { mainWindow.setOverlayIcon(badge ? nativeImage.createFromBitmap(badge.pixels, { width: badge.size, height: badge.size }) : null, count ? `${count} chat${count === 1 ? " has" : "s have"} unread completed responses` : "No unread completed responses"); }
+    catch (error) { lastCompletionBadgeCount = -1; console.warn("Could not update completion badge", error); }
+  } else app.setBadgeCount(count);
+};
 
 const shouldKeepRunningInTray = () =>
   process.platform !== "darwin" && Boolean(store?.getSettings().keepRunningInTray);
@@ -459,6 +472,11 @@ const createWindow = async () => {
       webSecurity: true,
     },
   });
+  lastCompletionBadgeCount = -1;
+  updateCompletionBadge();
+  // Covers deletion/rewind paths as well as completion/read notifications.
+  const completionBadgeTimer = setInterval(updateCompletionBadge, 2000);
+  completionBadgeTimer.unref();
 
   mainWindow.webContents.on("console-message", (details) => {
     if (!MAIN_WINDOW_VITE_DEV_SERVER_URL || (details.level !== "warning" && details.level !== "error")) return;
@@ -488,6 +506,7 @@ const createWindow = async () => {
   });
 
   mainWindow.on("closed", () => {
+    clearInterval(completionBadgeTimer);
     mainWindow = null;
   });
   installRendererDiagnostics(mainWindow);
@@ -551,6 +570,7 @@ if (!singleInstanceLock) {
       ])),
     );
     const workspaces = store.listWorkspaces();
+    store.onUnreadCompletionsChanged = updateCompletionBadge;
     state.activeWorkspaceId = workspaces[0]?.id ?? null;
     state.activeThreadId = store.listThreads()[0]?.id ?? store.createThread(state.activeWorkspaceId).id;
     computerUseManager.setEnabled(store.getSettings().computerUseEnabled);
