@@ -158,13 +158,24 @@ export class SecurityWorkspaceService {
     if (!path.isAbsolute(config.identityFile) || !path.isAbsolute(config.knownHostsFile)) throw new Error("SSH file paths must be absolute.");
     buildKaliSshArgs(config);
     const previous = this.store.getSecurityEnvironment(config.id);
+    let verifiedCapabilities: SecurityEnvironmentRecord["capabilities"];
     if (previous && this.store.listWorkspaces().some((workspace) => workspace.security?.environmentId === config.id)) {
       const prior = this.store.getSecurityEnvironmentConfig(config.id);
-      if (JSON.stringify(prior) !== JSON.stringify(config)) throw new Error("An environment used by a workspace cannot be replaced; import a new ID.");
+      if (JSON.stringify(prior) !== JSON.stringify(config)) {
+        const identityFields = ["id", "username", "identityFile", "hostFingerprint", "runnerPath", "jobRoot"] as const;
+        if (!prior || identityFields.some((key) => prior[key] !== config[key])) throw new Error("An environment used by a workspace cannot be replaced. Address refresh must retain the same SSH identity, host fingerprint, runner and job root; import a new ID for a different VM.");
+        if (this.active.size) throw new Error("Finish or stop active remote commands before refreshing the environment address.");
+        // Settle a stale health probe before it can overwrite the refreshed address.
+        await this.checking.get(config.id)?.catch(() => undefined);
+        verifiedCapabilities = await this.connectorFactory(config).capabilities();
+        this.requireOpen();
+        if (this.active.size || JSON.stringify(this.store.getSecurityEnvironmentConfig(config.id)) !== JSON.stringify(prior)) throw new Error("Environment changed during verification. Retry the address refresh when remote commands are idle.");
+      }
     }
     const record: SecurityEnvironmentRecord = {
-      id: config.id, name: typeof input.name === "string" ? requiredText(input.name, "name", 100) : config.id,
-      host: config.host, port: config.port, username: config.username, status: "unchecked",
+      id: config.id, name: typeof input.name === "string" ? requiredText(input.name, "name", 100) : previous?.name ?? config.id,
+      host: config.host, port: config.port, username: config.username, status: verifiedCapabilities ? "connected" : "unchecked",
+      ...(verifiedCapabilities ? { capabilities: verifiedCapabilities, lastCheckedAt: Date.now() } : {}),
     };
     this.store.saveSecurityEnvironment(record, config);
     this.changed();
@@ -184,6 +195,7 @@ export class SecurityWorkspaceService {
     this.requireOpen();
     const current = this.store.getSecurityEnvironment(id);
     if (!current) throw new Error("Unknown Kali environment.");
+    const checkedConfig = JSON.stringify(this.store.getSecurityEnvironmentConfig(id));
     let next: SecurityEnvironmentRecord;
     try {
       const capabilities = await this.connector(id).capabilities();
@@ -191,6 +203,7 @@ export class SecurityWorkspaceService {
     } catch (error) {
       next = { ...current, status: "disconnected", lastCheckedAt: Date.now(), error: errorText(error) };
     }
+    if (JSON.stringify(this.store.getSecurityEnvironmentConfig(id)) !== checkedConfig) return this.store.getSecurityEnvironment(id)!;
     this.store.saveSecurityEnvironment(next);
     this.changed();
     if (!this.closing && next.status === "connected") {

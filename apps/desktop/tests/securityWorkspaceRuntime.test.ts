@@ -64,6 +64,23 @@ const completeTransport = (options: { events?: { stream: "stdout" | "stderr"; da
 };
 
 describe("Security workspace runtime", () => {
+  it("refreshes an address only after verifying the same pinned runtime and preserves failed refreshes", async () => {
+    const capabilities = { protocolVersion: 1, os: "Linux", architecture: "aarch64", pythonVersion: "3.14", jobRoot: environment.jobRoot, tools: {}, limits: { concurrentJobs: 4, outputBytes: 1_000_000, artifactBytes: 1_000_000 } };
+    const request = vi.fn<KaliRpcTransport["request"]>(async (config, payload) => {
+      expect(config.host).toBe("new-kali.example"); expect(payload.operation).toBe("capabilities"); return capabilities;
+    });
+    const test = fixture(request); const service = test.service();
+    const refreshed = await service.importEnvironmentProfile({ ...environment, host: "new-kali.example" });
+    expect(refreshed).toMatchObject({ host: "new-kali.example", name: "Kali", status: "connected", capabilities });
+    expect(test.store.saveSecurityEnvironment).toHaveBeenCalledWith(expect.objectContaining({ host: "new-kali.example" }), expect.objectContaining({ host: "new-kali.example", hostFingerprint: environment.hostFingerprint }));
+    expect(test.jobs.size).toBe(0);
+    await expect(service.importEnvironmentProfile({ ...environment, host: "new-kali.example", hostFingerprint: "SHA256:" + "B".repeat(43) })).rejects.toThrow("same SSH identity");
+    request.mockRejectedValueOnce(new Error("host key verification failed"));
+    const count = test.store.saveSecurityEnvironment.mock.calls.length;
+    await expect(service.importEnvironmentProfile({ ...environment, host: "new-kali.example" })).rejects.toThrow("host key");
+    expect(test.store.saveSecurityEnvironment).toHaveBeenCalledTimes(count);
+    service.beginShutdown();
+  });
   it("gates report readiness, rejects stale/foreign review input and preserves review history", async () => {
     const test = fixture(completeTransport({ events: [{ stream: "stdout", data: Buffer.from("actual fixture transcript") }] }));
     const service = test.service();
