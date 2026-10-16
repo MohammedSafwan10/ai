@@ -842,3 +842,7 @@
 .response-disposition { color: var(--privora-text-muted); font-size: 12px; margin: 8px 0; }
 
 .desktop-connection-status { color: var(--text-secondary, #aaa); font-size: 12px; white-space: nowrap; }
+
+/* Standalone deliveries share the chat column; inline deliveries already sit inside it. */
+.agent-coordination-row { width: min(760px, calc(100% - 64px)); margin: 13px auto; min-width: 0; }
+.agent-coordination-row > .agent-coordination-line { margin: 0; max-width: 100%; }

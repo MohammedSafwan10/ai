@@ -134,7 +134,7 @@ function ChatMessageComponent({
       <AssistantTextPart text={part.text} active={runActive && message.status !== "failed"} showPlanActions={showPlanActions} onImplementPlan={onImplementPlan} onSuggestPlanChanges={onSuggestPlanChanges} />
     </div>;
   };
-  if (message.agentMessage) return <AgentCoordinationLine message={message} subagents={subagents} onOpenSubagent={onOpenSubagent} details={coordinationDetails} />;
+  if (message.agentMessage) return <div className="agent-coordination-row"><AgentCoordinationLine message={message} subagents={subagents} onOpenSubagent={onOpenSubagent} details={coordinationDetails} /></div>;
   return (
     <article data-completion-message={message.id} className={clsx("chat-message", isUser && "user", runActive && "is-streaming")}>
       <div className="message-stack">
