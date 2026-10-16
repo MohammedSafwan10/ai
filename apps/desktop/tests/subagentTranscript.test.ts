@@ -31,5 +31,15 @@ describe("live subagent transcript", () => {
   it("ignores events from unrelated threads", () => {
     const state = initial();
     expect(reduceAgentTranscript(state, "child", { type: "message.upserted", message: { ...message, threadId: "other" } })).toBe(state);
+    expect(applyAgentEvent(state, "child", envelopePrivoraEvent({ type: "message.upserted", message: { ...message, threadId: "other" } }))).toBe(state);
+  });
+  it("bounds continuously streamed output while retaining its beginning and latest tail", () => {
+    const tool = { id: "tool", threadId: "child", messageId: message.id, callId: "call", name: "kali_exec", title: "Read output", args: {}, status: "running" as const, risk: "safe" as const, createdAt: 1, updatedAt: 1, output: "START\n" };
+    let state = { ...initial(), page: { ...initial().page, toolEvents: [tool] } };
+    for (let index = 0; index < 500; index++) state = reduceAgentTranscript(state, "child", { type: "tool.output_delta", callId: "call", delta: "x".repeat(1000) }) as typeof state;
+    state = reduceAgentTranscript(state, "child", { type: "tool.output_delta", callId: "call", delta: "\nLATEST" }) as typeof state;
+    expect(state.page.toolEvents[0].output.length).toBeLessThan(40_100);
+    expect(state.page.toolEvents[0].output).toMatch(/^START\n/);
+    expect(state.page.toolEvents[0].output).toMatch(/LATEST$/);
   });
 });

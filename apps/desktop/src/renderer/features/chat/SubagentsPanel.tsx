@@ -8,6 +8,7 @@ import { RequestUserInputPanel } from "../../components/RequestUserInputPanel";
 import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
 import { groupInlineMessages } from "./inlineMessages";
+import { compactLiveOutput } from "../../state/liveOutput";
 
 const name = (agent: SubagentRecord) => agent.agentNickname || agent.taskName;
 const upsert = <T extends { id: string }>(items: T[], item: T) => {
@@ -16,7 +17,9 @@ const upsert = <T extends { id: string }>(items: T[], item: T) => {
 };
 export type AgentTranscript = { page: ThreadHistoryPage; run: ActiveRunState | null; sequence: number; pendingInput?: import("../../../shared/types").RequestUserInputRequestRecord | null };
 export function applyAgentEvent(current: AgentTranscript, threadId: string, event: PrivoraEventEnvelope) {
-  return event.sequence <= current.sequence ? current : { ...reduceAgentTranscript(current, threadId, event.payload), sequence: event.sequence };
+  if (event.sequence <= current.sequence) return current;
+  const next = reduceAgentTranscript(current, threadId, event.payload);
+  return next === current ? current : { ...next, sequence: event.sequence };
 }
 export function reduceAgentTranscript(current: AgentTranscript, threadId: string, event: PrivoraEventPayload): AgentTranscript {
   if (event.type === "user_input.requested" && event.request.threadId === threadId) return { ...current, pendingInput: event.request };
@@ -30,7 +33,7 @@ export function reduceAgentTranscript(current: AgentTranscript, threadId: string
   }
   if (event.type === "tool.output_delta") {
     const tool = current.page.toolEvents.find((item) => item.callId === event.callId);
-    if (tool) return { ...current, page: { ...current.page, toolEvents: upsert(current.page.toolEvents, { ...tool, output: `${tool.output || ""}${event.delta}` }) } };
+    if (tool) return { ...current, page: { ...current.page, toolEvents: upsert(current.page.toolEvents, { ...tool, output: compactLiveOutput(`${tool.output || ""}${event.delta}`) }) } };
   }
   return current;
 }
@@ -51,21 +54,37 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   useEffect(() => { if (request && agents.some((item) => item.threadId === request.threadId)) setSelected(request.threadId); }, [request]);
   useEffect(() => {
     setTranscript(null); setError(""); stick.current = true;
-    if (!selected) return;
+    if (!selected || hidden) return;
     let disposed = false;
     let ready = false;
     const buffered: PrivoraEventEnvelope[] = [];
     const unsubscribe = window.privoraDesktop.onPrivoraEvent((event) => {
-      if (!ready) { buffered.push(event); return; }
+      if (disposed) return;
+      const payload = event.payload;
+      const relevant = payload.type === "message.upserted" ? payload.message.threadId === selected
+        : payload.type === "tool.upserted" ? payload.tool.threadId === selected
+        : payload.type === "user_input.requested" ? payload.request.threadId === selected
+        : payload.type === "tool.output_delta" || ("threadId" in payload && payload.threadId === selected);
+      if (!relevant) return;
+      if (!ready) {
+        // A stalled history request must not retain a growing stream of updates.
+        if (buffered.length >= 128) {
+          buffered.length = 0; disposed = true; unsubscribe();
+          setError("Agent history could not keep up with live updates. Retry to reload saved history; running work is unaffected.");
+          return;
+        }
+        buffered.push(event); return;
+      }
       setTranscript((current) => current ? applyAgentEvent(current, selected, event) : current);
     });
     void window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected }).then((initial) => {
       if (disposed) return;
       setTranscript(buffered.reduce<AgentTranscript>((current, event) => applyAgentEvent(current, selected, event), initial));
+      buffered.length = 0;
       ready = true;
-    }).catch((reason: unknown) => { if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { disposed = true; unsubscribe(); };
-  }, [parentThreadId, selected, reload]);
+    }).catch((reason: unknown) => { buffered.length = 0; unsubscribe(); if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { disposed = true; buffered.length = 0; unsubscribe(); };
+  }, [parentThreadId, selected, reload, hidden]);
   useEffect(() => {
     if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [transcript]);

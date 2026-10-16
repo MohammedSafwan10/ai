@@ -480,6 +480,22 @@ const createWindow = async () => {
   const completionBadgeTimer = setInterval(updateCompletionBadge, 2000);
   completionBadgeTimer.unref();
 
+  // Keep only numeric process memory samples in RAM, and persist only on failure.
+  // This records no URLs, prompts, tool output, or session identifiers.
+  const memorySamples: { at: number; processes: { type: string; workingSetKiB: number; privateKiB?: number }[] }[] = [];
+  const sampleWindowMemory = () => {
+    try {
+      const rendererPid = mainWindow?.webContents.getOSProcessId();
+      const processes = app.getAppMetrics().filter((metric) => metric.pid === rendererPid || metric.type === "Browser" || metric.type === "GPU")
+        .map((metric) => ({ type: metric.pid === rendererPid ? "Interface" : metric.type, workingSetKiB: metric.memory.workingSetSize, privateKiB: metric.memory.privateBytes }));
+      memorySamples.push({ at: Date.now(), processes });
+      if (memorySamples.length > 10) memorySamples.shift();
+    } catch { /* Sampling must not affect background work or interface recovery. */ }
+  };
+  sampleWindowMemory();
+  const memorySampleTimer = setInterval(sampleWindowMemory, 30_000);
+  memorySampleTimer.unref();
+
   mainWindow.webContents.on("console-message", (details) => {
     if (details.level === "error") writeRendererFailure(app.getPath("userData"), "console-error", details.message);
     if (!MAIN_WINDOW_VITE_DEV_SERVER_URL || (details.level !== "warning" && details.level !== "error")) return;
@@ -494,6 +510,7 @@ const createWindow = async () => {
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error(`[renderer:gone] ${details.reason}`);
     writeRendererFailure(app.getPath("userData"), "renderer-gone", `${details.reason} (exit ${details.exitCode})`);
+    writeRendererFailure(app.getPath("userData"), "renderer-memory", JSON.stringify(memorySamples));
     const failedWindow = mainWindow;
     if (!failedWindow || failedWindow.isDestroyed() || isQuitting) return;
     void dialog.showMessageBox(failedWindow, { type: "error", title: "Privora interface stopped", message: "The interface process stopped.", detail: "Background work may still be running. Reload the interface, then check task status before retrying. Reloading does not request cancellation or replay of jobs.", buttons: ["Reload interface", "Later"], defaultId: 0, cancelId: 1 }).then(({ response }) => {
@@ -518,6 +535,7 @@ const createWindow = async () => {
 
   mainWindow.on("closed", () => {
     clearInterval(completionBadgeTimer);
+    clearInterval(memorySampleTimer);
     mainWindow = null;
   });
   installRendererDiagnostics(mainWindow);

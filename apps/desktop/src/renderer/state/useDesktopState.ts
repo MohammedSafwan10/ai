@@ -13,6 +13,8 @@ import type {
 } from "../../shared/types";
 import { GEMINI_37_FLASH_MODEL_ID } from "../../shared/models";
 import { isNewPrivoraEventSequence } from "../../shared/privoraProtocol";
+import { EventBatcher } from "./eventBatcher";
+import { compactLiveOutput } from "./liveOutput";
 
 const emptySettings: SettingsRecord = {
   id: "default",
@@ -74,8 +76,7 @@ export const useDesktopState = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const queuedEventsRef = useRef<PrivoraEventEnvelope[]>([]);
-  const frameRef = useRef<number | null>(null);
+  const eventBatcherRef = useRef<EventBatcher<PrivoraEventEnvelope> | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const eventStatsRef = useRef({ startedAt: performance.now(), events: 0, bytes: 0, flushes: 0 });
   const lastEventSequenceRef = useRef(0);
@@ -119,11 +120,9 @@ export const useDesktopState = () => {
     setHistoryError(null);
   }, [snapshot.activeThreadId]);
 
-  const flushEvents = useCallback(() => {
-    frameRef.current = null;
+  const flushEvents = useCallback((pending: PrivoraEventEnvelope[]) => {
     const started = performance.now();
-    const events = coalescePrivoraEvents(queuedEventsRef.current);
-    queuedEventsRef.current = [];
+    const events = coalescePrivoraEvents(pending);
     if (events.length === 0) return;
     setSnapshot((current) => reducePrivoraEvents(current, events));
     recordEventFlush(eventStatsRef.current, events, performance.now() - started);
@@ -147,29 +146,31 @@ export const useDesktopState = () => {
       }, 4500);
       return;
     }
-    queuedEventsRef.current.push(event);
-    if (frameRef.current !== null) return;
-    frameRef.current = window.requestAnimationFrame(flushEvents);
-  }, [flushEvents]);
+    eventBatcherRef.current?.enqueue(event);
+  }, []);
 
   useEffect(() => {
+    const batcher = new EventBatcher<PrivoraEventEnvelope>({
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (id) => window.cancelAnimationFrame(id),
+      setTimer: (callback, delay) => window.setTimeout(callback, delay),
+      clearTimer: (id) => window.clearTimeout(id),
+    }, flushEvents);
+    eventBatcherRef.current = batcher;
     void refresh();
     const unsubscribe = window.privoraDesktop.onPrivoraEvent(enqueueEvent);
     return () => {
       refreshRequestRef.current += 1;
       historyRequestRef.current = null;
       unsubscribe();
-      if (frameRef.current !== null) {
-        window.cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-      queuedEventsRef.current = [];
+      batcher.clear();
+      eventBatcherRef.current = null;
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current);
         toastTimerRef.current = null;
       }
     };
-  }, [enqueueEvent, refresh]);
+  }, [enqueueEvent, refresh, flushEvents]);
 
   const activeThread = useMemo(
     () => snapshot.threads.find((thread) => thread.id === snapshot.activeThreadId) || null,
@@ -493,13 +494,6 @@ const upsertBySessionId = <T extends { sessionId: number; updatedAt?: number }>(
   return next
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0) || b.sessionId - a.sessionId)
     .slice(0, 24);
-};
-
-const compactLiveOutput = (value: string, maxChars = 40_000) => {
-  if (value.length <= maxChars) return value;
-  const head = value.slice(0, 10_000);
-  const tail = value.slice(-(maxChars - 10_000));
-  return `${head}\n\n[... live output compacted ...]\n\n${tail}`;
 };
 
 const recordEventFlush = (
