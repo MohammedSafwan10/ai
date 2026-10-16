@@ -106,13 +106,16 @@ export function Composer({
     }) })).filter((group) => group.models.length > 0);
   }, [modelProviderGroups, modelSearch]);
   useEffect(() => { setModelSearch(""); }, [activeMenu, modelPickerTarget]);
+  useEffect(() => { goFetchedRef.current = false; setGoModelIds([]); }, [settings.activeOpencodeGoAccountId, settings.opencodeGoApiKeyStored]);
   useEffect(() => {
     if (activeMenu !== "model" || !settings.opencodeGoApiKeyStored || goFetchedRef.current) return;
     goFetchedRef.current = true;
+    let cancelled = false;
     void window.privoraDesktop.listOpencodeGoModels()
-      .then((list) => setGoModelIds(list.ids))
-      .catch(() => setGoModelIds([]));
-  }, [activeMenu, settings.opencodeGoApiKeyStored]);
+      .then((list) => { if (!cancelled) setGoModelIds(list.ids); })
+      .catch(() => { if (!cancelled) { setGoModelIds([]); goFetchedRef.current = false; } });
+    return () => { cancelled = true; goFetchedRef.current = false; };
+  }, [activeMenu, settings.opencodeGoApiKeyStored, settings.activeOpencodeGoAccountId]);
   const firstVisionModel = useMemo(
     () => modelProviderGroups.flatMap((group) => group.models).find((model) => model.supportsImageInput),
     [modelProviderGroups],

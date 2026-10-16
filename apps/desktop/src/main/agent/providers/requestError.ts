@@ -2,7 +2,7 @@ import { ProviderStreamError } from "./streamOutcome";
 
 export class ProviderRequestError extends Error {
   readonly retryAfterMs?: number;
-  constructor(message: string, public readonly status: number, retryAfter: string | null = null) {
+  constructor(message: string, public readonly status: number, retryAfter: string | null = null, public readonly code?: "usage_limit" | "invalid_key") {
     super(message);
     if (retryAfter) {
       const seconds = Number(retryAfter);
@@ -13,6 +13,7 @@ export class ProviderRequestError extends Error {
 }
 
 export function providerRetryDelay(error: unknown, retries: number, random = Math.random): number | null {
+  if (error instanceof ProviderRequestError && error.code) return null;
   if (retries >= 2) return null;
   const transient = error instanceof ProviderRequestError
     ? [408, 429, 500, 502, 503, 504].includes(error.status)

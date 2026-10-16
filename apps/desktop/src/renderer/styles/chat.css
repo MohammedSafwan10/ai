@@ -113,8 +113,8 @@
   align-items: center;
   gap: 6px;
   margin-bottom: 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 58%, transparent);
-  padding-bottom: 8px;
+  border-bottom: 0;
+  padding-bottom: 0;
   color: color-mix(in srgb, var(--privora-muted) 84%, transparent);
   font-size: 12px;
   line-height: 1.2;
@@ -691,6 +691,11 @@
   animation: text-shimmer 2s linear infinite;
   display: inline-block;
 }
+
+.markdown-code-block { position: relative; margin: 10px 0; overflow: hidden; border: 1px solid var(--privora-border); border-radius: 9px; background: color-mix(in srgb, var(--privora-surface) 65%, var(--privora-bg)); }
+.markdown-code-heading { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 0 10px; color: var(--privora-muted); font-size: 11px; }
+.markdown-body .markdown-code-block pre { margin: 0; border: 0; border-radius: 0; padding: 2px 12px 12px; background: transparent; overflow: auto; max-height: 480px; white-space: pre; }
+.markdown-code-block:hover .activity-copy-button, .markdown-code-block:focus-within .activity-copy-button { opacity: 1; }
 
 .proposed-plan-card {
   position: relative;

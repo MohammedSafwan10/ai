@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Bot, PanelRightClose, Square } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown, ArrowLeft, Bot, PanelRightClose, Square } from "lucide-react";
 import type { ActiveRunState, AppSnapshot, ChatMessageRecord, PrivoraEventEnvelope, PrivoraEventPayload, SubagentRecord, ThreadHistoryPage, ToolEventRecord } from "../../../shared/types";
 import { ChatMessage } from "../../components/ChatMessage";
 import { AgentAvatar } from "../../components/AgentAvatar";
@@ -9,6 +10,8 @@ import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
 import { groupInlineMessages } from "./inlineMessages";
 import { compactLiveOutput } from "../../state/liveOutput";
+import { retainRecentHistory } from "../../state/historyRetention";
+import { mergeUniqueByFreshness } from "../../state/useDesktopState";
 
 const name = (agent: SubagentRecord) => agent.agentNickname || agent.taskName;
 const upsert = <T extends { id: string }>(items: T[], item: T) => {
@@ -46,21 +49,23 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const [stoppingThreads, setStoppingThreads] = useState<Set<string>>(() => new Set());
   const [reload, setReload] = useState(0);
   const [now, setNow] = useState(Date.now);
+  const [showJump, setShowJump] = useState(false);
+  const [listOffset, setListOffset] = useState(0);
+  const list = useRef<HTMLDivElement>(null);
+  const historyGeneration = useRef(0);
   useEffect(() => { if (hidden) return; setNow(Date.now()); const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, [hidden]);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const agents = snapshot.subagents;
   const agent = agents.find((item) => item.threadId === selected);
-  const activityAt = transcript?.page.threadId === selected ? Math.max(
-    transcript.run?.updatedAt || 0,
-    ...transcript.page.messages.map((message) => message.updatedAt),
-    ...transcript.page.toolEvents.map((tool) => tool.updatedAt),
-  ) : 0;
+  const activityAt = transcript?.page.threadId === selected ? transcript.page.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt),
+    transcript.page.messages.reduce((latest, message) => Math.max(latest, message.updatedAt), transcript.run?.updatedAt || 0)) : 0;
   const displayTime = agent ? agentDisplayTime(agent, activityAt) : null;
   useEffect(() => { setSelected(null); }, [parentThreadId]);
   useEffect(() => { if (request && agents.some((item) => item.threadId === request.threadId)) setSelected(request.threadId); }, [request]);
   useEffect(() => {
-    setTranscript(null); setError(""); stick.current = true;
+    const generation = ++historyGeneration.current;
+    setTranscript(null); setError(""); setLoadingOlder(false); setShowJump(false); stick.current = true;
     if (!selected || hidden) return;
     let disposed = false;
     let ready = false;
@@ -82,19 +87,20 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
         }
         buffered.push(event); return;
       }
-      setTranscript((current) => current ? applyAgentEvent(current, selected, event) : current);
+      setTranscript((current) => {
+        if (!current) return current;
+        const updated = applyAgentEvent(current, selected, event);
+        return stick.current ? retainAgentTranscript(updated) : updated;
+      });
     });
     void window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected }).then((initial) => {
-      if (disposed) return;
-      setTranscript(buffered.reduce<AgentTranscript>((current, event) => applyAgentEvent(current, selected, event), initial));
+      if (disposed || generation !== historyGeneration.current) return;
+      setTranscript(retainAgentTranscript(buffered.reduce<AgentTranscript>((current, event) => applyAgentEvent(current, selected, event), initial)));
       buffered.length = 0;
       ready = true;
     }).catch((reason: unknown) => { buffered.length = 0; unsubscribe(); if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { disposed = true; buffered.length = 0; unsubscribe(); };
   }, [parentThreadId, selected, reload, hidden]);
-  useEffect(() => {
-    if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [transcript]);
   const status = (item: SubagentRecord) => snapshot.activeRuns.find((run) => run.threadId === item.threadId)?.status || item.status;
   const live = (item: SubagentRecord) => isActiveTurnStatus(status(item)) || ["pending", "waiting"].includes(status(item));
   const groups = [
@@ -102,7 +108,33 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
     { title: "Finished", rows: agents.filter((item) => !live(item) && ["completed", "closed"].includes(item.status)) },
     { title: "Needs attention", rows: agents.filter((item) => !live(item) && !["completed", "closed"].includes(item.status)) },
   ];
-  const inlineMessages = transcript ? groupInlineMessages(transcript.page.messages, transcript.page.toolEvents) : null;
+  const inlineMessages = useMemo(() => transcript ? groupInlineMessages(transcript.page.messages, transcript.page.toolEvents) : null, [transcript?.page.messages, transcript?.page.toolEvents]);
+  const messages = inlineMessages?.roots || [];
+  const toolsByMessage = useMemo(() => {
+    const grouped = new Map<string, ToolEventRecord[]>();
+    for (const tool of transcript?.page.toolEvents || []) {
+      const items = grouped.get(tool.messageId) || []; items.push(tool); grouped.set(tool.messageId, items);
+    }
+    return grouped;
+  }, [transcript?.page.toolEvents]);
+  const virtualizer = useVirtualizer({
+    count: messages.length, getScrollElement: () => scroller.current,
+    estimateSize: () => 190, overscan: 6, getItemKey: (index) => messages[index]?.id || index,
+    anchorTo: "end", followOnAppend: false, scrollEndThreshold: 80, scrollMargin: listOffset,
+    enabled: !hidden && Boolean(transcript),
+  });
+  useLayoutEffect(() => {
+    setListOffset(list.current?.offsetTop || 0);
+  }, [selected, transcript?.page.hasOlder, loadingOlder, error, hidden]);
+  const totalSize = virtualizer.getTotalSize();
+  useLayoutEffect(() => {
+    if (!stick.current || hidden || !messages.length) return;
+    const frame = requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+      if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [transcript, messages.length, totalSize, hidden]);
   const approve = (callId: string, approved: boolean) => {
     if (!selected) return;
     void window.privoraDesktop.decideApproval({ threadId: selected, callId, approved, scope: "once" }).catch((reason: unknown) => setError(String(reason)));
@@ -117,13 +149,16 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   };
   const older = async () => {
     if (!selected || !transcript?.page.beforeCursor || loadingOlder) return;
+    const generation = historyGeneration.current;
+    stick.current = false;
     setLoadingOlder(true);
     try {
       const previous = await window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected, before: transcript.page.beforeCursor });
-      setTranscript((current) => !current || current.page.threadId !== previous.page.threadId ? current : { ...current, page: { ...previous.page,
-        messages: [...previous.page.messages, ...current.page.messages], toolEvents: [...new Map([...previous.page.toolEvents, ...current.page.toolEvents].map((tool) => [tool.id, tool])).values()] } });
-    } catch (reason) { setError(String(reason)); }
-    finally { setLoadingOlder(false); }
+      if (generation !== historyGeneration.current) return;
+      setTranscript((current) => !current || current.page.threadId !== previous.page.threadId ? current : { ...current, page: { ...current.page, ...previous.page,
+        messages: mergeUniqueByFreshness(previous.page.messages, current.page.messages), toolEvents: mergeUniqueByFreshness(previous.page.toolEvents, current.page.toolEvents), turnUndos: [] } });
+    } catch (reason) { if (generation === historyGeneration.current) setError(String(reason)); }
+    finally { if (generation === historyGeneration.current) setLoadingOlder(false); }
   };
   return <aside className="workspace-ide subagents-pane" aria-label="Subagents" style={hidden ? { display: "none" } : undefined}>
     <header className="workspace-ide-topbar">
@@ -134,7 +169,15 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       <button className="workspace-icon-button" onClick={onClose} aria-label="Close subagents panel"><PanelRightClose size={16} /></button>
     </header>
     {agent && displayTime && <div className="agent-panel-meta"><div><span className={`agent-state ${live(agent) ? "live" : agent.status}`}>{status(agent).replace(/_/g, " ")}</span> · {agent.model} · {agent.reasoningEffort}</div><div className="agent-panel-times">Created <time dateTime={new Date(agent.createdAt).toISOString()} title={new Date(agent.createdAt).toLocaleString()}>{relativeAgentTime(agent.createdAt, now)}</time> · {displayTime.label} <time dateTime={new Date(displayTime.timestamp).toISOString()} title={new Date(displayTime.timestamp).toLocaleString()}>{relativeAgentTime(displayTime.timestamp, now)}</time></div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
-    <div className="agent-panel-scroll" ref={scroller} onScroll={() => { const el = scroller.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
+    <div className="agent-panel-scroll" ref={scroller} onWheel={(event) => { if (event.deltaY < 0) stick.current = false; }} onScroll={() => {
+      const el = scroller.current;
+      if (!el || !transcript) return;
+      const wasFollowing = stick.current;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stick.current = distance < 24;
+      setShowJump(distance > 96);
+      if (!wasFollowing && stick.current) setTranscript((current) => current ? retainAgentTranscript(current) : current);
+    }}>
       {error && <div role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
       {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title}<span>{group.rows.length}</span></h3>
         {!group.rows.length && <p>No {group.title.toLowerCase()} subagents</p>}
@@ -144,14 +187,29 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       </section>)}
       {selected && !transcript && !error && <p role="status">Loading agent chat…</p>}
       {transcript?.page.hasOlder && <button onClick={() => void older()} disabled={loadingOlder}>{loadingOlder ? "Loading…" : "Load earlier messages"}</button>}
-      {transcript && inlineMessages?.roots.map((message: ChatMessageRecord) => <ChatMessage key={message.id}
-        message={message} inlineSteers={inlineMessages.inlineByTurn.get(message.id)} coordinationDetails
-        tools={transcript.page.toolEvents.filter((tool: ToolEventRecord) => tool.messageId === message.id)} subagents={agents} onOpenSubagent={setSelected}
+      {transcript && <div ref={list} className="agent-virtual-spacer" style={{ height: totalSize }}>
+      {virtualizer.getVirtualItems().map((item) => {
+        const message: ChatMessageRecord = messages[item.index];
+        if (!message) return null;
+        return <div key={message.id} className="agent-virtual-row" data-index={item.index} ref={virtualizer.measureElement} style={{ transform: `translateY(${item.start - listOffset}px)` }}><ChatMessage
+        message={message} inlineSteers={inlineMessages?.inlineByTurn.get(message.id)} coordinationDetails
+        tools={toolsByMessage.get(message.id) || []} subagents={agents} onOpenSubagent={setSelected}
         activeRunStatus={transcript.run?.assistantMessageId === message.id ? transcript.run.status : null}
         activeRunReason={transcript.run?.assistantMessageId === message.id ? transcript.run.reason : null}
         onApprove={approve} onApproveAll={(ids) => ids.forEach((id) => approve(id, true))}
-        onOpenReview={() => {}} turnUndo={null} onPrepareTurnUndo={async () => null} onUndoTurnChanges={async () => null} readOnly />)}
+        onOpenReview={() => {}} turnUndo={null} onPrepareTurnUndo={async () => null} onUndoTurnChanges={async () => null} readOnly /></div>;
+      })}</div>}
       {transcript?.pendingInput && <RequestUserInputPanel request={transcript.pendingInput} onSubmit={(answers) => window.privoraDesktop.answerRequestUserInput({ threadId: transcript.pendingInput!.threadId, callId: transcript.pendingInput!.callId, answers })} />}
     </div>
+    {selected && showJump && <button type="button" className="agent-jump-latest" aria-label="Jump to latest agent message" onClick={() => {
+      stick.current = true; setShowJump(false);
+      setTranscript((current) => current ? retainAgentTranscript(current) : current);
+      virtualizer.scrollToIndex(Math.max(0, messages.length - 1), { align: "end" });
+    }}><ArrowDown size={15} /> Latest</button>}
   </aside>;
+}
+
+export function retainAgentTranscript(transcript: AgentTranscript): AgentTranscript {
+  const page = retainRecentHistory(transcript.page, [transcript.run?.assistantMessageId || "", transcript.pendingInput?.assistantMessageId || ""]);
+  return page === transcript.page ? transcript : { ...transcript, page };
 }

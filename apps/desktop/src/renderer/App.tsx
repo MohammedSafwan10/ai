@@ -38,7 +38,7 @@ const clampIdeWidth = (requestedWidth: number, containerWidth: number) => {
 };
 
 export default function App() {
-  const { snapshot, activeThread, activeWorkspace, toast, refresh, loadOlderMessages, historyLoading, historyError } = useDesktopState();
+  const { snapshot, activeThread, activeWorkspace, toast, refresh, loadOlderMessages, historyLoading, historyError, setFollowingLatest } = useDesktopState();
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -125,6 +125,7 @@ export default function App() {
     latestActivityKey,
     messages,
     onLoadOlder: loadOlderMessages,
+    onFollowingLatestChange: setFollowingLatest,
     settingsOpen,
   });
   useCompletionRead(activeThread, messages, scrollerRef, settingsOpen || historyLoading);

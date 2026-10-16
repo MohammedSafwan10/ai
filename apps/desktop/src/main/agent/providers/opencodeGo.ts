@@ -26,6 +26,7 @@ import {
   goRouteFor,
   goSessionId,
   normalizeGoError,
+  classifyGoAccountError,
   stripGoPrefix,
   truncatedOutputError,
 } from "../../../shared/opencodeGo";
@@ -50,6 +51,19 @@ const authHeaders = (apiKey: string, threadId?: string): Record<string, string> 
   "User-Agent": OPENCODE_GO_USER_AGENT,
   "x-opencode-session": goSessionId(threadId),
 });
+
+const goRequestError = (options: ProviderStreamOptions, value: string, status: number, retryAfter: string | null = null) => {
+  const code = classifyGoAccountError(value, status);
+  if (code) options.onAccountIssue?.(code);
+  return new ProviderRequestError(normalizeGoError(value, status), status, retryAfter, code);
+};
+const goStreamError = (options: ProviderStreamOptions) => (data: any, event?: string) => {
+  const error = data?.error || data?.response?.error;
+  if (!error && event !== "error" && data?.type !== "error") return;
+  const value = typeof error === "string" ? error : JSON.stringify(error || {});
+  const code = classifyGoAccountError(value);
+  return code ? goRequestError(options, value, code === "invalid_key" ? 401 : 429) : undefined;
+};
 
 const toMessages = (systemInstruction: string, messages: ProviderMessage[]) => {
   const out: Array<Record<string, unknown>> = systemInstruction ? [{ role: "system", content: systemInstruction }] : [];
@@ -166,7 +180,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new ProviderRequestError(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
+      throw goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
     }
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
@@ -213,7 +227,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
       if (choice.finish_reason === "length") truncated = true;
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
-    }, options.onStreamProgress, options.onStreamOutcome);
+    }, options.onStreamProgress, options.onStreamOutcome, goStreamError(options));
 
     if (buffers.size > 0) flush();
     if (truncated) throw truncatedOutputError(options.maxOutputTokens, thoughtChars > 0);
@@ -244,7 +258,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new ProviderRequestError(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
+      throw goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
     }
 
     const toolCalls = new ResponsesToolCallTracker(options);
@@ -300,7 +314,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       }
 
       toolCalls.consume(event, data);
-    }, options.onStreamProgress, options.onStreamOutcome);
+    }, options.onStreamProgress, options.onStreamOutcome, goStreamError(options));
     if (options.onStreamOutcome) toolCalls.assertComplete();
 
     if (incomplete) throw truncatedOutputError(options.maxOutputTokens, hasReasoningSummary);
@@ -342,7 +356,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new ProviderRequestError(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
+      throw goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
     }
 
     const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean; thinking?: string; signature?: string }>();
@@ -427,7 +441,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         for (const index of blocks.keys()) flushBlock(index);
         blocks.clear();
       }
-    }, options.onStreamProgress, options.onStreamOutcome);
+    }, options.onStreamProgress, options.onStreamOutcome, goStreamError(options));
 
     for (const index of blocks.keys()) flushBlock(index);
     blocks.clear();

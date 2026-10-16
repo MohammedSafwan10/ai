@@ -17,6 +17,53 @@ const options = (overrides: Partial<ProviderStreamOptions> = {}): ProviderStream
 const sse = (events: unknown[]) => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n");
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+describe("Go account limits", () => {
+  it.each(["opencode-go/glm-5.3-flash", "opencode-go/gpt-6-luna", "opencode-go/claude-haiku-5-5"])("pauses %s on a usage cap without retrying or changing the credential", async (model) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { message: "Go usage limit exceeded" } }), { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const callbacks = options({ model, onAccountIssue: vi.fn() });
+    await expect(reliableProviderStream(new OpenCodeGoAdapter(), callbacks)).rejects.toMatchObject({ outcome: { status: "interrupted", reason: "account_usage_limit" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(callbacks.onAccountIssue).toHaveBeenCalledWith("usage_limit");
+    expect(callbacks.onRetry).not.toHaveBeenCalled();
+    expect(callbacks.onToolCall).not.toHaveBeenCalled();
+    expect(callbacks.opencodeGoApiKey).toBe("fixture");
+  });
+  it("keeps completed output when a cap arrives inside a stream", async () => {
+    const fetchMock = vi.fn(async () => sse([
+      { choices: [{ delta: { content: "Saved progress" } }] },
+      { error: { code: "usage_limit_exceeded", message: "Go usage limit exceeded" } },
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+    const callbacks = options({ onAccountIssue: vi.fn() });
+    await expect(reliableProviderStream(new OpenCodeGoAdapter(), callbacks)).rejects.toMatchObject({ outcome: { reason: "account_usage_limit" } });
+    expect(callbacks.onTextDelta).toHaveBeenCalledWith("Saved progress");
+    expect(callbacks.onAccountIssue).toHaveBeenCalledWith("usage_limit");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("records rejected keys without retrying", async () => {
+    const fetchMock = vi.fn(async () => new Response("invalid API key", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const callbacks = options({ onAccountIssue: vi.fn() });
+    await expect(reliableProviderStream(new OpenCodeGoAdapter(), callbacks)).rejects.toMatchObject({ code: "invalid_key" });
+    expect(callbacks.onAccountIssue).toHaveBeenCalledWith("invalid_key");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("still retries temporary rate limiting without marking an account exhausted", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response("rate limit exceeded", { status: 429 }))
+      .mockResolvedValueOnce(sse([{ choices: [{ delta: { content: "Done" }, finish_reason: "stop" }] }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const callbacks = options({ onAccountIssue: vi.fn() });
+    const work = reliableProviderStream(new OpenCodeGoAdapter(), callbacks);
+    await vi.runAllTimersAsync();
+    await work;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(callbacks.onAccountIssue).not.toHaveBeenCalled();
+    expect(callbacks.onStreamOutcome).toHaveBeenCalledWith({ status: "completed", reason: "stop" });
+  });
+});
+
 describe("structured provider finish", () => {
   it.each([
     ["stop", "completed"], ["tool_calls", "tool_calls"], ["length", "output_limit"], ["content_filter", "refused"], ["mystery", "incomplete"],

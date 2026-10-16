@@ -24,6 +24,7 @@ import clsx from "clsx";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AiCreditSummaryRecord, SaveSettingsInput, SettingsRecord, StorageCleanupCategoryId, StorageUsageSnapshot, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
+import { GoAccountsSettings } from "./GoAccountsSettings";
 
 interface SettingsPanelProps {
   settings: SettingsRecord;
@@ -219,7 +220,6 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
-  const [opencodeGoApiKey, setOpencodeGoApiKey] = useState("");
   const [goModelsStatus, setGoModelsStatus] = useState("");
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
   const [billingRefreshing, setBillingRefreshing] = useState(false);
@@ -471,36 +471,7 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                     </div>
                     <small>Direct api.deepseek.com key for V4.1 Flash Temp (expires 09-10) + Vision Exp. Same pricing as v4-flash.</small>
                   </label>
-                  <label>
-                    <span className="settings-secret-label">
-                      OpenCode Go API key
-                      <small>{settings.opencodeGoApiKeyStored ? "Saved securely" : "Not saved"}</small>
-                    </span>
-                    <div className="settings-secret-row">
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={settings.opencodeGoApiKeyStored ? "New key replaces saved key" : "Paste Go key from Zen console"}
-                        value={opencodeGoApiKey}
-                        onChange={(event) => setOpencodeGoApiKey(event.target.value)}
-                      />
-                      {settings.opencodeGoApiKeyStored && (
-                        <button
-                          type="button"
-                          className="secret-clear-button"
-                          title="Clear saved Go key"
-                          onClick={() => {
-                            setOpencodeGoApiKey("");
-                            void saveProviderSettings({ opencodeGoApiKey: "" });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                    <small>$10/mo subscription gateway. Billed to Go caps, not Privora credits.</small>
-                  </label>
+                  <GoAccountsSettings settings={settings} busy={saving} onSave={saveProviderSettings} />
                   {settings.opencodeGoApiKeyStored && (
                     <div className="settings-button-row">
                       <button
@@ -533,13 +504,11 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                         ...(geminiApiKey ? { geminiApiKey } : {}),
                         ...(openRouterApiKey ? { openRouterApiKey } : {}),
                         ...(deepseekApiKey ? { deepseekApiKey } : {}),
-                        ...(opencodeGoApiKey ? { opencodeGoApiKey } : {}),
                       });
                       if (!saved) return;
                       setGeminiApiKey("");
                       setOpenRouterApiKey("");
                       setDeepseekApiKey("");
-                      setOpencodeGoApiKey("");
                     }}
                   >
                     {saving ? "Saving..." : status === "saved" ? (

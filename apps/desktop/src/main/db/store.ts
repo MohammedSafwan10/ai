@@ -24,6 +24,8 @@ import type {
   WorkspaceRecord,
 } from "../../shared/types";
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
+import { applyGoAccountAction, goAccountVaultSchema, type GoAccountAction, type GoAccountVault } from "../../shared/goAccounts";
+import { encodeHistoryCursor } from "../../shared/historyCursor";
 import { reorderPinnedPromptSchema, type ReorderPinnedPromptInput } from "../../shared/promptLibrary";
 import type { UpdateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
 import type { ComposerDraftRecord } from "../../shared/composerDraft";
@@ -44,6 +46,7 @@ type SecretName =
   | "gemini_api_key"
   | "deepseek_api_key"
   | "opencode_go_api_key"
+  | "opencode_go_accounts"
   | "privora_session_cookie"
   | "privora_user_jwt"
   | "privora_pending_auth"
@@ -248,6 +251,7 @@ export class DesktopStore {
   getSettings(): SettingsRecord {
     const stored = this.getKv<ReturnType<typeof defaultSettings>>("settings", "default") || defaultSettings();
     const profile = this.getPrivoraAccountProfile();
+    const goVault = this.getGoAccountVault();
     return {
       ...defaultSettings(),
       ...stored,
@@ -260,14 +264,16 @@ export class DesktopStore {
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
       deepseekApiKeyStored: Boolean(this.getSecret("deepseek_api_key")),
-      opencodeGoApiKeyStored: Boolean(this.getSecret("opencode_go_api_key")),
+      opencodeGoApiKeyStored: goVault.accounts.some((account) => account.id === goVault.activeId),
+      opencodeGoAccounts: goVault.accounts.map(({ id, name, issue }) => ({ id, name, issue })),
+      activeOpencodeGoAccountId: goVault.activeId,
       privoraAccountConnected: Boolean(this.getSecret("privora_session_cookie") || this.getPrivoraUserJwt()),
       privoraAccountEmail: profile.email,
       privoraAccountName: profile.name,
     };
   }
 
-  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string; opencodeGoApiKey?: string }): SettingsRecord {
+  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string; opencodeGoApiKey?: string; opencodeGoAccount?: GoAccountAction }): SettingsRecord {
     const current = this.getSettings();
     const next = {
       ...defaultSettings(),
@@ -306,11 +312,21 @@ export class DesktopStore {
       value: input.deepseekApiKey,
       envelope: input.deepseekApiKey.trim() ? this.encryptSecret(input.deepseekApiKey.trim()) : undefined,
     });
-    if (input.opencodeGoApiKey !== undefined) pendingSecrets.push({
-      name: "opencode_go_api_key",
-      value: input.opencodeGoApiKey,
-      envelope: input.opencodeGoApiKey.trim() ? this.encryptSecret(input.opencodeGoApiKey.trim()) : undefined,
-    });
+    if (input.opencodeGoApiKey !== undefined && input.opencodeGoAccount) throw new Error("Save one Go account change at a time.");
+    let goVault: GoAccountVault | undefined;
+    if (input.opencodeGoAccount) goVault = applyGoAccountAction(this.getGoAccountVault(true), input.opencodeGoAccount, () => crypto.randomUUID());
+    if (input.opencodeGoApiKey !== undefined) {
+      const currentVault = this.getGoAccountVault(true);
+      const active = currentVault.accounts.find((account) => account.id === currentVault.activeId);
+      goVault = input.opencodeGoApiKey.trim()
+        ? applyGoAccountAction(currentVault, { action: "save", id: active?.id, name: active?.name || "Default account", apiKey: input.opencodeGoApiKey.trim() }, () => crypto.randomUUID())
+        : active ? applyGoAccountAction(currentVault, { action: "remove", id: active.id }, () => crypto.randomUUID()) : currentVault;
+    }
+    if (goVault) {
+      const value = JSON.stringify(goVault);
+      pendingSecrets.push({ name: "opencode_go_accounts", value, envelope: this.encryptSecret(value) });
+      pendingSecrets.push({ name: "opencode_go_api_key", value: "" });
+    }
     this.run("BEGIN IMMEDIATE");
     try {
       this.putKv("settings", "default", next);
@@ -318,6 +334,7 @@ export class DesktopStore {
         if (!value.trim()) this.run("DELETE FROM kv WHERE scope = 'secrets' AND key = ?", name);
         else this.putKv("secrets", name, envelope);
       });
+      if (goVault) this.run("DELETE FROM kv WHERE scope = 'opencode_go' AND key = 'models'");
       this.run("COMMIT");
     } catch (error) {
       this.run("ROLLBACK");
@@ -380,6 +397,33 @@ export class DesktopStore {
   }
   getOpencodeGoModelCache(): OpenCodeGoModelCache | null {
     return this.getKv<OpenCodeGoModelCache>("opencode_go", "models");
+  }
+  private getGoAccountVault(strict = false): GoAccountVault {
+    const envelope = this.getKv<StoredSecretEnvelope>("secrets", "opencode_go_accounts");
+    if (envelope) {
+      try { return goAccountVaultSchema.parse(JSON.parse(this.decryptSecret(envelope))); }
+      catch { if (strict) throw new Error("Saved Go accounts could not be unlocked. No account changes were saved."); return { activeId: null, accounts: [] }; }
+    }
+    const legacyEnvelope = this.getKv<StoredSecretEnvelope>("secrets", "opencode_go_api_key");
+    let legacy = "";
+    try { legacy = legacyEnvelope ? this.decryptSecret(legacyEnvelope) : ""; } catch { /* Preserve unreadable legacy storage. */ }
+    if (strict && legacyEnvelope && !legacy) throw new Error("Saved Go accounts could not be unlocked. No account changes were saved.");
+    return legacy ? { activeId: "legacy", accounts: [{ id: "legacy", name: "Default account", apiKey: legacy }] } : { activeId: null, accounts: [] };
+  }
+  getOpencodeGoCredential() {
+    const vault = this.getGoAccountVault();
+    const account = vault.accounts.find((item) => item.id === vault.activeId);
+    return account ? { id: account.id, apiKey: account.apiKey } : null;
+  }
+  reportGoAccountIssue(id: string, issue: NonNullable<GoAccountVault["accounts"][number]["issue"]> | null, apiKey: string, model?: string) {
+    const vault = this.getGoAccountVault(true);
+    const account = vault.accounts.find((item) => item.id === id && item.apiKey === apiKey);
+    if (!account) return;
+    if (!issue && (!account.issue || (account.issue.kind === "usage_limit" && account.issue.model !== model))) return;
+    if (issue) account.issue = issue;
+    else delete account.issue;
+    this.setSecret("opencode_go_accounts", JSON.stringify(vault));
+    this.run("DELETE FROM kv WHERE scope = 'secrets' AND key = 'opencode_go_api_key'");
   }
   setOpencodeGoModelCache(cache: OpenCodeGoModelCache) {
     this.putKv("opencode_go", "models", cache);
@@ -972,7 +1016,15 @@ export class DesktopStore {
   }
   private count(sql: string, ...params: unknown[]) { return Number((this.prepare(sql).get(...params as never[]) as { count: number }).count); }
   private run(sql: string, ...params: unknown[]) { return this.prepare(sql).run(...params as never[]); }
-  private prepare(sql: string) { let statement = this.statements.get(sql); if (!statement) { statement = this.db.prepare(sql); this.statements.set(sql, statement); } return statement; }
+  private prepare(sql: string) {
+    let statement = this.statements.get(sql);
+    if (!statement) statement = this.db.prepare(sql);
+    else this.statements.delete(sql);
+    this.statements.set(sql, statement);
+    // Variable-length IN queries otherwise retain a new statement for each size.
+    if (this.statements.size > 256) this.statements.delete(this.statements.keys().next().value!);
+    return statement;
+  }
   private transaction<T>(fn: () => T): T {
     const startedAt = performance.now();
     this.db.exec("BEGIN IMMEDIATE");
@@ -1004,7 +1056,7 @@ const emptyPage = (): ThreadHistoryPage => ({ threadId: "", messages: [], toolEv
 const boundedSecurityText = (value: string, limit: number) => { const result = value.slice(-limit); return /^[\uDC00-\uDFFF]/.test(result) ? result.slice(1) : result; };
 const placeholders = (count: number) => Array.from({ length: count }, () => "?").join(",");
 const sqlColumn = (value: string) => value.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
-const encodeCursor = (message: Pick<ChatMessageRecord, "id" | "createdAt">) => Buffer.from(JSON.stringify({ id: message.id, createdAt: message.createdAt }), "utf8").toString("base64url");
+const encodeCursor = encodeHistoryCursor;
 const decodeCursor = (cursor?: string) => { try { const value = JSON.parse(Buffer.from(cursor || "", "base64url").toString("utf8")) as { id?: unknown; createdAt?: unknown }; return typeof value.id === "string" && typeof value.createdAt === "number" ? { id: value.id, createdAt: value.createdAt } : null; } catch { return null; } };
 const attachmentUrl = (artifactId: string, mimeType: string) =>
   `privora-attachment://artifact/${encodeURIComponent(artifactId)}?mime=${encodeURIComponent(mimeType)}`;

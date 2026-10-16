@@ -11,6 +11,7 @@ interface MessageAutoScrollInput {
   messages: ChatMessageRecord[];
   onLoadOlder: () => Promise<boolean>;
   settingsOpen: boolean;
+  onFollowingLatestChange?: (following: boolean) => void;
 }
 
 export const useMessageAutoScroll = ({
@@ -21,6 +22,7 @@ export const useMessageAutoScroll = ({
   messages,
   onLoadOlder,
   settingsOpen,
+  onFollowingLatestChange,
 }: MessageAutoScrollInput) => {
   const [showJumpButton, setShowJumpButton] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -75,6 +77,7 @@ export const useMessageAutoScroll = ({
   };
 
   const scrollToLatestMessage = (behavior: ScrollBehavior = "auto") => {
+    onFollowingLatestChange?.(true);
     followBottomRef.current = true;
     userScrollLockRef.current = false;
     manualScrollHoldUntilRef.current = 0;
@@ -125,6 +128,7 @@ export const useMessageAutoScroll = ({
       userScrollLockRef.current = true;
       manualScrollHoldUntilRef.current = Date.now() + 1200;
       followBottomRef.current = false;
+      onFollowingLatestChange?.(false);
     }
   };
 
@@ -147,6 +151,7 @@ export const useMessageAutoScroll = ({
         if (distance < 24 && Date.now() >= manualScrollHoldUntilRef.current) {
           userScrollLockRef.current = false;
           followBottomRef.current = true;
+          onFollowingLatestChange?.(true);
         } else {
           followBottomRef.current = false;
           setShowJumpButton((value) => value || distance > 96);
@@ -154,6 +159,7 @@ export const useMessageAutoScroll = ({
         }
       }
       followBottomRef.current = distance < 96;
+      onFollowingLatestChange?.(followBottomRef.current);
       if (distance >= 96) manualScrollHoldUntilRef.current = Date.now() + 900;
     }
     const shouldShow = distance > 220;

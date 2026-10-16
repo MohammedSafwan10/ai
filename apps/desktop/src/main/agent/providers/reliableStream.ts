@@ -1,7 +1,7 @@
 import type { ProviderStreamOutcome } from "../../../shared/providerOutcome";
 import type { ProviderAdapter, ProviderStreamOptions } from "./types";
 import { ProviderStreamError } from "./streamOutcome";
-import { providerRetryDelay, waitForProviderRetry } from "./requestError";
+import { ProviderRequestError, providerRetryDelay, waitForProviderRetry } from "./requestError";
 
 /** Retry only attempts that have not exposed content or actions to the harness. */
 export async function reliableProviderStream(adapter: ProviderAdapter, options: ProviderStreamOptions) {
@@ -48,6 +48,10 @@ export async function reliableProviderStream(adapter: ProviderAdapter, options: 
       return;
     } catch (error) {
       if (options.signal.aborted) { publish({ status: "interrupted", reason: "cancelled" }); throw error; }
+      if (error instanceof ProviderRequestError && error.code === "usage_limit") {
+        const paused: ProviderStreamOutcome = { status: "interrupted", reason: "account_usage_limit" };
+        publish(paused); throw new ProviderStreamError(paused);
+      }
       // Hosted requests can charge credits before a response is received. They
       // require server-side idempotency before any automatic request retry.
       const delay = !produced && options.provider !== "privora-cloud" ? providerRetryDelay(error, retries) : null;

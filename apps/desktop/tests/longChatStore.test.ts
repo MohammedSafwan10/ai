@@ -23,6 +23,15 @@ afterEach(() => {
 });
 
 describe("long chat SQLite repository", () => {
+  it("bounds reusable SQL statements while keeping recent queries usable", () => {
+    const db = createStore();
+    for (let index = 0; index < 600; index++) expect((db as any).prepare(`SELECT ${index} AS value`).get().value).toBe(index);
+    const statements = (db as any).statements as Map<string, unknown>;
+    expect(statements.size).toBeLessThanOrEqual(256);
+    expect(statements.has("SELECT 0 AS value")).toBe(false);
+    expect(statements.has("SELECT 599 AS value")).toBe(true);
+    expect((db as any).prepare("SELECT 0 AS value").get().value).toBe(0);
+  });
   it("keeps detailed child tools in the child transcript rather than the parent history", () => {
     const db = createStore(); const root = db.createThread(null);
     db.upsertMessage(message("assistant", root.id, 1));

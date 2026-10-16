@@ -2,7 +2,8 @@ import type { ProviderStreamOutcome } from "../../../shared/providerOutcome";
 
 export class ProviderStreamError extends Error {
   constructor(public readonly outcome: ProviderStreamOutcome) {
-    super(outcome.status === "output_limit" ? "The model reached its output limit. Partial work was kept; resume to continue."
+    super(outcome.reason === "account_usage_limit" ? "This Go account reached its usage cap. Choose a saved account in Settings > Providers, then Resume. Completed actions were kept."
+      : outcome.status === "output_limit" ? "The model reached its output limit. Partial work was kept; resume to continue."
       : outcome.status === "incomplete" ? "The model response was incomplete. Partial work was kept; resume from saved results."
       : outcome.status === "failed" ? "The provider reported a failed response. Partial work was kept; review the failure before resuming."
       : "The model connection was interrupted. Partial work was kept; resume from saved results.");

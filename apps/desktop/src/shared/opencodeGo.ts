@@ -16,6 +16,7 @@ export const OPENCODE_GO_USER_AGENT = "Privora-Desktop";
 export type OpenCodeGoRoute = "chat" | "responses" | "messages";
 
 export interface OpenCodeGoModelCache {
+  accountId?: string;
   ids: string[];
   unsupported: string[];
   fetchedAt: number;
@@ -226,6 +227,11 @@ export const truncatedOutputError = (maxOutputTokens?: number, hadThought = fals
     `Go stopped this response at the ${maxOutputTokens ? `${maxOutputTokens.toLocaleString()}-token ` : ""}output limit${hadThought ? " (reasoning used most of it)" : ""}. The thought was kept — press Continue to resume, or lower reasoning effort.`,
   );
 
+export const classifyGoAccountError = (value: string, status?: number): "usage_limit" | "invalid_key" | undefined => {
+  if (status === 401 || /invalid[ _-]*(?:api[ _-]*)?key|unauthorized|invalid_api_key/i.test(value)) return "invalid_key";
+  if (/usage[ _-]*(?:limit|cap)|(?:quota|allowance)[ _-]*(?:exceeded|exhausted|reached)|(?:daily|weekly|monthly|subscription|plan)[ _-]*(?:limit|cap)|insufficient_quota/i.test(value)) return "usage_limit";
+};
+
 export const normalizeGoError = (value: string, status?: number) => {  const trimmed = value.trim();
   let message = trimmed;
   try {
@@ -234,11 +240,14 @@ export const normalizeGoError = (value: string, status?: number) => {  const tri
   } catch {
     message = trimmed || `OpenCode Go request failed${status ? ` with ${status}` : ""}.`;
   }
-  if (status === 401 || /unauthorized|invalid.*key|api key/i.test(message)) {
+  if (classifyGoAccountError(value, status) === "invalid_key") {
     return "OpenCode Go rejected the saved API key. Replace it in Settings > Providers with a key from your Zen console Go subscription.";
   }
-  if (status === 429 || /limit|quota|cap/i.test(message)) {
-    return `OpenCode Go usage cap reached. Limits vary by model and plan; check OpenCode Console for the allowance and reset time. (${message})`;
+  if (classifyGoAccountError(value, status) === "usage_limit") {
+    return "OpenCode Go usage cap reached. Choose another saved account in Settings > Providers, then Resume. Check OpenCode Console for the allowance and reset time.";
+  }
+  if (status === 429) {
+    return "OpenCode Go temporarily rate limited this request. Try again after the provider cooldown.";
   }
   if (/x-opencode-session/i.test(message)) {
     return `OpenCode Go rejected the request routing (missing session). Update Privora past the Go session-header support and retry. (${message})`;

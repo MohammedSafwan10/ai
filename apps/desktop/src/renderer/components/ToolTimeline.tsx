@@ -1,6 +1,6 @@
 import { toolFailureLabel } from "../../shared/toolFailure";
 import { AgentAvatar } from "./AgentAvatar";
-import { Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Check, ChevronDown, Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
@@ -24,9 +24,10 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set());
   const [autoExpandedImageIds, setAutoExpandedImageIds] = useState<Set<string>>(() => new Set());
   const [autoExpandedFileDraftIds, setAutoExpandedFileDraftIds] = useState<Set<string>>(() => new Set());
-  const [autoExpandedTerminalIds, setAutoExpandedTerminalIds] = useState<Set<string>>(() => new Set());
   const [detailedTools, setDetailedTools] = useState<Record<string, ToolEventRecord>>({});
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const detailRequests = useRef(new Map<string, symbol>());
+  useEffect(() => () => { detailRequests.current.clear(); }, []);
   const [imagePreview, setImagePreview] = useState<GeneratedImagePreview | null>(null);
   const messageActive = isActiveTurnStatus(messageStatus);
   const resolvedTools = useMemo(
@@ -42,12 +43,6 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const currentLiveToolId = useMemo(() => latestLiveToolId(normalizedTools), [normalizedTools]);
   const hasBlockingAttention = hasLive || normalizedTools.some((tool) => tool.status === "awaiting_approval");
   const liveGroupOpen = messageActive && (defaultOpen || hasLive);
-  useEffect(() => {
-    const ids = normalizedTools.filter((tool) => isTerminalOutputTool(tool) && isLiveOutput(tool) && !autoExpandedTerminalIds.has(tool.id)).map((tool) => tool.id);
-    if (!ids.length) return;
-    setExpandedOutputIds((current) => new Set([...current, ...ids]));
-    setAutoExpandedTerminalIds((current) => new Set([...current, ...ids]));
-  }, [autoExpandedTerminalIds, normalizedTools]);
   useEffect(() => {
     if (userOpen === null && (defaultOpen || hasBlockingAttention || messageStatus === "awaiting_approval")) {
       setUserOpen(true);
@@ -132,6 +127,11 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
   const pendingCallIds = normalizedTools.filter((tool) => tool.status === "awaiting_approval").map((tool) => tool.callId);
   const toggleOutput = (toolId: string) => {
     const opening = !expandedOutputIds.has(toolId);
+    if (!opening) {
+      detailRequests.current.delete(toolId);
+      setDetailedTools((current) => { const next = { ...current }; delete next[toolId]; return next; });
+      setDetailErrors((current) => { const next = { ...current }; delete next[toolId]; return next; });
+    }
     setExpandedOutputIds((current) => {
       const next = new Set(current);
       if (next.has(toolId)) next.delete(toolId);
@@ -140,10 +140,12 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
     });
     const tool = tools.find((item) => item.id === toolId);
     if (opening && tool?.detailAvailable && (!detailedTools[toolId] || detailedTools[toolId].updatedAt < tool.updatedAt)) {
+      const request = Symbol();
+      detailRequests.current.set(toolId, request);
       setDetailErrors((current) => ({ ...current, [toolId]: "" }));
       void window.privoraDesktop.getToolEventDetail(toolId)
-        .then(({ tool: detail }) => setDetailedTools((current) => ({ ...current, [toolId]: detail })))
-        .catch(() => setDetailErrors((current) => ({ ...current, [toolId]: "Could not load saved output. Close and reopen to retry." })));
+        .then(({ tool: detail }) => { if (detailRequests.current.get(toolId) === request) setDetailedTools((current) => ({ ...current, [toolId]: detail })); })
+        .catch(() => { if (detailRequests.current.get(toolId) === request) setDetailErrors((current) => ({ ...current, [toolId]: "Could not load saved output. Close and reopen to retry." })); });
     }
   };
 
@@ -156,10 +158,15 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
       })}
       <button
         className="tool-summary"
-        onClick={() => setUserOpen((value) => !(value ?? shouldShowRows))}
+        aria-expanded={shouldShowRows}
+        onClick={() => {
+          if (shouldShowRows) { detailRequests.current.clear(); setDetailedTools({}); setDetailErrors({}); setExpandedOutputIds(new Set()); }
+          setUserOpen((value) => !(value ?? shouldShowRows));
+        }}
       >
         {summaryStatus !== "done" && <StatusIcon status={summaryStatus} />}
         <span>{summary}</span>
+        <ChevronDown size={12} className={clsx("tool-row-chevron", !shouldShowRows && "closed")} />
       </button>
       {shouldShowRows && (
         <div className="tool-rows">
@@ -264,8 +271,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
 function StatusIcon({ status }: { status: string }) {
   if (status === "failed" || status === "cancelled") return <XCircle size={15} className="status-failed" />;
   if (status === "awaiting_approval") return <ShieldAlert size={15} className="status-pending" />;
-  if (status === "running" || status === "preparing") return <span className="tool-status-live" aria-hidden="true" />;
-  return <span className="tool-status-spacer" aria-hidden="true" />;
+  return null;
 }
 
 function LiveOutput({ output }: { output: string }) {
@@ -307,13 +313,17 @@ function ToolTitleLine({
     isTerminalOutputTool(tool) ||
     (isQuestionTool(tool) && hasUsefulOutput(output))
   ) || isLiveFileDraft(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
-  const preview = canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) && !isImageTool(tool)
+  const label = primaryToolLabel(tool);
+  const command = isTerminalOutputTool(tool) ? terminalCommandText(tool).replace(/\s+/g, " ").trim() : "";
+  const alreadyInLabel = typeof label === "string" && command && label.replace(/\s+/g, " ").includes(command);
+  const preview = isTerminalOutputTool(tool) ? alreadyInLabel ? "" : command
+    : canExpand && !isQuestionTool(tool) && !isSubagentTool(tool) && !isImageTool(tool)
     ? compactOutputPreview(cleanTerminalText(output).trimEnd())
     : "";
   if (!canExpand) {
     return (
       <div className="tool-title-line">
-        <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
+        <strong className={clsx(live && "active-text-shimmer")}>{label}</strong>
         {tool.name === "context_compaction" && tool.preview && <code>{tool.preview}</code>}
       </div>
     );
@@ -327,8 +337,9 @@ function ToolTitleLine({
       aria-expanded={expanded}
     >
       {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isImageTool(tool) ? <ImageIcon size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : isComputerTool(tool) ? <MonitorCog size={13} /> : <Terminal size={13} />}
-      <strong className={clsx(live && "active-text-shimmer")}>{primaryToolLabel(tool)}</strong>
+      <strong className={clsx(live && "active-text-shimmer")}>{label}</strong>
       {preview && <code>{preview}</code>}
+      <ChevronDown size={12} className={clsx("tool-row-chevron", !expanded && "closed")} />
     </button>
   );
 }
@@ -417,7 +428,9 @@ function TerminalSection({ section, live }: { section: { label: string; value: s
     <section className="terminal-output-section">
       <div className="terminal-output-heading">
         <small>{section.label}</small>
-        <button type="button" onClick={() => void copy()} aria-label={`Copy ${section.label.toLowerCase()}`}><Copy size={12} />{copyStatus || "Copy"}</button>
+        <button type="button" className="activity-copy-button" onClick={() => void copy()} aria-label={`Copy ${section.label.toLowerCase()}`} title={copyStatus || `Copy ${section.label.toLowerCase()}`}>
+          {copyStatus === "Copied" ? <Check size={13} /> : <Copy size={13} />}<span className="activity-copy-feedback" role="status">{copyStatus}</span>
+        </button>
       </div>
       <pre ref={panel} className="terminal-output-panel" onScroll={() => {
         const element = panel.current;

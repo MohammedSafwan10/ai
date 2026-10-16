@@ -68,6 +68,7 @@ import type {
 } from "../../shared/types";
 import { envelopePrivoraEvent } from "../agent/harness/eventBus";
 import { OPENCODE_GO_CACHE_TTL_MS, fetchGoModelIds } from "../../shared/opencodeGo";
+import { goAccountActionSchema } from "../../shared/goAccounts";
 import type { SecurityWorkspaceService, CreateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
 
 export interface IpcState {
@@ -567,19 +568,23 @@ export const registerIpc = (
   });
 
   handle(channels.listOpencodeGoModels, z.tuple([z.object({ refresh: z.boolean().optional() }).optional()]), async (_event, input) => {
-    const apiKey = store.getSecret("opencode_go_api_key");
-    if (!apiKey) throw new Error("OpenCode Go API key is not configured in desktop settings.");
-    const cached = store.getOpencodeGoModelCache();
+    const credential = store.getOpencodeGoCredential();
+    if (!credential) throw new Error("Choose an OpenCode Go account in Settings > Providers.");
+    const stored = store.getOpencodeGoModelCache();
+    const cached = stored?.accountId === credential.id ? stored : null;
     if (!input?.refresh && cached && Date.now() - cached.fetchedAt < OPENCODE_GO_CACHE_TTL_MS && cached.ids.length > 0) {
       return { ids: cached.ids, unsupported: cached.unsupported, fetchedAt: cached.fetchedAt, source: "cache" as const };
     }
     try {
-      const { ids, unsupported } = await fetchGoModelIds(apiKey);
-      const record = { ids, unsupported, fetchedAt: Date.now() };
+      const { ids, unsupported } = await fetchGoModelIds(credential.apiKey);
+      const current = store.getOpencodeGoCredential();
+      if (current?.id !== credential.id || current.apiKey !== credential.apiKey) throw new Error("Go account changed. Refresh the model list again.");
+      const record = { ids, unsupported, fetchedAt: Date.now(), accountId: credential.id };
       store.setOpencodeGoModelCache(record);
       return { ...record, source: "live" as const };
     } catch (error) {
-      if (cached && cached.ids.length > 0) {
+      const current = store.getOpencodeGoCredential();
+      if (cached && cached.ids.length > 0 && current?.id === credential.id && current.apiKey === credential.apiKey) {
         return { ids: cached.ids, unsupported: cached.unsupported, fetchedAt: cached.fetchedAt, source: "cache" as const };
       }
       throw error;
@@ -1259,6 +1264,7 @@ const saveSettingsInputSchema = z.object({
   geminiApiKey: z.string().max(10_000).optional(),
   deepseekApiKey: z.string().max(10_000).optional(),
   opencodeGoApiKey: z.string().max(10_000).optional(),
+  opencodeGoAccount: goAccountActionSchema.optional(),
 });
 
 const saveThreadSettingsInputSchema = z.object({

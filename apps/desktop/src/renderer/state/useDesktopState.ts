@@ -15,6 +15,7 @@ import { GEMINI_37_FLASH_MODEL_ID } from "../../shared/models";
 import { isNewPrivoraEventSequence } from "../../shared/privoraProtocol";
 import { EventBatcher } from "./eventBatcher";
 import { compactLiveOutput } from "./liveOutput";
+import { retainRecentHistory } from "./historyRetention";
 
 const emptySettings: SettingsRecord = {
   id: "default",
@@ -83,6 +84,7 @@ export const useDesktopState = () => {
   const refreshRequestRef = useRef(0);
   const historyRequestRef = useRef<{ threadId: string; before: string } | null>(null);
   const activeThreadRef = useRef(snapshot.activeThreadId);
+  const readingHistoryRef = useRef(false);
   activeThreadRef.current = snapshot.activeThreadId;
 
   const refresh = useCallback(async () => {
@@ -90,7 +92,15 @@ export const useDesktopState = () => {
     const sequenceAtRequest = lastEventSequenceRef.current;
     const next = await window.privoraDesktop.getSnapshot();
     if (request !== refreshRequestRef.current) return;
-    setSnapshot((current) => applyRefreshSnapshot(current, next, sequenceAtRequest));
+    setSnapshot((current) => {
+      const refreshed = applyRefreshSnapshot(current, next, sequenceAtRequest);
+      return readingHistoryRef.current ? refreshed : retainRecentSnapshot(refreshed);
+    });
+  }, []);
+  const setFollowingLatest = useCallback((following: boolean) => {
+    if (readingHistoryRef.current === !following) return;
+    readingHistoryRef.current = !following;
+    if (following) setSnapshot((current) => retainRecentSnapshot(current));
   }, []);
 
   const loadOlderMessages = useCallback(async () => {
@@ -98,6 +108,7 @@ export const useDesktopState = () => {
     const before = snapshot.historyPage?.beforeCursor;
     if (!threadId || !snapshot.historyPage?.hasOlder || !before || historyRequestRef.current?.threadId === threadId) return false;
     const request = { threadId, before };
+    readingHistoryRef.current = true;
     historyRequestRef.current = request;
     setHistoryLoading(true);
     setHistoryError(null);
@@ -115,6 +126,7 @@ export const useDesktopState = () => {
   }, [snapshot.activeThreadId, snapshot.historyPage?.beforeCursor, snapshot.historyPage?.hasOlder]);
 
   useEffect(() => {
+    readingHistoryRef.current = false;
     if (historyRequestRef.current?.threadId !== snapshot.activeThreadId) historyRequestRef.current = null;
     setHistoryLoading(false);
     setHistoryError(null);
@@ -124,7 +136,10 @@ export const useDesktopState = () => {
     const started = performance.now();
     const events = coalescePrivoraEvents(pending);
     if (events.length === 0) return;
-    setSnapshot((current) => reducePrivoraEvents(current, events));
+    setSnapshot((current) => {
+      const reduced = reducePrivoraEvents(current, events);
+      return readingHistoryRef.current ? reduced : retainRecentSnapshot(reduced);
+    });
     recordEventFlush(eventStatsRef.current, events, performance.now() - started);
   }, []);
 
@@ -188,11 +203,19 @@ export const useDesktopState = () => {
     toast,
     refresh,
     loadOlderMessages,
+    setFollowingLatest,
     historyLoading,
     historyError,
     setSnapshot,
   };
 };
+
+export function retainRecentSnapshot(snapshot: DesktopUiSnapshot): DesktopUiSnapshot {
+  if (!snapshot.activeThreadId) return snapshot;
+  const page = { ...snapshot.historyPage, threadId: snapshot.activeThreadId, messages: snapshot.messages, toolEvents: snapshot.toolEvents, turnUndos: snapshot.turnUndos, hasOlder: snapshot.historyPage?.hasOlder || false };
+  const recent = retainRecentHistory(page, [snapshot.activeRun?.assistantMessageId || "", snapshot.pendingUserInput?.assistantMessageId || ""]);
+  return recent === page ? snapshot : { ...snapshot, messages: recent.messages, toolEvents: recent.toolEvents, turnUndos: recent.turnUndos, historyPage: recent };
+}
 
 export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: PrivoraEventEnvelope[]): DesktopUiSnapshot => {
   let next = snapshot;

@@ -39,6 +39,7 @@ export const readSse = async (
   onEvent: (event: string | undefined, data: string) => void,
   onProgress?: () => void,
   onOutcome?: (outcome: ProviderStreamOutcome) => void,
+  onProviderError?: (data: any, event?: string) => Error | undefined,
 ) => {
   if (!response.body) throw new ProviderStreamError({ status: "interrupted", reason: "missing_finish" });
   const reader = response.body.getReader();
@@ -51,7 +52,7 @@ export const readSse = async (
       try { parsed = JSON.parse(data); }
       catch { throw new ProviderStreamError({ status: "incomplete", reason: "invalid_stream_event" }); }
       outcome.observe(event, parsed);
-      const failure = providerEventError(parsed, event);
+      const failure = onProviderError?.(parsed, event) || providerEventError(parsed, event);
       if (failure) throw failure;
     }
     onEvent(event, data);

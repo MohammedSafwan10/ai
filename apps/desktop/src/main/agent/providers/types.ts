@@ -58,6 +58,7 @@ export interface ProviderStreamOptions {
   onAiCredits?: (event: { creditsUsed: number; estimatedCredits: number; summary?: AiCreditSummaryRecord }) => void;
   onStreamProgress?: () => void;
   onStreamOutcome?: (outcome: ProviderStreamOutcome) => void;
+  onAccountIssue?: (kind: "usage_limit" | "invalid_key") => void;
   onRetry?: (retry: { attempt: number; delayMs: number; reason: string }) => void;
   onTextReplace?: (text: string) => void;
   onWebSearch?: (event: ProviderWebSearchEvent) => void;

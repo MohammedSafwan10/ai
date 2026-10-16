@@ -262,7 +262,8 @@ describe("opencode go model discovery", () => {
   it("normalizes auth and cap errors", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }));
     await expect(fetchGoModelIds("bad-key", fetchMock as unknown as typeof fetch)).rejects.toThrow(/rejected the saved api key/i);
-    expect(normalizeGoError("rate limit exceeded", 429)).toMatch(/usage cap/i);
+    expect(normalizeGoError("rate limit exceeded", 429)).toMatch(/temporarily rate limited/i);
+    expect(normalizeGoError("Go usage limit exceeded", 429)).toMatch(/usage cap/i);
   });
 
   it("routes families to the right go endpoint", () => {

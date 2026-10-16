@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, Copy, Pencil } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
@@ -35,15 +35,18 @@ export function InlineFileChangeList({ files, active }: InlineFileChangeListProp
             <button
               type="button"
               className={clsx("inline-file-row", isOpen && "is-open")}
+              title={file.path}
+              aria-expanded={isOpen}
               onClick={() => {
                 setUserTouched(true);
                 setSelected(isOpen ? null : key);
               }}
             >
-              {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              <span className={clsx("inline-file-label", active && "active-text-shimmer")}>{fileVerb(file)} {file.path}</span>
+              <Pencil size={13} />
+              <span className={clsx("inline-file-label", active && "active-text-shimmer")}>{fileVerb(file)} <span className="inline-file-basename">{file.path.split(/[\\/]/).pop()}</span></span>
               <InlineDelta additions={file.additions} deletions={file.deletions} />
               {file.truncated && <span className="inline-diff-truncated-tag">truncated</span>}
+              <ChevronDown size={12} className={clsx("tool-row-chevron", !isOpen && "closed")} />
             </button>
             {isOpen && <InlineDiffPanel file={file} />}
           </div>
@@ -76,6 +79,7 @@ function InlineDiffPanel({ file }: { file: ToolDiffFileRecord }) {
   if (file.hunks.length === 0) {
     return (
       <div className="inline-diff-panel">
+        <DiffPanelHeading file={file} />
         <div className="inline-diff-empty">
           {file.status === "renamed" && file.oldPath ? `Renamed from ${file.oldPath}` : "No content diff."}
         </div>
@@ -85,6 +89,7 @@ function InlineDiffPanel({ file }: { file: ToolDiffFileRecord }) {
 
   return (
     <div className="inline-diff-panel" ref={scrollerRef}>
+      <DiffPanelHeading file={file} />
       {file.oldPath && file.oldPath !== file.path && (
         <div className="inline-diff-rename">{file.oldPath} {"->"} {file.path}</div>
       )}
@@ -115,6 +120,27 @@ function InlineDiffPanel({ file }: { file: ToolDiffFileRecord }) {
       )}
     </div>
   );
+}
+
+export const diffClipboardText = (file: ToolDiffFileRecord) => [
+  `--- ${file.status === "created" ? "/dev/null" : file.oldPath || file.path}`,
+  `+++ ${file.status === "deleted" ? "/dev/null" : file.path}`,
+  ...file.hunks.flatMap((hunk) => [
+    `@@ -${formatRange(hunk.oldStart, hunk.oldLines)} +${formatRange(hunk.newStart, hunk.newLines)} @@${hunk.section ? ` ${hunk.section}` : ""}`,
+    ...hunk.lines.map((line) => `${line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}${line.text}`),
+  ]),
+  ...(file.truncated ? ["[Preview truncated; open Review for the full change.]"] : []),
+].join("\n");
+
+function DiffPanelHeading({ file }: { file: ToolDiffFileRecord }) {
+  const [copyStatus, setCopyStatus] = useState("");
+  return <div className="inline-diff-heading">
+    <span title={file.path}>{file.path.split(/[\\/]/).pop()}</span><InlineDelta additions={file.additions} deletions={file.deletions} />
+    <button type="button" className="activity-copy-button" aria-label="Copy diff" title={copyStatus || "Copy diff"} onClick={async () => {
+      try { await navigator.clipboard.writeText(diffClipboardText(file)); setCopyStatus("Copied"); }
+      catch { setCopyStatus("Copy failed"); }
+    }}>{copyStatus === "Copied" ? <Check size={13} /> : <Copy size={13} />}<span className="activity-copy-feedback" role="status">{copyStatus}</span></button>
+  </div>;
 }
 
 function DiffLine({ line }: { line: ToolDiffLineRecord }) {

@@ -1089,6 +1089,14 @@ export class TurnCoordinator implements AgentHarnessApi {
           delete options.assistantMessage.responseDisposition;
           delete options.assistantMessage.providerOutcome;
           const currentSystemInstruction = buildCurrentSystemInstruction();
+          const goCredential = this.store.getOpencodeGoCredential();
+          const reportGoIssue = (issue: "usage_limit" | "invalid_key" | null) => {
+            if (!goCredential || getProviderForModel(effectiveModel) !== "opencode-go") return;
+            try {
+              this.store.reportGoAccountIssue(goCredential.id, issue ? { kind: issue, model: effectiveModel, at: Date.now() } : null, goCredential.apiKey, effectiveModel);
+              if (issue) this.emitSnapshot();
+            } catch { /* Account metadata must not hide the provider result. */ }
+          };
           if (effectiveModel === "opencode-go/claude-haiku-5-5") boundSystemInstruction ??= currentSystemInstruction;
           await this.modelLoop.stream({
             provider: getProviderForModel(effectiveModel),
@@ -1109,9 +1117,13 @@ export class TurnCoordinator implements AgentHarnessApi {
             openRouterApiKey: this.store.getSecret("openrouter_api_key"),
             geminiApiKey: this.store.getSecret("gemini_api_key"),
             deepseekApiKey: this.store.getSecret("deepseek_api_key"),
-            opencodeGoApiKey: this.store.getSecret("opencode_go_api_key"),
+            opencodeGoApiKey: goCredential?.apiKey || "",
+            onAccountIssue: reportGoIssue,
             maxOutputTokens: runtimeBudget.outputTokens,
-            onStreamOutcome: (outcome) => { options.assistantMessage.providerOutcome = outcome; },
+            onStreamOutcome: (outcome) => {
+              options.assistantMessage.providerOutcome = outcome;
+              if (["completed", "tool_calls"].includes(outcome.status)) reportGoIssue(null);
+            },
             onRetry: ({ attempt, delayMs }) => {
               run.reason = `Provider temporarily unavailable. Retry ${attempt} of 2 in ${Math.ceil(delayMs / 1000)}s.`;
               markRunProgress(run);
@@ -1910,6 +1922,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     prompt?: string;
   }) {
     const settings = this.store.getSettings();
+    const goCredential = this.store.getOpencodeGoCredential();
     let summary = "";
     await this.modelLoop.stream({
       provider: getProviderForModel(input.model),
@@ -1933,7 +1946,14 @@ export class TurnCoordinator implements AgentHarnessApi {
       openRouterApiKey: this.store.getSecret("openrouter_api_key"),
       geminiApiKey: this.store.getSecret("gemini_api_key"),
       deepseekApiKey: this.store.getSecret("deepseek_api_key"),
-      opencodeGoApiKey: this.store.getSecret("opencode_go_api_key"),
+      opencodeGoApiKey: goCredential?.apiKey || "",
+      onAccountIssue: (kind) => {
+        if (!goCredential) return;
+        try {
+          this.store.reportGoAccountIssue(goCredential.id, { kind, model: input.model, at: Date.now() }, goCredential.apiKey);
+          this.emitSnapshot();
+        } catch { /* Preserve the original provider error. */ }
+      },
       maxOutputTokens: 4096,
       onTextDelta: (delta) => { summary += delta; },
       onThoughtDelta: () => undefined,

@@ -1,0 +1,19 @@
+.go-accounts { display: flex; flex-direction: column; gap: 10px; padding: 16px 0; }
+.go-accounts-heading, .go-account, .go-account-name, .go-account-actions { display: flex; align-items: center; gap: 8px; }
+.go-accounts-heading { justify-content: space-between; font-weight: 500; }
+.go-accounts > small, .go-account-details > small, .go-accounts-empty { color: var(--privora-muted); font-size: 12px; line-height: 1.5; }
+.go-account { padding: 10px 0; border-bottom: 1px solid var(--privora-border); }
+.go-account-details { flex: 1; min-width: 0; }
+.go-account-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.go-account-active { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--ok); }
+.go-account-details > small { display: block; overflow-wrap: anywhere; }
+.go-account-details > .go-account-issue { color: var(--privora-muted); }
+.go-account-icon { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--privora-muted); background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.go-account-icon:hover { background: color-mix(in srgb, var(--privora-text) 6%, transparent); color: inherit; }
+.go-account-icon:disabled { opacity: .45; cursor: default; }
+.go-account-form, .go-account-confirm { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--privora-border); border-radius: 8px; }
+.go-account-form label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.go-account-form input { width: 100%; min-width: 0; box-sizing: border-box; }
+.go-account-actions .settings-primary-button { width: auto; margin: 0; }
+.go-account-confirm p { margin: 0; font-size: 13px; line-height: 1.5; }
+.go-account-remove { color: var(--danger); }

@@ -11,6 +11,10 @@ const tool = (overrides: Partial<ToolEventRecord> = {}): ToolEventRecord => ({
 });
 
 describe("terminal output history", () => {
+  it("shows the command once when the activity title already includes it", () => {
+    const html = renderToStaticMarkup(createElement(ToolTimeline, { tools: [tool({ name: "exec_command", title: "Ran npm run lint", args: { cmd: "npm run lint" }, terminal: { command: "npm run lint", running: false } })], messageStatus: "completed", defaultOpen: true, onApprove: () => {}, onApproveAll: () => {} }));
+    expect(html.match(/npm run lint/g)).toHaveLength(1);
+  });
   it.each(["done", "failed", "cancelled", "running"] as const)("keeps Kali output expandable when %s", (status) => {
     const html = renderToStaticMarkup(createElement(ToolTimeline, {
       tools: [tool({ status })], messageStatus: status === "running" ? "running" : "completed", defaultOpen: true,

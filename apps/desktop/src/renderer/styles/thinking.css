@@ -22,11 +22,11 @@
 }
 
 .thought-toggle:not(:disabled):hover {
-  opacity: 0.72;
+  color: var(--privora-text);
 }
 
 .thought-toggle.active {
-  color: var(--privora-accent);
+  color: var(--privora-muted);
 }
 
 .thought-toggle.empty {
@@ -55,11 +55,11 @@
 
 .privora-thought-panel {
   position: relative;
-  max-width: min(620px, 92%);
+  max-width: min(680px, 100%);
   overflow: hidden;
   border-left: 1px solid color-mix(in srgb, var(--privora-muted) 28%, transparent);
-  border-radius: 0 10px 10px 0;
-  background: color-mix(in srgb, var(--privora-surface) 18%, transparent);
+  border-radius: 0;
+  background: transparent;
   padding: 0.54rem 0.78rem 0.56rem 0.86rem;
   animation: thought-panel-in 0.22s ease-out;
 }
@@ -67,7 +67,7 @@
 .privora-thought-content {
   color: color-mix(in srgb, var(--privora-muted) 86%, var(--privora-text));
   font-size: 0.82rem;
-  font-style: italic;
+  font-style: normal;
   line-height: 1.55;
 }
 

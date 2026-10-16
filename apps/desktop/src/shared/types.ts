@@ -882,6 +882,8 @@ export interface SettingsRecord {
   geminiApiKeyStored: boolean;
   deepseekApiKeyStored: boolean;
   opencodeGoApiKeyStored: boolean;
+  opencodeGoAccounts?: import("./goAccounts").GoAccountSummary[];
+  activeOpencodeGoAccountId?: string | null;
   privoraAccountConnected: boolean;
   privoraAccountEmail?: string;
   privoraAccountName?: string;
@@ -1745,6 +1747,7 @@ export interface SaveSettingsInput {
   geminiApiKey?: string;
   deepseekApiKey?: string;
   opencodeGoApiKey?: string;
+  opencodeGoAccount?: import("./goAccounts").GoAccountAction;
 }
 
 export interface SaveThreadSettingsInput {

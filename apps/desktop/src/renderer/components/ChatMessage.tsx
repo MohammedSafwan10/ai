@@ -21,13 +21,13 @@ import { TurnReviewCard } from "./TurnReviewCard";
 import { describeActiveTurnStatus, isActiveTurnStatus } from "../../shared/runStatus";
 import { splitProposedPlan } from "../features/chat/proposedPlan";
 import { resolveChatWebLink } from "../../shared/chatLinks";
+import { useStreamingMarkdown } from "../features/chat/useStreamingMarkdown";
 
 const USER_MESSAGE_PREVIEW_CHARS = 900;
 const USER_MESSAGE_COLLAPSE_CHARS = 1200;
 const USER_MESSAGE_COLLAPSE_LINES = 16;
 const PROPOSED_PLAN_COLLAPSE_CHARS = 1800;
 const PROPOSED_PLAN_COLLAPSE_LINES = 26;
-const STREAM_MARKDOWN_THROTTLE_MS = 90;
 const LARGE_ASSISTANT_TEXT_CHARS = 32_000;
 const LARGE_ASSISTANT_PREVIEW_CHARS = 8_000;
 const markdownComponents = {
@@ -630,13 +630,15 @@ function AssistantRunMeta({
 }) {
   const elapsed = useElapsedTime(message.createdAt, active ? undefined : message.updatedAt);
   const retryLabel = activeRunReason?.startsWith("Provider temporarily unavailable.") ? activeRunReason : null;
-  const activeLabel = retryLabel || describeActiveTurnStatus(activeRunStatus || message.status, hasCompletedTools);
-  const outcomeLabel = message.providerOutcome?.status === "output_limit" ? "Output limit reached"
+  const activePhase = activeRunStatus || message.status;
+  const activeLabel = retryLabel || (!message.content.trim() && !hasActivity && !hasCompletedTools && ["sampling", "running"].includes(activePhase) ? "Thinking" : describeActiveTurnStatus(activePhase, hasCompletedTools));
+  const outcomeLabel = message.providerOutcome?.reason === "account_usage_limit" ? "Account limit reached"
+    : message.providerOutcome?.status === "output_limit" ? "Output limit reached"
     : message.providerOutcome?.status === "interrupted" ? "Interrupted"
     : message.providerOutcome?.status === "incomplete" ? "Incomplete response"
     : message.providerOutcome?.status === "failed" ? "Provider failed"
     : message.status === "completed" && message.providerOutcome?.status === "completed" ? "Completed" : null;
-  const runLabel = active ? retryLabel || `${activeLabel} for ${elapsed}` : outcomeLabel ? `${outcomeLabel} · ${elapsed}` : `Worked for ${elapsed}`;
+  const runLabel = active ? retryLabel || (!hasActivity && !hasCompletedTools ? activeLabel : `${activeLabel} for ${elapsed}`) : outcomeLabel ? `${outcomeLabel} · ${elapsed}` : `Worked for ${elapsed}`;
   return (
     <div className="assistant-run-meta">
       {hasActivity ? (
@@ -650,7 +652,7 @@ function AssistantRunMeta({
           <ChevronDown className={clsx("assistant-run-chevron", !activityOpen && "closed")} size={14} />
         </button>
       ) : (
-        <span>{runLabel}</span>
+        <span className={active ? "animate-text-shimmer" : undefined}>{runLabel}</span>
       )}
     </div>
   );
@@ -670,10 +672,9 @@ function AssistantTextPart({
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const committedMarkdown = useStreamingCommittedMarkdown(text, active);
-  if (!active) {
-    const shouldDefer = text.length > LARGE_ASSISTANT_TEXT_CHARS && !expanded;
-    if (shouldDefer) {
+  const shouldDefer = !active && text.length > LARGE_ASSISTANT_TEXT_CHARS && !expanded;
+  const blocks = useStreamingMarkdown(shouldDefer ? `${text.slice(0, LARGE_ASSISTANT_PREVIEW_CHARS)}\n\n...` : text, active);
+  if (shouldDefer) {
       return (
         <div className="large-message-preview">
           <AssistantMarkdownWithPlan
@@ -685,34 +686,22 @@ function AssistantTextPart({
           </button>
         </div>
       );
-    }
-    return (
-      <AssistantMarkdownWithPlan
-        text={text}
-        showPlanActions={showPlanActions}
-        onImplementPlan={onImplementPlan}
-        onSuggestPlanChanges={onSuggestPlanChanges}
-      />
-    );
   }
-
-  const tail = text.slice(committedMarkdown.length);
   return (
     <>
-      {committedMarkdown && (
-        <AssistantMarkdownWithPlan
-          text={committedMarkdown}
+      {blocks.map((block) => block.code ? <MarkdownCodeBlock key={block.start} text={block.code.text} language={block.code.language} /> : (
+        <AssistantMarkdownWithPlan key={block.start}
+          text={block.markdown}
           showPlanActions={showPlanActions}
           onImplementPlan={onImplementPlan}
           onSuggestPlanChanges={onSuggestPlanChanges}
         />
-      )}
-      {tail && <div className="streaming-text">{tail}</div>}
+      ))}
     </>
   );
 }
 
-function AssistantMarkdownWithPlan({
+const AssistantMarkdownWithPlan = memo(function AssistantMarkdownWithPlan({
   text,
   showPlanActions,
   onImplementPlan,
@@ -743,7 +732,17 @@ function AssistantMarkdownWithPlan({
       ))}
     </>
   );
-}
+});
+
+const MarkdownCodeBlock = memo(function MarkdownCodeBlock({ text, language }: { text: string; language: string }) {
+  const [copied, setCopied] = useState("");
+  return <div className="markdown-code-block">
+    <div className="markdown-code-heading"><span>{language}</span><button type="button" className="activity-copy-button" title={copied || "Copy code"} aria-label="Copy code" onClick={async () => {
+      try { await writeClipboard(text); setCopied("Copied"); } catch { setCopied("Copy failed"); }
+    }}>{copied === "Copied" ? <Check size={13} /> : <Copy size={13} />}<span className="activity-copy-feedback" role="status">{copied}</span></button></div>
+    <pre><code className={`language-${language}`}>{text}</code></pre>
+  </div>;
+});
 
 function ProposedPlanCard({
   text,
@@ -863,62 +862,6 @@ export function messageClipboardText(message: ChatMessageRecord, parts: Assistan
   const final = parts.filter((part): part is AssistantTextRenderPart => part.type === "text" && part.phase === "final_answer");
   return final.length ? final.map((part) => part.text).join("") : message.content || "";
 }
-
-function useStreamingCommittedMarkdown(text: string, active: boolean) {
-  const [committed, setCommitted] = useState(() => active ? completeLinePrefix(text) : text);
-  const committedRef = useRef(committed);
-  const latestPrefixRef = useRef(committed);
-  const lastFlushRef = useRef(0);
-  const timerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    committedRef.current = committed;
-  }, [committed]);
-
-  useEffect(() => () => {
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-  }, []);
-
-  useEffect(() => {
-    const flush = (value: string) => {
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-      latestPrefixRef.current = value;
-      committedRef.current = value;
-      lastFlushRef.current = Date.now();
-      setCommitted(value);
-    };
-
-    if (!active) {
-      flush(text);
-      return;
-    }
-
-    const next = completeLinePrefix(text);
-    latestPrefixRef.current = next;
-    if (next === committedRef.current) return;
-
-    const elapsed = Date.now() - lastFlushRef.current;
-    if (elapsed >= STREAM_MARKDOWN_THROTTLE_MS || next.length < committedRef.current.length) {
-      flush(next);
-      return;
-    }
-
-    if (timerRef.current !== null) return;
-    timerRef.current = window.setTimeout(() => {
-      flush(latestPrefixRef.current);
-    }, STREAM_MARKDOWN_THROTTLE_MS - elapsed);
-  }, [active, text]);
-
-  return committed;
-}
-
-const completeLinePrefix = (text: string) => {
-  const end = text.lastIndexOf("\n");
-  return end < 0 ? "" : text.slice(0, end + 1);
-};
 
 function useElapsedTime(startedAt: number, endedAt?: number) {
   const [now, setNow] = useState(Date.now());
@@ -1089,7 +1032,7 @@ function AttachmentGrid({ attachments }: { attachments: DesktopAttachmentRecord[
 
 const attachmentSrc = (attachment: DesktopAttachmentRecord) => attachment.url;
 
-function ThoughtPanel({ thought, active }: { thought: string; active: boolean }) {
+export function ThoughtPanel({ thought, active }: { thought: string; active: boolean }) {
   const hasThought = thought.trim().length > 0;
   const displayThought = thought;
   const shouldShowLabel = active || hasThought;
@@ -1105,13 +1048,9 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
         type="button"
         className={clsx("thought-toggle", active && hasThought && "active", !hasThought && "empty")}
         disabled={!hasThought}
+        aria-expanded={hasThought ? open : undefined}
         onClick={() => setOpen((value) => !value)}
       >
-        <TypingIndicator
-          size={hasThought ? 18 : 18}
-          className={clsx("thought-indicator", hasThought ? "has-thought" : "is-empty")}
-          isAnimating={active}
-        />
         {shouldShowLabel && (
           <>
             <span className={active ? "animate-text-shimmer" : undefined}>
@@ -1129,31 +1068,5 @@ function ThoughtPanel({ thought, active }: { thought: string; active: boolean })
         </div>
       )}
     </div>
-  );
-}
-
-function TypingIndicator({
-  size = 28,
-  className,
-  isAnimating = true,
-}: {
-  size?: number;
-  className?: string;
-  isAnimating?: boolean;
-}) {
-  const angles = [0, 45, 90, 135];
-
-  return (
-    <span className={clsx("typing-indicator", isAnimating && "animating", className)} style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" strokeLinecap="round" aria-hidden="true">
-        <circle className="typing-core" cx="12" cy="12" r="1.5" />
-        {angles.map((angle, index) => (
-          <g key={angle} style={{ transform: `rotate(${angle}deg)`, transformOrigin: "12px 12px" }}>
-            <ellipse className="typing-track" cx="12" cy="12" rx="3.5" ry="10.5" />
-            <ellipse className={`typing-trail trail-${index}`} cx="12" cy="12" rx="3.5" ry="10.5" />
-          </g>
-        ))}
-      </svg>
-    </span>
   );
 }
