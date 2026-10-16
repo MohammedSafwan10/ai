@@ -24,6 +24,18 @@ describe("chat Markdown plan boundaries", () => {
     expect(resolveChatWebLink("https://internal/", "Open internal dashboard")).toBe("https://internal/");
     expect(resolveChatWebLink("javascript:alert(1)", "bugcrowd.com")).toBeNull();
   });
+
+  it("labels Windows paths written by an assistant as unverified without rewriting them", () => {
+    const path = "C:\\Privora Evidence\\Bug bounty-3dc4cbb83a940019\\evidence-BPTyyj\\files\\file-bugcrowd_final_packagemd";
+    const html = render(`Reported path: \`${path}\``);
+    expect(html).toContain("Path in assistant text is unverified.");
+    expect(html).toContain("Saved to PC");
+    expect(html).toContain("file-bugcrowd_final_packagemd");
+  });
+
+  it("does not show the path warning for ordinary assistant prose", () => {
+    expect(render("The report was saved successfully.")).not.toContain("Path in assistant text is unverified.");
+  });
   it("keeps a fenced example of plan tags inside its code block", () => {
     const html = render("Example:\n\n```xml\n<proposed_plan>\nLiteral sample\n</proposed_plan>\n```\n");
     expect(html).not.toContain("proposed-plan-card");

@@ -657,7 +657,8 @@
   min-width: 0;
   max-width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  /* Let short identifier columns stay short, leaving readable room for paths. */
+  table-layout: auto;
   margin: 0;
   font-size: 12px;
   line-height: 1.35;
@@ -689,6 +690,29 @@
   overflow-wrap: anywhere;
   word-break: break-all;
 }
+
+.assistant-path-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  margin: 0.65rem 0;
+  padding: 0.52rem 0.64rem;
+  border: 1px solid color-mix(in srgb, #d89b30 56%, var(--privora-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #d89b30 8%, transparent);
+  color: color-mix(in srgb, var(--privora-text) 88%, #f1c15a);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.assistant-path-notice svg {
+  flex: 0 0 auto;
+  margin-top: 0.08rem;
+  color: #e3aa3e;
+}
+
+.assistant-path-notice strong { font-weight: 650; }
+.assistant-path-notice em { font-style: normal; font-weight: 600; }
 
 .active-text-shimmer,
 .animate-text-shimmer {

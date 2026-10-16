@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import { AgentAvatar } from "./AgentAvatar";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, Copy, Pencil, Download, Maximize2, Minimize2, Minus, Plus, X, MessageCircle } from "lucide-react";
+import { Check, ChevronDown, Copy, Pencil, Download, Maximize2, Minimize2, Minus, Plus, X, MessageCircle, ShieldAlert } from "lucide-react";
 import clsx from "clsx";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -30,6 +30,7 @@ const PROPOSED_PLAN_COLLAPSE_CHARS = 1800;
 const PROPOSED_PLAN_COLLAPSE_LINES = 26;
 const LARGE_ASSISTANT_TEXT_CHARS = 32_000;
 const LARGE_ASSISTANT_PREVIEW_CHARS = 8_000;
+const WINDOWS_PATH_IN_ASSISTANT_TEXT = /(?:^|[\s`"'|])(?:[A-Za-z]:\\|\\\\)[^\r\n`|]*/m;
 const markdownComponents = {
   a: MarkdownExternalLink,
   table: MarkdownTable,
@@ -713,8 +714,18 @@ const AssistantMarkdownWithPlan = memo(function AssistantMarkdownWithPlan({
   onSuggestPlanChanges?: (plan: string) => void;
 }) {
   const parts = splitProposedPlan(text);
+  // Assistant Markdown is a narrative and can include stale or malformed paths.
+  // Saved security evidence is verified from the actual local file before it can
+  // be copied or opened in the structured tool timeline.
+  const hasWindowsPath = WINDOWS_PATH_IN_ASSISTANT_TEXT.test(text);
   return (
     <>
+      {hasWindowsPath && (
+        <aside className="assistant-path-notice" role="note">
+          <ShieldAlert size={15} aria-hidden="true" />
+          <span><strong>Path in assistant text is unverified.</strong> For saved security evidence, use the <em>Saved to PC</em> card in the tool results; it checks the current file and its recorded hash before copying or opening it.</span>
+        </aside>
+      )}
       {parts.map((part, index) => part.type === "plan" ? (
         <ProposedPlanCard
           key={`plan-${index}`}
