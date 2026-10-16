@@ -38,6 +38,45 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("opens only a recorded evidence file's containing folder within the selected project", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const thread = store.createThread(workspace.id); state.activeWorkspaceId = workspace.id;
+    const folder = path.join(mocked.directory, "evidence");
+    const files = path.join(folder, "evidence-copy", "files"); fs.mkdirSync(files, { recursive: true });
+    const localPath = path.join(files, "file-report.final.md"); fs.writeFileSync(localPath, "fixture");
+    service.ensureEvidenceFolder = vi.fn(async () => folder);
+    const tool = { id: "saved-tool", threadId: thread.id, messageId: "answer", callId: "collect", name: "kali_artifact", title: "Collect report", status: "done" as const, risk: "safe" as const, args: {}, createdAt: 1, updatedAt: 1, result: { success: true, data: { localSaved: true, localPath } } };
+    store.upsertToolEvent(tool);
+    await invoke(channels.openSavedSecurityEvidenceFolder, tool.id);
+    expect(mocked.openPath).toHaveBeenCalledWith(files);
+    mocked.openPath.mockClear();
+    state.activeWorkspaceId = null;
+    await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("Security workspace");
+    state.activeWorkspaceId = workspace.id;
+    const outside = path.join(mocked.directory, "outside.md"); fs.writeFileSync(outside, "outside");
+    store.upsertToolEvent({ ...tool, result: { success: true, data: { localSaved: true, localPath: outside } } });
+    await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("outside");
+    store.upsertToolEvent(tool); fs.unlinkSync(localPath);
+    await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("missing");
+    expect(mocked.openPath).not.toHaveBeenCalled();
+  });
+
+  it("rejects absent save confirmations, renderer-supplied paths and evidence junction escapes", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const thread = store.createThread(workspace.id); state.activeWorkspaceId = workspace.id;
+    const folder = path.join(mocked.directory, "evidence"); const outside = path.join(mocked.directory, "outside");
+    fs.mkdirSync(folder); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, "file.md"), "fixture");
+    fs.symlinkSync(outside, path.join(folder, "linked"), process.platform === "win32" ? "junction" : "dir");
+    service.ensureEvidenceFolder = vi.fn(async () => folder);
+    const tool = { id: "saved-tool", threadId: thread.id, messageId: "answer", callId: "collect", name: "kali_artifact", title: "Collect report", status: "done" as const, risk: "safe" as const, args: {}, createdAt: 1, updatedAt: 1, result: { success: true, data: { localSaved: true, localPath: path.join(folder, "linked", "file.md") } } };
+    store.upsertToolEvent(tool);
+    await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("outside");
+    store.upsertToolEvent({ ...tool, result: { success: true, data: { ...tool.result.data, localSaved: false } } });
+    await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("No confirmed PC save");
+    expect(() => invoke(channels.openSavedSecurityEvidenceFolder, tool.id, outside)).toThrow();
+    expect(mocked.openPath).not.toHaveBeenCalled();
+  });
+
   it("captures an authoritative snapshot and watermark without changing the legacy snapshot API", () => {
     const before = currentEventSequence();
     const event = envelopePrivoraEvent({ type: "notification.created", tone: "info", message: "fixture" });

@@ -1,3 +1,4 @@
+import { savedSecurityEvidence } from "../../shared/savedSecurityEvidence";
 import { toolFailureLabel } from "../../shared/toolFailure";
 import { AgentAvatar } from "./AgentAvatar";
 import { Check, ChevronDown, Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle, PanelsTopLeft, Plug, Pencil, FileText, Folder, Search, ListCollapse, Wrench } from "lucide-react";
@@ -202,6 +203,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                     active={tool.id === currentLiveToolId}
                   />
                 ) : shouldShowActivity(tool) && <ToolActivity tool={tool} active={tool.id === currentLiveToolId} />}
+                {savedSecurityEvidence(tool) && <SavedEvidenceActions tool={tool} />}
                 {toolFailureLabel(tool) && <p className="tool-failure-source">{toolFailureLabel(tool)}</p>}
                 {tool.approvalReason && tool.status === "awaiting_approval" && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
                 {expandedOutputIds.has(tool.id) && detailErrors[tool.id] && <p role="alert">{detailErrors[tool.id]}</p>}
@@ -272,6 +274,35 @@ function StatusIcon({ status }: { status: string }) {
   if (status === "failed" || status === "cancelled") return <XCircle size={15} className="status-failed" />;
   if (status === "awaiting_approval") return <ShieldAlert size={15} className="status-pending" />;
   return null;
+}
+
+export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
+  const saved = savedSecurityEvidence(tool);
+  const [copied, setCopied] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState("");
+  if (!saved) return null;
+  const copy = async () => {
+    setError("");
+    try { await navigator.clipboard.writeText(saved.localPath); setCopied(true); }
+    catch { setError("Could not copy the path. Select the recorded path below to copy it manually."); }
+  };
+  const open = async () => {
+    setOpening(true); setError("");
+    try { await window.privoraDesktop.openSavedSecurityEvidenceFolder(tool.id); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { setOpening(false); }
+  };
+  return <section className="saved-evidence" aria-label="Saved evidence on this PC">
+    <div className="saved-evidence-heading"><span>Saved to PC{saved.size !== undefined ? ` · ${saved.size.toLocaleString()} bytes` : ""}</span>
+      <button type="button" onClick={() => void copy()}><Copy size={13} />{copied ? "Copied" : "Copy path"}</button>
+      <button type="button" disabled={opening} onClick={() => void open()}><Folder size={13} />{opening ? "Opening..." : "Open folder"}</button>
+    </div>
+    <code className="saved-evidence-path">{saved.localPath}</code>
+    {saved.sha256 && <details><summary>SHA-256</summary><code>{saved.sha256}</code></details>}
+    <small>Recorded at collection time.</small>
+    {error && <p role="alert">{error}</p>}
+  </section>;
 }
 
 function LiveOutput({ output }: { output: string }) {

@@ -1805,6 +1805,7 @@ export interface PrivoraDesktopApi {
   recordSecurityReportEvent(id: string, expectedUpdatedAt: number, kind: import("./securityWorkspace").SecurityReportEvent["kind"], reference: string): Promise<import("./securityWorkspace").SecurityFindingRecord>;
   cancelSecurityJob(jobRecordId: string): Promise<SecurityJobRecord>;
   openSecurityEvidenceFolder(workspaceId: string): Promise<void>;
+  openSavedSecurityEvidenceFolder(toolEventId: string): Promise<void>;
   saveSecurityArtifact(jobRecordId: string, artifactId: string): Promise<{ saved: boolean; path?: string }>;
   debugEnabled: boolean;
   listSavedPrompts(): Promise<SavedPrompt[]>;

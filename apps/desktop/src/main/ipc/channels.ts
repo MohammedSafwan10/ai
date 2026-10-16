@@ -34,6 +34,7 @@ export const channels = {
   clearComposerDraft: "desktop:clearComposerDraft",
   recordSecurityReportEvent: "desktop:recordSecurityReportEvent",
   cancelSecurityJob: "desktop:cancelSecurityJob",
+  openSavedSecurityEvidenceFolder: "desktop:openSavedSecurityEvidenceFolder",
   openSecurityEvidenceFolder: "desktop:openSecurityEvidenceFolder",
   saveSecurityArtifact: "desktop:saveSecurityArtifact",
   removeWorkspace: "desktop:removeWorkspace",

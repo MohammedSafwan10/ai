@@ -878,3 +878,10 @@
 
 
 .tool-failure-source { color: var(--privora-text-muted); font-size: 11px; margin: 4px 0; }
+.saved-evidence { margin: 7px 0; padding: 9px 11px; border: 1px solid var(--privora-border); border-radius: 8px; min-width: 0; font-size: 12px; }
+.saved-evidence-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.saved-evidence-heading > span { margin-right: auto; }
+.saved-evidence-heading button { display: inline-flex; align-items: center; gap: 4px; background: transparent; color: var(--privora-text); border: 1px solid var(--privora-border); border-radius: 5px; padding: 3px 6px; font: inherit; cursor: pointer; }
+.saved-evidence code { display: block; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+.saved-evidence small, .saved-evidence summary { color: var(--privora-muted); }
+.saved-evidence p[role="alert"] { color: var(--danger); margin: 6px 0 0; }

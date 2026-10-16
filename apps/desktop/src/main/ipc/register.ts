@@ -14,6 +14,7 @@ import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
 import { StorageCleanupService } from "../storage/cleanup";
 import { channels } from "./channels";
+import { savedSecurityEvidence } from "../../shared/savedSecurityEvidence";
 import { securityEvidenceForSave } from "../attachments/securityEvidence";
 import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
 import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
@@ -362,6 +363,23 @@ export const registerIpc = (
     const folder = await requireSecurityService().ensureEvidenceFolder?.(workspaceId);
     if (!folder) throw new Error("Automatic PC evidence storage is not configured.");
     const failure = await shell.openPath(folder);
+    if (failure) throw new Error(failure);
+  });
+  handle(channels.openSavedSecurityEvidenceFolder, z.tuple([idSchema]), async (_event, toolEventId: string) => {
+    const tool = store.getToolEvent(toolEventId);
+    const saved = tool && savedSecurityEvidence(tool);
+    const thread = tool && store.getThread(tool.threadId);
+    const workspace = thread?.workspaceId ? store.getWorkspace(thread.workspaceId) : null;
+    if (!saved) throw new Error("No confirmed PC save is recorded for this tool result.");
+    if (workspace?.type !== "security" || workspace.id !== state.activeWorkspaceId) throw new Error("Choose the saved evidence's Security workspace first.");
+    const folder = await requireSecurityService().ensureEvidenceFolder?.(workspace.id);
+    if (!folder) throw new Error("Automatic PC evidence storage is not configured.");
+    // Accept only the persisted result, and resolve junctions before opening a containing folder.
+    let target;
+    try { target = resolveExistingWorkspacePath(folder, saved.localPath); }
+    catch { throw new Error("The saved evidence file is missing or outside this project's evidence folder. Copy its recorded path to locate it."); }
+    if (!fs.statSync(target.absolutePath).isFile()) throw new Error("The saved evidence file is unavailable.");
+    const failure = await shell.openPath(path.dirname(target.absolutePath));
     if (failure) throw new Error(failure);
   });
   handle(channels.saveSecurityArtifact, z.tuple([idSchema, idSchema]), async (event, jobId: string, artifactId: string) => {
