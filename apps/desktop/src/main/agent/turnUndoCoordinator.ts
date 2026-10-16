@@ -33,10 +33,25 @@ export class TurnUndoCoordinator {
     if (this.isThreadBusy(thread.id) || children.some((agent) => this.isThreadBusy(agent.threadId))) {
       throw new Error("Stop the current run before editing an earlier message.");
     }
-    // A remote command can outlive its chat turn. Never erase its audit record or replay it.
-    if (thread.workspaceId && this.store.listSecurityJobs(thread.workspaceId)
-      .some((job) => [thread.id, ...children.map((agent) => agent.threadId)].includes(job.threadId) && ["submitting", "queued", "running", "unknown", "stop_requested"].includes(job.state))) {
-      throw new Error("Finish or reconcile the remaining Kali jobs before rewinding this chat.");
+    // Remote jobs outlive turns. Keep blocking active work, but an unresolved
+    // historical job whose context is retained must not lock all later edits.
+    const affectedThreads = new Set([thread.id, ...children.map((agent) => agent.threadId)]);
+    const removedIds = new Set(removed.map((item) => item.id));
+    const blockingJobs = thread.workspaceId ? this.store.listSecurityJobs(thread.workspaceId).filter((job) => {
+      if (!affectedThreads.has(job.threadId)) return false;
+      if (["submitting", "queued", "running", "stop_requested"].includes(job.state)) return true;
+      if (job.state !== "unknown") return false;
+      if (job.threadId !== thread.id) return true;
+      if (job.messageId) {
+        const source = this.store.getMessage(job.messageId);
+        return !source || source.threadId !== thread.id || removedIds.has(source.id);
+      }
+      // Legacy jobs have no message link; equal timestamps are ambiguous.
+      return job.createdAt >= message.createdAt;
+    }) : [];
+    if (blockingJobs.length) {
+      const unknown = blockingJobs.filter((job) => job.state === "unknown").length;
+      throw new Error(`Finish or reconcile the remaining Kali jobs before rewinding this chat. ${blockingJobs.length} job${blockingJobs.length === 1 ? " is" : "s are"} still ${unknown === blockingJobs.length ? "unconfirmed" : "active or unconfirmed"}. Check the project's Kali connection and refresh job status. Rewind does not stop or retry remote commands.`);
     }
     const turns = [...removed, ...children.flatMap((agent) => this.store.listMessages(agent.threadId))].filter((item) => item.role === "assistant");
     const tools = turns.flatMap((item) => this.store.listToolEventsForMessage(item.threadId, item.id))

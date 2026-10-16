@@ -9,10 +9,11 @@ import type { ChatMessageRecord, ToolEventRecord } from "../src/shared/types";
 
 let root = "";
 let store: DesktopStore;
-const setup = () => {
+const setup = (security = false) => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "privora-rewind-"));
   store = new DesktopStore(path.join(root, "profile"));
-  const workspace = store.upsertWorkspace(root);
+  if (security) store.saveSecurityEnvironment({ id: "kali", name: "Kali", host: "127.0.0.1", port: 2222, username: "privora", status: "connected" });
+  const workspace = security ? store.createSecurityWorkspace({ name: "Lab", objective: "Test", scope: "Local", environmentId: "kali" }) : store.upsertWorkspace(root);
   const thread = store.createThread(workspace.id);
   const add = (id: string, role: "user" | "assistant", time: number) => {
     const message: ChatMessageRecord = { id, threadId: thread.id, role, content: id, status: "completed", createdAt: time, updatedAt: time };
@@ -145,5 +146,33 @@ describe("edit message rewind", () => {
     store.upsertMessage({ id: "sec-prompt", threadId: secThread.id, role: "user", content: "Run check", status: "completed", createdAt: 1, updatedAt: 1 });
     store.upsertSecurityJob({ id: "job-stopping", remoteJobId: "remote-1", workspaceId: secWorkspace.id, threadId: secThread.id, environmentId: "kali", idempotencyKey: "key-1", projectId: "proj-1", state: "stop_requested", sequence: 0, outputPreview: "", commandPreview: "sleep 10", exitCode: null, error: null, createdAt: 1, updatedAt: 1 });
     await expect(new TurnUndoCoordinator(store, () => false).rewind("sec-prompt")).rejects.toThrow("Finish or reconcile the remaining Kali jobs");
+  });
+  it.each(["linked", "legacy"])("allows later edits while preserving an older %s unknown job and its context", async (link) => {
+    const { thread } = setup(true);
+    store.upsertSecurityJob({ id: "old-job", remoteJobId: "remote", workspaceId: thread.workspaceId!, threadId: thread.id, messageId: link === "linked" ? "older" : undefined, environmentId: "kali", idempotencyKey: "old-key", projectId: "project", state: "unknown", sequence: 0, outputPreview: "", commandPreview: "inspect", exitCode: null, error: "Remote job not found", createdAt: 0, updatedAt: 100 });
+    await new TurnUndoCoordinator(store, () => false).rewind("later");
+    expect(store.getSecurityJob("old-job")?.state).toBe("unknown");
+    expect(store.getMessage("older")).not.toBeNull();
+    expect(store.getMessage("later")).toBeNull();
+  });
+  it.each(["submitting", "queued", "running", "stop_requested", "unknown"] as const)("blocks %s jobs in the removed context without changing history", async (state) => {
+    const { thread } = setup(true);
+    store.upsertSecurityJob({ id: "job", remoteJobId: "remote", workspaceId: thread.workspaceId!, threadId: thread.id, messageId: "answer-2", environmentId: "kali", idempotencyKey: "key", projectId: "project", state, sequence: 0, outputPreview: "", commandPreview: "inspect", exitCode: null, error: null, createdAt: 4, updatedAt: 4 });
+    await expect(new TurnUndoCoordinator(store, () => false).rewind("later")).rejects.toThrow("Check the project's Kali connection");
+    expect(store.listMessages(thread.id)).toHaveLength(5);
+    expect(store.getSecurityJob("job")?.state).toBe(state);
+  });
+  it("still blocks an older job known to be running", async () => {
+    const { thread } = setup(true);
+    store.upsertSecurityJob({ id: "job", remoteJobId: "remote", workspaceId: thread.workspaceId!, threadId: thread.id, messageId: "older", environmentId: "kali", idempotencyKey: "key", projectId: "project", state: "running", sequence: 0, outputPreview: "", commandPreview: "inspect", exitCode: null, error: null, createdAt: 0, updatedAt: 100 });
+    await expect(new TurnUndoCoordinator(store, () => false).rewind("later")).rejects.toThrow("remaining Kali jobs");
+  });
+  it.each(["missing-source", "legacy-at-anchor", "removed-child"])("keeps ambiguous or removed unknown jobs blocked: %s", async (scenario) => {
+    const { thread } = setup(true);
+    const child = scenario === "removed-child" ? store.createSubagent({ parentThreadId: thread.id, parentMessageId: "answer-2", workspaceId: thread.workspaceId, taskName: "review", agentPath: "/root/review", prompt: "Inspect" }) : null;
+    store.upsertSecurityJob({ id: "job", remoteJobId: "remote", workspaceId: thread.workspaceId!, threadId: child?.threadId || thread.id, messageId: scenario === "missing-source" ? "missing" : undefined, environmentId: "kali", idempotencyKey: "key", projectId: "project", state: "unknown", sequence: 0, outputPreview: "", commandPreview: "inspect", exitCode: null, error: null, createdAt: scenario === "legacy-at-anchor" ? 3 : 0, updatedAt: 100 });
+    await expect(new TurnUndoCoordinator(store, () => false).rewind("later")).rejects.toThrow("remaining Kali jobs");
+    expect(store.listMessages(thread.id)).toHaveLength(5);
+    if (child) expect(store.getThread(child.threadId)).not.toBeNull();
   });
 });

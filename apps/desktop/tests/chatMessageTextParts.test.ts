@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ChatMessage, buildAssistantRenderParts, normalizeTextParts, splitTextByPhaseForTest, visibleSteeredAssistantParts } from "../src/renderer/components/ChatMessage";
+import { ChatMessage, buildAssistantRenderParts, messageClipboardText, normalizeTextParts, splitTextByPhaseForTest, visibleSteeredAssistantParts } from "../src/renderer/components/ChatMessage";
 import type { ChatMessageRecord } from "../src/shared/types";
 
 const message = (content: string, textParts: ChatMessageRecord["textParts"]): ChatMessageRecord => ({
@@ -18,6 +18,14 @@ const message = (content: string, textParts: ChatMessageRecord["textParts"]): Ch
 });
 
 describe("assistant text part rendering", () => {
+  it("copies the displayed final answer without earlier progress or thought text", () => {
+    const content = "Working...\nDone.\n";
+    const record = { ...message(content, [part("progress", "commentary", 0, 11, 1), part("answer", "final_answer", 11, content.length, 2)]), thought: "Private reasoning" };
+    expect(messageClipboardText(record)).toBe("Done.\n");
+    expect(messageClipboardText({ ...record, role: "user" })).toBe(content);
+    expect(messageClipboardText(message("Legacy answer", undefined))).toBe("Legacy answer");
+    expect(messageClipboardText({ ...message("", []), thought: "Private reasoning" })).toBe("");
+  });
   it("merges overlapping final answer ranges so final text is not repeated", () => {
     const content = "Implemented secure-notes-vault.\nVerification passed.\n";
     const parts = [

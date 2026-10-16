@@ -119,7 +119,7 @@ function ChatMessageComponent({
     window.setTimeout(() => setCopied(false), 1400);
   };
   const copyMessage = async () => {
-    await writeClipboard(message.content || message.thought || "");
+    await writeClipboard(messageClipboardText(message, renderParts));
     showCopyFeedback();
   };
   const showMessageActions = (message.content || hasAttachments) && (isUser || !runActive);
@@ -843,6 +843,13 @@ function splitAssistantActivityAndFinalText(parts: AssistantRenderPart[]) {
       part.type === "text" && part.phase === "final_answer"
     ),
   };
+}
+
+/** Match the answer displayed below the activity fold, rather than the raw turn stream. */
+export function messageClipboardText(message: ChatMessageRecord, parts: AssistantRenderPart[] = buildAssistantRenderParts(message, [], false)) {
+  if (message.role !== "assistant" || message.agentMessage) return message.content || "";
+  const final = parts.filter((part): part is AssistantTextRenderPart => part.type === "text" && part.phase === "final_answer");
+  return final.length ? final.map((part) => part.text).join("") : message.content || "";
 }
 
 function useStreamingCommittedMarkdown(text: string, active: boolean) {
