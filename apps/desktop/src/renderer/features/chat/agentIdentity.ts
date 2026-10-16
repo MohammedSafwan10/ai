@@ -1,7 +1,7 @@
 import type { SubagentRecord } from "../../../shared/types";
 
-export const agentDisplayTime = (agent: SubagentRecord) => {
-  if (["pending", "running", "waiting"].includes(agent.status)) return { timestamp: agent.updatedAt, label: "Last updated" };
+export const agentDisplayTime = (agent: SubagentRecord, activityAt = 0) => {
+  if (["pending", "running", "waiting"].includes(agent.status)) return { timestamp: Math.max(agent.updatedAt, Number.isFinite(activityAt) ? activityAt : 0), label: "Last updated" };
   const finished = agent.status === "closed" ? agent.closedAt ?? agent.finishedAt : agent.finishedAt;
   return finished ? { timestamp: finished, label: agent.status === "closed" ? "Closed" : agent.status === "completed" ? "Completed" : agent.status === "failed" ? "Failed" : "Stopped" } : { timestamp: agent.createdAt, label: "Created (finish time unavailable)" };
 };

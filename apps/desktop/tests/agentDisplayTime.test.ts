@@ -12,4 +12,10 @@ describe("agent list timestamps", () => {
   it("labels missing historic finish times honestly instead of using a recent update", () => {
     expect(agentDisplayTime({ ...agent, finishedAt: undefined })).toEqual({ timestamp: 100, label: "Created (finish time unavailable)" });
   });
+  it("uses actual streamed activity only for live agents", () => {
+    expect(agentDisplayTime({ ...agent, status: "running" }, 1200)).toEqual({ timestamp: 1200, label: "Last updated" });
+    expect(agentDisplayTime({ ...agent, status: "running" }, 500).timestamp).toBe(900);
+    expect(agentDisplayTime({ ...agent, status: "running" }, NaN).timestamp).toBe(900);
+    expect(agentDisplayTime(agent, 1200)).toEqual({ timestamp: 200, label: "Completed" });
+  });
 });
