@@ -22,7 +22,7 @@ describe("terminal output history", () => {
     }));
     expect(html).toContain('title="Expand output"');
     expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("Kali · bash");
+    expect(html).toContain(status === "running" ? "Kali · Running command for" : "Kali · bash");
     expect(html).not.toContain("[redacted]");
   });
   it("offers a command and reopen control even before output arrives or for silent commands", () => {

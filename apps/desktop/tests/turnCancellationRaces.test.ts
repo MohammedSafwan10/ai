@@ -12,7 +12,7 @@ import { TurnCoordinator } from "../src/main/agent/turnCoordinator";
 import { ProviderStreamError } from "../src/main/agent/providers/streamOutcome";
 import { StreamStalledError } from "../src/main/agent/harness/support/errors";
 import { OPENCODE_GO_MUSE_SPK_13_MODEL_ID } from "../src/shared/models";
-import type { ToolResult } from "../src/shared/types";
+import type { TerminalSessionRecord, ToolResult } from "../src/shared/types";
 
 let folder: string;
 let store: DesktopStore;
@@ -31,6 +31,47 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it("publishes the actual process exit after its execution tool already yielded", () => {
+    const { thread, coordinator } = fixture();
+    const runtime = coordinator as any;
+    const running = { sessionId: 42, running: true, status: "running", startedAt: 1000, updatedAt: 2000, exitCode: null } as TerminalSessionRecord;
+    vi.spyOn(runtime.tools, "getTerminalState").mockReturnValue({ sessions: [running], updatedAt: 2000 });
+    store.upsertMessage({ id: "yielded-answer", threadId: thread.id, role: "assistant", content: "", status: "completed", createdAt: 1, updatedAt: 2 });
+    const event = runtime.updateToolEvent(thread.id, "yielded-answer", { id: "yielded-call", name: "exec_command", arguments: { cmd: "fixture" } }, {
+      status: "done", startedAt: 1000, endedAt: 2000, result: { success: true, data: { session_id: 42, running: true } },
+    });
+    expect(event.terminal.running).toBe(true);
+    const emit = vi.spyOn(runtime, "emit");
+    runtime.finishTerminalCommand({ ...running, running: false, status: "exited", exitCode: 7, endedAt: 24000, updatedAt: 24000 });
+    const saved = store.findToolEventByCall(thread.id, "yielded-call")!;
+    expect(saved.status).toBe("done");
+    expect(saved.terminal).toMatchObject({ running: false, exitCode: 7, endedAt: 24000, processDurationMs: 23000 });
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: "tool.upserted", tool: saved }));
+    expect(runtime.terminalCommandEvents.size).toBe(0);
+  });
+  it("applies operator child settings to the next new turn without changing an in-flight model", async () => {
+    const { thread, coordinator } = fixture();
+    store.updateThreadSettings(thread.id, { subagentModel: "opencode-go/deepseek-v4.1-flash", subagentReasoningEffort: "xhigh" });
+    const child = store.createSubagent({ parentThreadId: thread.id, parentMessageId: "parent", workspaceId: thread.workspaceId,
+      taskName: "fixture", agentPath: "/root/fixture", prompt: "Fixture task", model: "opencode-go/mimo-v2.6-pro", reasoningEffort: "medium" });
+    let release!: () => void;
+    hooks.stream.mockImplementationOnce(async (options: ProviderStreamOptions) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      options.onTextDelta("First turn complete.");
+    }).mockImplementation(async (options: ProviderStreamOptions) => { options.onTextDelta("Next turn complete."); });
+    (coordinator as any).startExistingSubagentTurn(child, folder);
+    await vi.waitFor(() => expect(hooks.stream).toHaveBeenCalledTimes(1));
+    expect(hooks.stream.mock.calls[0][0]).toMatchObject({ model: "opencode-go/mimo-v2.6-pro", reasoning: "medium" });
+    store.updateThreadSettings(thread.id, { subagentSettingsScope: "next_turn" });
+    expect(store.getSubagentByThread(child.threadId)?.model).toBe("opencode-go/mimo-v2.6-pro");
+    release(); await coordinator.waitForIdle();
+    (coordinator as any).startExistingSubagentTurn(child, folder);
+    await coordinator.waitForIdle();
+    expect(hooks.stream).toHaveBeenCalledTimes(2);
+    expect(hooks.stream.mock.calls[1][0]).toMatchObject({ model: "opencode-go/deepseek-v4.1-flash", reasoning: "xhigh" });
+    expect(store.getSubagentByThread(child.threadId)).toMatchObject({ model: "opencode-go/deepseek-v4.1-flash", reasoningEffort: "xhigh" });
+    expect(store.getThread(child.threadId)?.model).toBe("opencode-go/deepseek-v4.1-flash");
+  });
   it.each([
     ["parent", "recovered"], ["direct", "recovered"], ["parent", "in-memory"], ["direct", "in-memory"],
   ] as const)("%s Stop cancels a child's %s approval and publishes its stopped state", (target, approvalState) => {

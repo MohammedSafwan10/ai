@@ -1,6 +1,7 @@
 import type { BrowserWindow } from "electron";
 import { ProviderStreamError } from "./providers/streamOutcome";
 import { isActiveTurnStatus } from "../../shared/runStatus";
+import { withTerminalSession } from "./harness/support/terminalSessionTool";
 import { KaliStopNotices } from "../kali/stopNotices";
 import { assertWorkspaceDirectory } from "../workspace/availability";
 import type { DesktopStore } from "../db/store";
@@ -103,7 +104,7 @@ import { VerificationEngine, reviewerReadOnlyBlockReason } from "./harness/verif
 import { ApprovalCoordinator, type ApprovalBundle } from "./harness/approvalCoordinator";
 import { ToolCallCoordinator } from "./harness/toolCallCoordinator";
 import { ModelLoop } from "./harness/modelLoop";
-import { SubagentManager, resolveSubagentModel } from "./harness/subagentManager";
+import { SubagentManager, resolveSubagentTurnSettings } from "./harness/subagentManager";
 import { HarnessEventBus } from "./harness/eventBus";
 import { TurnRegistry } from "./harness/turnRegistry";
 import { UserInputCoordinator } from "./harness/userInputCoordinator";
@@ -311,6 +312,7 @@ interface ContinueOptions {
 }
 
 export class TurnCoordinator implements AgentHarnessApi {
+  private readonly terminalCommandEvents = new Map<number, { threadId: string; callId: string }>();
   private readonly kaliStopNotices = new KaliStopNotices();
   private tools: ToolCallCoordinator;
   private contextManager: ContextManager;
@@ -434,6 +436,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         return;
       }
       if (event.type === "terminal_session_ended") {
+        this.finishTerminalCommand(event.session);
         this.untrackTerminalSession(event.session.sessionId);
       }
       this.emit({ type: "terminal.session_updated", session: event.session });
@@ -2131,6 +2134,17 @@ export class TurnCoordinator implements AgentHarnessApi {
     this.tools.untrackTerminalSession(sessionId);
   }
 
+  private finishTerminalCommand(session: import("../../shared/types").TerminalSessionRecord) {
+    const owner = this.terminalCommandEvents.get(session.sessionId);
+    this.terminalCommandEvents.delete(session.sessionId);
+    if (!owner) return;
+    this.flushThreadToolOutputs(owner.threadId);
+    const tool = this.store.findToolEventByCall(owner.threadId, owner.callId);
+    if (!tool) return;
+    const updated = withTerminalSession(tool, session);
+    if (updated !== tool) this.emit({ type: "tool.upserted", tool: this.store.upsertToolEvent({ ...updated, updatedAt: now() }) });
+  }
+
   private stopThreadProcesses(threadId: string) {
     this.tools.stopThreadProcesses(threadId);
     const workspaceId = this.store.getThread(threadId)?.workspaceId;
@@ -2241,13 +2255,14 @@ export class TurnCoordinator implements AgentHarnessApi {
     this.store.upsertMessage(userMessage);
     this.store.upsertMessage(assistantMessage);
     this.store.updateSubagent(agent.threadId, { status: "running", lastPreview: compactPreview(prompt, 180) });
-    this.runSubagentLoop(agent, workspaceRoot, assistantMessage, role, forkTurns);
+    this.runSubagentLoop(agent, workspaceRoot, assistantMessage, role, forkTurns, true);
   }
 
   private startExistingSubagentTurn(agent: SubagentRecord, workspaceRoot: string) {
     if (this.activeRuns.has(agent.threadId)) return;
     const timestamp = now();
     const latestUserMessage = this.store.findLatestMessage(agent.threadId, "user");
+    const assistantCreatedAt = Math.max(timestamp, (latestUserMessage?.createdAt || 0) + 1);
     const assistantMessage: ChatMessageRecord = {
       id: crypto.randomUUID(),
       threadId: agent.threadId,
@@ -2257,8 +2272,8 @@ export class TurnCoordinator implements AgentHarnessApi {
       thought: "",
       thoughtParts: [],
       status: "running",
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt: assistantCreatedAt,
+      updatedAt: assistantCreatedAt,
     };
     this.store.upsertMessage(assistantMessage);
     this.store.updateSubagent(agent.threadId, {
@@ -2276,18 +2291,19 @@ export class TurnCoordinator implements AgentHarnessApi {
     assistantMessage: ChatMessageRecord,
     role?: SubagentRoleConfig,
     forkTurns = "all",
+    initial = false,
   ) {
+    const selection = resolveSubagentTurnSettings(this.store, agent, !initial);
     const controller = new AbortController();
     const run = this.createRun(agent.threadId, assistantMessage.id, controller);
     this.activeRuns.set(agent.threadId, run);
     this.emitRun(run);
-    const inheritedModel = resolveSubagentModel(this.store, agent);
-    const childModel = getModelOption(inheritedModel);
-    const childReasoning = agent.reasoningEffort && childModel.reasoningEfforts.includes(agent.reasoningEffort)
-      ? agent.reasoningEffort : childModel.defaultReasoningEffort;
+    const inheritedModel = selection.model;
+    const childReasoning = selection.reasoningEffort;
     if (agent.model !== inheritedModel || agent.reasoningEffort !== childReasoning) {
       this.store.updateSubagent(agent.threadId, { model: inheritedModel, reasoningEffort: childReasoning });
       this.store.updateThreadSettings(agent.threadId, { model: inheritedModel, reasoningEffort: childReasoning });
+      this.emitSnapshot();
     }
     const subagentBudget = resolveModelRuntimeBudget(inheritedModel, "normal");
     const history = [
@@ -2425,7 +2441,7 @@ export class TurnCoordinator implements AgentHarnessApi {
     const computedDiffStats = diffStatsFromFiles(diffFiles) || diffStats(diff);
     const computedActivities = activityItemsForTool(call, diff, diffFiles);
     const terminal = terminalMeta(call, patch.result ?? existing?.result);
-    const event: ToolEventRecord = {
+    let event: ToolEventRecord = {
       id: existing?.id || crypto.randomUUID(),
       threadId,
       messageId,
@@ -2459,6 +2475,12 @@ export class TurnCoordinator implements AgentHarnessApi {
       createdAt: existing?.createdAt || timestamp,
       updatedAt: timestamp,
     };
+    if (patch.result && event.name === "exec_command" && event.terminal?.sessionId !== undefined) {
+      const sessionId = event.terminal.sessionId;
+      const session = this.tools.getTerminalState().sessions.find((item) => item.sessionId === sessionId);
+      if (session) event = withTerminalSession(event, session);
+      if (persist && event.terminal?.running) this.terminalCommandEvents.set(sessionId, { threadId, callId: call.id });
+    }
     return persist ? this.store.upsertToolEvent(event) : event;
   }
 

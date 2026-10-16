@@ -327,11 +327,19 @@ function ToolTitleLine({
   live: boolean;
   onToggle: () => void;
 }) {
+  const commandRunning = isCommandExecutionTool(tool) && (tool.status === "running" || tool.terminal?.running === true);
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    if (!commandRunning) return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [commandRunning, tool.id]);
   const canExpand = (
     isTerminalOutputTool(tool) ||
     (isQuestionTool(tool) && hasUsefulOutput(output))
   ) || isLiveFileDraft(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
-  const label = primaryToolLabel(tool);
+  const label = commandActivityLabel(tool, clock);
   const command = isTerminalOutputTool(tool) ? terminalCommandText(tool).replace(/\s+/g, " ").trim() : "";
   const alreadyInLabel = typeof label === "string" && command && label.replace(/\s+/g, " ").includes(command);
   const preview = isTerminalOutputTool(tool) ? alreadyInLabel ? "" : command
@@ -362,6 +370,28 @@ function ToolTitleLine({
     </button>
   );
 }
+
+export function commandActivityLabel(tool: ToolEventRecord, clock: number) {
+  const base = primaryToolLabel(tool);
+  if (!isCommandExecutionTool(tool)) return base;
+  const original = typeof base === "string" ? base : cleanTitle(tool.title);
+  const prefix = tool.name.startsWith("kali_") ? "Kali · " : "";
+  if (tool.status === "preparing") return `${prefix}Preparing command`;
+  const running = tool.status === "running" || tool.terminal?.running === true;
+  const start = tool.terminal?.startedAt ?? tool.startedAt ?? tool.createdAt;
+  const end = running ? clock : tool.terminal?.endedAt ?? tool.endedAt ?? tool.updatedAt;
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  const duration = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  if (running) return `${prefix}Running command for ${duration}`;
+  if (tool.result?.data?.state === "unknown") return `${prefix}Command status unconfirmed`;
+  if ((tool.startedAt === undefined && tool.terminal?.startedAt === undefined) || tool.status === "awaiting_approval") return original;
+  if (tool.status === "stopped" || tool.status === "cancelled" || tool.terminal?.status === "stopped") return `${prefix}Command stopped after ${duration}`;
+  if (tool.status === "failed" || tool.terminal?.status === "failed" || tool.terminal?.status === "timed_out" || (typeof tool.terminal?.exitCode === "number" && tool.terminal.exitCode !== 0)) return `${prefix}Command failed after ${duration}`;
+  const completed = /^Run\s/.test(original) ? original.replace(/^Run\s/, "Ran ") : tool.name === "kali_exec" ? "Kali · Command completed" : original;
+  return `${completed} · ${duration}`;
+}
+
+const isCommandExecutionTool = (tool: ToolEventRecord) => tool.name === "exec_command" || tool.name === "kali_exec";
 
 function SubagentInspector({ tool, subagents, onOpen }: { tool: ToolEventRecord; subagents: SubagentRecord[]; onOpen?: (threadId: string) => void }) {
   const agents = subagentsForTool(tool, subagents);

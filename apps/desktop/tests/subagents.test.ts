@@ -4,7 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reviewerReadOnlyBlockReason, VerificationEngine, type VerificationEnginePorts } from "../src/main/agent/harness/verificationEngine";
-import { SubagentManager, resolveSubagentModel, resolveNewSubagentSettings, type SubagentManagerPorts } from "../src/main/agent/harness/subagentManager";
+import { SubagentManager, resolveSubagentModel, resolveSubagentTurnSettings, resolveNewSubagentSettings, type SubagentManagerPorts } from "../src/main/agent/harness/subagentManager";
 import { ToolCallCoordinator } from "../src/main/agent/harness/toolCallCoordinator";
 import { TurnRegistry } from "../src/main/agent/harness/turnRegistry";
 import { DesktopStore } from "../src/main/db/store";
@@ -238,6 +238,34 @@ describe("subagent topology", () => {
     expect(resolveNewSubagentSettings(store, child.threadId, "gpt-5.6-sol", "high").model).toBe("gpt-5.6-sol");
     store.updateThreadSettings(root.id, { subagentModel: "removed-model" });
     expect(() => resolveNewSubagentSettings(store, child.threadId, "gpt-5.6-sol", "high")).toThrow("Unknown or removed model");
+  });
+
+  it("persists next-turn scope per chat, resolves nested follow-ups and leaves existing records unchanged until admission", () => {
+    let store = createStore(); const workspace = store.upsertWorkspace(tempDir);
+    const root = store.createThread(workspace.id);
+    const other = store.createThread(workspace.id);
+    store.updateThreadSettings(root.id, { subagentSettingsScope: "next_turn", subagentModel: "gemini-3.7-flash", subagentReasoningEffort: "xhigh" });
+    const child = createSubagent(store, root.id, "one", "/root/one");
+    const nested = createSubagent(store, child.threadId, "two", "/root/one/two");
+    const before = store.getSubagentByThread(nested.threadId);
+    const selection = resolveSubagentTurnSettings(store, nested);
+    expect(selection.model).toBe("gemini-3.7-flash");
+    expect(selection.reasoningEffort).not.toBe("xhigh");
+    expect(store.getSubagentByThread(nested.threadId)).toEqual(before);
+    store.close(); currentStore = new DesktopStore(tempDir); store = currentStore;
+    expect(store.getThread(root.id)?.subagentSettingsScope).toBe("next_turn");
+    expect(store.getThread(other.id)?.subagentSettingsScope).toBeUndefined();
+    store.updateThreadSettings(root.id, { subagentSettingsScope: "new" });
+    expect(resolveSubagentTurnSettings(store, nested).model).toBe(resolveSubagentModel(store, nested));
+  });
+  it("preserves the spawn-resolved reasoning on first admission when next-turn scope is enabled", () => {
+    const store = createStore(); const workspace = store.upsertWorkspace(tempDir);
+    const root = store.createThread(workspace.id);
+    store.updateThreadSettings(root.id, { model: "gpt-5.6-sol", reasoningEffort: "high", subagentSettingsScope: "next_turn", subagentReasoningEffort: null });
+    const child = store.createSubagent({ parentThreadId: root.id, parentMessageId: "turn", workspaceId: workspace.id,
+      taskName: "review", agentPath: "/root/review", prompt: "Review", model: "gpt-5.6-sol", reasoningEffort: "low" });
+    expect(resolveSubagentTurnSettings(store, child, false).reasoningEffort).toBe("low");
+    expect(resolveSubagentTurnSettings(store, child).reasoningEffort).toBe("high");
   });
 
   it("keeps a legacy child saved model when the parent model changes", () => {

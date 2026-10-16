@@ -4,7 +4,7 @@ import { ArrowDown, ArrowLeft, Bot, PanelRightClose, Square } from "lucide-react
 import type { ActiveRunState, AppSnapshot, ChatMessageRecord, PrivoraEventEnvelope, PrivoraEventPayload, SubagentRecord, ThreadHistoryPage, ToolEventRecord } from "../../../shared/types";
 import { ChatMessage } from "../../components/ChatMessage";
 import { AgentAvatar } from "../../components/AgentAvatar";
-import { agentDisplayTime, relativeAgentTime } from "./agentIdentity";
+import { agentDisplayTime, agentListTime, relativeAgentTime, sortAgentRows } from "./agentIdentity";
 import { RequestUserInputPanel } from "../../components/RequestUserInputPanel";
 import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
@@ -20,6 +20,11 @@ const upsert = <T extends { id: string }>(items: T[], item: T) => {
   return [...next, item];
 };
 export type AgentTranscript = { page: ThreadHistoryPage; run: ActiveRunState | null; sequence: number; pendingInput?: import("../../../shared/types").RequestUserInputRequestRecord | null };
+const withTranscriptRun = (current: AgentTranscript, run: ActiveRunState | null): AgentTranscript => {
+  const previous = current.run;
+  if (previous === run || (previous && run && Object.keys({ ...previous, ...run }).every((key) => previous[key as keyof ActiveRunState] === run[key as keyof ActiveRunState]))) return current;
+  return { ...current, run };
+};
 export function applyAgentEvent(current: AgentTranscript, threadId: string, event: PrivoraEventEnvelope) {
   if (event.sequence <= current.sequence) return current;
   const next = reduceAgentTranscript(current, threadId, event.payload);
@@ -29,9 +34,9 @@ export function reduceAgentTranscript(current: AgentTranscript, threadId: string
   if (event.type === "snapshot.updated") {
     const run = event.snapshot.activeRuns.find((item) => item.threadId === threadId) || null;
     const agent = event.snapshot.subagents.find((item) => item.threadId === threadId);
-    if (run) return { ...current, run: isActiveTurnStatus(run.status) ? run : null };
+    if (run) return withTranscriptRun(current, isActiveTurnStatus(run.status) ? run : null);
     // Snapshots omit some recovered approval runs. Absence alone is not a stop.
-    if (agent && ["stopped", "completed", "closed", "failed"].includes(agent.status) && agent.updatedAt >= (current.run?.updatedAt || 0)) return { ...current, run: null };
+    if (agent && ["stopped", "completed", "closed", "failed"].includes(agent.status) && agent.updatedAt >= (current.run?.updatedAt || 0)) return withTranscriptRun(current, null);
     return current;
   }
   if (event.type === "user_input.requested" && event.request.threadId === threadId) return { ...current, pendingInput: event.request };
@@ -115,9 +120,9 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const status = (item: SubagentRecord) => snapshot.activeRuns.find((run) => run.threadId === item.threadId)?.status || item.status;
   const live = (item: SubagentRecord) => isActiveTurnStatus(status(item)) || ["pending", "waiting"].includes(status(item));
   const groups = [
-    { title: "Active", rows: agents.filter(live) },
-    { title: "Finished", rows: agents.filter((item) => !live(item) && ["completed", "closed"].includes(item.status)) },
-    { title: "Needs attention", rows: agents.filter((item) => !live(item) && !["completed", "closed"].includes(item.status)) },
+    { title: "Active", active: true, rows: agents.filter(live) },
+    { title: "Finished", active: false, rows: agents.filter((item) => !live(item) && ["completed", "closed"].includes(item.status)) },
+    { title: "Needs attention", active: false, rows: agents.filter((item) => !live(item) && !["completed", "closed"].includes(item.status)) },
   ];
   const inlineMessages = useMemo(() => transcript ? groupInlineMessages(transcript.page.messages, transcript.page.toolEvents) : null, [transcript?.page.messages, transcript?.page.toolEvents]);
   const messages = inlineMessages?.roots || [];
@@ -203,9 +208,12 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       {error && <div role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
       {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title}<span>{group.rows.length}</span></h3>
         {!group.rows.length && <p>No {group.title.toLowerCase()} subagents</p>}
-        {[...group.rows].sort((a, b) => agentDisplayTime(b).timestamp - agentDisplayTime(a).timestamp || a.id.localeCompare(b.id)).map((item) => <button className="agent-row" key={item.id} title={name(item)} onClick={() => setSelected(item.threadId)}>
-          <AgentAvatar id={item.threadId} /><span className="agent-row-body"><strong>{name(item)}</strong><span className="agent-row-subtitle"><span className={`agent-state ${live(item) ? "live" : item.status}`}>{status(item).replace(/_/g, " ")}</span>{item.agentRole && <span> · {item.agentRole}</span>}</span></span><time className="agent-row-time" dateTime={new Date(agentDisplayTime(item).timestamp).toISOString()} title={`${agentDisplayTime(item).label} ${new Date(agentDisplayTime(item).timestamp).toLocaleString()}`}>{relativeAgentTime(agentDisplayTime(item).timestamp, now)}</time>
-        </button>)}
+        {sortAgentRows(group.rows, group.active).map((item) => {
+          const time = agentListTime(item, group.active);
+          return <button className="agent-row" key={item.id} title={name(item)} onClick={() => setSelected(item.threadId)}>
+          <AgentAvatar id={item.threadId} /><span className="agent-row-body"><strong>{name(item)}</strong><span className="agent-row-subtitle"><span className={`agent-state ${live(item) ? "live" : item.status}`}>{status(item).replace(/_/g, " ")}</span>{item.agentRole && <span> · {item.agentRole}</span>}</span></span><time className="agent-row-time" dateTime={new Date(time.timestamp).toISOString()} title={`${time.label} ${new Date(time.timestamp).toLocaleString()}`}>{relativeAgentTime(time.timestamp, now)}</time>
+        </button>;
+        })}
       </section>)}
       {selected && !transcript && !error && <p role="status">Loading agent chat…</p>}
       {transcript?.page.hasOlder && <button onClick={() => void older()} disabled={loadingOlder}>{loadingOlder ? "Loading…" : "Load earlier messages"}</button>}

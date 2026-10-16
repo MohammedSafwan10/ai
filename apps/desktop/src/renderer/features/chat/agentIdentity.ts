@@ -6,6 +6,15 @@ export const agentDisplayTime = (agent: SubagentRecord, activityAt = 0) => {
   return finished ? { timestamp: finished, label: agent.status === "closed" ? "Closed" : agent.status === "completed" ? "Completed" : agent.status === "failed" ? "Failed" : "Stopped" } : { timestamp: agent.createdAt, label: "Created (finish time unavailable)" };
 };
 
+/** List positions and labels must not follow each streamed token's activity time. */
+export const agentListTime = (agent: SubagentRecord, active: boolean) => active
+  ? { timestamp: agent.createdAt, label: "Created" }
+  : agentDisplayTime(agent);
+
+export const sortAgentRows = (agents: SubagentRecord[], active: boolean) => [...agents].sort((a, b) => active
+  ? a.createdAt - b.createdAt || a.id.localeCompare(b.id)
+  : agentListTime(b, false).timestamp - agentListTime(a, false).timestamp || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+
 export const agentIdentity = (id: string) => {
   let hash = 2166136261;
   for (const character of id) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);

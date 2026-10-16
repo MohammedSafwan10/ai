@@ -609,8 +609,9 @@ export class DesktopStore {
     const timestamp = now(); this.putThread({ ...thread, title: trimmed, titleSource: source, titleUpdatedAt: timestamp, updatedAt: timestamp });
     return this.getThread(threadId);
   }
-  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "subagentModel" | "subagentReasoningEffort" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
+  updateThreadSettings(threadId: string, input: Partial<Pick<ThreadRecord, "model" | "subagentModel" | "subagentReasoningEffort" | "subagentSettingsScope" | "reasoningEffort" | "collaborationMode" | "agentHarnessMode">>) {
     const thread = this.getThread(threadId); if (!thread) return null;
+    if (input.subagentSettingsScope !== undefined) thread.subagentSettingsScope = input.subagentSettingsScope;
     this.putThread({ ...thread, model: input.model ? normalizeModelId(input.model) : thread.model, subagentModel: input.subagentModel === undefined ? thread.subagentModel : input.subagentModel ? normalizeModelId(input.subagentModel) : null, subagentReasoningEffort: input.subagentReasoningEffort === undefined ? thread.subagentReasoningEffort : input.subagentReasoningEffort, reasoningEffort: input.reasoningEffort ?? thread.reasoningEffort, collaborationMode: input.collaborationMode ?? thread.collaborationMode, agentHarnessMode: input.agentHarnessMode ?? thread.agentHarnessMode, updatedAt: now() });
     return this.getThread(threadId);
   }

@@ -867,6 +867,7 @@ export interface SettingsRecord {
   model: string;
   subagentModel?: string | null;
   subagentReasoningEffort?: ReasoningEffort | null;
+  subagentSettingsScope?: "new" | "next_turn";
   reasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   collaborationMode: CollaborationMode;
@@ -899,6 +900,7 @@ export interface ThreadRecord {
   model?: string;
   subagentModel?: string | null;
   subagentReasoningEffort?: ReasoningEffort | null;
+  subagentSettingsScope?: "new" | "next_turn";
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;
@@ -1079,6 +1081,8 @@ export interface ToolDiffFileRecord {
 }
 
 export interface ToolTerminalRecord {
+  startedAt?: number;
+  endedAt?: number;
   command: string;
   cwd?: string;
   sessionId?: number;
@@ -1735,6 +1739,7 @@ export interface SaveSettingsInput {
   model?: string;
   subagentModel?: string | null;
   subagentReasoningEffort?: ReasoningEffort | null;
+  subagentSettingsScope?: "new" | "next_turn";
   reasoningEffort?: ReasoningEffort;
   permissionMode?: PermissionMode;
   collaborationMode?: CollaborationMode;
@@ -1755,6 +1760,7 @@ export interface SaveThreadSettingsInput {
   model?: string;
   subagentModel?: string | null;
   subagentReasoningEffort?: ReasoningEffort | null;
+  subagentSettingsScope?: "new" | "next_turn";
   reasoningEffort?: ReasoningEffort;
   collaborationMode?: CollaborationMode;
   agentHarnessMode?: AgentHarnessMode;

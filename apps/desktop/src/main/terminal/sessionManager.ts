@@ -151,13 +151,18 @@ interface TerminalSession {
   chunkSequence: number;
   stdoutRedactionCarry: string;
   stderrRedactionCarry: string;
+  interactionTail: Promise<void>;
+  finalUnreadConsumed: { value: boolean };
   timeout?: NodeJS.Timeout;
 }
+
+interface UnreadTerminalOutput { output: string; stdout: string; stderr: string; omittedBytes: number; consumed: { value: boolean } }
 
 export class TerminalSessionManager {
   private sessions = new Map<number, TerminalSession>();
   private recentSessions = new Map<number, TerminalSessionListRecord>();
   private recentOutput = new Map<number, string>();
+  private recentUnread = new Map<number, UnreadTerminalOutput>();
   private nextProcessId = Math.floor(Math.random() * 20_000) + 1;
   private backend: TerminalBackend;
 
@@ -180,7 +185,10 @@ export class TerminalSessionManager {
     } catch (error) {
       return this.spawnFailedResult(command, options.cwd, error);
     }
-    const outputMaxBytes = options.maxOutputChars || TERMINAL_OUTPUT_MAX_BYTES;
+    // Storage retention is independent of each operation's response budget.
+    const outputMaxBytes = TERMINAL_OUTPUT_MAX_BYTES;
+    let releaseInitial!: () => void;
+    const initialInteraction = new Promise<void>((resolve) => { releaseInitial = resolve; });
     const session: TerminalSession = {
       id,
       command,
@@ -204,6 +212,8 @@ export class TerminalSessionManager {
       chunkSequence: 0,
       stdoutRedactionCarry: "",
       stderrRedactionCarry: "",
+      interactionTail: initialInteraction,
+      finalUnreadConsumed: { value: false },
     };
 
     this.sessions.set(id, session);
@@ -220,12 +230,16 @@ export class TerminalSessionManager {
     options.signal.addEventListener("abort", abort, { once: true });
     if (options.signal.aborted) abort();
 
-    await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, false), options.signal);
-    if (shouldWaitForShortCommandClose(session, options.yieldTimeMs)) {
-      await this.waitForBoundary(session, SHORT_COMMAND_CLOSE_GRACE_MS, options.signal);
+    try {
+      await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, false), options.signal);
+      if (shouldWaitForShortCommandClose(session, options.yieldTimeMs)) {
+        await this.waitForBoundary(session, SHORT_COMMAND_CLOSE_GRACE_MS, options.signal);
+      }
+      return this.resultForSession(session, startedAt, { maxOutputChars: options.maxOutputChars });
+    } finally {
+      options.signal.removeEventListener("abort", abort);
+      releaseInitial();
     }
-    options.signal.removeEventListener("abort", abort);
-    return this.resultForSession(session, startedAt);
   }
 
   async writeStdin(options: WriteStdinOptions): Promise<TerminalSessionResult> {
@@ -235,30 +249,58 @@ export class TerminalSessionManager {
     if (!session) {
       const recent = this.recentSessions.get(options.processId);
       if (!options.input && !options.closeStdin && recent) {
-        return this.resultForRecentSession(recent, operationStartedAt);
+        return this.resultForRecentSession(recent, operationStartedAt, options.maxOutputChars);
       }
       return this.notRunningResult(options.processId);
     }
 
-    if (options.input) {
-      session.backend.write(options.input);
-      session.updatedAt = Date.now();
-    }
-    if (options.closeStdin) {
-      if (options.input) await delay(WINDOWS_STDIN_CLOSE_DELAY_MS);
-      options.signal.throwIfAborted();
-      session.backend.closeStdin();
-    }
+    return this.withSessionInteraction(session, options.signal, async () => {
+      if (session.closed) return !options.input && !options.closeStdin
+        ? this.resultForSession(session, operationStartedAt, { maxOutputChars: options.maxOutputChars })
+        : this.notRunningResult(options.processId);
+      const abort = () => {
+        session.stopRequested = true;
+        session.backend.terminate();
+      };
+      options.signal.addEventListener("abort", abort, { once: true });
+      if (options.signal.aborted) abort();
+      try {
+        options.signal.throwIfAborted();
+        if (options.input) {
+          session.backend.write(options.input);
+          session.updatedAt = Date.now();
+        }
+        if (options.closeStdin) {
+          if (options.input) await delay(WINDOWS_STDIN_CLOSE_DELAY_MS);
+          options.signal.throwIfAborted();
+          session.backend.closeStdin();
+        }
+        await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, !options.input), options.signal);
+        return this.resultForSession(session, operationStartedAt, { maxOutputChars: options.maxOutputChars });
+      } finally { options.signal.removeEventListener("abort", abort); }
+    });
+  }
 
-    const abort = () => {
-      session.stopRequested = true;
-      session.backend.terminate();
-    };
-    options.signal.addEventListener("abort", abort, { once: true });
-    if (options.signal.aborted) abort();
-    await this.waitForBoundary(session, normalizeYield(options.yieldTimeMs, !options.input), options.signal);
-    options.signal.removeEventListener("abort", abort);
-    return this.resultForSession(session, operationStartedAt);
+  private async withSessionInteraction<T>(session: TerminalSession, signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+    const previous = session.interactionTail;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    session.interactionTail = previous.then(() => gate);
+    let abort!: () => void;
+    try {
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal.reason ?? new DOMException("Cancelled", "AbortError"));
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+      await Promise.race([previous, cancelled]);
+      signal.throwIfAborted();
+      signal.removeEventListener("abort", abort);
+      return await operation();
+    } finally {
+      signal.removeEventListener("abort", abort);
+      release();
+    }
   }
 
   async resizeProcess(options: ResizeProcessOptions): Promise<TerminalSessionResult> {
@@ -270,7 +312,7 @@ export class TerminalSessionManager {
       this.appendText(session, "PTY resize failed for this terminal session.\n", "stderr", () => undefined);
     }
     return this.resultForSession(session, operationStartedAt, {
-      clearUnread: !resized,
+      clearUnread: false,
       outputOverride: resized ? `Resized session ${options.processId} to ${options.rows}x${options.cols}.` : undefined,
     });
   }
@@ -287,6 +329,7 @@ export class TerminalSessionManager {
     await this.waitForBoundary(session, STOP_GRACE_TIME_MS);
     if (session.closed) {
       return this.resultForSession(session, operationStartedAt, {
+        clearUnread: false,
         outputOverride: `Stopped session ${processId}.`,
       });
     }
@@ -403,6 +446,7 @@ export class TerminalSessionManager {
     session.endedAt = session.updatedAt;
     if (session.timeout) clearTimeout(session.timeout);
     const record = this.recordForSession(session);
+    this.recentUnread.set(session.id, { output: session.unreadOutput.toString(), stdout: session.unreadStdout.toString(), stderr: session.unreadStderr.toString(), omittedBytes: session.unreadOutput.stats().omittedBytes, consumed: session.finalUnreadConsumed });
     this.rememberSession(record, session.output.toString());
     this.emit({ type: "terminal_session_ended", session: record });
     this.sessions.delete(session.id);
@@ -435,25 +479,30 @@ export class TerminalSessionManager {
   private resultForSession(
     session: TerminalSession,
     operationStartedAt: number,
-    options: { clearUnread?: boolean; outputOverride?: string } = {},
+    options: { clearUnread?: boolean; outputOverride?: string; maxOutputChars?: number } = {},
   ): TerminalSessionResult {
     const clearUnread = options.clearUnread ?? true;
-    const outputBuffer = session.unreadOutput.hasContent() ? session.unreadOutput : session.output;
-    const stdoutBuffer = session.unreadStdout.hasContent() ? session.unreadStdout : session.stdout;
-    const stderrBuffer = session.unreadStderr.hasContent() ? session.unreadStderr : session.stderr;
-    const stats = outputBuffer.stats();
-    const output = options.outputOverride ?? outputBuffer.toString();
-    const stdout = options.outputOverride ? "" : stdoutBuffer.toString();
-    const stderr = options.outputOverride ? "" : stderrBuffer.toString();
+    const outputBuffer = session.unreadOutput;
+    const stdoutBuffer = session.unreadStdout;
+    const stderrBuffer = session.unreadStderr;
+    const consumed = session.closed && session.finalUnreadConsumed.value;
+    const stats = consumed ? { omittedBytes: 0 } : outputBuffer.stats();
+    const limit = normalizeOutputLimit(options.maxOutputChars);
+    const limited = limitTerminalOutput(consumed ? "" : outputBuffer.toString(), limit);
+    const output = options.outputOverride ?? limited.output;
+    const stdout = options.outputOverride || consumed ? "" : limitTerminalOutput(stdoutBuffer.toString(), limit).output;
+    const stderr = options.outputOverride || consumed ? "" : limitTerminalOutput(stderrBuffer.toString(), limit).output;
     if (clearUnread) {
       session.unreadOutput = new HeadTailOutputBuffer(session.outputMaxBytes);
       session.unreadStdout = new HeadTailOutputBuffer(session.outputMaxBytes);
       session.unreadStderr = new HeadTailOutputBuffer(session.outputMaxBytes);
+      this.recentUnread.delete(session.id);
+      if (session.closed) session.finalUnreadConsumed.value = true;
     }
     const running = !session.closed;
     if (!running) this.sessions.delete(session.id);
     const status = terminalStatus(session, running);
-    const processDurationMs = Date.now() - session.startedAt;
+    const processDurationMs = (session.endedAt ?? Date.now()) - session.startedAt;
     const operationDurationMs = Math.max(1, Date.now() - operationStartedAt);
     return {
       success: terminalSuccess(status, session.exitCode),
@@ -466,7 +515,7 @@ export class TerminalSessionManager {
       durationMs: processDurationMs,
       processDurationMs,
       operationDurationMs,
-      omittedBytes: stats.omittedBytes,
+      omittedBytes: stats.omittedBytes + limited.omittedBytes,
       timedOut: session.timedOut,
       running,
       status,
@@ -500,20 +549,26 @@ export class TerminalSessionManager {
     };
   }
 
-  private resultForRecentSession(record: TerminalSessionListRecord, operationStartedAt: number): TerminalSessionResult {
-    const output = this.recentOutput.get(record.sessionId) || record.outputPreview;
+  private resultForRecentSession(record: TerminalSessionListRecord, operationStartedAt: number, maxOutputChars?: number): TerminalSessionResult {
+    const saved = this.recentUnread.get(record.sessionId);
+    const unread = saved && !saved.consumed.value ? saved : undefined;
+    if (saved) saved.consumed.value = true;
+    this.recentUnread.delete(record.sessionId);
+    const limit = normalizeOutputLimit(maxOutputChars);
+    const limited = limitTerminalOutput(unread?.output || "", limit);
+    const output = limited.output;
     return {
-      success: record.status !== "failed" && record.status !== "timed_out",
+      success: terminalSuccess(record.status, record.exitCode),
       sessionId: record.sessionId,
       output,
-      stdout: output,
-      stderr: "",
+      stdout: limitTerminalOutput(unread?.stdout || "", limit).output,
+      stderr: limitTerminalOutput(unread?.stderr || "", limit).output,
       processId: null,
       exitCode: record.exitCode,
       durationMs: Math.max(0, (record.endedAt || record.updatedAt) - record.startedAt),
       processDurationMs: Math.max(0, (record.endedAt || record.updatedAt) - record.startedAt),
       operationDurationMs: Math.max(1, Date.now() - operationStartedAt),
-      omittedBytes: record.omittedBytes,
+      omittedBytes: (unread?.omittedBytes || 0) + limited.omittedBytes,
       timedOut: record.status === "timed_out",
       running: false,
       status: record.status,
@@ -579,6 +634,7 @@ export class TerminalSessionManager {
     for (const stale of ordered.slice(RECENT_SESSION_LIMIT)) {
       this.recentSessions.delete(stale.sessionId);
       this.recentOutput.delete(stale.sessionId);
+      this.recentUnread.delete(stale.sessionId);
     }
   }
 
@@ -1078,6 +1134,16 @@ const normalizeYield = (value: unknown, emptyPoll: boolean) => {
   const fallback = emptyPoll ? DEFAULT_EMPTY_POLL_YIELD_TIME_MS : DEFAULT_YIELD_TIME_MS;
   const requested = typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return Math.max(MIN_YIELD_TIME_MS, Math.min(MAX_YIELD_TIME_MS, requested));
+};
+
+const normalizeOutputLimit = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value > 0
+  ? Math.max(1, Math.floor(value)) : TERMINAL_OUTPUT_MAX_BYTES;
+
+const limitTerminalOutput = (output: string, limit: number) => {
+  if (Buffer.byteLength(output, "utf8") <= limit) return { output, omittedBytes: 0 };
+  const buffer = new HeadTailOutputBuffer(limit);
+  buffer.push(output);
+  return { output: buffer.toString(), omittedBytes: buffer.stats().omittedBytes };
 };
 
 const shouldWaitForShortCommandClose = (session: TerminalSession, yieldTimeMs: number | undefined) =>

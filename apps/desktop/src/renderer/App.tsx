@@ -94,10 +94,11 @@ export default function App() {
     model: activeThread?.model || snapshot.settings.model,
     subagentModel: activeThread?.subagentModel !== undefined ? activeThread.subagentModel : snapshot.settings.subagentModel,
     subagentReasoningEffort: activeThread?.subagentReasoningEffort !== undefined ? activeThread.subagentReasoningEffort : snapshot.settings.subagentReasoningEffort,
+    subagentSettingsScope: activeThread?.subagentSettingsScope || "new",
     reasoningEffort: activeThread?.reasoningEffort || snapshot.settings.reasoningEffort,
     collaborationMode: activeThread?.collaborationMode || snapshot.settings.collaborationMode,
     agentHarnessMode: activeThread?.agentHarnessMode || snapshot.settings.agentHarnessMode,
-  }), [activeThread?.subagentReasoningEffort, activeThread?.subagentModel, activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
+  }), [activeThread?.subagentSettingsScope, activeThread?.subagentReasoningEffort, activeThread?.subagentModel, activeThread?.agentHarnessMode, activeThread?.collaborationMode, activeThread?.model, activeThread?.reasoningEffort, snapshot.settings]);
   const lastToolUpdatedAt = useMemo(
     () => snapshot.toolEvents.reduce((latest, tool) => Math.max(latest, tool.updatedAt || tool.createdAt || 0), 0),
     [snapshot.toolEvents],
@@ -241,7 +242,7 @@ export default function App() {
     const { globalSettings, threadSettings } = splitComposerSettingsForPersistence(settings);
     try {
       if (Object.keys(globalSettings).length > 0) await window.privoraDesktop.saveSettings(globalSettings);
-      if (activeThread && (threadSettings.subagentReasoningEffort !== undefined || threadSettings.subagentModel !== undefined || threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
+      if (activeThread && (threadSettings.subagentSettingsScope !== undefined || threadSettings.subagentReasoningEffort !== undefined || threadSettings.subagentModel !== undefined || threadSettings.model || threadSettings.reasoningEffort || threadSettings.collaborationMode || threadSettings.agentHarnessMode)) {
         await window.privoraDesktop.saveThreadSettings({
           threadId: activeThread.id,
           ...threadSettings,

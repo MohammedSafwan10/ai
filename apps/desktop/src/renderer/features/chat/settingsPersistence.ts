@@ -5,6 +5,7 @@ export const splitComposerSettingsForPersistence = (settings: SaveSettingsInput)
     model: settings.model,
     subagentModel: settings.subagentModel,
     subagentReasoningEffort: settings.subagentReasoningEffort,
+    subagentSettingsScope: settings.subagentSettingsScope,
     reasoningEffort: settings.reasoningEffort,
     collaborationMode: settings.collaborationMode,
     agentHarnessMode: settings.agentHarnessMode,
@@ -12,5 +13,6 @@ export const splitComposerSettingsForPersistence = (settings: SaveSettingsInput)
   const globalSettings: SaveSettingsInput = { ...settings };
   delete globalSettings.collaborationMode;
   delete globalSettings.agentHarnessMode;
+  delete globalSettings.subagentSettingsScope;
   return { globalSettings, threadSettings };
 };

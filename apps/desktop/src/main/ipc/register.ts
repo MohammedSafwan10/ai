@@ -1268,6 +1268,7 @@ const saveSettingsInputSchema = z.object({
 });
 
 const saveThreadSettingsInputSchema = z.object({
+  subagentSettingsScope: z.enum(["new", "next_turn"]).optional(),
   subagentReasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
   threadId: idSchema,
   model: z.string().max(160).optional(),

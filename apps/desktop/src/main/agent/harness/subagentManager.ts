@@ -257,6 +257,22 @@ export const resolveSubagentModel = (
   return getModelOption(agent.model || parentAgent?.model || parentThread?.model || store.getSettings().model).id;
 };
 
+/** Read the operator's scope at admission, without changing an in-flight run. */
+export const resolveSubagentTurnSettings = (store: DesktopStore, original: SubagentRecord, existing = true) => {
+  const agent = store.getSubagentByThread(original.threadId) || original;
+  const root = store.getThread(store.rootAgentThread(agent.parentThreadId));
+  if (existing && root?.subagentSettingsScope === "next_turn") {
+    const parent = store.getThread(agent.parentThreadId);
+    const parentAgent = store.getSubagentByThread(agent.parentThreadId);
+    const settings = store.getSettings();
+    return resolveNewSubagentSettings(store, agent.parentThreadId,
+      parentAgent?.model || parent?.model || settings.model,
+      parentAgent?.reasoningEffort || parent?.reasoningEffort || settings.reasoningEffort);
+  }
+  const model = getModelOption(resolveSubagentModel(store, agent));
+  return { model: model.id, reasoningEffort: agent.reasoningEffort && model.reasoningEfforts.includes(agent.reasoningEffort) ? agent.reasoningEffort : model.defaultReasoningEffort };
+};
+
 /** Operator-selected child model applies to new children throughout this chat tree. */
 export const resolveNewSubagentSettings = (
   store: DesktopStore,

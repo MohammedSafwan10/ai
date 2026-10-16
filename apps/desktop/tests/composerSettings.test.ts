@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { splitComposerSettingsForPersistence } from "../src/renderer/features/chat/settingsPersistence";
 
 describe("composer settings persistence", () => {
+  it("keeps existing-agent model scope in this chat instead of global defaults", () => {
+    const result = splitComposerSettingsForPersistence({ subagentSettingsScope: "next_turn" });
+    expect(result.globalSettings).toEqual({});
+    expect(result.threadSettings.subagentSettingsScope).toBe("next_turn");
+  });
   it("carries a child model and explicit inheritance reset through both save paths", () => {
     for (const subagentModel of ["gemini-3.7-flash", null]) {
       const result = splitComposerSettingsForPersistence({ subagentModel });

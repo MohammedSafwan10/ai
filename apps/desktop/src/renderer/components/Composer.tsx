@@ -793,14 +793,15 @@ export function Composer({
                 <button
                   type="button"
                   className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "subagent" && "active")}
-                  title="Choose the model for new subagents. Existing children keep their assigned model."
+                  title={settings.subagentSettingsScope === "next_turn" ? "Choose the model for new agents and existing agents' next turns. Current runs keep their model." : "Choose the model for new subagents. Enable the option below to also update existing agents' next turns."}
                   onFocus={() => { setSubagentEffortOpen(false); setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
                   onClick={() => { setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
                 >
-                  <span className="subagent-model-label"><span>Subagent model</span><small>{subagentModel ? modelDisplayLabel(subagentModel.label) : "Same as parent"}</small></span>
+                  <span className="subagent-model-label"><span>{settings.subagentSettingsScope === "next_turn" ? "Subagent model" : "New subagent model"}</span><small>{subagentModel ? modelDisplayLabel(subagentModel.label) : "Same as parent"}</small></span>
                   <ChevronRight size={17} />
                 </button>
-                <button type="button" className={clsx("model-branch-row", subagentEffortOpen && "active")} onClick={() => { setSubagentEffortOpen(true); setModelSubmenuOpen(false); }} title="Choose reasoning effort for new subagents; existing children keep their settings."><span className="subagent-model-label"><span>Subagent reasoning</span><small>{settings.subagentReasoningEffort ? reasoningLabel(settings.subagentReasoningEffort, childModel) : "Same as parent"}</small></span><ChevronRight size={17} /></button>
+                <button type="button" className={clsx("model-branch-row", subagentEffortOpen && "active")} onClick={() => { setSubagentEffortOpen(true); setModelSubmenuOpen(false); }} title="Reasoning applies to new agents, and to existing agents' next turns when the option below is enabled."><span className="subagent-model-label"><span>Subagent reasoning</span><small>{settings.subagentReasoningEffort ? reasoningLabel(settings.subagentReasoningEffort, childModel) : "Same as parent"}</small></span><ChevronRight size={17} /></button>
+                {activeThreadId && <button type="button" role="menuitemcheckbox" aria-checked={settings.subagentSettingsScope === "next_turn"} title="Apply this chat's subagent model and reasoning when an existing agent starts its next turn. Current runs and resumed checkpoints keep their model." onClick={() => onSettings({ subagentSettingsScope: settings.subagentSettingsScope === "next_turn" ? "new" : "next_turn" })}><span>Apply to existing agents’ next turns</span>{settings.subagentSettingsScope === "next_turn" && <Check size={14} />}</button>}
                 <div className="composer-menu-divider" />
                 {activeReasoningOptions.map((option) => (
                   <button

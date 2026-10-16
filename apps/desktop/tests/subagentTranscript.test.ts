@@ -5,6 +5,17 @@ import type { AppSnapshot, ChatMessageRecord } from "../src/shared/types";
 const initial = (): AgentTranscript => ({ sequence: 0, run: null, page: { threadId: "child", messages: [], toolEvents: [], turnUndos: [], hasOlder: false } });
 const message: ChatMessageRecord = { id: "answer", threadId: "child", role: "assistant", status: "running", content: "First", createdAt: 1, updatedAt: 1 };
 describe("live subagent transcript", () => {
+  it("ignores snapshot-only run clones while retaining actual status and metadata changes", () => {
+    const state = { ...initial(), run: { threadId: "child", assistantMessageId: "answer", phase: "sampling" as const, status: "sampling" as const, updatedAt: 10, reason: "Working" } };
+    const snapshot = { activeRuns: [{ ...state.run }], subagents: [] } as unknown as AppSnapshot;
+    expect(reduceAgentTranscript(state, "child", { type: "snapshot.updated", snapshot })).toBe(state);
+    const changed = { ...snapshot, activeRuns: [{ ...state.run, reason: "Waiting for provider" }] };
+    expect(reduceAgentTranscript(state, "child", { type: "snapshot.updated", snapshot: changed }).run?.reason).toBe("Waiting for provider");
+    const stopped = { ...snapshot, activeRuns: [{ ...state.run, phase: "stopped" as const, status: "stopped" as const }] };
+    const terminal = reduceAgentTranscript(state, "child", { type: "snapshot.updated", snapshot: stopped });
+    expect(terminal.run).toBeNull();
+    expect(reduceAgentTranscript(terminal, "child", { type: "snapshot.updated", snapshot: stopped })).toBe(terminal);
+  });
   it("clears Stop when the active assistant message becomes terminal", () => {
     const state = { ...initial(), run: { threadId: "child", assistantMessageId: "answer", phase: "awaiting_approval" as const, status: "awaiting_approval" as const, updatedAt: 10 } };
     expect(reduceAgentTranscript(state, "child", { type: "message.upserted", message: { ...message, status: "stopped", updatedAt: 11 } }).run).toBeNull();
