@@ -30,7 +30,10 @@
 .agent-panel-task { margin-top: 6px; }
 .agent-panel-task summary { cursor: pointer; }
 .agent-panel-task p { margin: 8px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.agent-panel-scroll .chat-message { max-width: 100%; margin-bottom: 18px; }
+.agent-panel-scroll .chat-message { width: 100%; max-width: none; margin: 13px 0 18px; }
+.agent-panel-scroll .chat-message.user { justify-content: flex-start; }
+.agent-panel-scroll .chat-message.user .message-stack { justify-items: start; }
+.agent-panel-scroll .assistant-run-meta, .agent-panel-scroll .agent-coordination-line summary { justify-content: flex-start; text-align: left; }
 .agent-delivery-label { margin-bottom: 6px; font-size: 11px; color: var(--privora-muted); }
 .subagent-open-chat { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 4px 0; font-size: 12px; }
 .agent-coordination-line { font-size: 12px; margin: 12px 0; color: var(--privora-muted); }
