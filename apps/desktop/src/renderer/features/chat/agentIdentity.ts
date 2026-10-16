@@ -1,3 +1,11 @@
+import type { SubagentRecord } from "../../../shared/types";
+
+export const agentDisplayTime = (agent: SubagentRecord) => {
+  if (["pending", "running", "waiting"].includes(agent.status)) return { timestamp: agent.updatedAt, label: "Last updated" };
+  const finished = agent.status === "closed" ? agent.closedAt ?? agent.finishedAt : agent.finishedAt;
+  return finished ? { timestamp: finished, label: agent.status === "closed" ? "Closed" : agent.status === "completed" ? "Completed" : agent.status === "failed" ? "Failed" : "Stopped" } : { timestamp: agent.createdAt, label: "Created (finish time unavailable)" };
+};
+
 export const agentIdentity = (id: string) => {
   let hash = 2166136261;
   for (const character of id) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);

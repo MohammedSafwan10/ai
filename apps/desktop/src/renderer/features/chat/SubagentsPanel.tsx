@@ -3,7 +3,7 @@ import { ArrowLeft, Bot, PanelRightClose, Square } from "lucide-react";
 import type { ActiveRunState, AppSnapshot, ChatMessageRecord, PrivoraEventEnvelope, PrivoraEventPayload, SubagentRecord, ThreadHistoryPage, ToolEventRecord } from "../../../shared/types";
 import { ChatMessage } from "../../components/ChatMessage";
 import { AgentAvatar } from "../../components/AgentAvatar";
-import { relativeAgentTime } from "./agentIdentity";
+import { agentDisplayTime, relativeAgentTime } from "./agentIdentity";
 import { RequestUserInputPanel } from "../../components/RequestUserInputPanel";
 import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
@@ -99,13 +99,13 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       {transcript?.run && selected && <button className="workspace-icon-button" onClick={() => { void window.privoraDesktop.stopTurn(selected).catch((reason: unknown) => setError(String(reason))); }} aria-label="Stop this agent"><Square size={14} /></button>}
       <button className="workspace-icon-button" onClick={onClose} aria-label="Close subagents panel"><PanelRightClose size={16} /></button>
     </header>
-    {agent && <div className="agent-panel-meta"><div><span className={`agent-state ${live(agent) ? "live" : agent.status}`}>{status(agent).replace(/_/g, " ")}</span> · {agent.model} · {agent.reasoningEffort}</div><div className="agent-panel-times">Created <time dateTime={new Date(agent.createdAt).toISOString()} title={new Date(agent.createdAt).toLocaleString()}>{relativeAgentTime(agent.createdAt, now)}</time> · Updated <time dateTime={new Date(agent.updatedAt).toISOString()} title={new Date(agent.updatedAt).toLocaleString()}>{relativeAgentTime(agent.updatedAt, now)}</time></div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
+    {agent && <div className="agent-panel-meta"><div><span className={`agent-state ${live(agent) ? "live" : agent.status}`}>{status(agent).replace(/_/g, " ")}</span> · {agent.model} · {agent.reasoningEffort}</div><div className="agent-panel-times">Created <time dateTime={new Date(agent.createdAt).toISOString()} title={new Date(agent.createdAt).toLocaleString()}>{relativeAgentTime(agent.createdAt, now)}</time> · {agentDisplayTime(agent).label} <time dateTime={new Date(agentDisplayTime(agent).timestamp).toISOString()} title={new Date(agentDisplayTime(agent).timestamp).toLocaleString()}>{relativeAgentTime(agentDisplayTime(agent).timestamp, now)}</time></div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
     <div className="agent-panel-scroll" ref={scroller} onScroll={() => { const el = scroller.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {error && <div role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
       {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title}<span>{group.rows.length}</span></h3>
         {!group.rows.length && <p>No {group.title.toLowerCase()} subagents</p>}
-        {[...group.rows].sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id)).map((item) => <button className="agent-row" key={item.id} title={item.lastPreview || item.prompt} onClick={() => setSelected(item.threadId)}>
-          <AgentAvatar id={item.threadId} /><span className="agent-row-body"><strong>{name(item)}</strong><span className="agent-row-subtitle"><span className={`agent-state ${live(item) ? "live" : item.status}`}>{status(item).replace(/_/g, " ")}</span>{item.agentRole && <span> · {item.agentRole}</span>}</span>{live(item) && <span className="agent-row-preview">{item.lastPreview || item.prompt}</span>}</span><time className="agent-row-time" dateTime={new Date(item.updatedAt).toISOString()} title={`Last updated ${new Date(item.updatedAt).toLocaleString()}`}>{relativeAgentTime(item.updatedAt, now)}</time>
+        {[...group.rows].sort((a, b) => agentDisplayTime(b).timestamp - agentDisplayTime(a).timestamp || a.id.localeCompare(b.id)).map((item) => <button className="agent-row" key={item.id} title={item.lastPreview || item.prompt} onClick={() => setSelected(item.threadId)}>
+          <AgentAvatar id={item.threadId} /><span className="agent-row-body"><strong>{name(item)}</strong><span className="agent-row-subtitle"><span className={`agent-state ${live(item) ? "live" : item.status}`}>{status(item).replace(/_/g, " ")}</span>{item.agentRole && <span> · {item.agentRole}</span>}</span>{live(item) && <span className="agent-row-preview">{item.lastPreview || item.prompt}</span>}</span><time className="agent-row-time" dateTime={new Date(agentDisplayTime(item).timestamp).toISOString()} title={`${agentDisplayTime(item).label} ${new Date(agentDisplayTime(item).timestamp).toLocaleString()}`}>{relativeAgentTime(agentDisplayTime(item).timestamp, now)}</time>
         </button>)}
       </section>)}
       {selected && !transcript && !error && <p role="status">Loading agent chat…</p>}

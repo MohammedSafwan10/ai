@@ -1385,6 +1385,7 @@ export interface SubagentRecord {
   finalMessage?: string;
   lastPreview?: string;
   closedAt?: number;
+  finishedAt?: number;
   createdAt: number;
   updatedAt: number;
 }

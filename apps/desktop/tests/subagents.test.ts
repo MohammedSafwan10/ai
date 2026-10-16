@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { reviewerReadOnlyBlockReason, VerificationEngine, type VerificationEnginePorts } from "../src/main/agent/harness/verificationEngine";
 import { SubagentManager, resolveSubagentModel, resolveNewSubagentSettings, type SubagentManagerPorts } from "../src/main/agent/harness/subagentManager";
 import { ToolCallCoordinator } from "../src/main/agent/harness/toolCallCoordinator";
@@ -28,6 +29,32 @@ afterEach(() => {
 });
 
 describe("subagent topology", () => {
+  it("preserves timestamps for unchanged updates and records a separate finish time", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    try {
+      const store = createStore(); const root = store.createThread(null);
+      const agent = createSubagent(store, root.id, "reviewer", "/root/reviewer");
+      clock.mockReturnValue(200_000);
+      const finished = store.updateSubagent(agent.threadId, { status: "completed", lastPreview: "Done" })!;
+      expect(finished.finishedAt).toBe(200_000);
+      clock.mockReturnValue(300_000);
+      expect(store.updateSubagent(agent.threadId, { status: "completed", lastPreview: "Done" })?.updatedAt).toBe(200_000);
+      expect(store.updateSubagent(agent.threadId, { agentNickname: "Renamed" })?.finishedAt).toBe(200_000);
+      expect(store.updateSubagent(agent.threadId, { status: "pending" })?.finishedAt).toBeUndefined();
+    } finally { clock.mockRestore(); }
+  });
+  it("uses retained assistant results for legacy agents whose metadata time was touched", () => {
+    const store = createStore(); const root = store.createThread(null);
+    const agent = createSubagent(store, root.id, "reviewer", "/root/reviewer");
+    // Simulate a pre-finishedAt record, before any terminal status transition.
+    store.upsertMessage({ id: "old-result", threadId: agent.threadId, role: "assistant", content: "Actual result", status: "completed", createdAt: 100, updatedAt: 200 });
+    const database = new DatabaseSync(path.join(tempDir, "privora-desktop.sqlite"));
+    try { database.prepare("UPDATE subagents SET payload = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ...agent, status: "completed", updatedAt: 900 }), 900, agent.id); }
+    finally { database.close(); }
+    expect(store.listSubagents(root.id)[0]).toMatchObject({ finishedAt: 200, updatedAt: 900 });
+    store.updateSubagent(agent.threadId, { status: "closed", closedAt: 500 });
+    expect(store.listSubagents(root.id)[0].finishedAt).toBe(500);
+  });
   it("explicitly tells the model when a queued message cannot wake a completed recipient", async () => {
     const store = createStore(); const root = store.createThread(null);
     const agent = createSubagent(store, root.id, "reviewer", "/root/reviewer");

@@ -759,7 +759,7 @@ export class DesktopStore {
   }
   listSubagents(parentThreadId?: string): SubagentRecord[] {
     const all = this.all<SubagentRecord>("SELECT payload FROM subagents ORDER BY created_at, id");
-    if (!parentThreadId) return all;
+    if (!parentThreadId) return all.map((agent) => this.withSubagentFinishedTime(agent));
     const parents = new Set([parentThreadId]);
     const result: SubagentRecord[] = [];
     for (let changed = true; changed;) {
@@ -768,7 +768,15 @@ export class DesktopStore {
         parents.add(agent.threadId); result.push(agent); changed = true;
       }
     }
-    return result;
+    return result.map((agent) => this.withSubagentFinishedTime(agent));
+  }
+  private withSubagentFinishedTime(agent: SubagentRecord): SubagentRecord {
+    if (["pending", "running", "waiting"].includes(agent.status) || agent.finishedAt) return agent;
+    if (agent.status === "closed" && agent.closedAt) return { ...agent, finishedAt: agent.closedAt };
+    // Older metadata timestamps may have been touched by stopping the parent.
+    // Use the actual last assistant result, never invent a completion time.
+    const row = this.rawOne("SELECT json_extract(payload, '$.status') AS status, json_extract(payload, '$.updatedAt') AS finished_at FROM messages WHERE thread_id = ? AND json_extract(payload, '$.role') = 'assistant' ORDER BY created_at DESC, id DESC LIMIT 1", agent.threadId) as { status?: string; finished_at?: number } | null;
+    return row?.status === agent.status && typeof row.finished_at === "number" ? { ...agent, finishedAt: row.finished_at } : agent;
   }
   rootAgentThread(threadId: string): string {
     const seen = new Set<string>();
@@ -789,7 +797,13 @@ export class DesktopStore {
   }
   updateSubagent(threadId: string, patch: Partial<Pick<SubagentRecord, "status" | "finalMessage" | "lastPreview" | "closedAt" | "agentNickname" | "agentRole" | "model" | "reasoningEffort">>) {
     const agent = this.getSubagentByThread(threadId) || this.one<SubagentRecord>("SELECT payload FROM subagents WHERE id = ?", threadId);
-    if (!agent) return null; const updated = { ...agent, ...patch, updatedAt: now() }; this.putSubagent(updated); return updated;
+    if (!agent) return null;
+    if (Object.entries(patch).every(([key, value]) => agent[key as keyof SubagentRecord] === value)) return agent;
+    const timestamp = now();
+    const statusChanged = patch.status !== undefined && patch.status !== agent.status;
+    const finishedAt = statusChanged ? (["pending", "running", "waiting"].includes(patch.status!) ? undefined : patch.status === "closed" ? patch.closedAt ?? timestamp : timestamp) : agent.finishedAt;
+    const updated = { ...agent, ...patch, finishedAt, updatedAt: timestamp };
+    this.putSubagent(updated); return updated;
   }
 
   listApprovalScopes(workspaceId: string | null | undefined, threadId?: string | null) {
