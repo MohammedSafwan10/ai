@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentService } from "../src/main/agent/service";
 import type { BrowserSessionManager } from "../src/main/browser/BrowserSessionManager";
@@ -47,6 +48,7 @@ describe("security workspace IPC", () => {
     service.ensureEvidenceFolder = vi.fn(async () => folder);
     const tool = { id: "saved-tool", threadId: thread.id, messageId: "answer", callId: "collect", name: "kali_artifact", title: "Collect report", status: "done" as const, risk: "safe" as const, args: {}, createdAt: 1, updatedAt: 1, result: { success: true, data: { localSaved: true, localPath } } };
     store.upsertToolEvent(tool);
+    await expect(invoke(channels.verifySavedSecurityEvidence, tool.id)).resolves.toEqual({ localPath });
     await invoke(channels.openSavedSecurityEvidenceFolder, tool.id);
     expect(mocked.openPath).toHaveBeenCalledWith(files);
     mocked.openPath.mockClear();
@@ -58,6 +60,7 @@ describe("security workspace IPC", () => {
     await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("outside");
     store.upsertToolEvent(tool); fs.unlinkSync(localPath);
     await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("missing");
+    await expect(invoke(channels.verifySavedSecurityEvidence, tool.id)).rejects.toThrow("do not use this path");
     expect(mocked.openPath).not.toHaveBeenCalled();
   });
 
@@ -75,6 +78,18 @@ describe("security workspace IPC", () => {
     await expect(invoke(channels.openSavedSecurityEvidenceFolder, tool.id)).rejects.toThrow("No confirmed PC save");
     expect(() => invoke(channels.openSavedSecurityEvidenceFolder, tool.id, outside)).toThrow();
     expect(mocked.openPath).not.toHaveBeenCalled();
+  });
+
+  it("does not verify a copied file whose bytes no longer match the collection hash", async () => {
+    const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
+    const thread = store.createThread(workspace.id); state.activeWorkspaceId = workspace.id;
+    const folder = path.join(mocked.directory, "evidence"); const files = path.join(folder, "evidence-copy", "files"); fs.mkdirSync(files, { recursive: true });
+    const localPath = path.join(files, "file-report.md"); fs.writeFileSync(localPath, "original");
+    service.ensureEvidenceFolder = vi.fn(async () => folder);
+    store.upsertToolEvent({ id: "hashed-tool", threadId: thread.id, messageId: "answer", callId: "collect", name: "kali_artifact", title: "Collect report", status: "done", risk: "safe", args: {}, createdAt: 1, updatedAt: 1, result: { success: true, data: { localSaved: true, localPath, sha256: createHash("sha256").update("original").digest("hex"), attachment: { name: "report.md", size: 8 } } } });
+    await expect(invoke(channels.verifySavedSecurityEvidence, "hashed-tool")).resolves.toEqual({ localPath });
+    fs.writeFileSync(localPath, "changed!");
+    await expect(invoke(channels.verifySavedSecurityEvidence, "hashed-tool")).rejects.toThrow("no longer matches its collection hash");
   });
 
   it("captures an authoritative snapshot and watermark without changing the legacy snapshot API", () => {

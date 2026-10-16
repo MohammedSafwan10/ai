@@ -644,7 +644,7 @@
   display: block;
   max-width: 100%;
   margin: 0.72rem 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   border: 1px solid var(--privora-border);
   border-radius: 8px;
@@ -653,10 +653,11 @@
 }
 
 .markdown-body table {
-  width: max-content;
-  min-width: 100%;
-  max-width: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   margin: 0;
   font-size: 12px;
   line-height: 1.35;
@@ -668,8 +669,9 @@
   padding: 0.38rem 0.56rem;
   text-align: left;
   vertical-align: top;
-  white-space: nowrap;
-  overflow-wrap: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-body th {
@@ -683,8 +685,9 @@
 
 .markdown-body td code,
 .markdown-body th code {
-  white-space: nowrap;
-  overflow-wrap: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .active-text-shimmer,

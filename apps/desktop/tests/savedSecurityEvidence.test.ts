@@ -11,7 +11,7 @@ describe("recorded PC evidence actions", () => {
     const evidence = savedSecurityEvidence({ ...tool, output: "Saved elsewhere: C:\\wrong\\reportmd" });
     expect(evidence).toEqual({ localPath, name: "report.final.md", size: 1234, sha256: "a".repeat(64) });
     const html = renderToStaticMarkup(createElement(SavedEvidenceActions, { tool }));
-    expect(html).toContain(localPath); expect(html).toContain("Copy path"); expect(html).toContain("Open folder"); expect(html).toContain("Recorded at collection time.");
+    expect(html).toContain(localPath); expect(html).toContain("Copy verified path"); expect(html).toContain("Open folder"); expect(html).toContain("Checking the recorded PC copy...");
   });
   it("does not offer host actions for failed, incomplete or unconfirmed collections", () => {
     for (const candidate of [{ ...tool, name: "kali_exec" }, { ...tool, status: "running" as const }, { ...tool, result: { success: false, data: tool.result!.data } }, { ...tool, result: { success: true, data: { localSaved: false, localPath } } }, { ...tool, result: { success: true, data: { localSaved: true } } }]) {

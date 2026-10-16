@@ -281,11 +281,21 @@ export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
   const [copied, setCopied] = useState(false);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
+  const [verifiedPath, setVerifiedPath] = useState<string | null>(null);
+  useEffect(() => {
+    if (!saved) return;
+    let current = true;
+    setVerifiedPath(null); setError("");
+    void window.privoraDesktop.verifySavedSecurityEvidence(tool.id)
+      .then((result) => { if (current) setVerifiedPath(result.localPath); })
+      .catch((failure) => { if (current) setError(failure instanceof Error ? failure.message : String(failure)); });
+    return () => { current = false; };
+  }, [saved, tool.id]);
   if (!saved) return null;
   const copy = async () => {
     setError("");
-    try { await navigator.clipboard.writeText(saved.localPath); setCopied(true); }
-    catch { setError("Could not copy the path. Select the recorded path below to copy it manually."); }
+    try { const result = await window.privoraDesktop.verifySavedSecurityEvidence(tool.id); await navigator.clipboard.writeText(result.localPath); setVerifiedPath(result.localPath); setCopied(true); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
   };
   const open = async () => {
     setOpening(true); setError("");
@@ -295,12 +305,12 @@ export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
   };
   return <section className="saved-evidence" aria-label="Saved evidence on this PC">
     <div className="saved-evidence-heading"><span>Saved to PC{saved.size !== undefined ? ` · ${saved.size.toLocaleString()} bytes` : ""}</span>
-      <button type="button" onClick={() => void copy()}><Copy size={13} />{copied ? "Copied" : "Copy path"}</button>
-      <button type="button" disabled={opening} onClick={() => void open()}><Folder size={13} />{opening ? "Opening..." : "Open folder"}</button>
+      <button type="button" disabled={!verifiedPath} onClick={() => void copy()}><Copy size={13} />{copied ? "Copied" : "Copy verified path"}</button>
+      <button type="button" disabled={!verifiedPath || opening} onClick={() => void open()}><Folder size={13} />{opening ? "Opening..." : "Open folder"}</button>
     </div>
-    <code className="saved-evidence-path">{saved.localPath}</code>
+    <code className="saved-evidence-path">{verifiedPath ?? saved.localPath}</code>
     {saved.sha256 && <details><summary>SHA-256</summary><code>{saved.sha256}</code></details>}
-    <small>Recorded at collection time.</small>
+    <small>{verifiedPath ? "Verified on this PC now." : "Checking the recorded PC copy..."}</small>
     {error && <p role="alert">{error}</p>}
   </section>;
 }

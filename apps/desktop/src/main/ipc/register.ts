@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { assertWorkspaceDirectory } from "../workspace/availability";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from "electron";
@@ -296,6 +297,27 @@ export const registerIpc = (
     if (!options?.securityService) throw new Error("Security environment service is unavailable.");
     return options.securityService;
   };
+
+  const verifySavedSecurityEvidence = async (toolEventId: string) => {
+    const tool = store.getToolEvent(toolEventId);
+    const saved = tool && savedSecurityEvidence(tool);
+    const thread = tool && store.getThread(tool.threadId);
+    const workspace = thread?.workspaceId ? store.getWorkspace(thread.workspaceId) : null;
+    if (!saved) throw new Error("No confirmed PC save is recorded for this tool result.");
+    if (workspace?.type !== "security" || workspace.id !== state.activeWorkspaceId) throw new Error("Choose the saved evidence's Security workspace first.");
+    const folder = await requireSecurityService().ensureEvidenceFolder?.(workspace.id);
+    if (!folder) throw new Error("Automatic PC evidence storage is not configured.");
+    let target: ReturnType<typeof resolveExistingWorkspacePath>;
+    try { target = resolveExistingWorkspacePath(folder, saved.localPath); }
+    catch { throw new Error("The recorded PC evidence copy is missing or outside this project's evidence folder. Collect the artifact again; do not use this path."); }
+    const stat = fs.statSync(target.absolutePath);
+    if (!stat.isFile()) throw new Error("The recorded PC evidence copy is unavailable. Collect the artifact again; do not use this path.");
+    if (saved.size !== undefined && stat.size !== saved.size) throw new Error("The recorded PC evidence copy has a different size. Collect the artifact again; do not use this path.");
+    if (saved.sha256 && createHash("sha256").update(fs.readFileSync(target.absolutePath)).digest("hex") !== saved.sha256.toLowerCase()) {
+      throw new Error("The recorded PC evidence copy no longer matches its collection hash. Collect the artifact again; do not use this path.");
+    }
+    return { localPath: target.absolutePath };
+  };
   handle(channels.importKaliEnvironmentProfile, z.tuple([]), async () => {
     const service = requireSecurityService();
     const result = await dialog.showOpenDialog({ title: "Import Kali connection profile", properties: ["openFile"], filters: [{ name: "Kali connection profile", extensions: ["json"] }] });
@@ -362,22 +384,11 @@ export const registerIpc = (
     if (failure) throw new Error(failure);
   });
   handle(channels.openSavedSecurityEvidenceFolder, z.tuple([idSchema]), async (_event, toolEventId: string) => {
-    const tool = store.getToolEvent(toolEventId);
-    const saved = tool && savedSecurityEvidence(tool);
-    const thread = tool && store.getThread(tool.threadId);
-    const workspace = thread?.workspaceId ? store.getWorkspace(thread.workspaceId) : null;
-    if (!saved) throw new Error("No confirmed PC save is recorded for this tool result.");
-    if (workspace?.type !== "security" || workspace.id !== state.activeWorkspaceId) throw new Error("Choose the saved evidence's Security workspace first.");
-    const folder = await requireSecurityService().ensureEvidenceFolder?.(workspace.id);
-    if (!folder) throw new Error("Automatic PC evidence storage is not configured.");
-    // Accept only the persisted result, and resolve junctions before opening a containing folder.
-    let target;
-    try { target = resolveExistingWorkspacePath(folder, saved.localPath); }
-    catch { throw new Error("The saved evidence file is missing or outside this project's evidence folder. Copy its recorded path to locate it."); }
-    if (!fs.statSync(target.absolutePath).isFile()) throw new Error("The saved evidence file is unavailable.");
-    const failure = await shell.openPath(path.dirname(target.absolutePath));
+    const saved = await verifySavedSecurityEvidence(toolEventId);
+    const failure = await shell.openPath(path.dirname(saved.localPath));
     if (failure) throw new Error(failure);
   });
+  handle(channels.verifySavedSecurityEvidence, z.tuple([idSchema]), async (_event, toolEventId: string) => verifySavedSecurityEvidence(toolEventId));
   handle(channels.saveSecurityArtifact, z.tuple([idSchema, idSchema]), async (event, jobId: string, artifactId: string) => {
     const workspace = store.getWorkspace(state.activeWorkspaceId);
     if (workspace?.type !== "security") throw new Error("Choose a Security workspace first.");

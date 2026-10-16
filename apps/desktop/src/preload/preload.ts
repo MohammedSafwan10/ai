@@ -83,6 +83,7 @@ const api: PrivoraDesktopApi = {
   getSecurityWorkspaceState: (workspaceId) => ipcRenderer.invoke(channels.getSecurityWorkspaceState, workspaceId),
   recordSecurityReportEvent: (id, expectedUpdatedAt, kind, reference) => ipcRenderer.invoke(channels.recordSecurityReportEvent, id, expectedUpdatedAt, kind, reference),
   cancelSecurityJob: (jobRecordId) => ipcRenderer.invoke(channels.cancelSecurityJob, jobRecordId),
+  verifySavedSecurityEvidence: (toolEventId) => ipcRenderer.invoke(channels.verifySavedSecurityEvidence, toolEventId),
   openSavedSecurityEvidenceFolder: (toolEventId) => ipcRenderer.invoke(channels.openSavedSecurityEvidenceFolder, toolEventId),
   openSecurityEvidenceFolder: (workspaceId) => ipcRenderer.invoke(channels.openSecurityEvidenceFolder, workspaceId),
   saveSecurityArtifact: (jobRecordId, artifactId) => ipcRenderer.invoke(channels.saveSecurityArtifact, jobRecordId, artifactId),
