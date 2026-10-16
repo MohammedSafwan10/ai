@@ -1,6 +1,6 @@
 import type { CollaborationMode, ProviderId, ReasoningEffort } from "../../../shared/models";
 import type { ProviderStreamOutcome } from "../../../shared/providerOutcome";
-import type { AiCreditSummaryRecord, DesktopToolCall, TokenUsageRecord, ToolResult } from "../../../shared/types";
+import type { DesktopToolCall, TokenUsageRecord, ToolResult } from "../../../shared/types";
 
 export interface ProviderWebSearchEvent {
   id: string;
@@ -38,11 +38,6 @@ export interface ProviderStreamOptions {
   disableTools?: boolean;
   toolEnvironment?: "development" | "security";
   cliproxyBaseUrl: string;
-  appwriteEndpoint: string;
-  appwriteProjectId: string;
-  privoraGatewayFunctionId: string;
-  privoraSessionCookie: string;
-  privoraUserJwt: string;
   openRouterApiKey: string;
   geminiApiKey: string;
   deepseekApiKey: string;
@@ -55,7 +50,6 @@ export interface ProviderStreamOptions {
   onToolCall: (call: DesktopToolCall) => void;
   onProviderContextPart?: (part: Extract<ProviderPart, { type: "server_tool_call" | "server_tool_response" | "reasoning" }>) => void;
   onUsage?: (usage: TokenUsageRecord) => void;
-  onAiCredits?: (event: { creditsUsed: number; estimatedCredits: number; summary?: AiCreditSummaryRecord }) => void;
   onStreamProgress?: () => void;
   onStreamOutcome?: (outcome: ProviderStreamOutcome) => void;
   onAccountIssue?: (kind: "usage_limit" | "invalid_key") => void;

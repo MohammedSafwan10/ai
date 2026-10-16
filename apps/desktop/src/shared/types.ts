@@ -876,18 +876,12 @@ export interface SettingsRecord {
   keepRunningInTray: boolean;
   theme: "light" | "dark" | "system";
   cliproxyBaseUrl: string;
-  appwriteEndpoint: string;
-  appwriteProjectId: string;
-  privoraGatewayFunctionId: string;
   openRouterApiKeyStored: boolean;
   geminiApiKeyStored: boolean;
   deepseekApiKeyStored: boolean;
   opencodeGoApiKeyStored: boolean;
   opencodeGoAccounts?: import("./goAccounts").GoAccountSummary[];
   activeOpencodeGoAccountId?: string | null;
-  privoraAccountConnected: boolean;
-  privoraAccountEmail?: string;
-  privoraAccountName?: string;
 }
 
 export interface ThreadRecord {
@@ -1413,43 +1407,13 @@ export interface AppSnapshot {
   activeRuns: ActiveRunState[];
   historyPage?: ThreadHistoryPage;
   contextUsage?: ContextUsageRecord;
-  aiCredits?: AiCreditSummaryRecord;
   terminal?: TerminalStateRecord;
   recoveryNotice?: StoreRecoveryNoticeRecord;
 }
 
 export type PrivoraPlanId = "free" | "plus" | "pro";
 
-export interface AiCreditUsageRecord {
-  id: string;
-  modelId: string;
-  creditsCharged: number;
-  inputTokens: number;
-  outputTokens: number;
-  rawCostUsd: number;
-  createdAt: number;
-}
 
-export interface AiCreditSummaryRecord {
-  authenticated: boolean;
-  userId?: string;
-  email?: string;
-  plan: PrivoraPlanId;
-  status: "active" | "trialing" | "past_due" | "cancelled" | "disabled" | "unknown";
-  hostedAccessDisabled: boolean;
-  monthlyCreditAllowance: number;
-  monthlyCreditsRemaining: number;
-  topUpCreditsRemaining: number;
-  monthlyCreditsUsed: number;
-  dailyCreditsUsed: number;
-  perRunCreditCap: number;
-  dailyCreditCap: number;
-  resetDate?: string;
-  renewalDate?: string;
-  recentUsage: AiCreditUsageRecord[];
-  message?: string;
-  updatedAt: number;
-}
 
 export interface PrivoraAccountRecord {
   authenticated: boolean;
@@ -1657,7 +1621,6 @@ export type PrivoraEventPayload =
   | { type: "turn_undo.updated"; undo: TurnUndoRecord }
   | { type: "thread.rewound"; threadId: string; removedMessageIds: string[] }
   | { type: "context.usage_updated"; usage: ContextUsageRecord }
-  | { type: "ai_credit.summary_updated"; summary: AiCreditSummaryRecord }
   | { type: "browser.state_updated"; state: BrowserPanelStateRecord }
   | { type: "computer.state_updated"; state: ComputerUseStateRecord }
   | { type: "browser.tools_menu_action"; workspaceId: string; action: BrowserToolsMenuAction }
@@ -1781,16 +1744,7 @@ export interface OpencodeGoModelListRecord {
   source: "live" | "cache" | "static";
 }
 
-export interface PrivoraAuthInput {
-  email: string;
-  password: string;
-  name?: string;
-}
 
-export interface PrivoraBrowserAuthStartRecord {
-  url: string;
-  expiresAt: number;
-}
 
 export interface PrivoraDesktopApi {
   importKaliEnvironmentProfile(): Promise<SecurityEnvironmentRecord | null>;
@@ -1859,11 +1813,6 @@ export interface PrivoraDesktopApi {
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   saveThreadSettings(input: SaveThreadSettingsInput): Promise<ThreadRecord | null>;
   listOpencodeGoModels(input?: ListOpencodeGoModelsInput): Promise<OpencodeGoModelListRecord>;
-  startPrivoraBrowserAuth(): Promise<PrivoraBrowserAuthStartRecord>;
-  signInPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
-  signUpPrivora(input: PrivoraAuthInput): Promise<AiCreditSummaryRecord>;
-  signOutPrivora(): Promise<AiCreditSummaryRecord>;
-  refreshAiCredits(): Promise<AiCreditSummaryRecord>;
   getBrowserState(workspaceId: string): Promise<BrowserPanelStateRecord | null>;
   setBrowserVisible(workspaceId: string, visible: boolean): Promise<BrowserPanelStateRecord | null>;
   setBrowserOccluded(occluded: boolean): Promise<void>;

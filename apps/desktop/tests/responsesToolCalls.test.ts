@@ -27,8 +27,7 @@ const streamResponse = () => new Response(new ReadableStream({
 const options = (provider: ProviderStreamOptions["provider"]): ProviderStreamOptions => ({
   provider, model: provider === "opencode-go" ? "opencode-go/muse-spark-1.3-contributor" : "gpt-5.6-sol",
   systemInstruction: "system", messages: [], reasoning: "none", collaborationMode: "default", signal: AbortSignal.timeout(5000),
-  cliproxyBaseUrl: "http://127.0.0.1:8317", appwriteEndpoint: "", appwriteProjectId: "", privoraGatewayFunctionId: "", privoraSessionCookie: "", privoraUserJwt: "",
-  openRouterApiKey: "", geminiApiKey: "", deepseekApiKey: "", opencodeGoApiKey: "test-key",
+  cliproxyBaseUrl: "http://127.0.0.1:8317", openRouterApiKey: "", geminiApiKey: "", deepseekApiKey: "", opencodeGoApiKey: "test-key",
   onTextDelta: vi.fn(), onThoughtDelta: vi.fn(), onToolDraft: vi.fn(), onToolCall: vi.fn(),
 });
 

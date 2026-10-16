@@ -15,9 +15,6 @@ import { installRendererDiagnostics } from "./diagnostics";
 import { writeRendererFailure } from "./rendererFailureLog";
 import { resolveAppIconPath } from "./resources";
 import { checkForUpdates, getUpdateServiceStatus, installDownloadedUpdate, installUpdateService } from "./updateService";
-import { decodePrivoraDesktopAuthCode, parsePrivoraAuthCallback } from "./billing/browserAuthFlow";
-import { createTokenSession, getAppwriteAccount } from "./billing/appwriteAuth";
-import { emptyAiCreditSummary, refreshAiCreditSummary } from "./billing/creditService";
 import { BrowserSessionManager } from "./browser/BrowserSessionManager";
 import { ComputerUseManager } from "./computer/ComputerUseManager";
 import { SecurityWorkspaceService } from "./kali/service";
@@ -51,7 +48,6 @@ const state: IpcState = {
   activeWorkspaceId: null,
 };
 const isDevMode = Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-const PRIVORA_PROTOCOL = "privora";
 const PRIVORA_ATTACHMENT_PROTOCOL = "privora-attachment";
 
 if (squirrelStartup) app.quit();
@@ -68,16 +64,6 @@ if (isDevMode) {
   app.setName("Privora");
 }
 const singleInstanceLock = app.requestSingleInstanceLock();
-
-const registerPrivoraProtocol = () => {
-  if ((isDevMode || process.defaultApp) && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(PRIVORA_PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
-    return;
-  }
-  app.setAsDefaultProtocolClient(PRIVORA_PROTOCOL);
-};
-
-const findPrivoraProtocolUrl = (argv: string[]) => argv.find((arg) => arg.startsWith(`${PRIVORA_PROTOCOL}://`));
 
 const focusMainWindow = () => {
   if (!mainWindow) return;
@@ -106,71 +92,6 @@ const emitSnapshot = () => {
   snapshot.activeRuns = harnessService.listActiveRuns();
   snapshot.terminal = harnessService.getTerminalState();
   emitPrivoraEvent({ type: "snapshot.updated", snapshot });
-};
-
-const completePrivoraProtocolAuth = async (code: string) => {
-  if (!store) return;
-  const token = decodePrivoraDesktopAuthCode(code);
-  const settings = store.getSettings();
-  const sessionCookie = await createTokenSession(settings, token);
-  store.setPrivoraSessionCookie(sessionCookie);
-  const account = await getAppwriteAccount(settings, sessionCookie);
-  if (account.authenticated) {
-    store.setPrivoraAccountProfile({ email: account.email, name: account.name });
-  } else if (token.email || token.name) {
-    store.setPrivoraAccountProfile({ email: token.email, name: token.name });
-  }
-  try {
-    store.setAiCreditSummary(await refreshAiCreditSummary(store.getSettings(), sessionCookie));
-  } catch (error) {
-    store.setAiCreditSummary(emptyAiCreditSummary(error instanceof Error ? error.message : String(error)));
-  }
-  emitSnapshot();
-};
-
-const handlePrivoraProtocolUrl = (rawUrl: string | undefined) => {
-  if (!rawUrl || !store) return;
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol === `${PRIVORA_PROTOCOL}:` && parsed.hostname === "settings" && parsed.pathname === "/billing") {
-      focusMainWindow();
-      emitPrivoraEvent({
-        type: "notification.created",
-        tone: "info",
-        message: "Return to Billing and start Privora sign-in again if it is still not connected.",
-      });
-      return;
-    }
-  } catch {
-    return;
-  }
-
-  const result = parsePrivoraAuthCallback(store, rawUrl);
-  if (!result) return;
-  focusMainWindow();
-  if (!result.ok || !result.code) {
-    emitPrivoraEvent({
-      type: "notification.created",
-      tone: "error",
-      message: result.message,
-    });
-    return;
-  }
-  void completePrivoraProtocolAuth(result.code)
-    .then(() => {
-      emitPrivoraEvent({
-        type: "notification.created",
-        tone: "success",
-        message: "Privora Desktop is connected.",
-      });
-    })
-    .catch((error) => {
-      emitPrivoraEvent({
-        type: "notification.created",
-        tone: "error",
-        message: error instanceof Error ? error.message : "Privora sign-in failed.",
-      });
-    });
 };
 
 const clampZoomFactor = (zoomFactor: number) => Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, zoomFactor));
@@ -564,16 +485,9 @@ if (!singleInstanceLock) {
 } else {
   app.on("second-instance", (_event, argv) => {
     focusMainWindow();
-    handlePrivoraProtocolUrl(findPrivoraProtocolUrl(argv));
-  });
-
-  app.on("open-url", (event, url) => {
-    event.preventDefault();
-    handlePrivoraProtocolUrl(url);
   });
 
   app.whenReady().then(async () => {
-    registerPrivoraProtocol();
     installApplicationMenu();
     const icon = appIcon();
     if (process.platform === "darwin" && !icon.isEmpty()) app.dock?.setIcon(icon);
@@ -633,7 +547,6 @@ if (!singleInstanceLock) {
       type: "notification.created", tone: "error",
       message: "Kali recovery is incomplete: " + String(error),
     }));
-    handlePrivoraProtocolUrl(findPrivoraProtocolUrl(process.argv));
 
     app.on("activate", () => {
       void showMainWindow();

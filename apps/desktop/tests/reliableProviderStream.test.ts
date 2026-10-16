@@ -10,8 +10,7 @@ import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 
 const options = (overrides: Partial<ProviderStreamOptions> = {}): ProviderStreamOptions => ({
   provider: "opencode-go", model: "opencode-go/glm-5.3-flash", systemInstruction: "test", messages: [], reasoning: "high", collaborationMode: "default",
-  signal: new AbortController().signal, cliproxyBaseUrl: "http://127.0.0.1:8317", appwriteEndpoint: "https://example.com", appwriteProjectId: "test",
-  privoraGatewayFunctionId: "test", privoraSessionCookie: "", privoraUserJwt: "", openRouterApiKey: "fixture", geminiApiKey: "fixture", deepseekApiKey: "fixture", opencodeGoApiKey: "fixture",
+  signal: new AbortController().signal, cliproxyBaseUrl: "http://127.0.0.1:8317", openRouterApiKey: "fixture", geminiApiKey: "fixture", deepseekApiKey: "fixture", opencodeGoApiKey: "fixture",
   onTextDelta: vi.fn(), onThoughtDelta: vi.fn(), onToolDraft: vi.fn(), onToolCall: vi.fn(), onStreamOutcome: vi.fn(), onRetry: vi.fn(), ...overrides,
 });
 const sse = (events: unknown[]) => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n");
@@ -179,11 +178,6 @@ describe("bounded provider retry", () => {
     await vi.advanceTimersByTimeAsync(0); expect(input.onRetry).toHaveBeenCalledTimes(1);
     controller.abort(); await result; await vi.runAllTimersAsync(); expect(stream).toHaveBeenCalledTimes(1);
     expect(input.onStreamOutcome).toHaveBeenCalledWith({ status: "interrupted", reason: "cancelled" });
-  });
-  it("never automatically retries a potentially charged hosted request", async () => {
-    const stream = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
-    await expect(reliableProviderStream({ stream }, options({ provider: "privora-cloud" }))).rejects.toBeInstanceOf(ProviderStreamError);
-    expect(stream).toHaveBeenCalledTimes(1);
   });
   it("does not retry after reported usage or a provider refusal", async () => {
     for (const callback of ["usage", "refusal"] as const) {

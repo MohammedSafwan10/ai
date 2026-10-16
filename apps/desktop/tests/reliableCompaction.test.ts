@@ -256,8 +256,7 @@ describe("compacted history through real provider serializers", () => {
   const options = (model: string, messages: ProviderMessage[]): ProviderStreamOptions => ({
     provider: model.startsWith("opencode-go/") ? "opencode-go" : "gemini", model, messages, systemInstruction: "Stable instructions", reasoning: "none", collaborationMode: "default",
     signal: new AbortController().signal, threadId, maxOutputTokens: 4_096, toolEnvironment: "security",
-    cliproxyBaseUrl: "", appwriteEndpoint: "", appwriteProjectId: "", privoraGatewayFunctionId: "", privoraSessionCookie: "", privoraUserJwt: "",
-    openRouterApiKey: "", geminiApiKey: "fixture", deepseekApiKey: "", opencodeGoApiKey: "fixture",
+    cliproxyBaseUrl: "", openRouterApiKey: "", geminiApiKey: "fixture", deepseekApiKey: "", opencodeGoApiKey: "fixture",
     onTextDelta: vi.fn(), onThoughtDelta: vi.fn(), onToolDraft: vi.fn(), onToolCall: vi.fn(),
   });
   it.each([

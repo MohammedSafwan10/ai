@@ -1,5 +1,7 @@
 # Privora Desktop
 
+Privora Desktop is BYOK-only: no Privora account, subscription or AI credits. Configure your own Gemini, OpenRouter, DeepSeek, OpenCode Go or local CLIProxy provider in Settings. Local data stays on your PC; configured remote providers receive the context required for inference.
+
 Privora Desktop is an Electron agent app for local development and connected security work. Normal projects give the agent access to workspace files, search, git, terminals, diagnostics, approvals, and reviewable changes. Security projects use the same chat interface while executing tools in an assigned Kali environment over pinned SSH.
 
 The current Security implementation has passed live Muse Spark/Kali fixture checks, confirmed Stop and follow-up messages, evidence previews, and native file saving. The portable Windows build is verified. Existing installed releases need a new installer before these features are available through their normal update flow; source pushes alone do not publish releases.
@@ -190,8 +192,8 @@ The renderer includes:
 - Reviewer Swarm mode with an active pill and multi-agent icon.
 - Subagent status indicators, inline lifecycle/coordination events, and a live transcript panel.
 - Compaction progress and context usage that distinguishes estimates from provider-reported usage.
-- Codex-style account menu with Profile, Settings, Usage remaining, and Log out actions.
-- Settings screen for profile, billing, providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
+- Compact settings access for providers, project options, local storage and update status.
+- Settings screen for providers, browser storage cleanup, theme, workspace options, shortcuts, and update status.
 - Clear recovery/error notices if local SQLite storage cannot be opened safely.
 - Security project creation with objective, scope, private connection-profile
   import, and connection checks. A compact chat header opens job/output details,
@@ -203,7 +205,6 @@ The renderer includes:
 src/
   main/
     agent/          Agent runtime, providers, tools, diagnostics, context, approvals
-    billing/        Appwrite account handoff, local browser auth callback, AI credit summary
     computer/       Native Computer Use backends, safety rules, tool adapter
     db/             SQLite store, artifacts, workspaces, threads, settings, secrets
     imageGeneration Native image generation providers, file storage, previews, workspace export
@@ -223,13 +224,12 @@ tests/              Vitest coverage for runtime/tool/storage behavior
 Supported provider paths are configured in the app settings and shared model catalog:
 
 - CLIProxy API, defaulting to `http://127.0.0.1:8317`
-- OpenCode Go through its hosted-model adapter, including DeepSeek V4.1 Flash (Go)
+- OpenCode Go with the user's configured Go credentials, including DeepSeek V4.1 Flash (Go)
 - Gemini API
 - OpenRouter API for BYOK
-- Privora Cloud hosted models through the Appwrite model gateway
 
 Secrets are stored through the local desktop store and are not exposed directly to the renderer.
-BYOK requests consume 0 Privora AI credits. Hosted Privora Cloud requests are charged by the server-side credit engine.
+Provider usage is billed by the provider you configure; Privora does not operate an account or credit gateway.
 
 CLIProxy model aliases are owned by Privora Desktop in the first implementation, so users do not need to edit CLIProxy's `oauth-model-alias` config for supported models. Desktop also sends a thread-scoped `prompt_cache_key` to CLIProxy Responses requests so Codex-backed sessions can reuse stable prompt context and keep session routing consistent.
 
@@ -239,12 +239,6 @@ DeepSeek V4.1 Flash (Go) is the only DeepSeek model offered in the picker. Retir
 DeepSeek selections resolve to this Go model; it requires a configured Go key and
 subscription. Its context/output metadata uses Go family defaults, and discovery
 does not restore retired DeepSeek entries.
-
-## Browser Sign-In
-
-Desktop account sign-in opens Privora Web in the system browser. The authenticated web app asks the `model-gateway` function for a short-lived, single-use Appwrite custom token. Desktop exchanges that token for its own durable Appwrite session cookie, then creates fresh short-lived JWTs from that session when calling hosted APIs.
-
-Local development sends the token through a loopback callback. Production sends it through the state-verified `privora://auth/callback` protocol URL. Desktop stores the durable session cookie and optional profile display fields in OS-backed secret storage. It does not store the OpenRouter hosted key.
 
 ## Requirements
 
@@ -283,20 +277,6 @@ Useful scripts:
 | `npm run build` | Package the Electron app |
 | `npm run make` | Build distributables/installers |
 | `npm run release:win:x64 -- --notes "..."` | Build, upload, and publish the Windows x64 update feed |
-| `npm run saas:setup:credits` | Create/seed Appwrite AI credit collections |
-| `npm run saas:admin:credits -- <command>` | Manual grants, plan changes, usage checks, and hosted-access disable |
-
-## SaaS AI Credits
-
-The SaaS credit engine lives in the shared Appwrite project and is documented in [docs/saas-ai-credits.md](docs/saas-ai-credits.md).
-
-Launch pricing is INR-first:
-
-- Free: BYOK only
-- Plus: INR 799/mo with 5,000 AI credits/month
-- Pro: INR 1,999/mo with 20,000 AI credits/month
-
-AI credits are consumed based on model, input size, output size, and tool usage. Premium models consume credits faster. BYOK usage does not consume Privora AI credits.
 
 ## Browser Agent
 

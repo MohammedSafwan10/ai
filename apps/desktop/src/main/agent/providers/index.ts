@@ -4,7 +4,6 @@ import { DeepSeekAdapter } from "./deepseek";
 import { GeminiAdapter } from "./gemini";
 import { OpenCodeGoAdapter } from "./opencodeGo";
 import { OpenRouterAdapter } from "./openrouter";
-import { PrivoraCloudAdapter } from "./privoraCloud";
 import { reliableProviderStream } from "./reliableStream";
 
 const adapters: Record<string, ProviderAdapter> = {
@@ -13,7 +12,6 @@ const adapters: Record<string, ProviderAdapter> = {
   gemini: new GeminiAdapter(),
   "opencode-go": new OpenCodeGoAdapter(),
   openrouter: new OpenRouterAdapter(),
-  "privora-cloud": new PrivoraCloudAdapter(),
 };
 
 export const streamProviderResponse = (options: ProviderStreamOptions) =>

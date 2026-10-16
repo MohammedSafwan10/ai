@@ -1,34 +1,27 @@
 import {
-  BarChart3,
   Check,
-  ChevronDown,
   ChevronRight,
   Code2,
-  CreditCard,
   Database,
   Info,
   KeyRound,
   Keyboard,
-  LogIn,
-  LogOut,
   Monitor,
   Moon,
   RefreshCw,
   Settings as SettingsIcon,
   Sun,
   Trash2,
-  User,
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { AiCreditSummaryRecord, SaveSettingsInput, SettingsRecord, StorageCleanupCategoryId, StorageUsageSnapshot, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
+import { useEffect, useState, type ReactNode } from "react";
+import type { SaveSettingsInput, SettingsRecord, StorageCleanupCategoryId, StorageUsageSnapshot, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
 import { GoAccountsSettings } from "./GoAccountsSettings";
 
 interface SettingsPanelProps {
   settings: SettingsRecord;
-  aiCredits?: AiCreditSummaryRecord;
   open: boolean;
   onClose: () => void;
   onOpenTab?: (tab: SettingsTab) => void;
@@ -36,7 +29,6 @@ interface SettingsPanelProps {
 
 interface SettingsScreenProps {
   settings: SettingsRecord;
-  aiCredits?: AiCreditSummaryRecord;
   updateStatus: UpdateStatus | null;
   workspaceDisabled: boolean;
   open: boolean;
@@ -46,184 +38,19 @@ interface SettingsScreenProps {
   initialTab?: SettingsTab;
 }
 
-type SettingsTab = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
+type SettingsTab = "general" | "providers" | "workspace" | "storage" | "shortcuts" | "about";
 
-export function SettingsPanel({ settings, aiCredits, open, onClose, onOpenTab }: SettingsPanelProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(false);
-  const [usageRefreshing, setUsageRefreshing] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const refreshedMenuOpenRef = useRef(false);
-  const connected = settings.privoraAccountConnected;
-  const accountDisplay = getAccountDisplay(settings, aiCredits);
-  const accountLabel = accountDisplay || (connected ? "Privora account connected" : "Sign in to Privora");
-  const planLabel = aiCredits?.authenticated ? formatPlan(aiCredits) : connected ? "Account connected" : "Not signed in";
-  const creditRows = formatCreditMenuRows(aiCredits);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && menuOpen) setMenuOpen(false);
-      else if (event.key === "Escape" && open) onClose();
-      if (event.ctrlKey && event.key === "/") {
-        event.preventDefault();
-        onOpenTab?.("shortcuts");
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [menuOpen, onClose, onOpenTab, open]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (event: MouseEvent) => {
-      if (rootRef.current?.contains(event.target as Node)) return;
-      setMenuOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen) {
-      refreshedMenuOpenRef.current = false;
-      return;
-    }
-    if (!connected || refreshedMenuOpenRef.current) return;
-    let canceled = false;
-    refreshedMenuOpenRef.current = true;
-    setUsageRefreshing(true);
-    void window.privoraDesktop.refreshAiCredits().finally(() => {
-      if (!canceled) setUsageRefreshing(false);
-    });
-    return () => {
-      canceled = true;
-    };
-  }, [connected, menuOpen]);
-
-  const openTab = (tab: SettingsTab) => {
-    setMenuOpen(false);
-    setUsageOpen(false);
-    onOpenTab?.(tab);
-  };
-
-  const startSignIn = async () => {
-    setMenuOpen(false);
-    await window.privoraDesktop.startPrivoraBrowserAuth();
-  };
-
-  return (
-    <div className={clsx("settings-panel", menuOpen && "menu-open")} ref={rootRef}>
-      {menuOpen && (
-        <div className="sidebar-account-menu" role="menu">
-          <button
-            type="button"
-            className={clsx("sidebar-account-menu-row", connected && "muted")}
-            disabled={connected}
-            onClick={() => void startSignIn()}
-          >
-            <User size={15} />
-            <span>{accountLabel}</span>
-          </button>
-          <button type="button" className="sidebar-account-menu-row muted" disabled>
-            <CreditCard size={15} />
-            <span>{planLabel}</span>
-          </button>
-          <div className="sidebar-account-separator" />
-          <button type="button" className="sidebar-account-menu-row" onClick={() => openTab("profile")}>
-            <User size={15} />
-            <span>Profile</span>
-          </button>
-          <button type="button" className="sidebar-account-menu-row" onClick={() => openTab("general")}>
-            <SettingsIcon size={15} />
-            <span>Settings</span>
-            <small>Ctrl+,</small>
-          </button>
-          <div className="sidebar-account-separator" />
-          <button
-            type="button"
-            className={clsx("sidebar-account-menu-row", usageOpen && "active")}
-            onClick={() => setUsageOpen((value) => !value)}
-            aria-expanded={usageOpen}
-          >
-            <BarChart3 size={15} />
-            <span>Usage remaining</span>
-            {usageOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </button>
-          {usageOpen && (
-            <div className="sidebar-usage-submenu">
-              {creditRows.map((row) => (
-                <div className="sidebar-usage-row" key={row.label}>
-                  <span>{row.label}</span>
-                  <strong>{row.value}</strong>
-                </div>
-              ))}
-              {aiCredits?.message && (
-                <p className="sidebar-usage-message">{aiCredits.message}</p>
-              )}
-              {!aiCredits?.authenticated && connected && (
-                <p className="sidebar-usage-message">Refresh to sync your latest plan and AI credits.</p>
-              )}
-              <div className="sidebar-usage-actions">
-                <button
-                  type="button"
-                  onClick={() => openTab("billing")}
-                >
-                  Billing
-                </button>
-                <button
-                  type="button"
-                  disabled={!connected || usageRefreshing}
-                  onClick={async () => {
-                    setUsageRefreshing(true);
-                    try {
-                      await window.privoraDesktop.refreshAiCredits();
-                    } finally {
-                      setUsageRefreshing(false);
-                    }
-                  }}
-                >
-                  {usageRefreshing ? "Refreshing" : "Refresh"}
-                </button>
-              </div>
-            </div>
-          )}
-          {connected ? (
-            <button
-              type="button"
-              className="sidebar-account-menu-row"
-              onClick={async () => {
-                setMenuOpen(false);
-                await window.privoraDesktop.signOutPrivora();
-              }}
-            >
-              <LogOut size={15} />
-              <span>Log out</span>
-            </button>
-          ) : (
-            <button type="button" className="sidebar-account-menu-row" onClick={() => void startSignIn()}>
-              <LogIn size={15} />
-              <span>Sign in</span>
-            </button>
-          )}
-        </div>
-      )}
-      <button className="sidebar-settings-button" onClick={() => setMenuOpen((value) => !value)} title="Settings">
-        <SettingsIcon size={16} />
-        <span>Settings</span>
-      </button>
-    </div>
-  );
+export function SettingsPanel({ onOpenTab, onClose }: SettingsPanelProps) {
+  return <button className="sidebar-settings-button" onClick={() => onOpenTab ? onOpenTab("general") : onClose()} title="Settings"><SettingsIcon size={16} /><span>Settings</span></button>;
 }
 
-export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, initialTab = "general" }: SettingsScreenProps) {
+export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, initialTab = "general" }: SettingsScreenProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [goModelsStatus, setGoModelsStatus] = useState("");
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
-  const [billingRefreshing, setBillingRefreshing] = useState(false);
-  const [billingMessage, setBillingMessage] = useState("");
   const [workspaceTargets, setWorkspaceTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
   const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
   const [storageLoading, setStorageLoading] = useState(false);
@@ -232,9 +59,6 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [providerSaveError, setProviderSaveError] = useState("");
-  const accountDisplay = getAccountDisplay(settings, aiCredits);
-  const profileTitle = (settings.privoraAccountConnected ? settings.privoraAccountName : "") || accountDisplay || (settings.privoraAccountConnected ? "Privora account" : "Privora user");
-  const profileSubtitle = accountDisplay || (settings.privoraAccountConnected ? "Email sync pending. Refresh or sign in again if it does not appear." : "Connect Privora to show your account email.");
 
   const saveProviderSettings = async (input: SaveSettingsInput) => {
     setSaving(true);
@@ -323,11 +147,9 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
     <div className="settings-screen">
       <section className="settings-screen-shell" aria-label="Settings">
             <aside className="settings-tabs">
-              <strong>{activeTab === "profile" ? "Profile" : "Settings"}</strong>
-              <SettingsTabButton id="profile" active={activeTab} icon={<User size={15} />} label="Profile" onSelect={setActiveTab} />
+              <strong>Settings</strong>
               <SettingsTabButton id="general" active={activeTab} icon={<Sun size={15} />} label="General" onSelect={setActiveTab} />
               <SettingsTabButton id="providers" active={activeTab} icon={<KeyRound size={15} />} label="Providers" onSelect={setActiveTab} />
-              <SettingsTabButton id="billing" active={activeTab} icon={<CreditCard size={15} />} label="Billing" onSelect={setActiveTab} />
               <SettingsTabButton id="workspace" active={activeTab} icon={<Code2 size={15} />} label="Workspace" onSelect={setActiveTab} />
               <SettingsTabButton id="storage" active={activeTab} icon={<Database size={15} />} label="Storage" onSelect={setActiveTab} />
               <SettingsTabButton id="shortcuts" active={activeTab} icon={<Keyboard size={15} />} label="Shortcuts" onSelect={setActiveTab} />
@@ -617,102 +439,6 @@ export function SettingsScreen({ settings, aiCredits, updateStatus, workspaceDis
                 </div>
               )}
 
-              {activeTab === "profile" && (
-                <div className="settings-section profile-page">
-                  <div className="profile-avatar">{profileInitials(settings, aiCredits)}</div>
-                  <h3>{profileTitle}</h3>
-                  <p>{profileSubtitle}</p>
-                  <div className="profile-stats">
-                    <InfoRow label="Plan" value={formatPlan(aiCredits)} />
-                    <InfoRow label="AI credits" value={formatCredits(aiCredits)} />
-                    <InfoRow label="Hosted access" value={aiCredits?.hostedAccessDisabled ? "Disabled" : aiCredits?.authenticated ? "Enabled" : "Not connected"} />
-                  </div>
-                </div>
-              )}
-
-              {activeTab === "billing" && (
-                <div className="settings-section settings-about">
-                  <InfoRow label="Plan" value={formatPlan(aiCredits)} />
-                  <InfoRow label="AI credits" value={formatCredits(aiCredits)} />
-                  <InfoRow label="Renewal" value={aiCredits?.renewalDate || aiCredits?.resetDate || "Not scheduled"} />
-                  <InfoRow label="Hosted access" value={aiCredits?.hostedAccessDisabled ? "Disabled" : aiCredits?.authenticated ? "Enabled" : "Not connected"} />
-                  {(accountDisplay || settings.privoraAccountConnected) && (
-                    <InfoRow label="Account" value={accountDisplay || "Connected. Email sync pending."} />
-                  )}
-                  {(billingMessage || aiCredits?.message) && <InfoRow label="Status" value={billingMessage || aiCredits?.message || ""} />}
-                  {!settings.privoraAccountConnected && (
-                    <div className="settings-muted-panel">
-                      Sign in opens in your browser. Privora Desktop stores only the secure account connection result.
-                    </div>
-                  )}
-                  <div className="settings-button-row">
-                    {settings.privoraAccountConnected ? (
-                      <button
-                        type="button"
-                        className="settings-row-button"
-                        disabled={billingRefreshing}
-                        onClick={async () => {
-                          setBillingRefreshing(true);
-                          try {
-                            await window.privoraDesktop.signOutPrivora();
-                          } finally {
-                            setBillingRefreshing(false);
-                          }
-                        }}
-                      >
-                        <Trash2 size={15} />
-                        <span>Sign out</span>
-                      </button>
-                    ) : (
-                      <button
-                        className="settings-primary-button"
-                        disabled={billingRefreshing}
-                        onClick={async () => {
-                          setBillingRefreshing(true);
-                          setBillingMessage("");
-                          try {
-                            const auth = await window.privoraDesktop.startPrivoraBrowserAuth();
-                            setBillingMessage(`Browser sign-in opened. Link expires at ${new Date(auth.expiresAt).toLocaleTimeString()}.`);
-                          } catch (error) {
-                            setBillingMessage(error instanceof Error ? error.message : "Could not open browser sign-in.");
-                          } finally {
-                            setBillingRefreshing(false);
-                          }
-                        }}
-                      >
-                        {billingRefreshing ? "Opening..." : "Sign in with Privora"}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="settings-row-button"
-                      disabled={billingRefreshing || !settings.privoraAccountConnected}
-                      onClick={async () => {
-                        setBillingRefreshing(true);
-                        try {
-                          await window.privoraDesktop.refreshAiCredits();
-                        } finally {
-                          setBillingRefreshing(false);
-                        }
-                      }}
-                    >
-                      <RefreshCw size={15} />
-                      <span>{billingRefreshing ? "Refreshing" : "Refresh"}</span>
-                    </button>
-                  </div>
-                  {aiCredits?.recentUsage?.length ? (
-                    <div className="settings-usage-list">
-                      {aiCredits.recentUsage.slice(0, 5).map((event) => (
-                        <div className="settings-info-row" key={event.id}>
-                          <span>{new Date(event.createdAt).toLocaleString()}</span>
-                          <strong>{event.creditsCharged.toLocaleString()} credits</strong>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
               {activeTab === "about" && (
                 <div className="settings-section settings-about">
                   <InfoRow label="Version" value={updateStatus?.currentVersion || "Unknown"} />
@@ -784,7 +510,6 @@ const formatUpdateState = (status: UpdateStatus | null) => {
   if (status.state === "unsupported") return status.message || "Unsupported";
   return status.message || "Up to date";
 };
-
 const formatUpdateChannel = (status: UpdateStatus | null) => {
   if (!status?.feedUrl) return "Not configured";
   if (status.feedUrl.includes("/win32/x64/stable")) return "Windows x64 stable";
@@ -792,9 +517,7 @@ const formatUpdateChannel = (status: UpdateStatus | null) => {
 };
 
 const tabTitle = (tab: SettingsTab) => {
-  if (tab === "profile") return "Profile";
   if (tab === "providers") return "Providers";
-  if (tab === "billing") return "Billing";
   if (tab === "workspace") return "Workspace";
   if (tab === "storage") return "Storage";
   if (tab === "shortcuts") return "Shortcuts";
@@ -802,38 +525,11 @@ const tabTitle = (tab: SettingsTab) => {
   return "General";
 };
 
-const getAccountDisplay = (settings: SettingsRecord, credits?: AiCreditSummaryRecord) => {
-  if (!settings.privoraAccountConnected) return "";
-  return credits?.email || settings.privoraAccountEmail || settings.privoraAccountName || "";
-};
-
-const profileInitials = (settings: SettingsRecord, credits?: AiCreditSummaryRecord) => {
-  const source = (settings.privoraAccountConnected ? settings.privoraAccountName : "") || getAccountDisplay(settings, credits) || "Privora";
-  const parts = source
-    .replace(/@.*/, "")
-    .split(/[\s._-]+/)
-    .filter(Boolean);
-  const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
-  return initials || "P";
-};
-
 const themeOptions = [
   { id: "system" as const, label: "System", icon: Monitor },
   { id: "light" as const, label: "Light", icon: Sun },
   { id: "dark" as const, label: "Dark", icon: Moon },
 ];
-
-const formatPlan = (credits?: AiCreditSummaryRecord) => {
-  if (!credits?.authenticated) return "Free";
-  if (credits.plan === "plus") return "Plus";
-  if (credits.plan === "pro") return "Pro";
-  return "Free";
-};
-
-const formatCredits = (credits?: AiCreditSummaryRecord) => {
-  if (!credits?.authenticated) return "No hosted credits";
-  return `${credits.monthlyCreditsRemaining.toLocaleString()} monthly + ${credits.topUpCreditsRemaining.toLocaleString()} top-up`;
-};
 
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -845,27 +541,4 @@ const formatBytes = (bytes: number) => {
     unit += 1;
   }
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-};
-
-const formatPercent = (used: number, total: number) => {
-  if (total <= 0) return "0%";
-  return `${Math.max(0, Math.min(100, Math.round((used / total) * 100)))}%`;
-};
-
-const formatCreditMenuRows = (credits?: AiCreditSummaryRecord) => {
-  if (!credits?.authenticated) {
-    return [
-      { label: "Plan", value: "Free" },
-      { label: "Monthly", value: "0 AI credits" },
-    ];
-  }
-
-  const remaining = credits.monthlyCreditsRemaining + credits.topUpCreditsRemaining;
-  return [
-    { label: "Plan", value: formatPlan(credits) },
-    { label: "Monthly", value: `${remaining.toLocaleString()} left` },
-    { label: "Used", value: `${credits.monthlyCreditsUsed.toLocaleString()} (${formatPercent(credits.monthlyCreditsUsed, credits.monthlyCreditAllowance)})` },
-    { label: "Daily cap", value: credits.dailyCreditCap > 0 ? `${credits.dailyCreditsUsed.toLocaleString()} / ${credits.dailyCreditCap.toLocaleString()}` : "BYOK only" },
-    { label: "Reset", value: credits.resetDate || credits.renewalDate ? new Date(credits.resetDate || credits.renewalDate || "").toLocaleDateString() : "Not scheduled" },
-  ];
 };

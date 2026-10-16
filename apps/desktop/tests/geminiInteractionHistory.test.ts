@@ -16,8 +16,7 @@ describe("Gemini interaction search history", () => {
     const parts: ProviderPart[] = [];
     await new GeminiAdapter().stream({
       provider: "gemini", model: "gemini-3.7-flash", systemInstruction: "", collaborationMode: "default",
-      cliproxyBaseUrl: "", appwriteEndpoint: "", appwriteProjectId: "", privoraGatewayFunctionId: "",
-      privoraSessionCookie: "", privoraUserJwt: "", openRouterApiKey: "", deepseekApiKey: "", opencodeGoApiKey: "",
+      cliproxyBaseUrl: "", openRouterApiKey: "", deepseekApiKey: "", opencodeGoApiKey: "",
       geminiApiKey: "test-fixture", messages: [], signal: new AbortController().signal, reasoning: "high",
       onTextDelta: vi.fn(), onThoughtDelta: vi.fn(), onToolDraft: vi.fn(), onToolCall: vi.fn(),
       onProviderContextPart: (part) => { parts.push(part); },

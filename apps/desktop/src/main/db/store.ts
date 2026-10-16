@@ -7,7 +7,6 @@ import type {
   ApprovalHistoryRecord,
   ApprovalScopeRecord,
   AgentRunCheckpointRecord,
-  AiCreditSummaryRecord,
   AssistantTextPartRecord,
   BrowserWorkspaceStateRecord,
   ChatMessageRecord,
@@ -46,11 +45,7 @@ type SecretName =
   | "gemini_api_key"
   | "deepseek_api_key"
   | "opencode_go_api_key"
-  | "opencode_go_accounts"
-  | "privora_session_cookie"
-  | "privora_user_jwt"
-  | "privora_pending_auth"
-  | "privora_account_profile";
+  | "opencode_go_accounts";
 
 interface StoredSecretEnvelope {
   v: 1;
@@ -61,15 +56,7 @@ interface StoredSecretEnvelope {
   platform: NodeJS.Platform;
 }
 
-interface PrivoraJwtSecret {
-  jwt: string;
-  expiresAt: number;
-}
 
-interface PrivoraAccountProfileSecret {
-  email?: string;
-  name?: string;
-}
 
 type JsonRow = { payload: string };
 type StoredToolEvent = Omit<ToolEventRecord, "output" | "diff"> & {
@@ -86,7 +73,7 @@ const TOOL_PAGE_LIMIT = 2_000;
 const PLACEHOLDER_THREAD_TITLE = "New chat";
 const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(app?.isPackaged);
 
-const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "opencodeGoApiKeyStored" | "privoraAccountConnected"> => ({
+const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "opencodeGoApiKeyStored"> => ({
   id: "default",
   model: GEMINI_37_FLASH_MODEL_ID,
   reasoningEffort: "medium",
@@ -97,9 +84,6 @@ const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "gem
   keepRunningInTray: defaultKeepRunningInTray(),
   theme: "system",
   cliproxyBaseUrl: "http://127.0.0.1:8317",
-  appwriteEndpoint: "https://sgp.cloud.appwrite.io/v1",
-  appwriteProjectId: "69af9f0700103b7f3482",
-  privoraGatewayFunctionId: "model-gateway",
 });
 
 export class DesktopStore {
@@ -107,7 +91,6 @@ export class DesktopStore {
   private readonly dbPath: string;
   private readonly artifacts: ArtifactStore;
   private readonly statements = new Map<string, StatementSync>();
-  private aiCreditSummary: AiCreditSummaryRecord | undefined;
   onUnreadCompletionsChanged?: () => void;
 
   constructor(userDataPath = app.getPath("userData")) {
@@ -123,6 +106,12 @@ export class DesktopStore {
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
     this.createSchema();
     this.ensureDefaultSettings();
+    this.run("DELETE FROM kv WHERE scope = 'secrets' AND key IN ('privora_session_cookie','privora_user_jwt','privora_pending_auth','privora_account_profile')");
+    const localSettings = this.getKv<Record<string, unknown>>("settings", "default");
+    if (localSettings) {
+      for (const key of ["appwriteEndpoint", "appwriteProjectId", "privoraGatewayFunctionId", "privoraAccountConnected", "privoraAccountEmail", "privoraAccountName"]) delete localSettings[key];
+      this.putKv("settings", "default", localSettings);
+    }
     this.transaction(() => {
       if (!this.getKv("prompt_library", "seeded_v1")) {
         this.savePrompt(preparationPrompt);
@@ -244,21 +233,16 @@ export class DesktopStore {
       activeRuns: [],
       historyPage: page,
       contextUsage: undefined,
-      aiCredits: this.aiCreditSummary,
     };
   }
 
   getSettings(): SettingsRecord {
     const stored = this.getKv<ReturnType<typeof defaultSettings>>("settings", "default") || defaultSettings();
-    const profile = this.getPrivoraAccountProfile();
     const goVault = this.getGoAccountVault();
     return {
       ...defaultSettings(),
       ...stored,
       cliproxyBaseUrl: safeCliproxyBaseUrl(stored.cliproxyBaseUrl),
-      appwriteEndpoint: defaultSettings().appwriteEndpoint,
-      appwriteProjectId: defaultSettings().appwriteProjectId,
-      privoraGatewayFunctionId: defaultSettings().privoraGatewayFunctionId,
       model: normalizeModelId(stored.model),
       subagentModel: stored.subagentModel ? normalizeModelId(stored.subagentModel) : null,
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
@@ -267,9 +251,6 @@ export class DesktopStore {
       opencodeGoApiKeyStored: goVault.accounts.some((account) => account.id === goVault.activeId),
       opencodeGoAccounts: goVault.accounts.map(({ id, name, issue }) => ({ id, name, issue })),
       activeOpencodeGoAccountId: goVault.activeId,
-      privoraAccountConnected: Boolean(this.getSecret("privora_session_cookie") || this.getPrivoraUserJwt()),
-      privoraAccountEmail: profile.email,
-      privoraAccountName: profile.name,
     };
   }
 
@@ -289,9 +270,6 @@ export class DesktopStore {
       keepRunningInTray: input.keepRunningInTray ?? current.keepRunningInTray,
       theme: input.theme ?? current.theme,
       cliproxyBaseUrl: input.cliproxyBaseUrl === undefined ? current.cliproxyBaseUrl : normalizeCliproxyBaseUrl(input.cliproxyBaseUrl),
-      appwriteEndpoint: defaultSettings().appwriteEndpoint,
-      appwriteProjectId: defaultSettings().appwriteProjectId,
-      privoraGatewayFunctionId: defaultSettings().privoraGatewayFunctionId,
     };
     // Encrypt every supplied secret before mutating settings. If OS-backed
     // encryption is unavailable, the save fails without partially applying
@@ -343,53 +321,6 @@ export class DesktopStore {
     return this.getSettings();
   }
 
-  setAiCreditSummary(summary: AiCreditSummaryRecord | undefined) { this.aiCreditSummary = summary; }
-  setPrivoraSessionCookie(cookieHeader: string) {
-    this.setSecret("privora_session_cookie", cookieHeader);
-    this.setSecret("privora_user_jwt", "");
-    this.clearPrivoraPendingAuth();
-  }
-  setPrivoraUserJwt(jwt: string, expiresAt = Date.now() + 55 * 60 * 1000, profile?: PrivoraAccountProfileSecret) {
-    this.setSecret("privora_user_jwt", JSON.stringify({ jwt, expiresAt }));
-    this.setSecret("privora_session_cookie", "");
-    if (profile?.email || profile?.name) this.setPrivoraAccountProfile(profile);
-    this.clearPrivoraPendingAuth();
-  }
-  getPrivoraUserJwt() {
-    const raw = this.getSecret("privora_user_jwt");
-    if (!raw) return "";
-    try {
-      const parsed = JSON.parse(raw) as Partial<PrivoraJwtSecret>;
-      if (typeof parsed.jwt !== "string" || typeof parsed.expiresAt !== "number") return "";
-      if (Date.now() >= parsed.expiresAt) {
-        this.setSecret("privora_user_jwt", "");
-        this.aiCreditSummary = undefined;
-        return "";
-      }
-      return parsed.jwt;
-    } catch { return raw; }
-  }
-  clearPrivoraSession() {
-    ["privora_session_cookie", "privora_user_jwt", "privora_account_profile", "privora_pending_auth"].forEach((name) => this.setSecret(name as SecretName, ""));
-    this.aiCreditSummary = undefined;
-  }
-  setPrivoraAccountProfile(profile: PrivoraAccountProfileSecret) {
-    this.setSecret("privora_account_profile", JSON.stringify({ email: profile.email?.trim() || undefined, name: profile.name?.trim() || undefined }));
-  }
-  getPrivoraAccountProfile(): PrivoraAccountProfileSecret {
-    try {
-      const parsed = JSON.parse(this.getSecret("privora_account_profile") || "{}") as PrivoraAccountProfileSecret;
-      return { email: typeof parsed.email === "string" ? parsed.email : undefined, name: typeof parsed.name === "string" ? parsed.name : undefined };
-    } catch { return {}; }
-  }
-  setPrivoraPendingAuth(state: string, createdAt = Date.now()) { this.setSecret("privora_pending_auth", JSON.stringify({ state, createdAt })); }
-  getPrivoraPendingAuth(): { state: string; createdAt: number } | null {
-    try {
-      const parsed = JSON.parse(this.getSecret("privora_pending_auth") || "{}") as { state?: unknown; createdAt?: unknown };
-      return typeof parsed.state === "string" && typeof parsed.createdAt === "number" ? { state: parsed.state, createdAt: parsed.createdAt } : null;
-    } catch { return null; }
-  }
-  clearPrivoraPendingAuth() { this.setSecret("privora_pending_auth", ""); }
   getSecret(name: SecretName) {
     const stored = this.getKv<StoredSecretEnvelope>("secrets", name);
     if (!stored) return "";

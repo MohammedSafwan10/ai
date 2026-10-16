@@ -43,12 +43,6 @@ const isPrivoraEventPayload = (value: unknown) => {
       return isRecord(value.undo) && hasString(value.undo, "id") && hasString(value.undo, "threadId");
     case "context.usage_updated":
       return isRecord(value.usage) && hasString(value.usage, "threadId");
-    case "ai_credit.summary_updated":
-      return isRecord(value.summary)
-        && typeof value.summary.authenticated === "boolean"
-        && hasString(value.summary, "plan")
-        && hasString(value.summary, "status")
-        && typeof value.summary.updatedAt === "number";
     case "browser.state_updated":
       return isRecord(value.state)
         && hasString(value.state, "workspaceId")

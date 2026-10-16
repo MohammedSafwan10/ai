@@ -1,5 +1,7 @@
 # Desktop Auto Updates
 
+The feed implementation lives in [privora-platform](https://github.com/MohammedSafwan10/privora-platform/tree/main/appwrite/functions/desktop-update-feed). This repository retains the desktop updater and release client, independently of the removed account/billing service.
+
 Privora Desktop uses Electron Forge's Windows Squirrel maker and Electron's `autoUpdater` for Windows x64 updates.
 
 ## Current Production Feed

@@ -230,10 +230,26 @@ describe("long chat SQLite repository", () => {
     expect(store.getMessage("persisted")?.content).toBe("persisted");
   });
 
-  it("keeps hosted endpoints trusted and rejects remote CLI proxy settings", () => {
+  it("migrates retired account data without losing provider keys, messages or saved model compatibility", () => {
     const db = createStore();
-    const settings = db.saveSettings({ appwriteEndpoint: "https://attacker.example/v1" } as never);
-    expect(settings.appwriteEndpoint).toBe("https://sgp.cloud.appwrite.io/v1");
+    const thread = db.createThread(null); db.upsertMessage(message("kept", thread.id, 1));
+    const raw = db as unknown as { putKv: (scope: string, key: string, value: unknown) => void; getKv: (scope: string, key: string) => unknown };
+    const providerEnvelope = { fixture: "provider-secret-envelope" };
+    raw.putKv("secrets", "openrouter_api_key", providerEnvelope);
+    for (const key of ["privora_session_cookie", "privora_user_jwt", "privora_pending_auth", "privora_account_profile"]) raw.putKv("secrets", key, { fixture: "retired-account" });
+    raw.putKv("settings", "default", { ...db.getSettings(), model: "privora/minimax-m3", appwriteEndpoint: "https://retired.example/v1" });
+    db.close(); store = new DesktopStore(tempDir);
+    const reopened = store as unknown as typeof raw;
+    expect(reopened.getKv("secrets", "openrouter_api_key")).toEqual(providerEnvelope);
+    for (const key of ["privora_session_cookie", "privora_user_jwt", "privora_pending_auth", "privora_account_profile"]) expect(reopened.getKv("secrets", key)).toBeNull();
+    expect(store.getMessage("kept")?.threadId).toBe(thread.id);
+    expect(store.getSettings().model).toBe("minimax/minimax-m3");
+    expect(store.getSettings()).not.toHaveProperty("appwriteEndpoint");
+  });
+  it("does not expose retired cloud settings and rejects remote CLI proxy settings", () => {
+    const db = createStore();
+    const settings = db.saveSettings({ appwriteEndpoint: "https://retired.example/v1" } as never);
+    expect(settings).not.toHaveProperty("appwriteEndpoint");
     expect(() => db.saveSettings({ cliproxyBaseUrl: "https://attacker.example" })).toThrow(/localhost/i);
   });
 

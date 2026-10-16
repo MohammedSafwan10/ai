@@ -4,7 +4,7 @@
 
 A provider connection ending must not silently complete a partial answer or a
 tool draft. Temporary request failures should recover within explicit limits,
-without repeating delivered actions or potentially charging hosted credits twice.
+without repeating delivered actions or duplicating provider usage.
 
 The design was informed by OpenCode commit
 `f09eee5002b8495bff5629bad7907a36767ab39a`, particularly its structured finish
@@ -54,7 +54,7 @@ proof that every promise was fulfilled.
 - Honor valid Retry-After values up to 30 seconds. Longer cooldowns are returned
   to the operator rather than shortened. No new request begins during that delay.
 - Once an attempt reports text, reasoning, replacements, tool drafts/calls,
-  provider context, search activity, usage, credits or refusal, it is not retried.
+  provider context, search activity, usage or refusal, it is not retried.
   A recoverable partial response is paused for an explicit Resume instead.
 - Stop interrupts backoff immediately. Retries use the same cancellation signal.
 - The idle-timeout watchdog also pauses after partial progress instead of starting
@@ -67,22 +67,15 @@ proof that every promise was fulfilled.
 The limits apply to the application's requests. An upstream proxy may implement
 its own retry policy that this client cannot count or control.
 
-## Hosted gateway compatibility
+## BYOK boundary
 
-Hosted-credit requests do not automatically retry: a missing response can follow
-a successful charge. Server-side idempotency is required before enabling that.
-
-The gateway source now returns `finishReason`, but this source change is not a
-deployment. Previously deployed gateways returning atomic JSON without that field
-remain supported and are explicitly recorded as `legacy_gateway_response`.
-That legacy response confirms RPC completion, not the model's termination reason.
-The stronger hosted finish check takes effect after the gateway update is deployed.
+The desktop connects directly to configured providers using user-supplied credentials. The legacy Privora hosted adapter and account/credit gateway have been removed.
 
 ## Validation
 
 Fixtures cover missing/unknown finish reasons, output limits, malformed SSE,
 incomplete tool arguments, protocol routes, response labels, transient failures,
-Retry-After, retry exhaustion, Stop during backoff, hosted-request non-retry,
+Retry-After, retry exhaustion, Stop during backoff,
 and retained delivered tool results with a resumable checkpoint.
 
 These checks use mocked providers and isolated local stores. They do not send

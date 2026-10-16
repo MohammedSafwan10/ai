@@ -28,14 +28,10 @@ const emptySettings: SettingsRecord = {
   keepRunningInTray: false,
   theme: "system",
   cliproxyBaseUrl: "http://127.0.0.1:8317",
-  appwriteEndpoint: "https://sgp.cloud.appwrite.io/v1",
-  appwriteProjectId: "69af9f0700103b7f3482",
-  privoraGatewayFunctionId: "model-gateway",
   openRouterApiKeyStored: false,
   geminiApiKeyStored: false,
   deepseekApiKeyStored: false,
   opencodeGoApiKeyStored: false,
-  privoraAccountConnected: false,
 };
 
 const emptySnapshot: AppSnapshot = {
@@ -53,7 +49,6 @@ const emptySnapshot: AppSnapshot = {
   activeRun: null,
   activeRuns: [],
   contextUsage: undefined,
-  aiCredits: undefined,
   terminal: { sessions: [], updatedAt: 0 },
 };
 
@@ -273,10 +268,6 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
       if (event.usage.threadId === next.activeThreadId) {
         next = { ...next, contextUsage: event.usage };
       }
-      continue;
-    }
-    if (event.type === "ai_credit.summary_updated") {
-      next = { ...next, aiCredits: event.summary };
       continue;
     }
     if (event.type === "turn.status_changed") {

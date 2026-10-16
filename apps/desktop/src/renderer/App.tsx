@@ -24,7 +24,7 @@ import { buildReviewSession, type ReviewSession } from "./reviewModels";
 import type { ContextMentionRecord, DesktopAttachmentRecord, RequestUserInputRequestRecord, SaveSettingsInput, UpdateStatus } from "../shared/types";
 import { isActiveTurnStatus } from "../shared/runStatus";
 
-type SettingsDestination = "profile" | "general" | "providers" | "billing" | "workspace" | "storage" | "shortcuts" | "about";
+type SettingsDestination = "general" | "providers" | "workspace" | "storage" | "shortcuts" | "about";
 
 const EMPTY_MESSAGES: never[] = [];
 
@@ -62,7 +62,6 @@ export default function App() {
   const [workspacePanelRequest, setWorkspacePanelRequest] = useState<{ mode: "files" | "review" | "browser" | "notes"; key: number } | null>(null);
   const [zoomToast, setZoomToast] = useState<{ id: number; percent: number; visible: boolean } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const creditRefreshStarted = useRef(false);
   const zoomToastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const browserToolAutoOpenRef = useRef<{ initialized: boolean; key: string }>({ initialized: false, key: "" });
   const [rewinding, setRewinding] = useState(false);
@@ -222,11 +221,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!snapshot.settings.privoraAccountConnected || creditRefreshStarted.current) return;
-    creditRefreshStarted.current = true;
-    void window.privoraDesktop.refreshAiCredits();
-  }, [snapshot.settings.privoraAccountConnected]);
 
   const saveSettings = async (settings: SaveSettingsInput) => {
     try {
@@ -453,7 +447,6 @@ export default function App() {
         footer={(
           <SettingsPanel
             settings={snapshot.settings}
-            aiCredits={snapshot.aiCredits}
             open={settingsOpen}
             onOpenTab={(tab) => {
               setSettingsInitialTab(tab);
@@ -763,7 +756,6 @@ export default function App() {
         settingsLayer={(
           <SettingsScreen
             settings={snapshot.settings}
-            aiCredits={snapshot.aiCredits}
             updateStatus={updateStatus}
             workspaceDisabled={!activeWorkspace}
             open={settingsOpen}

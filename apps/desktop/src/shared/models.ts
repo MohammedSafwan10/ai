@@ -1,4 +1,4 @@
-export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "privora-cloud" | "deepseek" | "opencode-go";
+export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "deepseek" | "opencode-go";
 
 import { OPENCODE_GO_DEFAULT_OUTPUT_TOKENS, OPENCODE_GO_ID_PREFIX, isGoModelId, synthesizeGoModelOption } from "./opencodeGo";
 
@@ -91,7 +91,7 @@ const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   {
     id: "opencode-go",
     label: "OpenCode Go",
-    description: "$10/mo subscription gateway. Billed to Go caps, not Privora credits.",
+    description: "$10/mo subscription gateway. Uses your own Go account and its provider limits.",
   },
   {
     id: "cliproxy",
@@ -102,11 +102,6 @@ const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
     id: "openrouter",
     label: "OpenRouter BYOK",
     description: "OpenRouter models using your saved API key.",
-  },
-  {
-    id: "privora-cloud",
-    label: "Privora Cloud",
-    description: "Hosted Privora AI credits. BYOK usage does not consume credits.",
   },
 ];
 
@@ -343,26 +338,11 @@ const modelOptions: ModelOption[] = [
     defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
     description: "Free OpenRouter 1M context reasoning model for coding, agentic workflows, and multimodal tasks.",
   },
-  {
-    id: PRIVORA_MINIMAX_M3_MODEL_ID,
-    label: "MiniMax M3",
-    provider: "privora-cloud",
-    supportsTools: true,
-    supportsImageInput: true,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "medium"],
-    defaultReasoningEffort: "medium",
-    reasoningControl: "toggle",
-    contextWindowTokens: 524_288,
-    maxOutputTokens: 8_192,
-    defaultOutputTokens: 2_048,
-    upstreamModelId: "minimax/minimax-m3",
-    description: "Hosted long-context Privora model. Uses AI credits unless you switch to BYOK.",
-  },
 ];
 
 export const normalizeModelId = (modelId: string | undefined) => {
   const normalizedId = modelId?.trim();
+  if (normalizedId === PRIVORA_MINIMAX_M3_MODEL_ID) return OPENROUTER_MINIMAX_M3_MODEL_ID;
   const retiredDeepSeekIds = new Set([
     DEEPSEEK_V41_FLASH_EXP_MODEL_ID, DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID,
     OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID, OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID, OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID,

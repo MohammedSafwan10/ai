@@ -3,15 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "lint": "npm run workspace:lint && npm run web:lint && npm run desktop:lint",
-    "workspace:dev": "npm --prefix apps/workspace run dev",
-    "workspace:lint": "npm --prefix apps/workspace run lint",
-    "workspace:build": "npm --prefix apps/workspace run build",
-    "workspace:preview": "npm --prefix apps/workspace run preview",
-    "web:dev": "npm --prefix apps/web run dev",
-    "web:lint": "npm --prefix apps/web run lint",
-    "web:build": "npm --prefix apps/web run build",
-    "web:preview": "npm --prefix apps/web run preview",
+    "lint": "npm run desktop:lint && npm run marketing:lint",
     "desktop:dev": "npm --prefix apps/desktop run dev",
     "desktop:debug": "npm --prefix apps/desktop run dev:debug",
     "desktop:debug:break": "npm --prefix apps/desktop run dev:debug:break",
@@ -19,6 +11,13 @@
     "desktop:lint": "npm --prefix apps/desktop run lint",
     "desktop:test": "npm --prefix apps/desktop run test",
     "desktop:build": "npm --prefix apps/desktop run build",
-    "desktop:release:win:x64": "npm --prefix apps/desktop run release:win:x64 --"
-  }
+    "desktop:release:win:x64": "npm --prefix apps/desktop run release:win:x64 --",
+    "test": "npm run desktop:test",
+    "build": "npm run desktop:build && npm run marketing:build",
+    "marketing:dev": "npm --prefix apps/marketing run dev",
+    "marketing:lint": "npm --prefix apps/marketing run lint",
+    "marketing:build": "npm --prefix apps/marketing run build",
+    "marketing:preview": "npm --prefix apps/marketing run preview"
+  },
+  "description": "Privora Desktop and its static marketing website"
 }

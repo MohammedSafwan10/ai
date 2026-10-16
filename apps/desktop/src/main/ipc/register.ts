@@ -16,9 +16,6 @@ import { StorageCleanupService } from "../storage/cleanup";
 import { channels } from "./channels";
 import { savedSecurityEvidence } from "../../shared/savedSecurityEvidence";
 import { securityEvidenceForSave } from "../attachments/securityEvidence";
-import { emptyAiCreditSummary, refreshAiCreditSummary } from "../billing/creditService";
-import { createEmailPasswordAccount, createEmailPasswordSession, createTokenSession, deleteCurrentSession, getAppwriteAccount } from "../billing/appwriteAuth";
-import { beginPrivoraBrowserAuth } from "../billing/browserAuthFlow";
 import type { BrowserSessionManager } from "../browser/BrowserSessionManager";
 import type { ComputerUseManager } from "../computer/ComputerUseManager";
 import type { NotesStore } from "../notes/NotesStore";
@@ -65,7 +62,6 @@ import type {
   TerminalResizeInput,
   TerminalStopInput,
   WorkspaceOpenTarget,
-  PrivoraAuthInput,
 } from "../../shared/types";
 import { envelopePrivoraEvent } from "../agent/harness/eventBus";
 import { OPENCODE_GO_CACHE_TTL_MS, fetchGoModelIds } from "../../shared/opencodeGo";
@@ -615,89 +611,6 @@ export const registerIpc = (
         return { ids: cached.ids, unsupported: cached.unsupported, fetchedAt: cached.fetchedAt, source: "cache" as const };
       }
       throw error;
-    }
-  });
-
-  handle(channels.startPrivoraBrowserAuth, z.tuple([]), async () => {
-    const auth = await beginPrivoraBrowserAuth(store, {
-      onToken: async (token) => {
-        const sessionCookie = await createTokenSession(store.getSettings(), token);
-        store.setPrivoraSessionCookie(sessionCookie);
-        try {
-          const account = await getAppwriteAccount(store.getSettings(), sessionCookie);
-          if (account.authenticated) {
-            store.setPrivoraAccountProfile({ email: account.email, name: account.name });
-          }
-        } catch {
-          if (token.email || token.name) store.setPrivoraAccountProfile({ email: token.email, name: token.name });
-        }
-        try {
-          await refreshCreditsFromSession();
-        } catch (error) {
-          const summary = emptyAiCreditSummary(error instanceof Error ? error.message : String(error));
-          store.setAiCreditSummary(summary);
-          emit({ type: "ai_credit.summary_updated", summary });
-        }
-        emitSnapshot();
-        emit({ type: "notification.created", tone: "success", message: "Privora Desktop is connected." });
-      },
-    });
-    await shell.openExternal(auth.url);
-    emit({ type: "notification.created", tone: "info", message: "Opened Privora sign-in in your browser." });
-    return auth;
-  });
-
-  const refreshCreditsFromSession = async () => {
-    const settings = store.getSettings();
-    const sessionCookie = store.getSecret("privora_session_cookie");
-    const userJwt = store.getPrivoraUserJwt();
-    const summary = await refreshAiCreditSummary(settings, sessionCookie, userJwt);
-    store.setAiCreditSummary(summary);
-    emit({ type: "ai_credit.summary_updated", summary });
-    return summary;
-  };
-
-  handle(channels.signInPrivora, z.tuple([privoraAuthInputSchema]), async (_event, input: PrivoraAuthInput) => {
-    const sessionCookie = await createEmailPasswordSession(store.getSettings(), input);
-    store.setPrivoraSessionCookie(sessionCookie);
-    const summary = await refreshCreditsFromSession();
-    emitSnapshot();
-    return summary;
-  });
-
-  handle(channels.signUpPrivora, z.tuple([privoraAuthInputSchema]), async (_event, input: PrivoraAuthInput) => {
-    await createEmailPasswordAccount(store.getSettings(), input);
-    const sessionCookie = await createEmailPasswordSession(store.getSettings(), input);
-    store.setPrivoraSessionCookie(sessionCookie);
-    const summary = await refreshCreditsFromSession();
-    emitSnapshot();
-    return summary;
-  });
-
-  handle(channels.signOutPrivora, z.tuple([]), async () => {
-    await deleteCurrentSession(store.getSettings(), store.getSecret("privora_session_cookie"));
-    store.clearPrivoraSession();
-    const summary = emptyAiCreditSummary();
-    store.setAiCreditSummary(summary);
-    emit({ type: "ai_credit.summary_updated", summary });
-    emitSnapshot();
-    return summary;
-  });
-
-  handle(channels.refreshAiCredits, z.tuple([]), async () => {
-    const settings = store.getSettings();
-    const sessionCookie = store.getSecret("privora_session_cookie");
-    const userJwt = store.getPrivoraUserJwt();
-    try {
-      const summary = await refreshAiCreditSummary(settings, sessionCookie, userJwt);
-      store.setAiCreditSummary(summary);
-      emit({ type: "ai_credit.summary_updated", summary });
-      return summary;
-    } catch (error) {
-      const summary = emptyAiCreditSummary(error instanceof Error ? error.message : String(error));
-      store.setAiCreditSummary(summary);
-      emit({ type: "ai_credit.summary_updated", summary });
-      return summary;
     }
   });
 
@@ -1305,11 +1218,7 @@ const saveThreadSettingsInputSchema = z.object({
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
 });
 
-const privoraAuthInputSchema = z.object({
-  email: z.string().email().max(320),
-  password: z.string().min(8).max(4096),
-  name: z.string().max(160).optional(),
-});
+
 
 const requestUserInputAnswerSchema = z.object({
   answers: z.array(z.string().max(4000)).max(4),

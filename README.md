@@ -1,80 +1,65 @@
 # Privora
 
-Privora brings AI chat, local development tools, and connected security environments into a multi-app repository. Product apps live under `apps/`; the root provides commands for working on them.
+Privora Desktop is a local-first coding and security workspace. Bring your own model keys, work with files and terminal sessions, review changes, use the built-in browser, and follow live subagents. Security projects run their tools in your configured Kali environment over pinned SSH.
 
-## Apps
+This repository contains **Privora Desktop and its static marketing website only**. No Privora account, subscription, billing system or hosted AI-credit gateway is required.
 
-- `apps/workspace` - browser AI workspace app for chat, artifacts, Web Dev, Characters, Command Center, image generation, Deep Research, Debate, and Clash.
-- `apps/web` - SaaS website for pricing, auth, account pages, legal pages, desktop connection, and future admin.
-- `apps/desktop` - Electron desktop app for local coding workflows and Security projects, with built-in browser research, live subagents, recoverable context compaction, and tools executed in an assigned Kali VM.
-- `appwrite` - Appwrite Functions and scripts for the update feed and SaaS AI credit engine.
-- `docs` - shared runbooks and architecture notes.
+## Projects
 
-## Root Commands
+| Path | Purpose |
+| --- | --- |
+| [apps/desktop](apps/desktop/README.md) | Electron desktop app, local persistence, providers, browser and Security tools |
+| [apps/marketing](apps/marketing/README.md) | Pre-rendered public marketing, download, BYOK and legal pages |
+| [docs](docs/) | Desktop operations and repository architecture |
+
+The other products now have independent repositories, with their relevant Git history preserved:
+
+- [privora-workspace](https://github.com/MohammedSafwan10/privora-workspace): browser AI workspace.
+- [privora-mobile](https://github.com/MohammedSafwan10/privora-mobile): Flutter app.
+- [privora-platform](https://github.com/MohammedSafwan10/privora-platform): previous account, billing, hosted-model and update-feed services. This is retained independently; the BYOK desktop does not use its account or credit APIs.
+
+## Development
+
+Use Node.js 22.12 or later. Each app owns its package metadata and lockfile; the repository root only provides convenience commands.
 
 ```powershell
-npm run workspace:dev
-npm run workspace:lint
-npm run workspace:build
-
-npm run web:dev
-npm run web:lint
-npm run web:build
-
+npm --prefix apps/desktop ci
+npm --prefix apps/marketing ci
 npm run desktop:dev
-npm run desktop:lint
-npm run desktop:test
-npm run desktop:build
-npm run desktop:release:win:x64 -- --notes "Release notes"
+# In another terminal:
+npm run marketing:dev
 ```
 
-Run all TypeScript checks:
+Configure your own providers in **Settings > Providers**. Gemini, OpenRouter, DeepSeek, OpenCode Go and a local CLIProxy endpoint are supported. Provider keys use OS-backed secret storage. Provider charges and quotas belong to your chosen provider; local storage does not make remote model inference offline.
 
 ```powershell
 npm run lint
+npm test
+npm run marketing:build
+npm run marketing:preview
+npm run desktop:build
 ```
 
-## App Boundaries
+The marketing build produces HTML and assets in `apps/marketing/dist/` for ordinary static hosting. It needs no server runtime, account SDK or environment secrets. `/pricing/` explains BYOK; sign-in, account and billing routes are absent.
 
-- Use `apps/workspace` for the browser AI workspace product.
-- Use `apps/web` for public SaaS, auth, pricing, account, legal, and admin pages.
-- Use `apps/desktop` for packaged desktop behavior and local-agent UX.
-- Use `appwrite` for backend-only code, server secrets, credit ledgers, and update feeds.
+## Desktop workflows
 
-Do not put private API keys, Appwrite API keys, OpenRouter hosted keys, Razorpay secrets, or signing credentials in any frontend `VITE_*` variable or desktop bundle.
+- [Desktop guide](apps/desktop/README.md)
+- [Security projects and Kali setup](apps/desktop/docs/security-workspace/README.md)
+- [Browser tools](apps/desktop/docs/browser-agent.md)
+- [Long-session recovery](apps/desktop/docs/reliable-compaction.md)
+- [Connection and state recovery](apps/desktop/docs/desktop-state-recovery.md)
+- [Windows release and updates](docs/desktop-auto-updates.md)
+- [Repository split and migration](docs/repository-layout.md)
 
-## Setup
+Security project scope remains operator-defined. Full access skips command approval prompts; it does not grant root privileges or change the authorized target scope. Collected evidence is retained locally; confirmed PC saves expose their exact recorded path and an Open folder action.
 
-Desktop development and packaging require Node.js 22.12 or later; Node.js 24 LTS is a suitable choice. Each app documents its own additional requirements.
+## Releases and hosting
 
-Each app owns its own package metadata and lockfile. Install dependencies inside the app you are working on:
+Source pushes do not publish an installer or deploy the website. Existing download/update and demo-video URLs remain external public services. Removing cloud account code from this repository does not delete existing production resources.
 
 ```powershell
-npm --prefix apps/workspace install
-npm --prefix apps/web install
-npm --prefix apps/desktop install
+npm run desktop:release:win:x64 -- --notes "Release notes"
 ```
 
-Local environment examples live beside each app:
-
-- `apps/workspace/.env.example`
-- `apps/web/.env.example`
-
-Desktop release and SaaS credit automation are documented in:
-
-- `docs/desktop-auto-updates.md`
-- `apps/desktop/docs/browser-agent.md` for Browser Agent phases, workflow evidence, and storage cleanup behavior.
-- `apps/desktop/docs/reliable-compaction.md` for preserved task state, checkpoint validation, recovery, and model-budget limits.
-- `apps/desktop/docs/saas-ai-credits.md`
-
-## Desktop Security workspace
-
-Create a **Security project** from the desktop sidebar, choose a saved Kali connection, and describe the objective and authorized scope. Connection profiles are imported once per VM and reused across projects. Normal local projects retain their existing coding tools; Security projects execute through SSH in their assigned environment.
-
-The selected model and reasoning level stay in Privora. Kali needs the small Python runner and SSH access, without Docker or a second model agent. Chat shows remote activity; project details provide jobs, connection checks, findings, evidence previews, and native file saving.
-
-Security projects also support public research in the built-in desktop browser, including screenshots, evidence capture, and PDF reading. Browser research traffic originates on the desktop; target commands execute in Kali. Subagents have live transcripts and visible coordination messages. Long chats can compact while retaining operator instructions, operational state, and evidence references; original transcripts and artifacts remain stored.
-
-**Full access** skips command approval prompts in Privora. It does not grant root privileges, expand target authorization, or add hardware capabilities. Remote GUI/browser control and interactive PTY sessions are future work.
-
-See the [desktop README](apps/desktop/README.md) for everyday use and the [Security workspace documentation](apps/desktop/docs/security-workspace/README.md) for connection requirements, tested behavior, and remaining acceptance checks. The implementation and portable Windows build are verified; pushing source does not publish a new installer or update feed.
+Keep provider keys, SSH profiles, service credentials and signing material out of Git. Do not expose secrets through frontend environment variables or packaged assets.

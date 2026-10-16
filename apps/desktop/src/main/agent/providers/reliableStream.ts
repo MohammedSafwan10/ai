@@ -23,7 +23,6 @@ export async function reliableProviderStream(adapter: ProviderAdapter, options: 
         onProviderContextPart: (part) => { produced = true; options.onProviderContextPart?.(part); },
         onWebSearch: (event) => { produced = true; options.onWebSearch?.(event); },
         onUsage: (usage) => { produced = true; options.onUsage?.(usage); },
-        onAiCredits: (credits) => { produced = true; options.onAiCredits?.(credits); },
         onResponseDisposition: (disposition) => { produced = true; options.onResponseDisposition?.(disposition); },
         onToolDraft: (draft) => {
           produced = true;
@@ -52,9 +51,7 @@ export async function reliableProviderStream(adapter: ProviderAdapter, options: 
         const paused: ProviderStreamOutcome = { status: "interrupted", reason: "account_usage_limit" };
         publish(paused); throw new ProviderStreamError(paused);
       }
-      // Hosted requests can charge credits before a response is received. They
-      // require server-side idempotency before any automatic request retry.
-      const delay = !produced && options.provider !== "privora-cloud" ? providerRetryDelay(error, retries) : null;
+      const delay = !produced ? providerRetryDelay(error, retries) : null;
       if (delay !== null) {
         options.onRetry?.({ attempt: retries + 1, delayMs: delay, reason: "Temporary provider connection or capacity failure" });
         try { await waitForProviderRetry(delay, options.signal); }
