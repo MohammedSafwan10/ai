@@ -22,7 +22,8 @@ import { BrowserSessionManager } from "./browser/BrowserSessionManager";
 import { ComputerUseManager } from "./computer/ComputerUseManager";
 import { SecurityWorkspaceService } from "./kali/service";
 import { attachmentProtocolResponse } from "./attachments/protocol";
-import { interceptWindowClose, stopWorkForShutdown, unfinishedSecurityJobs } from "./lifecycle";
+import { interceptWindowClose, stopWorkForShutdown, unfinishedSecurityJobs, remoteTaskCounts } from "./lifecycle";
+import { isActiveTurnStatus } from "../shared/runStatus";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -202,9 +203,9 @@ const shouldKeepRunningInTray = () =>
   process.platform !== "darwin" && Boolean(store?.getSettings().keepRunningInTray);
 
 const runningTaskCount = () => {
-  const activeRuns = harnessService?.listActiveRuns().length || 0;
+  const activeRuns = harnessService?.listActiveRuns().filter((run) => isActiveTurnStatus(run.status)).length || 0;
   const runningTerminals = harnessService?.getTerminalState().sessions.filter((session) => session.running).length || 0;
-  return activeRuns + runningTerminals + unfinishedSecurityJobs(listRemoteJobs()).length;
+  return activeRuns + runningTerminals + remoteTaskCounts(listRemoteJobs()).active;
 };
 
 const listRemoteJobs = () => store?.listWorkspaces().filter((workspace) => workspace.type === "security").flatMap((workspace) => store!.listSecurityJobs(workspace.id)) || [];
@@ -221,7 +222,9 @@ const stopActiveWork = async () => {
 
 const trayStatusLabel = () => {
   const tasks = runningTaskCount();
-  if (tasks > 0) return `Running tasks: ${tasks}`;
+  const uncertain = remoteTaskCounts(listRemoteJobs()).unconfirmed;
+  if (tasks > 0) return `Running tasks: ${tasks}${uncertain ? ` · Unconfirmed Kali jobs: ${uncertain}` : ""}`;
+  if (uncertain) return `Unconfirmed Kali jobs: ${uncertain}`;
   const update = getUpdateServiceStatus();
   if (update.state === "ready") return "Update ready";
   if (update.state === "downloading") return "Downloading update";
@@ -291,7 +294,7 @@ const prepareShutdown = (reason: "tray" | "menu" | "update"): Promise<boolean> =
       defaultId: 1,
       cancelId: 1,
       title: "Quit Privora?",
-      message: `Privora has ${tasks} active or unconfirmed task(s). Stop tasks before ${reason === "update" ? "installing the update" : "quitting"}?`,
+      message: `Privora has ${tasks} active task(s). Stop tasks before ${reason === "update" ? "installing the update" : "quitting"}?`,
     };
     const response = mainWindow
       ? await dialog.showMessageBox(mainWindow, options)
@@ -311,11 +314,15 @@ const prepareShutdown = (reason: "tray" | "menu" | "update"): Promise<boolean> =
   await securityService?.waitForIdle();
   const unconfirmed = unfinishedSecurityJobs(listRemoteJobs());
   if (unconfirmed.length) {
+    const noConfirmedIds = unconfirmed.every((job) => !job.remoteJobId);
     const options: MessageBoxOptions = {
-      type: "warning", title: "Kali jobs may still be running",
+      type: "warning", title: noConfirmedIds ? "Unconfirmed Kali job history" : "Kali job status unconfirmed",
       buttons: [reason === "update" ? "Restart anyway" : "Quit anyway", "Keep Privora open"], defaultId: 1, cancelId: 1,
-      message: `Could not confirm that ${unconfirmed.length} remote job(s) stopped.`,
-      detail: "These jobs may continue in Kali. Their saved identities will be checked when Privora reopens.\n\n" + unconfirmed.slice(0, 8).map((job) => `${job.remoteJobId || job.id}: ${job.state}`).join("\n"),
+      message: noConfirmedIds ? `${unconfirmed.length} saved job submission(s) have no confirmed remote job ID.` : `Could not confirm that ${unconfirmed.length} remote job(s) stopped.`,
+      detail: (noConfirmedIds
+        ? "These saved records do not establish that an agent or command is running. You can quit while retaining this history. Privora will check the saved submissions when it reopens."
+        : "These remote jobs may continue in Kali. Their saved identities will be checked when Privora reopens.")
+        + "\n\n" + unconfirmed.slice(0, 8).map((job) => `${job.remoteJobId || job.id}: ${job.state}`).join("\n"),
     };
     const response = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
     if (response.response !== 0) return false;

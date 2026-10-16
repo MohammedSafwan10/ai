@@ -12,6 +12,11 @@ export const interceptWindowClose = (event: { preventDefault(): void }, options:
 export const unfinishedSecurityJobs = (jobs: SecurityJobRecord[]) =>
   jobs.filter((job) => !["succeeded", "failed", "cancelled", "timed_out"].includes(job.state));
 
+export const remoteTaskCounts = (jobs: SecurityJobRecord[]) => {
+  const unfinished = unfinishedSecurityJobs(jobs);
+  return { active: unfinished.filter((job) => job.state !== "unknown").length, unconfirmed: unfinished.filter((job) => job.state === "unknown").length };
+};
+
 export interface ShutdownWork {
   stopLocal(): void | Promise<void>;
   waitForLocalIdle(): Promise<void>;

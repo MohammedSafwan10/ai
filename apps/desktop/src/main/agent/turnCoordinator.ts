@@ -1,6 +1,7 @@
 import type { BrowserWindow } from "electron";
 import { ProviderStreamError } from "./providers/streamOutcome";
 import { isActiveTurnStatus } from "../../shared/runStatus";
+import { KaliStopNotices } from "../kali/stopNotices";
 import { assertWorkspaceDirectory } from "../workspace/availability";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
@@ -310,6 +311,7 @@ interface ContinueOptions {
 }
 
 export class TurnCoordinator implements AgentHarnessApi {
+  private readonly kaliStopNotices = new KaliStopNotices();
   private tools: ToolCallCoordinator;
   private contextManager: ContextManager;
   private recovery: RunRecoveryService;
@@ -2131,11 +2133,11 @@ export class TurnCoordinator implements AgentHarnessApi {
 
   private stopThreadProcesses(threadId: string) {
     this.tools.stopThreadProcesses(threadId);
+    const workspaceId = this.store.getThread(threadId)?.workspaceId;
+    const previouslyUnknown = new Set(workspaceId ? this.store.listSecurityJobs(workspaceId, threadId).filter((job) => job.state === "unknown").map((job) => job.id) : []);
     void this.security?.stopThreadJobs(threadId).then((unconfirmed) => {
-      if (unconfirmed.length) this.emit({
-        type: "notification.created", tone: "error",
-        message: "Some Kali jobs could not be confirmed stopped. Their state remains visible in Security details.",
-      });
+      const notice = this.kaliStopNotices.update(threadId, previouslyUnknown, unconfirmed);
+      if (notice) this.emit(notice);
     }).catch((error) => this.emit({
       type: "notification.created", tone: "error",
       message: "Kali cancellation is unconfirmed: " + errorMessage(error),

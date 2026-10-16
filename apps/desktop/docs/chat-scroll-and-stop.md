@@ -36,3 +36,26 @@ prepending 50 messages. Long code stayed inside the centered 760px column.
 These checks use fixture data, not live provider requests or credentials.
 
 Packaged build: `out/scroll-reviewed/Privora-win32-x64/Privora.exe`.
+
+## Unconfirmed remote history follow-up
+
+Stop previously retried every nonterminal job saved for the thread and displayed
+the same error toast on each attempt, including records already marked unknown.
+The tray also counted unknown jobs and locally stalled resumable runs as running.
+The tray now distinguishes unconfirmed remote jobs from active work. Repeated
+unchanged uncertainty produces one notice per thread during the session; newly
+failed cancellation still warns, including a previously unknown job that became
+active again. No job is deleted or declared stopped without confirmation.
+
+Quit asks about active work first only when active work exists. Remaining remote
+uncertainty still gets a final confirmation, with clearer wording for saved
+submissions that never acquired a confirmed remote job ID. Reopening retains the
+normal reconciliation path.
+
+The inner tool grid also requires a zero minimum column width. A long Kali
+command reproduced a 34,998px tool row under the former rules; the constrained
+grid keeps that same row at 760px. This is separate from the outer chat grid fix.
+
+Follow-up verification: TypeScript passed, 873 tests passed and 7 skipped; an
+independent agent rechecked notification episodes, paused-run counting and quit
+guards. Package: `out/kali-stop-status/Privora-win32-x64/Privora.exe`.

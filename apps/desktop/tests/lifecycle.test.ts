@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { interceptWindowClose, stopWorkForShutdown, unfinishedSecurityJobs } from "../src/main/lifecycle";
+import { interceptWindowClose, stopWorkForShutdown, unfinishedSecurityJobs, remoteTaskCounts } from "../src/main/lifecycle";
 import type { SecurityJobRecord } from "../src/shared/securityWorkspace";
 
 const job = (id: string, state: SecurityJobRecord["state"]): SecurityJobRecord => ({ id, remoteJobId: id, workspaceId: "workspace", threadId: "thread", environmentId: "kali", idempotencyKey: id, projectId: "workspace", state, sequence: 0, outputPreview: "", commandPreview: "test", exitCode: null, error: null, createdAt: 1, updatedAt: 1 });
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; };
 
 describe("application shutdown", () => {
+  it("separates unknown history from running work without clearing shutdown uncertainty", () => {
+    const jobs = [job("old", "unknown"), job("live", "running"), job("queued", "queued"), job("done", "succeeded")];
+    expect(remoteTaskCounts(jobs)).toEqual({ active: 2, unconfirmed: 1 });
+    expect(unfinishedSecurityJobs(jobs)).toHaveLength(3);
+  });
   it("keeps the window present while a quit decision is pending or cancelled", async () => {
     const decision = deferred();
     let prevented = false;
