@@ -38,7 +38,7 @@ const clampIdeWidth = (requestedWidth: number, containerWidth: number) => {
 };
 
 export default function App() {
-  const { snapshot, activeThread, activeWorkspace, toast, refresh, loadOlderMessages, historyLoading, historyError, setFollowingLatest } = useDesktopState();
+  const { snapshot, connectionStatus, activeThread, activeWorkspace, toast, refresh, loadOlderMessages, historyLoading, historyError, setFollowingLatest } = useDesktopState();
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -480,6 +480,7 @@ export default function App() {
         topbarSecondary={isSecurityWorkspace ? <SecurityWorkspaceBadge environment={securityWorkspace.state?.environment} checking={securityWorkspace.checking} onOpen={() => setSecurityDetailsOpen(true)} /> : undefined}
         topbarTrailing={(
           <>
+            {connectionStatus !== "connected" && <span role="status" className="desktop-connection-status" title="Confirming desktop and run state. No prompts or commands will be resent.">{connectionStatus === "checking" ? "Checking connection..." : connectionStatus === "recovering" ? "Recovering state..." : "Reconnecting..."}</span>}
             <UpdateControl status={updateStatus} />
             <button className="subagent-topbar-button" aria-label="Show subagents" title={`Subagents: ${snapshot.subagents.filter((agent) => ["pending", "running", "waiting"].includes(agent.status)).length} active, ${snapshot.subagents.filter((agent) => agent.status === "completed").length} done`} onClick={() => { setSubagentRequest(null); setSubagentsOpen(true); setIdeCollapsed(false); }}><span className={`agent-status-dot ${snapshot.subagents.some((agent) => ["pending", "running", "waiting"].includes(agent.status)) ? "live" : "completed"}`} /><span className="subagent-topbar-label">Subagents</span><span>{snapshot.subagents.length}</span></button>
             {!isSecurityWorkspace && <AppLauncher disabled={!activeWorkspace} />}

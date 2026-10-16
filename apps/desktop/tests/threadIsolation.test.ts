@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRefreshSnapshot, coalescePrivoraEvents, prependHistoryPage, reducePrivoraEvents } from "../src/renderer/state/useDesktopState";
+import { applyRecoveredSnapshot, applyRefreshSnapshot, coalescePrivoraEvents, prependHistoryPage, reducePrivoraEvents } from "../src/renderer/state/useDesktopState";
 import { PRIVORA_EVENT_PROTOCOL_VERSION } from "../src/shared/types";
 import type { ChatMessageRecord, PrivoraEventEnvelope, PrivoraEventPayload, ToolEventRecord } from "../src/shared/types";
 
@@ -45,6 +45,17 @@ const baseSnapshot = () => ({
 });
 
 describe("renderer thread isolation", () => {
+  it("replaces missed runtime state, questions, terminal state and stale message tails on recovery", () => {
+    const run = { threadId: "old-thread", assistantMessageId: "turn", phase: "running" as const, status: "running" as const };
+    const pending = { threadId: "old-thread", assistantMessageId: "turn", callId: "question", questions: [], createdAt: 1 };
+    const current = { ...baseSnapshot(), activeRun: run, activeRuns: [run], activeRunsByThread: { "old-thread": run }, pendingUserInput: pending, pendingUserInputsByThread: { "old-thread": pending }, runEventSequences: { "old-thread": 999 }, selectionEventSequence: 999, messages: [message("deleted", "old-thread", "stale")] };
+    const fresh = { ...baseSnapshot(), terminal: { sessions: [], updatedAt: 123 } };
+    const next = applyRecoveredSnapshot(current, { runtimeId: "new-runtime", sequence: 2, snapshot: fresh, pendingInputs: [] });
+    expect(next.activeRun).toBeNull(); expect(next.activeRuns).toEqual([]);
+    expect(next.pendingUserInput).toBeNull(); expect(next.pendingUserInputsByThread).toEqual({});
+    expect(next.runEventSequences).toEqual({}); expect(next.selectionEventSequence).toBe(2);
+    expect(next.messages.map((item) => item.id)).toEqual(["old-message"]); expect(next.terminal?.updatedAt).toBe(123);
+  });
   it("does not duplicate tool output when replacements arrive between deltas in one frame", () => {
     const current = { ...baseSnapshot(), toolEvents: [{ ...tool("old-tool", "old-thread", "old-message"), output: "", status: "running" as const }] };
     const events = [

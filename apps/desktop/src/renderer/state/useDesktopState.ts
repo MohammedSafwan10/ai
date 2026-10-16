@@ -12,7 +12,7 @@ import type {
   ThreadHistoryPage,
 } from "../../shared/types";
 import { GEMINI_37_FLASH_MODEL_ID } from "../../shared/models";
-import { isNewPrivoraEventSequence } from "../../shared/privoraProtocol";
+import { getDesktopSync, type ConnectionStatus, type SyncSnapshot } from "./desktopSync";
 import { EventBatcher } from "./eventBatcher";
 import { compactLiveOutput } from "./liveOutput";
 import { retainRecentHistory } from "./historyRetention";
@@ -74,29 +74,20 @@ const emptyUiSnapshot: DesktopUiSnapshot = {
 
 export const useDesktopState = () => {
   const [snapshot, setSnapshot] = useState<DesktopUiSnapshot>(emptyUiSnapshot);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("checking");
   const [toast, setToast] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const eventBatcherRef = useRef<EventBatcher<PrivoraEventEnvelope> | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const eventStatsRef = useRef({ startedAt: performance.now(), events: 0, bytes: 0, flushes: 0 });
-  const lastEventSequenceRef = useRef(0);
-  const refreshRequestRef = useRef(0);
+  const recoveryGenerationRef = useRef(0);
   const historyRequestRef = useRef<{ threadId: string; before: string } | null>(null);
   const activeThreadRef = useRef(snapshot.activeThreadId);
   const readingHistoryRef = useRef(false);
   activeThreadRef.current = snapshot.activeThreadId;
 
-  const refresh = useCallback(async () => {
-    const request = ++refreshRequestRef.current;
-    const sequenceAtRequest = lastEventSequenceRef.current;
-    const next = await window.privoraDesktop.getSnapshot();
-    if (request !== refreshRequestRef.current) return;
-    setSnapshot((current) => {
-      const refreshed = applyRefreshSnapshot(current, next, sequenceAtRequest);
-      return readingHistoryRef.current ? refreshed : retainRecentSnapshot(refreshed);
-    });
-  }, []);
+  const refresh = useCallback(async () => { await getDesktopSync().recover(); }, []);
   const setFollowingLatest = useCallback((following: boolean) => {
     if (readingHistoryRef.current === !following) return;
     readingHistoryRef.current = !following;
@@ -108,6 +99,7 @@ export const useDesktopState = () => {
     const before = snapshot.historyPage?.beforeCursor;
     if (!threadId || !snapshot.historyPage?.hasOlder || !before || historyRequestRef.current?.threadId === threadId) return false;
     const request = { threadId, before };
+    const recoveryGeneration = recoveryGenerationRef.current;
     readingHistoryRef.current = true;
     historyRequestRef.current = request;
     setHistoryLoading(true);
@@ -115,7 +107,7 @@ export const useDesktopState = () => {
     try {
       const page = await window.privoraDesktop.getThreadHistoryPage({ threadId, before, limit: 50 });
       if (historyRequestRef.current !== request || activeThreadRef.current !== threadId) return false;
-      setSnapshot((current) => current.activeThreadId === threadId ? prependHistoryPage(current, page) : current);
+      setSnapshot((current) => current.activeThreadId === threadId && recoveryGeneration === recoveryGenerationRef.current ? prependHistoryPage(current, page) : current);
       return true;
     } catch (error) {
       if (historyRequestRef.current === request && activeThreadRef.current === threadId) setHistoryError(error instanceof Error ? error.message : String(error));
@@ -144,10 +136,8 @@ export const useDesktopState = () => {
   }, []);
 
   const enqueueEvent = useCallback((event: PrivoraEventEnvelope) => {
-    if (!isNewPrivoraEventSequence(lastEventSequenceRef.current, event)) return;
-    lastEventSequenceRef.current = event.sequence;
     if (event.payload.type === "thread.rewound") {
-      refreshRequestRef.current += 1;
+      recoveryGenerationRef.current++;
       if (historyRequestRef.current?.threadId === event.payload.threadId) {
         historyRequestRef.current = null; setHistoryLoading(false);
       }
@@ -172,12 +162,37 @@ export const useDesktopState = () => {
       clearTimer: (id) => window.clearTimeout(id),
     }, flushEvents);
     eventBatcherRef.current = batcher;
-    void refresh();
-    const unsubscribe = window.privoraDesktop.onPrivoraEvent(enqueueEvent);
+    const unsubscribe = getDesktopSync().subscribe((update) => {
+      if (update.type === "status") {
+        setConnectionStatus(update.status);
+        if (update.status !== "connected") {
+          batcher.clear(); recoveryGenerationRef.current++;
+          historyRequestRef.current = null; setHistoryLoading(false); setHistoryError(null);
+        }
+      } else if (update.type === "snapshot") {
+        batcher.clear();
+        setSnapshot((current) => {
+          const next = applyRecoveredSnapshot(current, update.value);
+          return readingHistoryRef.current ? next : retainRecentSnapshot(next);
+        });
+      } else enqueueEvent(update.event);
+    });
+    let lastCheck = Date.now();
+    const recoverVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastCheck > 20_000) void refresh();
+      lastCheck = Date.now();
+    };
+    const pageshow = () => { void refresh(); };
+    window.addEventListener("focus", recoverVisible);
+    window.addEventListener("pageshow", pageshow);
+    document.addEventListener("visibilitychange", recoverVisible);
     return () => {
-      refreshRequestRef.current += 1;
       historyRequestRef.current = null;
       unsubscribe();
+      window.removeEventListener("focus", recoverVisible);
+      window.removeEventListener("pageshow", pageshow);
+      document.removeEventListener("visibilitychange", recoverVisible);
       batcher.clear();
       eventBatcherRef.current = null;
       if (toastTimerRef.current !== null) {
@@ -198,6 +213,7 @@ export const useDesktopState = () => {
 
   return {
     snapshot,
+    connectionStatus,
     activeThread,
     activeWorkspace,
     toast,
@@ -370,6 +386,11 @@ const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot, author
     runEventSequences: current.runEventSequences,
     selectionEventSequence: current.selectionEventSequence,
   };
+};
+
+export const applyRecoveredSnapshot = (current: DesktopUiSnapshot, value: SyncSnapshot): DesktopUiSnapshot => {
+  const pendingUserInputsByThread = Object.fromEntries(value.pendingInputs.map((input) => [input.threadId, input]));
+  return applySnapshot({ ...current, contextUsage: undefined, pendingUserInputsByThread, runEventSequences: {}, selectionEventSequence: value.sequence }, value.snapshot, true);
 };
 
 export const applyRefreshSnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot, sequenceAtRequest: number): DesktopUiSnapshot => {

@@ -7,6 +7,7 @@ export const isPrivoraEventEnvelope = (value: unknown): value is PrivoraEventEnv
   if (!value || typeof value !== "object") return false;
   const event = value as Partial<PrivoraEventEnvelope>;
   return event.protocolVersion === PRIVORA_EVENT_PROTOCOL_VERSION
+    && (event.runtimeId === undefined || (typeof event.runtimeId === "string" && event.runtimeId.length > 0))
     && typeof event.eventId === "string"
     && event.eventId.length > 0
     && typeof event.sequence === "number"

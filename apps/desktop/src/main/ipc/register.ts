@@ -8,7 +8,7 @@ import type { DesktopStore } from "../db/store";
 import type { AgentService } from "../agent/service";
 import { searchContextMentions } from "../agent/contextMentions";
 import { TurnUndoCoordinator } from "../agent/turnUndoCoordinator";
-import { currentEventSequence } from "../agent/harness/eventBus";
+import { currentEventSequence, currentRuntimeId } from "../agent/harness/eventBus";
 import { resolveExistingWorkspacePath } from "../security/pathSandbox";
 import { listWorkspaceDirectory, readWorkspaceFile } from "../workspace/files";
 import { listWorkspaceOpenTargets, openWorkspaceTarget } from "../workspace/openTargets";
@@ -125,13 +125,27 @@ export const registerIpc = (
   };
 
   const emitSnapshot = () => {
+    emit({ type: "snapshot.updated", snapshot: captureSnapshot() });
+  };
+
+  const captureSnapshot = () => {
     ensureThread();
     store.saveActiveSelection(state.activeThreadId, state.activeWorkspaceId);
     const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
     snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
     snapshot.activeRuns = runtime.listActiveRuns();
     snapshot.terminal = runtime.getTerminalState();
-    emit({ type: "snapshot.updated", snapshot });
+    return snapshot;
+  };
+
+  const pendingInputForRun = (run: ReturnType<AgentService["getActiveRun"]>) => {
+    if (!run) return null;
+    const checkpoint = store.getRunCheckpoint(run.threadId);
+    const pending = checkpoint?.pendingUserInput;
+    return run.assistantMessageId === checkpoint?.assistantMessageId && pending && !pending.resolvedResult ? {
+      threadId: run.threadId, assistantMessageId: checkpoint.assistantMessageId,
+      callId: pending.call.id, questions: pending.questions, createdAt: checkpoint.updatedAt,
+    } : null;
   };
 
   const handle = (
@@ -152,14 +166,14 @@ export const registerIpc = (
   handle(channels.updatePromptMetadata, z.tuple([promptMetadataSchema]), (_event, input) => store.updatePromptMetadata(input));
   handle(channels.savePrompt, z.tuple([savePromptSchema]), (_event, input) => store.savePrompt(input));
   handle(channels.deleteSavedPrompt, z.tuple([idSchema]), (_event, id: string) => store.deleteSavedPrompt(id));
-  handle(channels.getSnapshot, z.tuple([]), () => {
-    ensureThread();
-    store.saveActiveSelection(state.activeThreadId, state.activeWorkspaceId);
-    const snapshot = store.snapshot(state.activeThreadId, state.activeWorkspaceId);
-    snapshot.activeRun = state.activeThreadId ? runtime.getActiveRun(state.activeThreadId) : null;
-    snapshot.activeRuns = runtime.listActiveRuns();
-    snapshot.terminal = runtime.getTerminalState();
-    return snapshot;
+  handle(channels.getSnapshot, z.tuple([]), captureSnapshot);
+  handle(channels.getRuntimeHealth, z.tuple([]), () => ({ runtimeId: currentRuntimeId(), sequence: currentEventSequence() }));
+  handle(channels.getSyncSnapshot, z.tuple([]), () => {
+    const snapshot = captureSnapshot();
+    const runs = new Map(snapshot.activeRuns.map((run) => [run.threadId, run]));
+    if (snapshot.activeRun) runs.set(snapshot.activeRun.threadId, snapshot.activeRun);
+    const pendingInputs = [...runs.values()].flatMap((run) => { const pending = pendingInputForRun(run); return pending ? [pending] : []; });
+    return { runtimeId: currentRuntimeId(), sequence: currentEventSequence(), snapshot, pendingInputs };
   });
 
   handle(channels.getThreadHistoryPage, z.tuple([z.object({
@@ -174,13 +188,8 @@ export const registerIpc = (
     (_event, input: { parentThreadId: string; threadId: string; before?: string }) => {
       if (state.activeThreadId !== input.parentThreadId || !store.listSubagents(input.parentThreadId).some((agent) => agent.threadId === input.threadId)) throw new Error("Agent does not belong to the selected chat.");
       const run = runtime.getActiveRun(input.threadId);
-      const checkpoint = store.getRunCheckpoint(input.threadId);
-      const pending = checkpoint?.pendingUserInput;
-      const pendingInput = run && run.assistantMessageId === checkpoint?.assistantMessageId && pending && !pending.resolvedResult ? {
-        threadId: input.threadId, assistantMessageId: checkpoint.assistantMessageId,
-        callId: pending.call.id, questions: pending.questions, createdAt: checkpoint.updatedAt,
-      } : null;
-      return { page: store.getThreadHistoryPage(input.threadId, { before: input.before, limit: 50 }), run, pendingInput, sequence: currentEventSequence() };
+      const pendingInput = pendingInputForRun(run);
+      return { page: store.getThreadHistoryPage(input.threadId, { before: input.before, limit: 50 }), run, pendingInput, runtimeId: currentRuntimeId(), sequence: currentEventSequence() };
     });
 
   handle(channels.getMessageDetail, z.tuple([idSchema]), (_event, messageId: string) => {

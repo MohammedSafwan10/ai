@@ -1679,6 +1679,7 @@ export type PrivoraEventPayload =
 ;
 
 export interface PrivoraEventEnvelope<T extends PrivoraEventPayload = PrivoraEventPayload> {
+  runtimeId?: string;
   protocolVersion: typeof PRIVORA_EVENT_PROTOCOL_VERSION;
   eventId: string;
   sequence: number;
@@ -1688,6 +1689,9 @@ export interface PrivoraEventEnvelope<T extends PrivoraEventPayload = PrivoraEve
   itemId?: string;
   payload: T;
 }
+
+export interface RuntimeHealth { runtimeId: string; sequence: number }
+export interface SyncSnapshot extends RuntimeHealth { snapshot: AppSnapshot; pendingInputs: RequestUserInputRequestRecord[] }
 
 export interface PrepareTurnUndoInput {
   messageId: string;
@@ -1811,7 +1815,9 @@ export interface PrivoraDesktopApi {
   savePrompt(input: SavePromptInput): Promise<SavedPrompt>;
   deleteSavedPrompt(id: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
-  getSubagentHistory(input: { parentThreadId: string; threadId: string; before?: string }): Promise<{ page: ThreadHistoryPage; run: ActiveRunState | null; pendingInput: RequestUserInputRequestRecord | null; sequence: number }>;
+  getSyncSnapshot(): Promise<SyncSnapshot>;
+  getRuntimeHealth(): Promise<RuntimeHealth>;
+  getSubagentHistory(input: { parentThreadId: string; threadId: string; before?: string }): Promise<{ page: ThreadHistoryPage; run: ActiveRunState | null; pendingInput: RequestUserInputRequestRecord | null; sequence: number; runtimeId: string }>;
   getThreadHistoryPage(input: ThreadHistoryPageInput): Promise<ThreadHistoryPage>;
   getMessageDetail(messageId: string): Promise<MessageDetailRecord>;
   getToolEventDetail(toolId: string): Promise<ToolEventDetailRecord>;

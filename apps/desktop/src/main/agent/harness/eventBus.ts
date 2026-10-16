@@ -1,4 +1,5 @@
 import type { BrowserWindow } from "electron";
+import { randomUUID } from "node:crypto";
 import {
   PRIVORA_EVENT_PROTOCOL_VERSION,
   type PrivoraEventEnvelope,
@@ -6,6 +7,8 @@ import {
 } from "../../../shared/types";
 
 let sequence = 0;
+const runtimeId = randomUUID();
+export const currentRuntimeId = () => runtimeId;
 export const currentEventSequence = () => sequence;
 
 export const envelopePrivoraEvent = (payload: PrivoraEventPayload): PrivoraEventEnvelope => {
@@ -13,6 +16,7 @@ export const envelopePrivoraEvent = (payload: PrivoraEventPayload): PrivoraEvent
   const nextSequence = ++sequence;
   return {
     protocolVersion: PRIVORA_EVENT_PROTOCOL_VERSION,
+    runtimeId,
     eventId: crypto.randomUUID(),
     sequence: nextSequence,
     emittedAt,

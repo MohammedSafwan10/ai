@@ -51,6 +51,8 @@ import { channels } from "../main/ipc/channels";
 const api: PrivoraDesktopApi = {
   debugEnabled: typeof process !== "undefined" && process.env.PRIVORA_DEBUG === "1",
   getSnapshot: () => ipcRenderer.invoke(channels.getSnapshot),
+  getSyncSnapshot: () => ipcRenderer.invoke(channels.getSyncSnapshot),
+  getRuntimeHealth: () => ipcRenderer.invoke(channels.getRuntimeHealth),
   getComposerDraft: (threadId) => ipcRenderer.invoke(channels.getComposerDraft, threadId),
   saveComposerDraft: (threadId, draft) => ipcRenderer.invoke(channels.saveComposerDraft, threadId, draft),
   clearComposerDraft: (threadId, revision) => ipcRenderer.invoke(channels.clearComposerDraft, threadId, revision),

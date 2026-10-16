@@ -9,6 +9,7 @@ import { RequestUserInputPanel } from "../../components/RequestUserInputPanel";
 import { isActiveTurnStatus } from "../../../shared/runStatus";
 import "./subagents.css";
 import { groupInlineMessages } from "./inlineMessages";
+import { getDesktopSync, withDeadline } from "../../state/desktopSync";
 import { compactLiveOutput } from "../../state/liveOutput";
 import { retainRecentHistory } from "../../state/historyRetention";
 import { mergeUniqueByFreshness } from "../../state/useDesktopState";
@@ -19,7 +20,7 @@ const upsert = <T extends { id: string }>(items: T[], item: T) => {
   const next = items.filter((old) => old.id !== item.id);
   return [...next, item];
 };
-export type AgentTranscript = { page: ThreadHistoryPage; run: ActiveRunState | null; sequence: number; pendingInput?: import("../../../shared/types").RequestUserInputRequestRecord | null };
+export type AgentTranscript = { runtimeId?: string; page: ThreadHistoryPage; run: ActiveRunState | null; sequence: number; pendingInput?: import("../../../shared/types").RequestUserInputRequestRecord | null };
 const withTranscriptRun = (current: AgentTranscript, run: ActiveRunState | null): AgentTranscript => {
   const previous = current.run;
   if (previous === run || (previous && run && Object.keys({ ...previous, ...run }).every((key) => previous[key as keyof ActiveRunState] === run[key as keyof ActiveRunState]))) return current;
@@ -69,6 +70,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const [listOffset, setListOffset] = useState(0);
   const list = useRef<HTMLDivElement>(null);
   const historyGeneration = useRef(0);
+  const recoveryGeneration = useRef(0);
   useEffect(() => { if (hidden) return; setNow(Date.now()); const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, [hidden]);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -86,8 +88,43 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
     let disposed = false;
     let ready = false;
     const buffered: PrivoraEventEnvelope[] = [];
-    const unsubscribe = window.privoraDesktop.onPrivoraEvent((event) => {
+    let requestVersion = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const load = (runtimeId?: string) => {
+      clearTimeout(retryTimer);
+      recoveryGeneration.current++; setLoadingOlder(false);
+      const version = ++requestVersion;
+      ready = false; buffered.length = 0;
+      void withDeadline(window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected })).then((initial) => {
+        if (disposed || version !== requestVersion || generation !== historyGeneration.current) return;
+        if (runtimeId && initial.runtimeId !== runtimeId) { void getDesktopSync().recover(); return; }
+        setError(""); attempts = 0;
+        const replay = buffered.splice(0);
+        setTranscript((current) => {
+          // Keep explicitly loaded older pages, but replace the live tail and runtime state.
+          const older = current?.page.threadId === selected && initial.page.hasOlder
+            ? current.page.messages.filter((message) => message.createdAt < (initial.page.messages[0]?.createdAt || 0)) : [];
+          const olderIds = new Set(older.map((message) => message.id));
+          const base = older.length && current ? { ...initial, page: { ...current.page, messages: [...older, ...initial.page.messages], toolEvents: [...current.page.toolEvents.filter((tool) => olderIds.has(tool.messageId)), ...initial.page.toolEvents], turnUndos: [...current.page.turnUndos.filter((undo) => olderIds.has(undo.messageId)), ...initial.page.turnUndos] } } : initial;
+          const next = replay.reduce<AgentTranscript>((value, event) => applyAgentEvent(value, selected, event), base);
+          return stick.current ? retainAgentTranscript(next) : next;
+        });
+        ready = true;
+      }).catch((reason: unknown) => {
+        if (disposed || version !== requestVersion) return;
+        setError(reason instanceof Error ? reason.message : String(reason));
+        if (attempts < 3) retryTimer = setTimeout(() => load(runtimeId), 1000 * 2 ** attempts++);
+      });
+    };
+    const unsubscribe = getDesktopSync().subscribe((update) => {
       if (disposed) return;
+      if (update.type === "status") {
+        if (update.status !== "connected") { ready = false; requestVersion++; recoveryGeneration.current++; setLoadingOlder(false); buffered.length = 0; clearTimeout(retryTimer); }
+        return;
+      }
+      if (update.type === "snapshot") { load(update.value.runtimeId); return; }
+      const event = update.event;
       const payload = event.payload;
       const relevant = payload.type === "snapshot.updated" || (payload.type === "message.upserted" ? payload.message.threadId === selected
         : payload.type === "tool.upserted" ? payload.tool.threadId === selected
@@ -97,8 +134,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       if (!ready) {
         // A stalled history request must not retain a growing stream of updates.
         if (buffered.length >= 128) {
-          buffered.length = 0; disposed = true; unsubscribe();
-          setError("Agent history could not keep up with live updates. Retry to reload saved history; running work is unaffected.");
+          buffered.length = 0; requestVersion++; void getDesktopSync().recover();
           return;
         }
         buffered.push(event); return;
@@ -109,13 +145,8 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
         return stick.current ? retainAgentTranscript(updated) : updated;
       });
     });
-    void window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected }).then((initial) => {
-      if (disposed || generation !== historyGeneration.current) return;
-      setTranscript(retainAgentTranscript(buffered.reduce<AgentTranscript>((current, event) => applyAgentEvent(current, selected, event), initial)));
-      buffered.length = 0;
-      ready = true;
-    }).catch((reason: unknown) => { buffered.length = 0; unsubscribe(); if (!disposed) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { disposed = true; buffered.length = 0; unsubscribe(); };
+    load();
+    return () => { disposed = true; clearTimeout(retryTimer); buffered.length = 0; unsubscribe(); };
   }, [parentThreadId, selected, reload, hidden]);
   const status = (item: SubagentRecord) => snapshot.activeRuns.find((run) => run.threadId === item.threadId)?.status || item.status;
   const live = (item: SubagentRecord) => isActiveTurnStatus(status(item)) || ["pending", "waiting"].includes(status(item));
@@ -175,16 +206,18 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const older = async () => {
     if (!selected || !transcript?.page.beforeCursor || loadingOlder) return;
     const generation = historyGeneration.current;
+    const recovery = recoveryGeneration.current;
     stick.current = false;
     readingAnchor.capture();
     setLoadingOlder(true);
     try {
       const previous = await window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected, before: transcript.page.beforeCursor });
-      if (generation !== historyGeneration.current) return;
-      setTranscript((current) => !current || current.page.threadId !== previous.page.threadId ? current : { ...current, page: { ...current.page, ...previous.page,
+      if (generation !== historyGeneration.current || recovery !== recoveryGeneration.current) return;
+      if (transcript.runtimeId && previous.runtimeId !== transcript.runtimeId) { void getDesktopSync().recover(); return; }
+      setTranscript((current) => !current || generation !== historyGeneration.current || recovery !== recoveryGeneration.current || current.page.threadId !== previous.page.threadId ? current : { ...current, page: { ...current.page, ...previous.page,
         messages: mergeUniqueByFreshness(previous.page.messages, current.page.messages), toolEvents: mergeUniqueByFreshness(previous.page.toolEvents, current.page.toolEvents), turnUndos: [] } });
-    } catch (reason) { if (generation === historyGeneration.current) setError(String(reason)); }
-    finally { if (generation === historyGeneration.current) setLoadingOlder(false); }
+    } catch (reason) { if (generation === historyGeneration.current && recovery === recoveryGeneration.current) setError(String(reason)); }
+    finally { if (generation === historyGeneration.current && recovery === recoveryGeneration.current) setLoadingOlder(false); }
   };
   return <aside className="workspace-ide subagents-pane" aria-label="Subagents" style={hidden ? { display: "none" } : undefined}>
     <header className="workspace-ide-topbar">

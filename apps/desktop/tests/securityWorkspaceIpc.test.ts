@@ -17,6 +17,8 @@ vi.mock("electron", () => ({
 import { DesktopStore } from "../src/main/db/store";
 import { registerIpc, type IpcState } from "../src/main/ipc/register";
 import { channels } from "../src/main/ipc/channels";
+import { currentEventSequence, currentRuntimeId, envelopePrivoraEvent } from "../src/main/agent/harness/eventBus";
+import type { ActiveRunState, SyncSnapshot } from "../src/shared/types";
 
 let store: DesktopStore;
 let service: SecurityWorkspaceService;
@@ -36,6 +38,44 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("captures an authoritative snapshot and watermark without changing the legacy snapshot API", () => {
+    const before = currentEventSequence();
+    const event = envelopePrivoraEvent({ type: "notification.created", tone: "info", message: "fixture" });
+    const sync = invoke(channels.getSyncSnapshot) as SyncSnapshot;
+    expect(sync.runtimeId).toBe(currentRuntimeId());
+    expect(event.runtimeId).toBe(sync.runtimeId);
+    expect(sync.sequence).toBe(before + 1);
+    expect(sync.pendingInputs).toEqual([]);
+    expect(sync.snapshot.activeThreadId).toBe(state.activeThreadId);
+    expect(invoke(channels.getRuntimeHealth)).toEqual({ runtimeId: sync.runtimeId, sequence: sync.sequence });
+    expect(invoke(channels.getSnapshot)).toEqual(sync.snapshot);
+    expect(currentEventSequence()).toBe(sync.sequence);
+    expect(() => invoke(channels.getRuntimeHealth, "unexpected argument")).toThrow();
+    expect(() => invoke(channels.getSyncSnapshot, {})).toThrow();
+  });
+
+  it("restores only authoritative unresolved questions and reads its watermark after runtime projection", () => {
+    const root = store.createThread(null); state.activeThreadId = root.id;
+    const child = store.createSubagent({ parentThreadId: root.id, parentMessageId: "root-answer", workspaceId: null, taskName: "review", agentPath: "/root/review", prompt: "Fixture" });
+    const run = (threadId: string, assistantMessageId: string): ActiveRunState => ({ threadId, assistantMessageId, status: "waiting_tool", phase: "waiting_tool", updatedAt: 2 });
+    const rootRun = run(root.id, "root-answer"); const childRun = run(child.threadId, "child-answer");
+    for (const current of [rootRun, childRun]) store.saveRunCheckpoint({ threadId: current.threadId, assistantMessageId: current.assistantMessageId, workspaceRoot: mocked.directory,
+      history: [], assistantText: "", assistantThought: "", iteration: 0, toolCount: 0, recoveryAttempts: 0, lastProgressAt: 1, updatedAt: 2,
+      pendingUserInput: { call: { id: `${current.threadId}-question`, name: "request_user_input", arguments: {} }, questions: [] } });
+    const runtime = { listActiveRuns: () => [rootRun, childRun], getActiveRun: (threadId: string) => threadId === root.id ? rootRun : childRun,
+      getTerminalState: () => { envelopePrivoraEvent({ type: "notification.created", tone: "info", message: "projection fixture" }); return null; } };
+    registerIpc(store, runtime as unknown as AgentService, state, {} as BrowserSessionManager, {} as NotesStore);
+    const sync = invoke(channels.getSyncSnapshot) as SyncSnapshot;
+    expect(sync.sequence).toBe(currentEventSequence());
+    expect(sync.pendingInputs.map((pending) => pending.threadId).sort()).toEqual([root.id, child.threadId].sort());
+    const checkpoint = store.getRunCheckpoint(child.threadId)!;
+    store.saveRunCheckpoint({ ...checkpoint, pendingUserInput: { ...checkpoint.pendingUserInput!, resolvedResult: { success: true } } });
+    expect((invoke(channels.getSyncSnapshot) as SyncSnapshot).pendingInputs.map((pending) => pending.threadId)).toEqual([root.id]);
+    const history = invoke(channels.getSubagentHistory, { parentThreadId: root.id, threadId: child.threadId }) as { runtimeId: string; pendingInput: unknown };
+    expect(history.runtimeId).toBe(currentRuntimeId()); expect(history.pendingInput).toBeNull();
+    store.saveRunCheckpoint({ ...checkpoint, assistantMessageId: "superseded-answer" });
+    expect((invoke(channels.getSyncSnapshot) as SyncSnapshot).pendingInputs.map((pending) => pending.threadId)).toEqual([root.id]);
+  });
   it("validates saved composer drafts and clears only the accepted revision", () => {
     const thread = store.createThread(null);
     const draft = { revision: "current", text: "not sent", attachments: [], contextMentions: [], pastedBlocks: [] };

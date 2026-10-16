@@ -840,3 +840,5 @@
 .message-edit-confirm [role="alert"] { color: #f87171; }
 
 .response-disposition { color: var(--privora-text-muted); font-size: 12px; margin: 8px 0; }
+
+.desktop-connection-status { color: var(--text-secondary, #aaa); font-size: 12px; white-space: nowrap; }
