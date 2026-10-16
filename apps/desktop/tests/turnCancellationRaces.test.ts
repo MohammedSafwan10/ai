@@ -9,6 +9,8 @@ vi.mock("../src/main/agent/providers", () => ({ streamProviderResponse: hooks.st
 vi.mock("../src/main/agent/contextMentions", () => ({ buildMentionContext: hooks.mentions }));
 import { DesktopStore } from "../src/main/db/store";
 import { TurnCoordinator } from "../src/main/agent/turnCoordinator";
+import { ProviderStreamError } from "../src/main/agent/providers/streamOutcome";
+import { StreamStalledError } from "../src/main/agent/harness/support/errors";
 import { OPENCODE_GO_MUSE_SPK_13_MODEL_ID } from "../src/shared/models";
 import type { ToolResult } from "../src/shared/types";
 
@@ -29,6 +31,24 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it.each(["provider", "watchdog"])("preserves delivered tool results and makes a %s interruption resumable without replay", async (source) => {
+    const { thread, coordinator } = fixture();
+    const execute = vi.spyOn(coordinator as unknown as { executeTool: () => Promise<ToolResult> }, "executeTool").mockResolvedValue({ success: true, output: "Mutation completed once" });
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      options.onTextDelta("Partial response");
+      options.onToolCall({ id: "delivered-once", name: "desktop_list_dir", arguments: {} });
+      options.onStreamOutcome?.({ status: "interrupted", reason: "missing_finish" });
+      throw source === "provider" ? new ProviderStreamError({ status: "interrupted", reason: "missing_finish" }) : new StreamStalledError("Provider became idle");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Inspect fixture" });
+    expect(execute).toHaveBeenCalledTimes(1); expect(hooks.stream).toHaveBeenCalledTimes(1);
+    const message = store.listMessages(thread.id).find((item) => item.role === "assistant")!;
+    expect(message.status).toBe("stalled"); expect(message.providerOutcome?.status).toBe("interrupted");
+    expect(coordinator.getActiveRun(thread.id)?.resumable).toBe(true);
+    const checkpoint = store.getRunCheckpoint(thread.id);
+    expect(JSON.stringify(checkpoint?.history)).toContain("Mutation completed once");
+    expect(checkpoint?.toolCount).toBe(1);
+  });
   it("anchors incoming coordination after live text even before the throttled write", async () => {
     const { thread, coordinator } = fixture();
     let sampled = false;

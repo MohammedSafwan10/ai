@@ -3,6 +3,8 @@ import { geminiDesktopFunctionDeclarations, parseDesktopToolCall, parsePartialDe
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { createToolCallId } from "./types";
 import { normalizeProviderUsage } from "./usage";
+import { ProviderStreamError, StreamOutcomeTracker } from "./streamOutcome";
+import { ProviderRequestError } from "./requestError";
 
 interface GeminiGroundingMetadata {
   webSearchQueries?: string[];
@@ -220,6 +222,10 @@ export class GeminiAdapter implements ProviderAdapter {
       await this.streamGemini(options);
     } catch (error) {
       if (options.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+      if (error instanceof ProviderStreamError) throw error;
+      if (error instanceof TypeError && /fetch|network|terminated/i.test(error.message)) throw error;
+      const status = Number((error as { status?: number; code?: number })?.status || (error as { code?: number })?.code);
+      if (status >= 400 && status <= 599) throw new ProviderRequestError(normalizeGeminiError(error), status);
       throw new Error(normalizeGeminiError(error));
     }
   }
@@ -239,7 +245,7 @@ export class GeminiAdapter implements ProviderAdapter {
         ...(!options.disableTools ? { tool_choice: "validated" } : {}),
       },
       ...(!options.disableTools ? { tools: geminiInteractionTools(options.collaborationMode, options.toolEnvironment) as any } : {}),
-    } as any, { abortSignal: options.signal } as any);
+    } as any, { abortSignal: options.signal, maxRetries: 0 } as any);
 
     const activeSteps = new Map<number, {
       id: string;
@@ -249,16 +255,20 @@ export class GeminiAdapter implements ProviderAdapter {
     const citationSources = new Map<string, string>();
     const serverSteps = new Map<number, Record<string, any>>();
     let webSearchEventId = "";
+    let incompleteTool = false;
+    const outcome = new StreamOutcomeTracker();
     for await (const rawEvent of responseStream as any) {
       if (options.signal.aborted) throw new DOMException("Aborted", "AbortError");
       options.onStreamProgress?.();
       const event = rawEvent as Record<string, any>;
+      outcome.observe(undefined, event);
       if (event.event_type === "error") {
         throw new Error(String(event.error?.message || event.message || "Gemini stream failed."));
       }
       if (event.event_type === "interaction.status_update") {
         const status = String(event.status || event.interaction?.status || event.status_update?.status || "").toLowerCase();
         if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(status)) {
+          options.onStreamOutcome?.(outcome.finish());
           throw new Error(String(event.error?.message || event.interaction?.error?.message || `Gemini stream ended with status ${status}.`));
         }
       }
@@ -338,11 +348,14 @@ export class GeminiAdapter implements ProviderAdapter {
           const rawArguments = active.argumentsText || "{}";
           const call = parseDesktopToolCall(active.name, rawArguments, active.id);
           if (call) options.onToolCall(call);
+          else incompleteTool = true;
           activeSteps.delete(event.index);
         }
       }
     }
 
+    if (options.onStreamOutcome && (activeSteps.size || incompleteTool)) throw new ProviderStreamError({ status: "incomplete", reason: "incomplete_tool_call" });
+    options.onStreamOutcome?.(outcome.finish());
     if (citationSources.size > 0) {
       options.onTextDelta(`\n\nSources:\n${Array.from(citationSources, ([url, title]) => `- [${title}](${url})`).join("\n")}`);
     }

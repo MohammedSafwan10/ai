@@ -19,8 +19,9 @@ export const resolveNoToolOutcome = (input: {
   const promisedAction = /(?:^|[.!?\n]\s*)(?:let me|i['’]ll|i will)\s+(?!know\b|not\b)[^.!?\n]{0,80}\b(?:re-?run|run|retry|check|verify|inspect|fetch|write|save|execute|collect|compare)\b[^.!?\n]{0,180}[.!]?\s*$/i.test(text);
   // Models also announce a tool with "Starting ...:" or "Generating ...:".
   // Require the unfinished colon ending, so completed progress summaries stay final.
-  const announcedAction = /(?:^|[.!?\n]\s*)(?:now\s+)?(?:i(?:['’]m| am)\s+)?(?:generating|starting|copying|downloading|installing|configuring|writing|fetching|saving|checking|verifying)\s+(?![^.!?\n]*\b(?:not|cannot|failed|blocked|unavailable)\b)[^.!?\n]{1,180}:\s*$/i.test(text);
-  const pendingAction = input.afterToolResults && (promisedAction || announcedAction);
+  const announcedAction = /(?:^|[.!?\n—]\s*)(?:now\s+)?(?:i(?:['’]m| am)\s+)?(?:generating|starting|copying|downloading|installing|configuring|writing|fetching|saving|checking|verifying|extracting|comparing|inspecting|running)\s+(?![^.!?\n]*\b(?:not|cannot|failed|blocked|unavailable)\b)[^.!?\n]{1,180}:\s*$/i.test(text);
+  const trailingExtraction = /(?:^|\s)(?<!not )(?:extracting|comparing|inspecting)\s+(?![^.!?\n]*\b(?:not|cannot|failed|blocked|unavailable)\b)[^.!?\n]{1,180}:\s*$/i.test(text);
+  const pendingAction = input.afterToolResults && (promisedAction || announcedAction || trailingExtraction);
   if (pendingAction) {
     return input.recoveryAttempts >= MAX_RECOVERY_NUDGES
       ? { action: "incomplete", message: "The model stopped after promising another check without executing it. Existing results were kept; the task is incomplete." }

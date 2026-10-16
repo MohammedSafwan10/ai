@@ -1,6 +1,8 @@
 import { openRouterDesktopTools, parseDesktopToolCall, parsePartialDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
+import { ProviderRequestError } from "./requestError";
+import { ProviderStreamError } from "./streamOutcome";
 import { emitChatDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 import type { ReasoningEffort } from "../../../shared/models";
@@ -136,7 +138,7 @@ export class DeepSeekAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(normalizeDeepSeekError(errorText || `DeepSeek request failed with ${response.status}`, response.status));
+      throw new ProviderRequestError(normalizeDeepSeekError(errorText || `DeepSeek request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
     }
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
@@ -153,6 +155,7 @@ export class DeepSeekAdapter implements ProviderAdapter {
 
     const flush = () => {
       for (const value of buffers.values()) {
+        if (options.onStreamOutcome && !parseDesktopToolCall(value.name, value.argumentsText, value.id)) throw new ProviderStreamError({ status: "incomplete", reason: "incomplete_tool_call" });
         emitBufferedCall(value);
       }
       buffers.clear();
@@ -190,7 +193,7 @@ export class DeepSeekAdapter implements ProviderAdapter {
       });
 
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
-    }, options.onStreamProgress);
+    }, options.onStreamProgress, options.onStreamOutcome);
 
     if (buffers.size > 0) flush();
   }

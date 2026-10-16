@@ -148,6 +148,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
         message={message} inlineSteers={inlineMessages.inlineByTurn.get(message.id)} coordinationDetails
         tools={transcript.page.toolEvents.filter((tool: ToolEventRecord) => tool.messageId === message.id)} subagents={agents} onOpenSubagent={setSelected}
         activeRunStatus={transcript.run?.assistantMessageId === message.id ? transcript.run.status : null}
+        activeRunReason={transcript.run?.assistantMessageId === message.id ? transcript.run.reason : null}
         onApprove={approve} onApproveAll={(ids) => ids.forEach((id) => approve(id, true))}
         onOpenReview={() => {}} turnUndo={null} onPrepareTurnUndo={async () => null} onUndoTurnChanges={async () => null} readOnly />)}
       {transcript?.pendingInput && <RequestUserInputPanel request={transcript.pendingInput} onSubmit={(answers) => window.privoraDesktop.answerRequestUserInput({ threadId: transcript.pendingInput!.threadId, callId: transcript.pendingInput!.callId, answers })} />}

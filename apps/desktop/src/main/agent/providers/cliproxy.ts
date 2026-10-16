@@ -8,6 +8,8 @@ import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./
 import type { ProviderWebSearchEvent } from "./types";
 import { normalizeLocalServiceBaseUrl } from "../../security/serviceUrls";
 import { readSse } from "./sse";
+import { ProviderRequestError } from "./requestError";
+import { ProviderStreamError } from "./streamOutcome";
 import { emitResponsesDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 
@@ -165,6 +167,7 @@ interface ResponsesCallBuffer {
 export class ResponsesToolCallTracker {
   private readonly buffers = new Map<string, ResponsesCallBuffer>();
   private readonly emitted = new Set<string>();
+  private malformed = false;
 
   constructor(private readonly options: Pick<ProviderStreamOptions, "onToolCall" | "onToolDraft">) {}
 
@@ -185,12 +188,12 @@ export class ResponsesToolCallTracker {
     if (typeof itemId === "string" && itemId) aliases.push(`item:${itemId}`);
     if (Number.isInteger(data?.output_index) && data.output_index >= 0) aliases.push(`output:${data.output_index}`);
     // Missing all identity fields cannot safely identify a mutating call.
-    if (!aliases.length) return;
+    if (!aliases.length) { this.malformed = true; return; }
     const matches = aliases.map((alias) => this.buffers.get(alias)).filter((buffer): buffer is ResponsesCallBuffer => Boolean(buffer));
     const buffer = matches[0] ?? { argumentsText: "", completed: false };
     const knownIds = new Set(matches.map((value) => value.id).filter(Boolean));
     if (typeof callId === "string" && callId) knownIds.add(callId);
-    if (knownIds.size > 1) return; // Conflicting aliases are malformed, not new calls.
+    if (knownIds.size > 1) { this.malformed = true; return; }
     for (const match of matches) {
       buffer.id ??= match.id;
       buffer.name ??= match.name;
@@ -222,6 +225,12 @@ export class ResponsesToolCallTracker {
     if (!call) return;
     this.emitted.add(buffer.id);
     this.options.onToolCall(call);
+  }
+
+  assertComplete() {
+    if (this.malformed || [...new Set(this.buffers.values())].some((buffer) => !buffer.id || !this.emitted.has(buffer.id))) {
+      throw new ProviderStreamError({ status: "incomplete", reason: "incomplete_tool_call" });
+    }
   }
 }
 
@@ -296,7 +305,7 @@ export class CliproxyAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(normalizeCliproxyError(errorText || `CLIProxy request failed with ${response.status}`));
+      throw new ProviderRequestError(normalizeCliproxyError(errorText || `CLIProxy request failed with ${response.status}`), response.status, response.headers.get("retry-after"));
     }
 
     const toolCalls = new ResponsesToolCallTracker(options);
@@ -350,6 +359,7 @@ export class CliproxyAdapter implements ProviderAdapter {
         // Ignore malformed or non-JSON SSE payloads. CLIProxy Responses streams use
         // typed events, and unknown payloads must not leak into visible assistant text.
       }
-    }, options.onStreamProgress);
+    }, options.onStreamProgress, options.onStreamOutcome);
+    if (options.onStreamOutcome) toolCalls.assertComplete();
   }
 }

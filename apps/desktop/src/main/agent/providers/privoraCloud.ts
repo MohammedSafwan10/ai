@@ -4,6 +4,7 @@ import { openRouterDesktopTools, parseDesktopToolCall } from "../tools/definitio
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { normalizeProviderUsage } from "./usage";
 import { openRouterReasoningConfig } from "./openrouter";
+import { normalizeFinish, ProviderStreamError } from "./streamOutcome";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -90,6 +91,7 @@ export class PrivoraCloudAdapter implements ProviderAdapter {
     const jwt = options.privoraUserJwt.trim() || await createAppwriteJwt(gatewaySettings, options.privoraSessionCookie);
     const result = await executePrivoraGateway<{
       text?: string;
+      finishReason?: string;
       reasoning?: string;
       toolCalls?: Array<{ id?: string; name?: string; arguments?: string | Record<string, unknown> }>;
       usage?: unknown;
@@ -123,12 +125,16 @@ export class PrivoraCloudAdapter implements ProviderAdapter {
     result.toolCalls?.forEach((toolCall) => {
       const args = typeof toolCall.arguments === "string" ? toolCall.arguments : JSON.stringify(toolCall.arguments || {});
       const parsed = parseDesktopToolCall(toolCall.name, args, toolCall.id);
-      if (parsed) options.onToolCall(parsed);
+      if (!parsed) throw new ProviderStreamError({ status: "incomplete", reason: "incomplete_tool_call" });
+      options.onToolCall(parsed);
     });
     if (result.billing) options.onAiCredits?.({
       creditsUsed: result.billing.creditsUsed,
       estimatedCredits: result.billing.estimatedCredits,
       summary: result.summary,
     });
+    // Older deployed gateways return an atomic JSON result without finishReason.
+    // Keep them compatible; only upgraded gateways attest the model's finish.
+    options.onStreamOutcome?.(result.finishReason ? normalizeFinish(result.finishReason) : { status: "completed", reason: "legacy_gateway_response" });
   }
 }

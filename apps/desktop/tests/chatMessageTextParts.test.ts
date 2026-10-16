@@ -18,6 +18,25 @@ const message = (content: string, textParts: ChatMessageRecord["textParts"]): Ch
 });
 
 describe("assistant text part rendering", () => {
+  it.each([
+    ["interrupted", "Interrupted"], ["incomplete", "Incomplete response"], ["output_limit", "Output limit reached"],
+  ] as const)("labels %s distinctly from a completed answer", (status, label) => {
+    const html = renderToStaticMarkup(createElement(ChatMessage, {
+      message: { ...message("Partial response", []), status: "stalled", providerOutcome: { status, reason: "fixture" } },
+      tools: [], subagents: [], activeRunStatus: null, onApprove: () => {}, onApproveAll: () => {}, onOpenReview: () => {}, turnUndo: null,
+      onPrepareTurnUndo: async () => null, onUndoTurnChanges: async () => null,
+    }));
+    expect(html).toContain(label); expect(html).not.toContain("Worked for");
+  });
+  it("shows the bounded retry explanation in the existing activity row", () => {
+    const html = renderToStaticMarkup(createElement(ChatMessage, {
+      message: { ...message("", []), status: "sampling" }, tools: [], subagents: [], activeRunStatus: "sampling",
+      activeRunReason: "Provider temporarily unavailable. Retry 1 of 2 in 2s.",
+      onApprove: () => {}, onApproveAll: () => {}, onOpenReview: () => {}, turnUndo: null,
+      onPrepareTurnUndo: async () => null, onUndoTurnChanges: async () => null,
+    }));
+    expect(html).toContain("Retry 1 of 2 in 2s.");
+  });
   it("copies the displayed final answer without earlier progress or thought text", () => {
     const content = "Working...\nDone.\n";
     const record = { ...message(content, [part("progress", "commentary", 0, 11, 1), part("answer", "final_answer", 11, content.length, 2)]), thought: "Private reasoning" };

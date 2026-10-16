@@ -543,6 +543,7 @@ export default function App() {
                           ? snapshot.activeRun.status
                           : null
                       }
+                      activeRunReason={snapshot.activeRun?.assistantMessageId === message.id ? snapshot.activeRun.reason : null}
                       onApprove={(callId, approved, scope) => {
                         if (!activeThread) return;
                         void window.privoraDesktop.decideApproval({ threadId: activeThread.id, callId, approved, scope });

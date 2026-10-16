@@ -1,4 +1,5 @@
 import type { BrowserWindow } from "electron";
+import { ProviderStreamError } from "./providers/streamOutcome";
 import { assertWorkspaceDirectory } from "../workspace/availability";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
@@ -1086,6 +1087,7 @@ export class TurnCoordinator implements AgentHarnessApi {
 
         try {
           delete options.assistantMessage.responseDisposition;
+          delete options.assistantMessage.providerOutcome;
           const currentSystemInstruction = buildCurrentSystemInstruction();
           if (effectiveModel === "opencode-go/claude-haiku-5-5") boundSystemInstruction ??= currentSystemInstruction;
           await this.modelLoop.stream({
@@ -1109,8 +1111,15 @@ export class TurnCoordinator implements AgentHarnessApi {
             deepseekApiKey: this.store.getSecret("deepseek_api_key"),
             opencodeGoApiKey: this.store.getSecret("opencode_go_api_key"),
             maxOutputTokens: runtimeBudget.outputTokens,
+            onStreamOutcome: (outcome) => { options.assistantMessage.providerOutcome = outcome; },
+            onRetry: ({ attempt, delayMs }) => {
+              run.reason = `Provider temporarily unavailable. Retry ${attempt} of 2 in ${Math.ceil(delayMs / 1000)}s.`;
+              markRunProgress(run);
+              this.emitRun(run);
+            },
             onStreamProgress: () => {
               if (samplingController.signal.aborted) return;
+              if (run.reason?.startsWith("Provider temporarily unavailable.")) run.reason = undefined;
               providerProducedProgress = true;
               markRunProgress(run);
               if (Date.now() - lastStreamProgressEmitAt >= 1000) {
@@ -1326,6 +1335,7 @@ export class TurnCoordinator implements AgentHarnessApi {
             },
           });
         } catch (error) {
+          this.closeDanglingDraftTools(options.threadId, options.assistantMessage.id, new Set(calls.map((call) => call.id)));
           if (!(samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) && calls.length > 0) {
             // Tool delivery can precede the stream's failure. Keep its execution
             // owned by this turn until it settles and retain the completed result
@@ -1342,6 +1352,12 @@ export class TurnCoordinator implements AgentHarnessApi {
               results.push({ id: call.id, name: call.name, response: result });
             }
             history = appendToolResults(history, results);
+          }
+          if (error instanceof ProviderStreamError) {
+            if (!calls.length && (assistantText.slice(textStart).trim() || providerContextParts.length)) {
+              history = appendAssistantToolCalls(history, assistantText.slice(textStart), [], providerContextParts);
+            }
+            history = [...history, textProviderMessage("The previous model response was interrupted or incomplete. Completed tool results above are retained. Continue from that boundary without repeating completed actions; reconcile uncertain remote jobs before retrying any command. Incomplete tool drafts were not executed.")];
           }
           if (stalledAbortReason) throw new StreamStalledError(stalledAbortReason);
           if (samplingController.signal.reason === STEER_ABORT_REASON && !controller.signal.aborted) {
@@ -1565,7 +1581,18 @@ export class TurnCoordinator implements AgentHarnessApi {
       this.emitRun(run);
       handoff = true;
     } catch (error) {
+      if (error instanceof ProviderStreamError && !controller.signal.aborted) {
+        this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
+        transitionRun(run, "stalled", { iteration, toolCount, reason: error.message, resumable: true });
+        flushAssistant("stalled", true);
+        this.markSubagentFinished(options.threadId, "stopped", assistantText || error.message);
+        this.emitRun(run);
+        this.emit({ type: "notification.created", tone: "error", message: error.message });
+        handoff = true;
+        return;
+      }
       if (error instanceof StreamStalledError) {
+        options.assistantMessage.providerOutcome = { status: "interrupted", reason: "idle_timeout" };
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         if (shouldCompleteAfterSuccessfulImageStall({
           hasSuccessfulImageAwaitingFollowup: successfulImageAwaitingFollowup,
@@ -1583,7 +1610,7 @@ export class TurnCoordinator implements AgentHarnessApi {
           this.emit({ type: "turn.status_changed", threadId: options.threadId, run: this.getActiveRun(options.threadId) });
           return;
         }
-        if (recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
+        if (!providerProducedProgress && recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
           const nextController = new AbortController();
           run.controller = nextController;
           run.recoveryAttempts = recoveryAttempts + 1;

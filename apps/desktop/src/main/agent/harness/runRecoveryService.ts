@@ -1,4 +1,5 @@
 import type { DesktopStore } from "../../db/store";
+import { ProviderStreamError } from "../providers/streamOutcome";
 import type { ActiveRunState, AgentRunCheckpointRecord, ChatMessageRecord } from "../../../shared/types";
 import { toActiveRunState, type AgentRunTracker } from "../runState";
 import { appendToolResults, type ProviderMessage } from "../providers/types";
@@ -20,7 +21,9 @@ export class RunRecoveryService {
       updatedAt: checkpoint.updatedAt,
       iteration: checkpoint.iteration,
       toolCount: checkpoint.toolCount,
-      reason: checkpoint.interruptedAt
+      reason: message.status === "stalled" && message.providerOutcome && ["interrupted", "incomplete", "output_limit", "failed"].includes(message.providerOutcome.status)
+        ? new ProviderStreamError(message.providerOutcome).message
+        : checkpoint.interruptedAt
         ? "Interrupted when Privora closed. Progress saved. Resume to reconcile unfinished work before continuing."
         : message.status === "awaiting_approval"
         ? "Waiting for approval."

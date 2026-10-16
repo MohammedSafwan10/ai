@@ -26,6 +26,7 @@ describe("Gemini interaction search history", () => {
       { type: "google_search_call", id: "search", arguments: { queries: ["release notes"] }, signature: "call-signature" },
       { type: "google_search_result", call_id: "search", result: [{ search_suggestions: "Official release documentation" }], signature: "result-signature" },
     ]);
+    expect(mocked.create.mock.calls.at(-1)?.[1]).toMatchObject({ maxRetries: 0 });
   });
   it("keeps older server-tool evidence as text instead of silently dropping it", () => {
     const result = toGeminiInteractionInput([{ role: "assistant", content: "", parts: [{ type: "server_tool_response", toolType: "GOOGLE_SEARCH_WEB", response: { result: "Preserved evidence" } }] }]);

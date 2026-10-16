@@ -351,6 +351,7 @@ const handleChat = async ({ account, records, body }) => {
   const summary = await usageSummary(account, { ...records, balance: nextBalance });
   return {
     text: choice.content || "",
+    finishReason: openRouter.choices?.[0]?.finish_reason || "unknown",
     reasoning: choice.reasoning || choice.reasoning_content || "",
     toolCalls: (choice.tool_calls || []).map((call) => ({
       id: call.id,

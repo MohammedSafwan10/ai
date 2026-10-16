@@ -7,6 +7,8 @@ import {
 } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
 import { readSse } from "./sse";
+import { ProviderRequestError } from "./requestError";
+import { ProviderStreamError } from "./streamOutcome";
 import { emitChatDisposition, emitResponsesDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 import {
@@ -164,7 +166,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status));
+      throw new ProviderRequestError(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
     }
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
@@ -176,7 +178,10 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         const key = value.id || `${value.name}:${value.argumentsText}`;
         if (emitted.has(key)) continue;
         const call = parseDesktopToolCall(value.name, value.argumentsText, value.id);
-        if (!call) continue;
+        if (!call) {
+          if (options.onStreamOutcome) throw new ProviderStreamError({ status: "incomplete", reason: "incomplete_tool_call" });
+          continue;
+        }
         emitted.add(key);
         options.onToolCall(call);
       }
@@ -208,7 +213,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
       if (choice.finish_reason === "length") truncated = true;
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
-    }, options.onStreamProgress);
+    }, options.onStreamProgress, options.onStreamOutcome);
 
     if (buffers.size > 0) flush();
     if (truncated) throw truncatedOutputError(options.maxOutputTokens, thoughtChars > 0);
@@ -239,7 +244,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status));
+      throw new ProviderRequestError(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
     }
 
     const toolCalls = new ResponsesToolCallTracker(options);
@@ -295,7 +300,8 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       }
 
       toolCalls.consume(event, data);
-    }, options.onStreamProgress);
+    }, options.onStreamProgress, options.onStreamOutcome);
+    if (options.onStreamOutcome) toolCalls.assertComplete();
 
     if (incomplete) throw truncatedOutputError(options.maxOutputTokens, hasReasoningSummary);
   }
@@ -336,7 +342,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status));
+      throw new ProviderRequestError(normalizeGoError(errorText || `OpenCode Go request failed with ${response.status}`, response.status), response.status, response.headers.get("retry-after"));
     }
 
     const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean; thinking?: string; signature?: string }>();
@@ -348,7 +354,10 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       const block = blocks.get(index);
       if (!block || block.emitted || block.kind !== "tool_use" || !block.name) return;
       const call = parseDesktopToolCall(block.name, block.json || "{}", block.id);
-      if (!call) return;
+      if (!call) {
+        if (options.onStreamOutcome) throw new ProviderStreamError({ status: "incomplete", reason: "incomplete_tool_call" });
+        return;
+      }
       block.emitted = true;
       options.onToolCall(call);
     };
@@ -418,7 +427,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         for (const index of blocks.keys()) flushBlock(index);
         blocks.clear();
       }
-    }, options.onStreamProgress);
+    }, options.onStreamProgress, options.onStreamOutcome);
 
     for (const index of blocks.keys()) flushBlock(index);
     blocks.clear();

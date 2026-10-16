@@ -44,6 +44,7 @@ interface ChatMessageProps {
   tools: ToolEventRecord[];
   subagents: SubagentRecord[];
   activeRunStatus: string | null;
+  activeRunReason?: string | null;
   onApprove: (callId: string, approved: boolean, scope?: ApprovalDecisionScope) => void;
   onApproveAll: (callIds: string[]) => void;
   onOpenReview: (messageId: string) => void;
@@ -66,6 +67,7 @@ function ChatMessageComponent({
   tools,
   subagents,
   activeRunStatus,
+  activeRunReason,
   onApprove,
   onApproveAll,
   onOpenReview,
@@ -148,6 +150,7 @@ function ChatMessageComponent({
                 message={message}
                 active={runActive}
                 activeRunStatus={activeRunStatus}
+                activeRunReason={activeRunReason}
                 hasActivity={hasAssistantActivity}
                 hasCompletedTools={hasCompletedTools}
                 activityOpen={activityOpen}
@@ -262,6 +265,7 @@ function ChatMessageComponent({
 export const ChatMessage = memo(ChatMessageComponent, (previous, next) =>
   previous.message === next.message &&
   previous.onEditMessage === next.onEditMessage &&
+  previous.activeRunReason === next.activeRunReason &&
   previous.editDisabled === next.editDisabled &&
   previous.inlineSteers === next.inlineSteers &&
   previous.coordinationDetails === next.coordinationDetails &&
@@ -609,6 +613,7 @@ function AssistantRunMeta({
   message,
   active,
   activeRunStatus,
+  activeRunReason,
   hasActivity,
   hasCompletedTools,
   activityOpen,
@@ -617,14 +622,21 @@ function AssistantRunMeta({
   message: ChatMessageRecord;
   active: boolean;
   activeRunStatus: string | null;
+  activeRunReason?: string | null;
   hasActivity: boolean;
   hasCompletedTools: boolean;
   activityOpen: boolean;
   onToggleActivity: () => void;
 }) {
   const elapsed = useElapsedTime(message.createdAt, active ? undefined : message.updatedAt);
-  const activeLabel = describeActiveTurnStatus(activeRunStatus || message.status, hasCompletedTools);
-  const runLabel = active ? `${activeLabel} for ${elapsed}` : `Worked for ${elapsed}`;
+  const retryLabel = activeRunReason?.startsWith("Provider temporarily unavailable.") ? activeRunReason : null;
+  const activeLabel = retryLabel || describeActiveTurnStatus(activeRunStatus || message.status, hasCompletedTools);
+  const outcomeLabel = message.providerOutcome?.status === "output_limit" ? "Output limit reached"
+    : message.providerOutcome?.status === "interrupted" ? "Interrupted"
+    : message.providerOutcome?.status === "incomplete" ? "Incomplete response"
+    : message.providerOutcome?.status === "failed" ? "Provider failed"
+    : message.status === "completed" && message.providerOutcome?.status === "completed" ? "Completed" : null;
+  const runLabel = active ? retryLabel || `${activeLabel} for ${elapsed}` : outcomeLabel ? `${outcomeLabel} · ${elapsed}` : `Worked for ${elapsed}`;
   return (
     <div className="assistant-run-meta">
       {hasActivity ? (

@@ -5,6 +5,7 @@ import { GeminiAdapter } from "./gemini";
 import { OpenCodeGoAdapter } from "./opencodeGo";
 import { OpenRouterAdapter } from "./openrouter";
 import { PrivoraCloudAdapter } from "./privoraCloud";
+import { reliableProviderStream } from "./reliableStream";
 
 const adapters: Record<string, ProviderAdapter> = {
   cliproxy: new CliproxyAdapter(),
@@ -16,4 +17,4 @@ const adapters: Record<string, ProviderAdapter> = {
 };
 
 export const streamProviderResponse = (options: ProviderStreamOptions) =>
-  adapters[options.provider].stream(options);
+  reliableProviderStream(adapters[options.provider], options);

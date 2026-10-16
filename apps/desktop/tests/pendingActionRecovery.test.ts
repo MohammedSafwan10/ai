@@ -11,6 +11,8 @@ describe("unfinished promised actions", () => {
     "Bundle extracted cleanly. Generating an E20 self-managed license file:",
     "The images are ready. Starting the stack:",
     "Now copying the verified bundle:",
+    "Found it — Extracting the true secret's **hash only** to check against the stored one (nothing printed):",
+    "Found it — `token2-create-resp.json` is the real create capture Extracting the true secret's **hash only** to check against the stored one (nothing printed):",
   ])("recovers an explicit unexecuted trailing action: %s", (text) => {
     expect(outcome(text).action).toBe("recover");
   });
@@ -26,6 +28,7 @@ describe("unfinished promised actions", () => {
     "Starting the stack succeeded. All checks passed.",
     "Installing is not necessary:",
     "The log contains the phrase 'Starting the stack:'.",
+    "I am not extracting any more data:",
   ])("does not prolong a final answer or conditional offer: %s", (text) => {
     expect(outcome(text).action).toBe("complete");
   });

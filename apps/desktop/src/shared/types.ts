@@ -909,6 +909,7 @@ export interface ThreadRecord {
 }
 
 export interface ChatMessageRecord {
+  providerOutcome?: import("./providerOutcome").ProviderStreamOutcome;
   agentMessage?: { id: string; senderThreadId: string; senderLabel: string; recipientLabel: string; recipientThreadId?: string; toolCallId?: string; delivery: "queued" | "delivered"; outgoing?: boolean };
   id: string;
   threadId: string;
