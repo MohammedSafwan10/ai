@@ -80,6 +80,11 @@ export class ArtifactStore {
   loadBuffer(artifactId: string) {
     return fs.readFileSync(this.resolve(artifactId));
   }
+  byteLength(artifactId: string) {
+    const stat = fs.statSync(this.resolve(artifactId));
+    if (!stat.isFile()) throw new Error("Attachment file is unavailable.");
+    return stat.size;
+  }
 
   deleteUnreferenced(referencedIds: Set<string>) {
     for (const entry of fs.readdirSync(this.root, { withFileTypes: true })) {

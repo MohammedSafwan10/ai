@@ -8,6 +8,8 @@ import { ContextMeter } from "./ContextMeter";
 import { PromptLibrary } from "../features/chat/PromptLibrary";
 import { canRunSavedPrompt, insertSavedPrompt } from "../../shared/promptLibrary";
 import { BookOpen } from "lucide-react";
+import { useComposerDraft } from "../features/chat/useComposerDraft";
+import type { PastedDraftBlock as PastedBlock } from "../../shared/composerDraft";
 
 interface ComposerProps {
   settings: SettingsRecord;
@@ -31,13 +33,6 @@ interface ComposerProps {
   onDraftConsumed?: () => void;
 }
 
-interface PastedBlock {
-  id: string;
-  label: string;
-  text: string;
-  createdAt: number;
-}
-
 type ComposerMenu = "tools" | "access" | "model";
 
 const unavailableModel = (id: string): ModelOption => ({
@@ -54,7 +49,7 @@ const unavailableModel = (id: string): ModelOption => ({
 
 export function Composer({
   settings,
-  disabled,
+  disabled: externallyDisabled,
   inputDisabledReason,
   remoteEnvironment = false,
   running,
@@ -68,14 +63,14 @@ export function Composer({
   onSettings,
   onDraftConsumed,
 }: ComposerProps) {
-  const [value, setValue] = useState("");
+  const savedDraft = useComposerDraft(activeThreadId);
+  const { text: value, attachments, contextMentions, pastedBlocks } = savedDraft.draft;
+  const { setValue, setAttachments, setContextMentions, setPastedBlocks } = savedDraft;
+  const disabled = externallyDisabled || savedDraft.loading;
   const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   useEffect(() => { setPromptLibraryOpen(false); }, [activeThreadId]);
-  const [attachments, setAttachments] = useState<DesktopAttachmentRecord[]>([]);
-  const [contextMentions, setContextMentions] = useState<ContextMentionRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
   const [mentionToken, setMentionToken] = useState<{ query: string; start: number; end: number } | null>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<ContextMentionSuggestion[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -240,6 +235,7 @@ export function Composer({
     }
     if (submitting) return false;
     setSubmitting(true);
+    const submittedRevision = savedDraft.session.getSnapshot().draft.revision;
     const submittedAttachments = attachments;
     const submittedMentions = contextMentions;
     let accepted: void | boolean;
@@ -252,17 +248,15 @@ export function Composer({
     } catch (error) {
       console.error(error);
       accepted = false;
-    } finally {
-      setSubmitting(false);
     }
     if (accepted === false) {
+      setSubmitting(false);
       setSubmitError("Privora could not start that turn. Your draft was kept.");
       return false;
     }
-    setValue("");
-    setAttachments([]);
-    setContextMentions([]);
-    setPastedBlocks([]);
+    const cleared = await savedDraft.session.accepted(submittedRevision);
+    setSubmitting(false);
+    if (!cleared) return true;
     setMentionToken(null);
     setMentionSuggestions([]);
     setAttachmentError(null);
@@ -375,6 +369,7 @@ export function Composer({
   };
 
   const addFiles = async (files: FileList | File[]) => {
+    if (disabled || inputDisabledReason) return;
     const allFiles = Array.from(files);
     const incoming = allFiles.filter((file) => SUPPORTED_IMAGE_TYPES.includes(file.type));
     const unsupported = allFiles.filter((file) => !SUPPORTED_IMAGE_TYPES.includes(file.type));
@@ -433,7 +428,7 @@ export function Composer({
         ref={textareaRef}
         value={value}
         disabled={disabled || Boolean(inputDisabledReason)}
-        placeholder={inputDisabledReason || (disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : settings.collaborationMode === "plan" ? "Ask Privora to research and draft a plan" : "Ask for follow-up changes")}
+        placeholder={inputDisabledReason || (savedDraft.loading ? "Restoring draft…" : disabled ? "Choose a workspace to start" : attachments.length ? "Ask about these images or add instructions" : settings.collaborationMode === "plan" ? "Ask Privora to research and draft a plan" : "Ask for follow-up changes")}
         onChange={(event) => {
           setValue(event.target.value);
           setSubmitError(null);
@@ -556,6 +551,7 @@ export function Composer({
         </div>
       )}
       {(attachmentError || submitError) && <div className="attachment-error">{attachmentError || submitError}</div>}
+      {savedDraft.error && <div className="attachment-error" role="alert">{savedDraft.error} <button type="button" onClick={savedDraft.session.retry}>Retry</button></div>}
       {attachments.length > 0 && !activeModel.supportsImageInput && (
         <div className="vision-model-warning" role="status">
           <ImageOff size={15} />

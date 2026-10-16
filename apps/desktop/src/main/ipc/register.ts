@@ -197,6 +197,9 @@ export const registerIpc = (
   handle(channels.importAttachment, z.tuple([importAttachmentSchema]), (_event, input: z.infer<typeof importAttachmentSchema>) => {
     return store.importAttachment(input);
   });
+  handle(channels.getComposerDraft, z.tuple([idSchema]), (_event, threadId) => store.getComposerDraft(threadId));
+  handle(channels.saveComposerDraft, z.tuple([idSchema, composerDraftSchema]), (_event, threadId, draft) => store.saveComposerDraft(threadId, draft));
+  handle(channels.clearComposerDraft, z.tuple([idSchema, idSchema]), (_event, threadId, revision) => store.clearComposerDraft(threadId, revision));
 
   handle(channels.createThread, z.tuple([optionalNullableId.optional()]), (_event, workspaceId?: string | null) => {
     if (workspaceId && !store.getWorkspace(workspaceId)) throw new Error("Workspace not found.");
@@ -1185,6 +1188,14 @@ const contextMentionSchema = z.object({
   path: z.string().max(2000).optional(),
   createdAt: z.number(),
 });
+
+const composerDraftSchema = z.object({
+  revision: idSchema,
+  text: z.string().max(1_000_000),
+  attachments: z.array(attachmentSchema).max(12),
+  contextMentions: z.array(contextMentionSchema).max(24),
+  pastedBlocks: z.array(z.object({ id: idSchema, label: z.string().max(200), text: z.string().max(1_000_000), createdAt: z.number() }).strict()).max(100),
+}).strict().refine((draft) => draft.text.length + draft.pastedBlocks.reduce((total, block) => total + block.text.length, 0) <= 1_000_000, "Draft is too long.");
 
 const startTurnInputSchema = z.object({
   threadId: idSchema,

@@ -32,6 +32,19 @@ beforeEach(() => { encryption.available = true; directory = fs.mkdtempSync(path.
 afterEach(() => { store.close(); fs.rmSync(directory, { recursive: true, force: true }); });
 
 describe("security workspace persistence", () => {
+  it("keeps draft text, attachments and pasted blocks through reopen and artifact cleanup", () => {
+    const chat = store.createThread(null); const unrelated = store.createThread(null);
+    const attachment = store.importAttachment({ id: "draft-image", name: "draft.png", mimeType: "image/png", bytes: Buffer.from("image bytes"), createdAt: 1 });
+    const draft = { revision: "revision-one", text: "Unsent\ntext", attachments: [attachment], contextMentions: [], pastedBlocks: [{ id: "paste", label: "Pasted text", text: "Detailed reproduction", createdAt: 1 }] };
+    store.saveComposerDraft(chat.id, draft); store.deleteThread(unrelated.id);
+    expect(store.loadAttachment(attachment.artifactId).toString()).toBe("image bytes");
+    store.close(); store = new DesktopStore(directory);
+    expect(store.getComposerDraft(chat.id)).toEqual(draft);
+    store.clearComposerDraft(chat.id, "old-revision"); expect(store.getComposerDraft(chat.id)).not.toBeNull();
+    store.clearComposerDraft(chat.id, draft.revision); expect(store.getComposerDraft(chat.id)).toBeNull();
+    store.saveComposerDraft(chat.id, draft); store.deleteThread(chat.id); expect(store.getComposerDraft(chat.id)).toBeNull();
+    expect(() => store.saveComposerDraft(chat.id, draft)).toThrow("no longer exists");
+  });
   it("restores the actual selected chat rather than sidebar order, with safe deletion fallback", () => {
     const workspace = securityWorkspace(); const lastOpen = store.createThread(workspace.id); const first = store.createThread(workspace.id);
     store.saveActiveSelection(lastOpen.id, workspace.id);

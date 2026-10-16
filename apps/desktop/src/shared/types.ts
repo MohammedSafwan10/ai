@@ -2,6 +2,7 @@ import type { AgentHarnessMode, CollaborationMode, ModelRuntimeBudgetMode, Permi
 import type { SavedPrompt, SavePromptInput, PromptQuery, PromptPage, PromptMetadataInput } from "./promptLibrary";
 import type { ReorderPinnedPromptInput } from "./promptLibrary";
 import type { UpdateSecurityWorkspaceInput } from "./securityWorkspace";
+import type { ComposerDraftRecord } from "./composerDraft";
 import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 export type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityJobRecord, SecurityFindingRecord, SecurityWorkspaceConfig, SecurityWorkspaceState } from "./securityWorkspace";
 
@@ -1783,6 +1784,9 @@ export interface PrivoraDesktopApi {
   createSecurityWorkspace(input: CreateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
   updateSecurityWorkspace(input: UpdateSecurityWorkspaceInput): Promise<WorkspaceRecord>;
   getSecurityWorkspaceState(workspaceId: string): Promise<SecurityWorkspaceState>;
+  getComposerDraft(threadId: string): Promise<ComposerDraftRecord | null>;
+  saveComposerDraft(threadId: string, draft: ComposerDraftRecord): Promise<void>;
+  clearComposerDraft(threadId: string, revision: string): Promise<void>;
   recordSecurityReportEvent(id: string, expectedUpdatedAt: number, kind: import("./securityWorkspace").SecurityReportEvent["kind"], reference: string): Promise<import("./securityWorkspace").SecurityFindingRecord>;
   cancelSecurityJob(jobRecordId: string): Promise<SecurityJobRecord>;
   openSecurityEvidenceFolder(workspaceId: string): Promise<void>;

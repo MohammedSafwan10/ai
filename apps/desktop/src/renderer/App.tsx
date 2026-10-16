@@ -593,12 +593,11 @@ export default function App() {
             </button>
           )}
           {resumable && activeThread && (
-            <div className="run-recovery-notice" role="status">
-              <p>{snapshot.activeRun?.reason || "Saved progress is available."}</p>
             <button
               type="button"
               className="continue-run-button"
-              title="Continue from the last saved checkpoint"
+              title={`${snapshot.activeRun?.reason || "Progress saved."} Continue from the last saved checkpoint.`}
+              aria-label="Resume saved progress"
               onClick={() => {
                 void window.privoraDesktop.continueRun(activeThread.id);
               }}
@@ -606,7 +605,6 @@ export default function App() {
               <RotateCw size={14} />
               <span>Resume</span>
             </button>
-            </div>
           )}
           {queuedPrompts.length > 0 && (
             <div className={queuePaused ? "queued-prompts is-paused" : "queued-prompts"} aria-label="Queued prompts">
@@ -737,6 +735,7 @@ export default function App() {
             />
           )}
           <Composer
+            key={activeThread?.id || "no-chat"}
             remoteEnvironment={isSecurityWorkspace}
             settings={activeThreadSettings}
             disabled={!activeThread || !activeWorkspace}

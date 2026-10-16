@@ -26,6 +26,7 @@ import type {
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
 import { reorderPinnedPromptSchema, type ReorderPinnedPromptInput } from "../../shared/promptLibrary";
 import type { UpdateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
+import type { ComposerDraftRecord } from "../../shared/composerDraft";
 import type { SecurityReportEvent } from "../../shared/securityWorkspace";
 import { assessReportReadiness } from "../../shared/reportReadiness";
 import { redactSecrets } from "../security/redact";
@@ -184,6 +185,26 @@ export class DesktopStore {
   close() {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     this.db.close();
+  }
+
+  getComposerDraft(threadId: string): ComposerDraftRecord | null {
+    const draft = this.one<ComposerDraftRecord>("SELECT payload FROM composer_drafts WHERE thread_id = ?", threadId);
+    return draft ? { ...draft, attachments: draft.attachments.map((attachment) => ({ ...attachment, url: attachmentUrl(attachment.artifactId, attachment.mimeType) })) } : null;
+  }
+  saveComposerDraft(threadId: string, draft: ComposerDraftRecord) {
+    if (!this.getThread(threadId)) throw new Error("Chat no longer exists; draft was not saved.");
+    const attachments = draft.attachments.map(({ base64: _base64, url: _url, ...attachment }) => {
+      // Drafts reference already imported app-managed files, never renderer data URLs.
+      if (this.artifacts.byteLength(attachment.artifactId) !== attachment.size) throw new Error("Attachment file is missing or changed; draft was not saved.");
+      return attachment;
+    });
+    if (!draft.text && !attachments.length && !draft.contextMentions.length && !draft.pastedBlocks.length) {
+      this.run("DELETE FROM composer_drafts WHERE thread_id = ?", threadId); return;
+    }
+    this.run("INSERT INTO composer_drafts(thread_id,payload) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET payload=excluded.payload", threadId, JSON.stringify({ ...draft, attachments }));
+  }
+  clearComposerDraft(threadId: string, revision: string) {
+    this.run("DELETE FROM composer_drafts WHERE thread_id = ? AND json_extract(payload, '$.revision') = ?", threadId, revision);
   }
 
   saveActiveSelection(activeThreadId: string | null, activeWorkspaceId: string | null) {
@@ -850,6 +871,7 @@ export class DesktopStore {
       CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, updated_at INTEGER NOT NULL, payload TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, workspace_id TEXT, hidden INTEGER NOT NULL, starred INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE) STRICT;
       CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
+      CREATE TABLE IF NOT EXISTS composer_drafts (thread_id TEXT PRIMARY KEY, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
       CREATE INDEX IF NOT EXISTS messages_thread_order ON messages(thread_id, created_at, id);
       CREATE TABLE IF NOT EXISTS tool_events (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, call_id TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE) STRICT;
       CREATE INDEX IF NOT EXISTS tools_thread_message ON tool_events(thread_id, message_id, created_at, id);
@@ -958,6 +980,7 @@ export class DesktopStore {
     const refs = new Set<string>();
     this.all<StoredToolEvent>("SELECT payload FROM tool_events").forEach((tool) => [tool.output, tool.diff].forEach((value) => { if (value && typeof value !== "string") refs.add(value.artifactId); }));
     this.all<StoredMessage>("SELECT payload FROM messages").forEach((message) => message.attachments?.forEach((attachment) => refs.add(attachment.artifactId)));
+    this.all<ComposerDraftRecord>("SELECT payload FROM composer_drafts").forEach((draft) => draft.attachments.forEach((attachment) => refs.add(attachment.artifactId)));
     this.all<SecurityJobRecord>("SELECT payload FROM security_jobs").forEach((job) => job.artifacts?.forEach((attachment) => { if (attachment.artifactId) refs.add(attachment.artifactId); }));
     this.artifacts.deleteUnreferenced(refs);
   }

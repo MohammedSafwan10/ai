@@ -36,6 +36,15 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("validates saved composer drafts and clears only the accepted revision", () => {
+    const thread = store.createThread(null);
+    const draft = { revision: "current", text: "not sent", attachments: [], contextMentions: [], pastedBlocks: [] };
+    invoke(channels.saveComposerDraft, thread.id, draft);
+    expect(invoke(channels.getComposerDraft, thread.id)).toEqual(draft);
+    invoke(channels.clearComposerDraft, thread.id, "older"); expect(invoke(channels.getComposerDraft, thread.id)).toEqual(draft);
+    expect(() => invoke(channels.saveComposerDraft, thread.id, { ...draft, text: "x".repeat(1_000_001) })).toThrow();
+    invoke(channels.clearComposerDraft, thread.id, draft.revision); expect(invoke(channels.getComposerDraft, thread.id)).toBeNull();
+  });
   it("persists explicit chat navigation and clears the old project for a projectless chat", () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
     const lab = store.createThread(workspace.id); const plain = store.createThread(null);
