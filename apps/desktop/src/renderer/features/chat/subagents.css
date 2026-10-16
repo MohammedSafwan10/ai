@@ -52,3 +52,6 @@
 .subagent-topbar-button:hover { color: var(--privora-text); background: var(--privora-surface-faint); }
 @keyframes agent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .agent-status-dot.live { animation: none; } }
+
+.agent-panel-scroll > .agent-transcript-notice,
+.agent-panel-scroll > .request-user-input-panel { width: min(760px, calc(100% - 64px)); margin: 13px auto; min-width: 0; overflow-wrap: anywhere; }

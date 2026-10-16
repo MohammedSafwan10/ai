@@ -238,7 +238,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       setShowJump(distance > 96);
       if (!wasFollowing && stick.current) setTranscript((current) => current ? retainAgentTranscript(current) : current);
     }}>
-      {error && <div role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
+      {error && <div className={selected ? "agent-transcript-notice" : undefined} role="alert">{error}<button onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
       {!selected && groups.map((group) => <section key={group.title} className="agent-group"><h3>{group.title}<span>{group.rows.length}</span></h3>
         {!group.rows.length && <p>No {group.title.toLowerCase()} subagents</p>}
         {sortAgentRows(group.rows, group.active).map((item) => {
@@ -248,8 +248,8 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
         </button>;
         })}
       </section>)}
-      {selected && !transcript && !error && <p role="status">Loading agent chat…</p>}
-      {transcript?.page.hasOlder && <button onClick={() => void older()} disabled={loadingOlder}>{loadingOlder ? "Loading…" : "Load earlier messages"}</button>}
+      {selected && !transcript && !error && <p className="agent-transcript-notice" role="status">Loading agent chat…</p>}
+      {transcript?.page.hasOlder && <button className="history-load-control" onClick={() => void older()} disabled={loadingOlder}>{loadingOlder ? "Loading…" : "Load earlier messages"}</button>}
       {transcript && <div ref={list} className="agent-virtual-spacer" style={{ height: totalSize }}>
       {virtualizer.getVirtualItems().map((item) => {
         const message: ChatMessageRecord = messages[item.index];
