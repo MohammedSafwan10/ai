@@ -815,7 +815,7 @@ export const terminalOutputSections = (tool: ToolEventRecord, fallbackOutput: st
 
   const primary = stdout || stderr || sessionOutput;
   if (!primary && (liveOutput || resultOutput)) sections.push({ label: isLiveOutput(tool) ? "Live output" : "Output", value: liveOutput || resultOutput });
-  if (resultError && resultError !== resultOutput) sections.push({ label: toolFailureLabel(tool) || "Error", value: resultError });
+  if (resultError && !sections.some((section) => section.label !== "Command" && section.value.trim() === resultError.trim())) sections.push({ label: toolFailureLabel(tool) || "Error", value: resultError });
 
   if (!sections.some((section) => section.label !== "Command")) sections.push({ label: "Output", value: "" });
   return sections;

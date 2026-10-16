@@ -210,15 +210,26 @@ def kill_group(process, sig):
 
 
 def worker(root, db, job_id):
-    job = get_job(db, job_id)
-    if job["state"] == "stop_requested":
-        db.execute("UPDATE jobs SET state='cancelled' WHERE id=?", (job_id,))
+    # submit still holds its write transaction when it starts this process.
+    # Acquire the lock BEFORE reading: a WAL reader otherwise sees a snapshot
+    # without the uncommitted job and exits with 'Job not found'. Claiming under
+    # the same lock also prevents a second worker from executing the same job.
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        job = get_job(db, job_id)
+        if job["state"] == "stop_requested":
+            db.execute("UPDATE jobs SET state='cancelled' WHERE id=?", (job_id,))
+            db.commit()
+            return
+        if job["state"] != "queued":
+            db.commit()
+            return
+        db.execute("UPDATE jobs SET state='running',worker_pid=?,worker_identity=? WHERE id=?",
+                   (os.getpid(), identity(os.getpid()), job_id))
         db.commit()
-        return
-    db.execute("UPDATE jobs SET state=CASE WHEN state='stop_requested' THEN state ELSE 'running' END,"
-               "worker_pid=?,worker_identity=? WHERE id=?",
-               (os.getpid(), identity(os.getpid()), job_id))
-    db.commit()
+    except BaseException:
+        db.rollback()
+        raise
     if get_job(db, job_id)["state"] == "stop_requested":
         db.execute("UPDATE jobs SET state='cancelled' WHERE id=?", (job_id,))
         db.commit()

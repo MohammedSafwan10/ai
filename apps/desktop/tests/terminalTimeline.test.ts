@@ -11,6 +11,13 @@ const tool = (overrides: Partial<ToolEventRecord> = {}): ToolEventRecord => ({
 });
 
 describe("terminal output history", () => {
+  it("shows a runner startup error once when it is also the tool output", () => {
+    const error = "Runner worker exited before command startup. The command was not executed.";
+    const event = tool({ status: "failed", output: error, result: { success: false, error } });
+    expect(terminalOutputSections(event, error).filter((section) => section.value === error)).toHaveLength(1);
+    const distinct = tool({ status: "failed", output: "Diagnostic output", result: { success: false, error } });
+    expect(terminalOutputSections(distinct, "Diagnostic output").map((section) => section.value)).toContain(error);
+  });
   it("shows the command once when the activity title already includes it", () => {
     const html = renderToStaticMarkup(createElement(ToolTimeline, { tools: [tool({ name: "exec_command", title: "Ran npm run lint", args: { cmd: "npm run lint" }, terminal: { command: "npm run lint", running: false } })], messageStatus: "completed", defaultOpen: true, onApprove: () => {}, onApproveAll: () => {} }));
     expect(html.match(/npm run lint/g)).toHaveLength(1);
