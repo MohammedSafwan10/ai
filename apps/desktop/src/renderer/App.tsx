@@ -530,6 +530,7 @@ export default function App() {
                     key={message.id}
                     ref={messageVirtualizer.measureElement}
                     data-index={virtualItem.index}
+                      data-message-id={message.id}
                     className="virtual-message-row"
                     style={{ transform: `translateY(${virtualItem.start}px)` }}
                   >

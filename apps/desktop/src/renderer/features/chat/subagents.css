@@ -1,7 +1,7 @@
 .workspace-ide.subagents-pane { --text-muted: var(--privora-muted); display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; }
 .subagents-pane > .workspace-ide-topbar { display: flex; flex-shrink: 0; }
-.agent-stop-button { flex-shrink: 0; }
-.agent-panel-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 14px; }
+.send-button.agent-stop-button { flex: 0 0 26px; width: 26px; height: 26px; padding: 0; }
+.agent-panel-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: 14px; }
 .subagents-pane { position: relative; }
 .agent-virtual-spacer { position: relative; width: 100%; }
 .agent-virtual-row { position: absolute; top: 0; left: 0; width: 100%; }

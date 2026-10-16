@@ -12,6 +12,7 @@ import { groupInlineMessages } from "./inlineMessages";
 import { compactLiveOutput } from "../../state/liveOutput";
 import { retainRecentHistory } from "../../state/historyRetention";
 import { mergeUniqueByFreshness } from "../../state/useDesktopState";
+import { adjustForHiddenRow, useReadingAnchor } from "./scrollAnchoring";
 
 const name = (agent: SubagentRecord) => agent.agentNickname || agent.taskName;
 const upsert = <T extends { id: string }>(items: T[], item: T) => {
@@ -25,9 +26,19 @@ export function applyAgentEvent(current: AgentTranscript, threadId: string, even
   return next === current ? current : { ...next, sequence: event.sequence };
 }
 export function reduceAgentTranscript(current: AgentTranscript, threadId: string, event: PrivoraEventPayload): AgentTranscript {
+  if (event.type === "snapshot.updated") {
+    const run = event.snapshot.activeRuns.find((item) => item.threadId === threadId) || null;
+    const agent = event.snapshot.subagents.find((item) => item.threadId === threadId);
+    if (run) return { ...current, run: isActiveTurnStatus(run.status) ? run : null };
+    // Snapshots omit some recovered approval runs. Absence alone is not a stop.
+    if (agent && ["stopped", "completed", "closed", "failed"].includes(agent.status) && agent.updatedAt >= (current.run?.updatedAt || 0)) return { ...current, run: null };
+    return current;
+  }
   if (event.type === "user_input.requested" && event.request.threadId === threadId) return { ...current, pendingInput: event.request };
   if (event.type === "user_input.resolved" && event.threadId === threadId && current.pendingInput?.callId === event.callId) return { ...current, pendingInput: null };
-  if (event.type === "message.upserted" && event.message.threadId === threadId) return { ...current, page: { ...current.page, messages: upsert(current.page.messages, event.message).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)) } };
+  if (event.type === "message.upserted" && event.message.threadId === threadId) return { ...current,
+    run: current.run?.assistantMessageId === event.message.id && !isActiveTurnStatus(event.message.status) ? null : current.run,
+    page: { ...current.page, messages: upsert(current.page.messages, event.message).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)) } };
   if (event.type === "tool.upserted" && event.tool.threadId === threadId) return { ...current, page: { ...current.page, toolEvents: upsert(current.page.toolEvents, event.tool) } };
   if (event.type === "turn.status_changed" && event.threadId === threadId) return { ...current, run: event.run };
   if ((event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.stopped") && event.threadId === threadId) {
@@ -73,10 +84,10 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
     const unsubscribe = window.privoraDesktop.onPrivoraEvent((event) => {
       if (disposed) return;
       const payload = event.payload;
-      const relevant = payload.type === "message.upserted" ? payload.message.threadId === selected
+      const relevant = payload.type === "snapshot.updated" || (payload.type === "message.upserted" ? payload.message.threadId === selected
         : payload.type === "tool.upserted" ? payload.tool.threadId === selected
         : payload.type === "user_input.requested" ? payload.request.threadId === selected
-        : payload.type === "tool.output_delta" || ("threadId" in payload && payload.threadId === selected);
+        : payload.type === "tool.output_delta" || ("threadId" in payload && payload.threadId === selected));
       if (!relevant) return;
       if (!ready) {
         // A stalled history request must not retain a growing stream of updates.
@@ -110,6 +121,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   ];
   const inlineMessages = useMemo(() => transcript ? groupInlineMessages(transcript.page.messages, transcript.page.toolEvents) : null, [transcript?.page.messages, transcript?.page.toolEvents]);
   const messages = inlineMessages?.roots || [];
+  const readingAnchor = useReadingAnchor(scroller, messages[0]?.id);
   const toolsByMessage = useMemo(() => {
     const grouped = new Map<string, ToolEventRecord[]>();
     for (const tool of transcript?.page.toolEvents || []) {
@@ -120,18 +132,26 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
   const virtualizer = useVirtualizer({
     count: messages.length, getScrollElement: () => scroller.current,
     estimateSize: () => 190, overscan: 6, getItemKey: (index) => messages[index]?.id || index,
-    anchorTo: "end", followOnAppend: false, scrollEndThreshold: 80, scrollMargin: listOffset,
+    anchorTo: "end", followOnAppend: false, scrollEndThreshold: stick.current ? 80 : -1, scrollMargin: listOffset,
     enabled: !hidden && Boolean(transcript),
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = adjustForHiddenRow;
   useLayoutEffect(() => {
     setListOffset(list.current?.offsetTop || 0);
   }, [selected, transcript?.page.hasOlder, loadingOlder, error, hidden]);
   const totalSize = virtualizer.getTotalSize();
   useLayoutEffect(() => {
-    if (!stick.current || hidden || !messages.length) return;
+    if (hidden || !messages.length) return;
     const frame = requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-      if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+      const element = scroller.current;
+      if (!element) return;
+      if (stick.current) {
+        virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+        element.scrollTop = element.scrollHeight;
+      }
+      const distance = Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
+      setShowJump(distance > 96);
+      if (distance <= 1) stick.current = true;
     });
     return () => cancelAnimationFrame(frame);
   }, [transcript, messages.length, totalSize, hidden]);
@@ -151,6 +171,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
     if (!selected || !transcript?.page.beforeCursor || loadingOlder) return;
     const generation = historyGeneration.current;
     stick.current = false;
+    readingAnchor.capture();
     setLoadingOlder(true);
     try {
       const previous = await window.privoraDesktop.getSubagentHistory({ parentThreadId, threadId: selected, before: transcript.page.beforeCursor });
@@ -165,16 +186,17 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       {selected ? <button className="workspace-icon-button" onClick={() => setSelected(null)} aria-label="Back to subagents"><ArrowLeft size={16} /></button> : <Bot size={16} />}
       {agent && <AgentAvatar id={agent.threadId} small />}<strong>{agent ? name(agent) : "Subagents"}</strong>
       <div className="workspace-ide-mode-spacer" />
-      {transcript?.run && selected && <button type="button" className="send-button agent-stop-button" onClick={() => void stopSelectedAgent()} disabled={stoppingThreads.has(selected)} title={stoppingThreads.has(selected) ? "Stopping" : "Stop"} aria-label={stoppingThreads.has(selected) ? "Stopping this agent" : "Stop this agent"} aria-busy={stoppingThreads.has(selected)}><Square size={17} fill="currentColor" /></button>}
+      {transcript?.run && isActiveTurnStatus(transcript.run.status) && transcript.run.status !== "draining" && selected && <button type="button" className="send-button agent-stop-button" onClick={() => void stopSelectedAgent()} disabled={stoppingThreads.has(selected)} title={stoppingThreads.has(selected) ? "Stopping" : "Stop"} aria-label={stoppingThreads.has(selected) ? "Stopping this agent" : "Stop this agent"} aria-busy={stoppingThreads.has(selected)}><Square size={12} fill="currentColor" /></button>}
       <button className="workspace-icon-button" onClick={onClose} aria-label="Close subagents panel"><PanelRightClose size={16} /></button>
     </header>
     {agent && displayTime && <div className="agent-panel-meta"><div><span className={`agent-state ${live(agent) ? "live" : agent.status}`}>{status(agent).replace(/_/g, " ")}</span> · {agent.model} · {agent.reasoningEffort}</div><div className="agent-panel-times">Created <time dateTime={new Date(agent.createdAt).toISOString()} title={new Date(agent.createdAt).toLocaleString()}>{relativeAgentTime(agent.createdAt, now)}</time> · {displayTime.label} <time dateTime={new Date(displayTime.timestamp).toISOString()} title={new Date(displayTime.timestamp).toLocaleString()}>{relativeAgentTime(displayTime.timestamp, now)}</time></div><details className="agent-panel-task" key={agent.threadId}><summary>View task</summary><p>{agent.prompt}</p></details></div>}
-    <div className="agent-panel-scroll" ref={scroller} onWheel={(event) => { if (event.deltaY < 0) stick.current = false; }} onScroll={() => {
+    <div className="agent-panel-scroll" ref={scroller} onPointerDown={() => readingAnchor.release()} onWheel={(event) => { readingAnchor.release(); if (event.deltaY < 0) { stick.current = false; virtualizer.setOptions({ ...virtualizer.options, scrollEndThreshold: -1 }); } }} onScroll={() => {
       const el = scroller.current;
       if (!el || !transcript) return;
       const wasFollowing = stick.current;
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      stick.current = distance < 24;
+      stick.current = distance <= 1;
+      virtualizer.setOptions({ ...virtualizer.options, scrollEndThreshold: stick.current ? 80 : -1 });
       setShowJump(distance > 96);
       if (!wasFollowing && stick.current) setTranscript((current) => current ? retainAgentTranscript(current) : current);
     }}>
@@ -191,7 +213,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       {virtualizer.getVirtualItems().map((item) => {
         const message: ChatMessageRecord = messages[item.index];
         if (!message) return null;
-        return <div key={message.id} className="agent-virtual-row" data-index={item.index} ref={virtualizer.measureElement} style={{ transform: `translateY(${item.start - listOffset}px)` }}><ChatMessage
+        return <div key={message.id} className="agent-virtual-row" data-message-id={message.id} data-index={item.index} ref={virtualizer.measureElement} style={{ transform: `translateY(${item.start - listOffset}px)` }}><ChatMessage
         message={message} inlineSteers={inlineMessages?.inlineByTurn.get(message.id)} coordinationDetails
         tools={toolsByMessage.get(message.id) || []} subagents={agents} onOpenSubagent={setSelected}
         activeRunStatus={transcript.run?.assistantMessageId === message.id ? transcript.run.status : null}
@@ -202,6 +224,7 @@ export function SubagentsPanel({ parentThreadId, snapshot, onClose, request, hid
       {transcript?.pendingInput && <RequestUserInputPanel request={transcript.pendingInput} onSubmit={(answers) => window.privoraDesktop.answerRequestUserInput({ threadId: transcript.pendingInput!.threadId, callId: transcript.pendingInput!.callId, answers })} />}
     </div>
     {selected && showJump && <button type="button" className="agent-jump-latest" aria-label="Jump to latest agent message" onClick={() => {
+      readingAnchor.release();
       stick.current = true; setShowJump(false);
       setTranscript((current) => current ? retainAgentTranscript(current) : current);
       virtualizer.scrollToIndex(Math.max(0, messages.length - 1), { align: "end" });

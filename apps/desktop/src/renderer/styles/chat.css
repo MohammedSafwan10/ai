@@ -5,6 +5,7 @@
   margin: 13px auto;
   content-visibility: auto;
   contain-intrinsic-size: 1px 180px;
+  min-width: 0;
 }
 
 .chat-message.is-streaming {
@@ -25,6 +26,8 @@
   width: 100%;
   max-width: 100%;
   padding-bottom: 2px;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .chat-message.user .message-stack {
@@ -34,20 +37,26 @@
 
 .message-bubble {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   color: var(--privora-text);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .assistant-flow {
   display: grid;
   gap: 8px;
   position: relative;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .assistant-activity-block {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .assistant-activity-text {
@@ -490,7 +499,9 @@
 }
 
 .markdown-body {
-  overflow-wrap: break-word;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body > :first-child {
@@ -518,7 +529,7 @@
 .markdown-body p,
 .markdown-body li,
 .markdown-body blockquote {
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body a,

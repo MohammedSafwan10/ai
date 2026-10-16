@@ -9,6 +9,7 @@ const hooks = vi.hoisted(() => ({
 }));
 
 vi.mock("react", () => ({
+  useLayoutEffect: () => {},
   useRef: (value: unknown) => hooks.refs[hooks.refIndex++] ||= { current: value },
   useState: (value: unknown) => {
     const index = hooks.stateIndex++;
@@ -22,7 +23,7 @@ vi.mock("react", () => ({
     hooks.deps[index] = deps;
   },
 }));
-vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({ scrollToIndex: hooks.scrollToIndex }) }));
+vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({ scrollToIndex: hooks.scrollToIndex, options: {}, setOptions: vi.fn() }) }));
 import { useMessageAutoScroll } from "../src/renderer/features/chat/useMessageAutoScroll";
 
 describe("message scroll ownership", () => {
@@ -67,5 +68,21 @@ describe("message scroll ownership", () => {
     render("first", 2, "initial", true); flush();
     render("first", 2, "initial", false); flush();
     expect(hooks.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it("preserves a small upward gesture near bottom across streaming updates", () => {
+    const current = render("first", 2, "initial");
+    current.scrollerRef.current = { scrollHeight: 1000, scrollTop: 600, clientHeight: 400 } as HTMLDivElement;
+    flush(); hooks.scrollToIndex.mockClear();
+    current.handleMessageWheel({ deltaY: -5 } as Parameters<typeof current.handleMessageWheel>[0]);
+    current.scrollerRef.current.scrollTop = 595;
+    current.handleMessageScroll();
+    render("first", 2, "next-delta"); flush();
+    expect(hooks.scrollToIndex).not.toHaveBeenCalled();
+    expect(render("first", 2, "next-delta").showJumpButton).toBe(false);
+    current.scrollerRef.current.scrollTop = 600;
+    current.handleMessageScroll();
+    render("first", 2, "final-delta"); flush();
+    expect(hooks.scrollToIndex).toHaveBeenCalled();
   });
 });

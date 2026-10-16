@@ -1,5 +1,6 @@
 import type { BrowserWindow } from "electron";
 import { ProviderStreamError } from "./providers/streamOutcome";
+import { isActiveTurnStatus } from "../../shared/runStatus";
 import { assertWorkspaceDirectory } from "../workspace/availability";
 import type { DesktopStore } from "../db/store";
 import { isPlaceholderThreadTitle } from "../db/store";
@@ -699,35 +700,47 @@ export class TurnCoordinator implements AgentHarnessApi {
 
   stopTurn(threadId: string) {
     const run = this.activeRuns.get(threadId);
+    const ownAgent = this.store.getSubagentByThread(threadId);
+    const wasWaiting = this.approvals.hasThread(threadId) || this.recovery.activeRun(threadId)?.status === "awaiting_approval";
     run?.controller.abort();
     this.samplingRequests.get(threadId)?.controller.abort();
     this.stopThreadProcesses(threadId);
     this.store.listSubagents(threadId).forEach((agent) => {
       const childRun = this.activeRuns.get(agent.threadId);
+      const wasActive = Boolean(childRun && isActiveTurnStatus(childRun.phase)) || this.approvals.hasThread(agent.threadId)
+        || this.recovery.activeRun(agent.threadId)?.status === "awaiting_approval" || ["pending", "running", "waiting"].includes(agent.status);
       childRun?.controller.abort();
       this.stopThreadProcesses(agent.threadId);
       this.cancelPendingApprovalsForThread(agent.threadId, "Stopped with parent run.");
-      this.store.updateSubagent(agent.threadId, {
-        status: childRun ? "stopped" : agent.status,
-        lastPreview: childRun ? "Stopped with parent run." : agent.lastPreview,
-      });
+      this.cancelRecoveredApproval(agent.threadId, "Stopped with parent run.");
+      this.userInput.cancelThread(agent.threadId);
+      if (childRun && isActiveTurnStatus(childRun.phase)) transitionRun(childRun, "draining", { reason: "Stop requested with parent run.", resumable: false });
+      else this.activeRuns.delete(agent.threadId);
+      if (wasActive) this.store.updateSubagent(agent.threadId, { status: "stopped", lastPreview: "Stopped with parent run." });
+      this.emit({ type: "turn.status_changed", threadId: agent.threadId, run: this.getActiveRun(agent.threadId) });
     });
+    if (ownAgent && (wasWaiting || Boolean(run && isActiveTurnStatus(run.phase)) || ["pending", "running", "waiting"].includes(ownAgent.status))) {
+      this.store.updateSubagent(threadId, { status: "stopped", lastPreview: "Stopped by user." });
+    }
     const workspace = this.store.getWorkspace(this.store.getThread(threadId)?.workspaceId);
-    if (run) {
+    if (run && isActiveTurnStatus(run.phase)) {
       // Keep this thread busy until provider/tool cancellation has settled.
       // Resumed turns have no start registry lease to protect them.
       transitionRun(run, "draining", { reason: workspace?.type === "security" ? "Stop requested. Waiting for Kali job state." : "Stop requested. Cleaning up active work.", resumable: false });
       this.emitRun(run);
       this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
       this.userInput.cancelThread(threadId);
+      this.emitSnapshot();
       return;
     }
     this.flushThreadToolOutputs(threadId);
     this.discardThreadToolDrafts(threadId);
     this.cancelPendingApprovalsForThread(threadId, "Stopped before approval.");
-    if (this.recovery.cancelPendingApproval(threadId, "Stopped before approval.")) this.emitSnapshot();
+    this.cancelRecoveredApproval(threadId, "Stopped before approval.");
     this.userInput.cancelThread(threadId);
-    if (!run) this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
+    this.activeRuns.delete(threadId);
+    this.emit({ type: "turn.status_changed", threadId, run: this.getActiveRun(threadId) });
+    this.emitSnapshot();
   }
 
   clearInactiveRun(threadId: string) {
@@ -1603,7 +1616,7 @@ export class TurnCoordinator implements AgentHarnessApi {
         handoff = true;
         return;
       }
-      if (error instanceof StreamStalledError) {
+      if (error instanceof StreamStalledError && !controller.signal.aborted) {
         options.assistantMessage.providerOutcome = { status: "interrupted", reason: "idle_timeout" };
         this.saveCheckpoint(options, history, assistantText, assistantThought, iteration, toolCount, recoveryAttempts, run);
         if (shouldCompleteAfterSuccessfulImageStall({
@@ -2127,6 +2140,16 @@ export class TurnCoordinator implements AgentHarnessApi {
       type: "notification.created", tone: "error",
       message: "Kali cancellation is unconfirmed: " + errorMessage(error),
     }));
+  }
+
+  private cancelRecoveredApproval(threadId: string, reason: string) {
+    const checkpoint = this.recovery.checkpoint(threadId);
+    if (!this.recovery.cancelPendingApproval(threadId, reason) || !checkpoint) return;
+    const message = this.store.getMessage(checkpoint.assistantMessageId);
+    if (message) this.emit({ type: "message.upserted", message });
+    for (const tool of this.store.listToolEventsForMessage(threadId, checkpoint.assistantMessageId)) {
+      if (tool.status === "stopped" && tool.result?.error === reason) this.emit({ type: "tool.upserted", tool });
+    }
   }
 
   private cancelPendingApprovalsForThread(threadId: string, reason: string) {

@@ -31,6 +31,61 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it.each([
+    ["parent", "recovered"], ["direct", "recovered"], ["parent", "in-memory"], ["direct", "in-memory"],
+  ] as const)("%s Stop cancels a child's %s approval and publishes its stopped state", (target, approvalState) => {
+    const { thread, coordinator } = fixture();
+    const child = store.createSubagent({ parentThreadId: thread.id, parentMessageId: "parent-turn", workspaceId: thread.workspaceId,
+      taskName: "reviewer", agentPath: "/root/reviewer", prompt: "Review fixture" });
+    const completed = store.createSubagent({ parentThreadId: thread.id, parentMessageId: "parent-turn", workspaceId: thread.workspaceId,
+      taskName: "finished", agentPath: "/root/finished", prompt: "Already done" });
+    store.updateSubagent(completed.threadId, { status: "completed", finalMessage: "Retained completed work", lastPreview: "Already done" });
+    const completedBefore = store.getSubagentByThread(completed.threadId);
+    store.updateSubagent(child.threadId, { status: "running" });
+    store.upsertMessage({ id: "child-approval", threadId: child.threadId, role: "assistant", content: "Approval needed", status: "awaiting_approval", createdAt: 1, updatedAt: 1 });
+    store.upsertToolEvent({ id: "pending-child-tool", threadId: child.threadId, messageId: "child-approval", callId: "pending-call",
+      name: "exec_command", title: "Pending fixture command", args: { command: "fixture-only" }, status: "awaiting_approval", risk: "risky", createdAt: 2, updatedAt: 2 });
+    store.saveRunCheckpoint({ threadId: child.threadId, assistantMessageId: "child-approval", workspaceRoot: folder,
+      history: [{ role: "assistant", content: "Approval needed", parts: [{ type: "function_call", id: "pending-call", name: "exec_command", arguments: { command: "fixture-only" } }] }],
+      assistantText: "Approval needed", assistantThought: "", iteration: 1, toolCount: 0, recoveryAttempts: 0, lastProgressAt: 2, updatedAt: 2 });
+    if (approvalState === "in-memory") {
+      const runtime = coordinator as any;
+      expect(runtime.approvals.restorePendingBundle(child.threadId, "pending-call", (...args: unknown[]) => runtime.createRun(...args))).not.toBeNull();
+    }
+    expect(coordinator.getActiveRun(child.threadId)?.status).toBe("awaiting_approval");
+    const emit = vi.spyOn(coordinator as any, "emit");
+
+    coordinator.stopTurn(target === "parent" ? thread.id : child.threadId);
+
+    expect(store.getMessage("child-approval")?.status).toBe("stopped");
+    expect(store.getToolEvent("pending-child-tool")?.status).toBe("stopped");
+    expect(store.getSubagentByThread(child.threadId)?.status).toBe("stopped");
+    expect(coordinator.getActiveRun(child.threadId)).toMatchObject({ status: "stopped", resumable: true });
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: "turn.status_changed", threadId: child.threadId,
+      run: expect.objectContaining({ status: "stopped" }) }));
+    expect(JSON.stringify(store.getRunCheckpoint(child.threadId)?.history)).toContain("function_response");
+    expect(store.getSubagentByThread(completed.threadId)).toEqual(completedBefore);
+    expect(hooks.stream).not.toHaveBeenCalled();
+  });
+
+  it("does not restart watchdog recovery when Stop arrives before the provider settles", async () => {
+    const { thread, coordinator } = fixture();
+    let settle!: () => void;
+    hooks.stream.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { settle = resolve; });
+      throw new StreamStalledError("Provider shutdown completed after the idle watchdog fired");
+    }).mockImplementation(async (options: ProviderStreamOptions) => { options.onTextDelta("Unexpected restart"); });
+    const task = coordinator.startTurn({ threadId: thread.id, prompt: "Begin fixture" });
+    await vi.waitFor(() => expect(hooks.stream).toHaveBeenCalledOnce());
+    coordinator.stopTurn(thread.id);
+    settle();
+    await task;
+    await coordinator.waitForIdle();
+    expect(hooks.stream).toHaveBeenCalledTimes(1);
+    expect(store.listMessages(thread.id).find((message) => message.role === "assistant")?.status).toBe("stopped");
+    expect(coordinator.getActiveRun(thread.id)).toMatchObject({ status: "stopped", resumable: true });
+  });
+
   it.each(["provider", "watchdog"])("preserves delivered tool results and makes a %s interruption resumable without replay", async (source) => {
     const { thread, coordinator } = fixture();
     const execute = vi.spyOn(coordinator as unknown as { executeTool: () => Promise<ToolResult> }, "executeTool").mockResolvedValue({ success: true, output: "Mutation completed once" });

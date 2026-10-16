@@ -1,6 +1,6 @@
 import { toolFailureLabel } from "../../shared/toolFailure";
 import { AgentAvatar } from "./AgentAvatar";
-import { Check, ChevronDown, Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle } from "lucide-react";
+import { Check, ChevronDown, Copy, Minus, Plus, X, Bot, Globe2, ImageIcon, MessageSquareMore, MonitorCog, ShieldAlert, Terminal, XCircle, PanelsTopLeft, Plug, Pencil, FileText, Folder, Search, ListCollapse, Wrench } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
@@ -286,6 +286,24 @@ function LiveOutput({ output }: { output: string }) {
   );
 }
 
+function ToolActivityIcon({ tool }: { tool: ToolEventRecord }) {
+  const Icon = isQuestionTool(tool) ? MessageSquareMore
+    : isSubagentTool(tool) ? Bot
+    : isImageTool(tool) ? ImageIcon
+    : isBrowserTool(tool) ? PanelsTopLeft
+    : isComputerTool(tool) ? MonitorCog
+    : tool.name === "web_search" ? Globe2
+    : /^(mcp[_.:]|integration[_.:])/.test(tool.name) ? Plug
+    : tool.name === "context_compaction" ? ListCollapse
+    : /^(desktop_)?(edit_file|write_file|apply_patch)$/.test(tool.name) ? Pencil
+    : tool.name === "desktop_read_file" || tool.name.startsWith("notes_") ? FileText
+    : tool.name === "desktop_list_dir" ? Folder
+    : tool.name === "desktop_search" ? Search
+    : isTerminalOutputTool(tool) ? Terminal
+    : Wrench;
+  return <Icon size={13} strokeWidth={1.6} className="tool-activity-icon" aria-hidden="true" />;
+}
+
 function LiveFileDraft({ tool }: { tool: ToolEventRecord }) {
   const output = liveFileDraftOutput(tool);
   return (
@@ -323,6 +341,7 @@ function ToolTitleLine({
   if (!canExpand) {
     return (
       <div className="tool-title-line">
+        <ToolActivityIcon tool={tool} />
         <strong className={clsx(live && "active-text-shimmer")}>{label}</strong>
         {tool.name === "context_compaction" && tool.preview && <code>{tool.preview}</code>}
       </div>
@@ -336,7 +355,7 @@ function ToolTitleLine({
       title={expanded ? "Collapse output" : "Expand output"}
       aria-expanded={expanded}
     >
-      {isQuestionTool(tool) ? <MessageSquareMore size={13} /> : isSubagentTool(tool) ? <Bot size={13} /> : isImageTool(tool) ? <ImageIcon size={13} /> : isBrowserTool(tool) ? <Globe2 size={13} /> : isComputerTool(tool) ? <MonitorCog size={13} /> : <Terminal size={13} />}
+      <ToolActivityIcon tool={tool} />
       <strong className={clsx(live && "active-text-shimmer")}>{label}</strong>
       {preview && <code>{preview}</code>}
       <ChevronDown size={12} className={clsx("tool-row-chevron", !expanded && "closed")} />
