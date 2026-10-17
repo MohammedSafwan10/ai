@@ -63,6 +63,7 @@ const toMessages = (systemInstruction: string, messages: ProviderMessage[]) => {
       out.push({
         role: "assistant",
         content: message.content || "",
+        ...(parts.some((p) => p.type === "reasoning" && p.text) ? { reasoning_content: parts.filter((p) => p.type === "reasoning").map((p) => p.text).join("") } : {}),
         tool_calls: functionCalls.map((part) => ({
           id: part.id,
           type: "function",
@@ -120,18 +121,18 @@ export class DeepSeekAdapter implements ProviderAdapter {
         Authorization: `Bearer ${options.deepseekApiKey}`,
       },
       body: JSON.stringify({
-        model: options.model,
+        model: options.modelInfo?.upstreamModelId || options.model,
         messages: toMessages(options.systemInstruction, options.messages),
         ...(!options.disableTools ? {
           tools: openRouterDesktopTools(options.collaborationMode, options.toolEnvironment),
           tool_choice: "auto",
-          parallel_tool_calls: true,
+          ...(!options.modelInfo ? { parallel_tool_calls: true } : {}),
         } : {}),
         ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
-        ...deepSeekThinkingConfig(options.reasoning),
+        ...(options.modelInfo ? options.modelInfo.supportsReasoning ? { thinking: { type: options.reasoning === "none" ? "disabled" : "enabled" }, ...(options.reasoning !== "none" ? { reasoning_effort: options.reasoning } : {}) } : {} : deepSeekThinkingConfig(options.reasoning)),
         stream: true,
         stream_options: { include_usage: true },
-        temperature: 0.35,
+        ...(!options.modelInfo ? { temperature: 0.35 } : {}),
       }),
       signal: options.signal,
     });
@@ -143,6 +144,7 @@ export class DeepSeekAdapter implements ProviderAdapter {
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
     const emitted = new Set<string>();
+    let reasoningText = "";
 
     const emitBufferedCall = (value: { id?: string; name?: string; argumentsText: string }) => {
       const key = value.id || `${value.name}:${value.argumentsText}`;
@@ -172,7 +174,7 @@ export class DeepSeekAdapter implements ProviderAdapter {
       if (typeof delta.content === "string") options.onTextDelta(delta.content);
       if (typeof choice.message?.content === "string") options.onTextDelta(choice.message.content);
       const thought = delta.reasoning || delta.reasoning_content || delta.thought;
-      if (typeof thought === "string") options.onThoughtDelta(thought);
+      if (typeof thought === "string") { reasoningText += thought; options.onThoughtDelta(thought); }
 
       const toolCalls = Array.isArray(delta.tool_calls)
         ? delta.tool_calls
@@ -195,6 +197,7 @@ export class DeepSeekAdapter implements ProviderAdapter {
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
     }, options.onStreamProgress, options.onStreamOutcome);
 
+    if (options.modelInfo && reasoningText) options.onProviderContextPart?.({ type: "reasoning", text: reasoningText });
     if (buffers.size > 0) flush();
   }
 }

@@ -1,3 +1,5 @@
+import { ProviderModelsSettings } from "./ProviderModelsSettings";
+import type { CatalogProvider } from "../../shared/providerCatalog";
 import {
   Check,
   ArrowLeft,
@@ -41,10 +43,12 @@ interface SettingsScreenProps {
 }
 
 type SettingsTab = "general" | "providers" | "workspace" | "storage" | "shortcuts" | "about";
-type ProviderId = "openrouter" | "go" | "gemini" | "deepseek" | "cliproxy";
+type ProviderId = CatalogProvider | "openrouter";
 const providers: { id: ProviderId; name: string; description: string }[] = [
+  { id: "openai", name: "OpenAI", description: "API key · GPT and Codex API models" },
+  { id: "anthropic", name: "Claude", description: "Anthropic API key and models" },
   { id: "openrouter", name: "OpenRouter", description: "API key and model library" },
-  { id: "go", name: "OpenCode Go", description: "Accounts and model access" },
+  { id: "opencode-go", name: "OpenCode Go", description: "Accounts and model access" },
   { id: "gemini", name: "Gemini", description: "Direct Google API access" },
   { id: "deepseek", name: "DeepSeek", description: "Direct DeepSeek API access" },
   { id: "cliproxy", name: "CLIProxy", description: "Local proxy connection" },
@@ -57,11 +61,8 @@ export function SettingsPanel({ onOpenTab, onClose }: SettingsPanelProps) {
 export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, initialTab = "general" }: SettingsScreenProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [provider, setProvider] = useState<ProviderId | null>(null);
-  const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [openRouterKeyRevision, setOpenRouterKeyRevision] = useState(0);
-  const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [deepseekApiKey, setDeepseekApiKey] = useState("");
-  const [goModelsStatus, setGoModelsStatus] = useState("");
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
   const [workspaceTargets, setWorkspaceTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
   const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
@@ -78,7 +79,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
     setProviderSaveError("");
     try {
       await onSave(input);
-      if ("openRouterApiKey" in input) setOpenRouterKeyRevision((revision) => revision + 1);
+      setOpenRouterKeyRevision((revision) => revision + 1);
       setStatus("saved");
       window.setTimeout(() => setStatus("idle"), 1800);
       return true;
@@ -229,7 +230,9 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         const detail = item.id === "openrouter" ? settings.openRouterApiKeyStored ? "Key saved" : "Not configured"
                           : item.id === "gemini" ? settings.geminiApiKeyStored ? "Key saved" : "Not configured"
                           : item.id === "deepseek" ? settings.deepseekApiKeyStored ? "Key saved" : "Not configured"
-                          : item.id === "go" ? `${settings.opencodeGoAccounts?.length || (settings.opencodeGoApiKeyStored ? 1 : 0)} saved`
+                          : item.id === "openai" ? settings.openaiApiKeyStored ? "Key saved" : "Not configured"
+                          : item.id === "anthropic" ? settings.anthropicApiKeyStored ? "Key saved" : "Not configured"
+                          : item.id === "opencode-go" ? `${settings.opencodeGoAccounts?.length || (settings.opencodeGoApiKeyStored ? 1 : 0)} saved`
                           : "Local endpoint";
                         return <button type="button" key={item.id} onClick={() => { setProvider(item.id); setStatus("idle"); setProviderSaveError(""); }}>
                           <span className="settings-preference-copy"><strong>{item.name}</strong><small>{item.description}</small></span>
@@ -242,151 +245,21 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                     <button type="button" className="settings-row-button" disabled={saving} onClick={() => { setProvider(null); setStatus("idle"); setProviderSaveError(""); }}><ArrowLeft size={14} /> All providers</button>
                     <h3>{providers.find((item) => item.id === provider)?.name}</h3>
                   </div>
-                  {provider === "cliproxy" && <label>
-                    CLIProxy base URL
-                    <input value={cliproxyBaseUrl} onChange={(event) => setCliproxyBaseUrl(event.target.value)} />
-                  </label>}
-                  {provider === "gemini" && <label>
-                    <span className="settings-secret-label">
-                      Gemini API key
-                      <small>{settings.geminiApiKeyStored ? "Saved securely" : "Not saved"}</small>
-                    </span>
-                    <div className="settings-secret-row">
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={settings.geminiApiKeyStored ? "New key replaces saved key" : "Paste Gemini key"}
-                        value={geminiApiKey}
-                        onChange={(event) => setGeminiApiKey(event.target.value)}
-                      />
-                      {settings.geminiApiKeyStored && (
-                        <button
-                          type="button"
-                          className="secret-clear-button"
-                          disabled={saving}
-                          title="Clear saved Gemini key"
-                          onClick={() => {
-                            setGeminiApiKey("");
-                            void saveProviderSettings({ geminiApiKey: "" });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </label>}
-                  {provider === "openrouter" && <label>
-                    <span className="settings-secret-label">
-                      OpenRouter API key
-                      <small>{settings.openRouterApiKeyStored ? "Saved securely" : "Not saved"}</small>
-                    </span>
-                    <div className="settings-secret-row">
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={settings.openRouterApiKeyStored ? "New key replaces saved key" : "Paste OpenRouter key"}
-                        value={openRouterApiKey}
-                        onChange={(event) => setOpenRouterApiKey(event.target.value)}
-                      />
-                      {settings.openRouterApiKeyStored && (
-                        <button
-                          type="button"
-                          className="secret-clear-button"
-                          disabled={saving}
-                          title="Clear saved OpenRouter key"
-                          onClick={() => {
-                            setOpenRouterApiKey("");
-                            void saveProviderSettings({ openRouterApiKey: "" });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </label>}
-                  {provider === "deepseek" && <label>
-                    <span className="settings-secret-label">
-                      DeepSeek API key
-                      <small>{settings.deepseekApiKeyStored ? "Saved securely" : "Not saved"}</small>
-                    </span>
-                    <div className="settings-secret-row">
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={settings.deepseekApiKeyStored ? "New key replaces saved key" : "Paste DeepSeek key (sk-...)"}
-                        value={deepseekApiKey}
-                        onChange={(event) => setDeepseekApiKey(event.target.value)}
-                      />
-                      {settings.deepseekApiKeyStored && (
-                        <button
-                          type="button"
-                          className="secret-clear-button"
-                          disabled={saving}
-                          title="Clear saved DeepSeek key"
-                          onClick={() => {
-                            setDeepseekApiKey("");
-                            void saveProviderSettings({ deepseekApiKey: "" });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </label>}
-                  {provider === "go" && <>
-                  <GoAccountsSettings settings={settings} busy={saving} onSave={saveProviderSettings} />
-                  {settings.opencodeGoApiKeyStored && (
-                    <div className="settings-button-row">
-                      <button
-                        type="button"
-                        className="settings-row-button"
-                        disabled={saving}
-                        onClick={async () => {
-                          setGoModelsStatus("Refreshing Go model list...");
-                          try {
-                            const list = await window.privoraDesktop.listOpencodeGoModels({ refresh: true });
-                            const updated = list.fetchedAt ? new Date(list.fetchedAt).toLocaleString() : "just now";
-                            setGoModelsStatus(`${list.ids.length} Go models available (${list.source}, ${updated})${list.unsupported.length ? `. ${list.unsupported.length} need responses/messages route.` : ""}`);
-                          } catch (error) {
-                            setGoModelsStatus(error instanceof Error ? error.message : "Could not refresh Go models.");
-                          }
-                        }}
-                      >
-                        <RefreshCw size={15} />
-                        <span>Refresh Go models</span>
-                      </button>
-                    </div>
-                  )}
-                  {goModelsStatus && <p className="settings-storage-message">{goModelsStatus}</p>}
-                  </>}
-                  {provider !== "go" && <button
-                    className="settings-primary-button"
-                    disabled={saving || (provider === "openrouter" && !openRouterApiKey.trim()) || (provider === "gemini" && !geminiApiKey.trim()) || (provider === "deepseek" && !deepseekApiKey.trim())}
-                    onClick={async () => {
-                      const saved = await saveProviderSettings(provider === "cliproxy" ? { cliproxyBaseUrl }
-                        : provider === "gemini" ? { geminiApiKey }
-                        : provider === "openrouter" ? { openRouterApiKey }
-                        : { deepseekApiKey });
-                      if (!saved) return;
-                      if (provider === "gemini") setGeminiApiKey("");
-                      if (provider === "openrouter") setOpenRouterApiKey("");
-                      if (provider === "deepseek") setDeepseekApiKey("");
-                    }}
-                  >
-                    {saving ? "Saving..." : status === "saved" ? (
-                      <>
-                        <Check size={15} />
-                        Saved
-                      </>
-                    ) : provider === "cliproxy" ? "Save connection" : "Save API key"}
-                  </button>}
-                  {status === "error" && (
-                    <p className="settings-error">{providerSaveError}</p>
-                  )}
-                  {provider === "openrouter" && <OpenRouterModelsSettings key={openRouterKeyRevision} keyStored={settings.openRouterApiKeyStored} />}
+                  {provider === "cliproxy" ? <label>Base URL<input value={cliproxyBaseUrl} onChange={(event) => setCliproxyBaseUrl(event.target.value)} /></label>
+                    : provider !== "opencode-go" ? <label><span className="settings-secret-label">API key<small>{providerKeyStored(provider, settings) ? "Saved securely" : "Not saved"}</small></span>
+                      <div className="settings-secret-row"><input type="password" autoComplete="off" spellCheck={false} value={apiKeys[provider] || ""} placeholder={providerKeyStored(provider, settings) ? "New key replaces saved key" : "Paste API key"} onChange={(event) => setApiKeys({ ...apiKeys, [provider]: event.target.value })}/>
+                        {providerKeyStored(provider, settings) && <button type="button" className="secret-clear-button" disabled={saving} aria-label="Clear saved API key" title="Clear saved API key" onClick={() => { setApiKeys({ ...apiKeys, [provider]: "" }); void saveProviderSettings({ [providerKeyField(provider)]: "" }); }}><Trash2 size={14}/></button>}
+                      </div>
+                      {(provider === "openai" || provider === "anthropic") && <small>Uses API billing. ChatGPT and Claude subscriptions do not fund API-key requests.</small>}
+                    </label> : <GoAccountsSettings settings={settings} busy={saving} onSave={saveProviderSettings}/>}
+                  {provider !== "opencode-go" && <button type="button" className="settings-primary-button" disabled={saving || (provider !== "cliproxy" && !apiKeys[provider]?.trim())} onClick={async () => {
+                    const saved = await saveProviderSettings(provider === "cliproxy" ? { cliproxyBaseUrl } : { [providerKeyField(provider)]: apiKeys[provider] });
+                    if (saved) setApiKeys((keys) => ({ ...keys, [provider]: "" }));
+                  }}>{saving ? "Saving…" : status === "saved" ? <><Check size={15}/>Saved</> : provider === "cliproxy" ? "Save connection" : "Save API key"}</button>}
+                  {status === "error" && <p className="settings-error" role="status">{providerSaveError}</p>}
+                  {provider === "openrouter" ? <OpenRouterModelsSettings key={openRouterKeyRevision} keyStored={settings.openRouterApiKeyStored}/>
+                    : <ProviderModelsSettings key={`${provider}:${openRouterKeyRevision}:${settings.activeOpencodeGoAccountId}`} provider={provider} connected={provider === "cliproxy" || providerKeyStored(provider, settings)}/>}
+
                   </>}
                 </div>
               )}
@@ -587,3 +460,12 @@ const formatBytes = (bytes: number) => {
   }
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
+
+function providerKeyField(provider: ProviderId): "openaiApiKey" | "anthropicApiKey" | "openRouterApiKey" | "geminiApiKey" | "deepseekApiKey" {
+  return provider === "openai" ? "openaiApiKey" : provider === "anthropic" ? "anthropicApiKey" : provider === "openrouter" ? "openRouterApiKey" : provider === "gemini" ? "geminiApiKey" : "deepseekApiKey";
+}
+function providerKeyStored(provider: ProviderId, settings: SettingsRecord): boolean {
+  if (provider === "opencode-go") return settings.opencodeGoApiKeyStored;
+  if (provider === "cliproxy") return true;
+  return Boolean(settings[`${providerKeyField(provider)}Stored`]);
+}

@@ -1,3 +1,4 @@
+import { catalogModelOptions, registerCatalogModels, type CatalogProvider, type ProviderCatalogState } from "../../shared/providerCatalog";
 import { app, safeStorage } from "electron";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import fs from "node:fs";
@@ -42,6 +43,8 @@ import type { KaliEnvironment } from "../../shared/kali";
 import type { CreateSecurityWorkspaceInput, SecurityEnvironmentRecord, SecurityFindingRecord, SecurityJobRecord } from "../../shared/securityWorkspace";
 
 type SecretName =
+  | "openai_api_key"
+  | "anthropic_api_key"
   | "openrouter_api_key"
   | "gemini_api_key"
   | "deepseek_api_key"
@@ -74,7 +77,7 @@ const TOOL_PAGE_LIMIT = 2_000;
 const PLACEHOLDER_THREAD_TITLE = "New chat";
 const defaultKeepRunningInTray = () => process.platform === "win32" && Boolean(app?.isPackaged);
 
-const defaultSettings = (): Omit<SettingsRecord, "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "opencodeGoApiKeyStored"> => ({
+const defaultSettings = (): Omit<SettingsRecord, "openaiApiKeyStored" | "anthropicApiKeyStored" | "openRouterApiKeyStored" | "geminiApiKeyStored" | "deepseekApiKeyStored" | "opencodeGoApiKeyStored"> => ({
   id: "default",
   model: GEMINI_37_FLASH_MODEL_ID,
   reasoningEffort: "medium",
@@ -107,6 +110,7 @@ export class DesktopStore {
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
     this.createSchema();
     this.ensureDefaultSettings();
+    for (const state of this.listProviderCatalogs()) registerCatalogModels(catalogModelOptions(state));
     registerOpenRouterModels(this.getOpenRouterCatalog()?.models.map(openRouterModelOption) || []);
     this.run("DELETE FROM kv WHERE scope = 'secrets' AND key IN ('privora_session_cookie','privora_user_jwt','privora_pending_auth','privora_account_profile')");
     const localSettings = this.getKv<Record<string, unknown>>("settings", "default");
@@ -225,6 +229,7 @@ export class DesktopStore {
     const referencedModels = new Set([...(catalog?.selections.map((s) => s.id) || []), ...threads.flatMap((t) => [t.model, t.subagentModel]), settings.model, settings.subagentModel]);
     return {
       settings,
+      providerModels: this.listProviderCatalogs().flatMap((state) => catalogModelOptions(state).filter((m) => state.enabledIds.includes(m.upstreamModelId!) || referencedModels.has(m.id) || referencedModels.has(m.upstreamModelId!))),
       openRouterModels: (catalog?.models || []).filter((m) => referencedModels.has(m.id) || referencedModels.has(`openrouter/${m.id}`)).map(openRouterModelOption),
       workspaces: this.listWorkspaces(),
       threads,
@@ -252,6 +257,8 @@ export class DesktopStore {
       cliproxyBaseUrl: safeCliproxyBaseUrl(stored.cliproxyBaseUrl),
       model: normalizeModelId(stored.model),
       subagentModel: stored.subagentModel ? normalizeModelId(stored.subagentModel) : null,
+      openaiApiKeyStored: Boolean(this.getSecret("openai_api_key")),
+      anthropicApiKeyStored: Boolean(this.getSecret("anthropic_api_key")),
       openRouterApiKeyStored: Boolean(this.getSecret("openrouter_api_key")),
       geminiApiKeyStored: Boolean(this.getSecret("gemini_api_key")),
       deepseekApiKeyStored: Boolean(this.getSecret("deepseek_api_key")),
@@ -261,7 +268,7 @@ export class DesktopStore {
     };
   }
 
-  saveSettings(input: Partial<SettingsRecord> & { openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string; opencodeGoApiKey?: string; opencodeGoAccount?: GoAccountAction }): SettingsRecord {
+  saveSettings(input: Partial<SettingsRecord> & { openaiApiKey?: string; anthropicApiKey?: string; openRouterApiKey?: string; geminiApiKey?: string; deepseekApiKey?: string; opencodeGoApiKey?: string; opencodeGoAccount?: GoAccountAction }): SettingsRecord {
     const current = this.getSettings();
     const next = {
       ...defaultSettings(),
@@ -282,6 +289,10 @@ export class DesktopStore {
     // encryption is unavailable, the save fails without partially applying
     // unrelated settings.
     const pendingSecrets: Array<{ name: SecretName; value: string; envelope?: StoredSecretEnvelope }> = [];
+    for (const [field, name] of [["openaiApiKey", "openai_api_key"], ["anthropicApiKey", "anthropic_api_key"]] as const) {
+      const value = input[field];
+      if (value !== undefined) pendingSecrets.push({ name, value, envelope: value.trim() ? this.encryptSecret(value.trim()) : undefined });
+    }
     if (input.openRouterApiKey !== undefined) pendingSecrets.push({
       name: "openrouter_api_key",
       value: input.openRouterApiKey,
@@ -335,6 +346,12 @@ export class DesktopStore {
   }
   getOpencodeGoModelCache(): OpenCodeGoModelCache | null {
     return this.getKv<OpenCodeGoModelCache>("opencode_go", "models");
+  }
+  getProviderCatalog(provider: CatalogProvider): ProviderCatalogState | null { return this.getKv<ProviderCatalogState>("provider_catalogs", provider); }
+  listProviderCatalogs(): ProviderCatalogState[] { return this.all<ProviderCatalogState>("SELECT payload FROM kv WHERE scope = 'provider_catalogs'"); }
+  setProviderCatalog(state: ProviderCatalogState) {
+    this.putKv("provider_catalogs", state.provider, state);
+    registerCatalogModels(catalogModelOptions(state));
   }
   getOpenRouterCatalog(): OpenRouterCatalogState | null { return this.getKv<OpenRouterCatalogState>("openrouter", "catalog"); }
   setOpenRouterCatalog(state: OpenRouterCatalogState) {

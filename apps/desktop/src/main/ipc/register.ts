@@ -1,3 +1,5 @@
+import { catalogProviderSchema, catalogSelectionSchema } from "../../shared/providerCatalog";
+import { ProviderCatalogService, setProviderCatalogGuard } from "../agent/providers/providerCatalog";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { assertWorkspaceDirectory } from "../workspace/availability";
@@ -622,6 +624,11 @@ export const registerIpc = (
     return settings;
   });
 
+  const providerCatalog = new ProviderCatalogService(store, emitSnapshot);
+  setProviderCatalogGuard((provider, id, expectedCredential) => providerCatalog.prepare(provider, id, expectedCredential));
+  handle(channels.listProviderModels, z.tuple([z.object({ provider: catalogProviderSchema, refresh: z.boolean().optional(), cachedOnly: z.boolean().optional() })]), (_event, input) => input.cachedOnly ? providerCatalog.cached(input.provider) : providerCatalog.list(input.provider, input.refresh));
+  handle(channels.updateProviderModels, z.tuple([catalogSelectionSchema]), (_event, input) => providerCatalog.update(input));
+  for (const provider of catalogProviderSchema.options) { if (provider !== "cliproxy") void providerCatalog.list(provider).catch(() => undefined); }
   const openRouterCatalog = new OpenRouterCatalogService(store, emitSnapshot);
   setOpenRouterCatalogGuard((id) => openRouterCatalog.prepare(id));
   handle(channels.listOpenRouterModels, z.tuple([z.object({ refresh: z.boolean().optional(), cachedOnly: z.boolean().optional() }).optional()]), (_event, input) => input?.cachedOnly ? openRouterCatalog.cached() : openRouterCatalog.list(input?.refresh));
@@ -1244,6 +1251,8 @@ const saveSettingsInputSchema = z.object({
   keepRunningInTray: z.boolean().optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   cliproxyBaseUrl: z.string().max(500).optional(),
+  openaiApiKey: z.string().max(10_000).optional(),
+  anthropicApiKey: z.string().max(10_000).optional(),
   openRouterApiKey: z.string().max(10_000).optional(),
   geminiApiKey: z.string().max(10_000).optional(),
   deepseekApiKey: z.string().max(10_000).optional(),

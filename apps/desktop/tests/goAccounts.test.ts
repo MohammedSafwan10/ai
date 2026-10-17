@@ -19,6 +19,23 @@ afterEach(() => { store.close(); fs.rmSync(directory, { recursive: true, force: 
 const add = (name: string, apiKey: string) => store.saveSettings({ opencodeGoAccount: { action: "save", name, apiKey } });
 
 describe("saved Go accounts", () => {
+  it("protects new OpenAI and Claude API keys and clears each independently", () => {
+    const settings = store.saveSettings({ openaiApiKey: "test-secret-openai", anthropicApiKey: "test-secret-claude" });
+    expect(settings).toMatchObject({ openaiApiKeyStored: true, anthropicApiKeyStored: true });
+    expect(JSON.stringify(store.snapshot(null, null))).not.toContain("test-secret");
+    expect(store.getSecret("openai_api_key")).toBe("test-secret-openai");
+    expect(store.getSecret("anthropic_api_key")).toBe("test-secret-claude");
+    encryption.available = false;
+    expect(() => store.saveSettings({ openaiApiKey: "replacement", theme: "dark" })).toThrow();
+    encryption.available = true;
+    expect(store.getSecret("openai_api_key")).toBe("test-secret-openai");
+    store.saveSettings({ openaiApiKey: "" });
+    expect(store.getSettings()).toMatchObject({ openaiApiKeyStored: false, anthropicApiKeyStored: true });
+    store.close();
+    expect(fs.readFileSync(path.join(directory, "privora-desktop.sqlite")).includes(Buffer.from("test-secret"))).toBe(false);
+    store = new DesktopStore(directory);
+    expect(store.getSecret("anthropic_api_key")).toBe("test-secret-claude");
+  });
   it("keeps multiple keys encrypted and returns only summaries to the UI", () => {
     const first = add("Personal", "test-secret-personal").activeOpencodeGoAccountId!;
     const settings = add("Work", "test-secret-work");

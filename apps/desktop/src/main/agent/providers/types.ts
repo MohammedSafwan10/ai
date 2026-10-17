@@ -11,7 +11,7 @@ export interface ProviderWebSearchEvent {
 }
 
 export type ProviderPart =
-  | { type: "reasoning"; text: string; signature?: string }
+  | { type: "reasoning"; text: string; signature?: string; redactedData?: string; responsesItem?: Record<string, unknown> }
   | { type: "text"; text: string }
   | { type: "image"; name: string; mimeType: string; data: string }
   | { type: "function_call"; id: string; name: string; arguments: Record<string, unknown>; thoughtSignature?: string }
@@ -28,6 +28,7 @@ export interface ProviderMessage {
 export interface ProviderStreamOptions {
   provider: ProviderId;
   model: string;
+  modelInfo?: import("../../../shared/providerCatalog").CatalogModel;
   systemInstruction: string;
   messages: ProviderMessage[];
   reasoning: ReasoningEffort;
@@ -38,6 +39,8 @@ export interface ProviderStreamOptions {
   disableTools?: boolean;
   toolEnvironment?: "development" | "security";
   cliproxyBaseUrl: string;
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
   openRouterApiKey: string;
   geminiApiKey: string;
   deepseekApiKey: string;

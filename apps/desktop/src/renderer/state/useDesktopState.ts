@@ -1,3 +1,4 @@
+import { registerCatalogModels } from "../../shared/providerCatalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { registerOpenRouterModels } from "../../shared/openRouterModels";
 import type {
@@ -346,6 +347,7 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
 };
 
 const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot, authoritative = false): DesktopUiSnapshot => {
+  if (snapshot.providerModels) registerCatalogModels(snapshot.providerModels);
   if (snapshot.openRouterModels) registerOpenRouterModels(snapshot.openRouterModels);
   const activeThreadId = snapshot.activeThreadId;
   const sameThread = Boolean(activeThreadId && activeThreadId === current.activeThreadId);

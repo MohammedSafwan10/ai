@@ -1,3 +1,4 @@
+import { streamDiscoveredGemini } from "./geminiCatalog";
 import { GoogleGenAI, type ToolConfig } from "@google/genai";
 import { geminiDesktopFunctionDeclarations, parseDesktopToolCall, parsePartialDesktopToolCall } from "../tools/definitions";
 import type { ProviderAdapter, ProviderMessage, ProviderStreamOptions } from "./types";
@@ -219,6 +220,7 @@ export class GeminiAdapter implements ProviderAdapter {
       throw new Error("Gemini API key is not configured in desktop settings.");
     }
     try {
+      if (options.modelInfo) return await streamDiscoveredGemini(options);
       await this.streamGemini(options);
     } catch (error) {
       if (options.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;

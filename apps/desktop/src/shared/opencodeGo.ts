@@ -1,9 +1,9 @@
 import type { ModelOption, ReasoningEffort } from "./models";
 
-export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go";
-export const OPENCODE_GO_CHAT_COMPLETIONS_URL = `${OPENCODE_GO_BASE_URL}/v1/chat/completions`;
-export const OPENCODE_GO_RESPONSES_URL = `${OPENCODE_GO_BASE_URL}/v1/responses`;
-export const OPENCODE_GO_MESSAGES_URL = `${OPENCODE_GO_BASE_URL}/v1/messages`;
+export const OPENCODE_GO_BASE_URL = "https://opencode.ai/inference/go";
+export const OPENCODE_GO_CHAT_COMPLETIONS_URL = `${OPENCODE_GO_BASE_URL}/openai/v1/chat/completions`;
+export const OPENCODE_GO_RESPONSES_URL = `${OPENCODE_GO_BASE_URL}/openai/v1/responses`;
+export const OPENCODE_GO_MESSAGES_URL = `${OPENCODE_GO_BASE_URL}/anthropic/v1/messages`;
 export const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/v1/models`;
 export const OPENCODE_GO_ID_PREFIX = "opencode-go/";
 export const OPENCODE_GO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;

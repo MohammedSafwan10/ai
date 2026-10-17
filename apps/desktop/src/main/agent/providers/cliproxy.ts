@@ -287,18 +287,18 @@ export class CliproxyAdapter implements ProviderAdapter {
         ...(promptCacheKey ? { Session_id: promptCacheKey } : {}),
       },
       body: JSON.stringify({
-        model: resolveCliproxyModelId(options.model),
+        model: options.modelInfo?.upstreamModelId || resolveCliproxyModelId(options.model),
         instructions: options.systemInstruction,
         input: toResponsesInput(options.messages),
         ...(!options.disableTools ? {
-          tools: cliproxyToolsForModel(options.model, options.collaborationMode, options.toolEnvironment),
+          tools: options.modelInfo ? desktopToolDefinitionsForMode(options.collaborationMode, options.toolEnvironment) : cliproxyToolsForModel(options.model, options.collaborationMode, options.toolEnvironment),
           parallel_tool_calls: true,
         } : {}),
         ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
-        reasoning: { effort: options.reasoning, summary: "auto" },
+        ...(!options.modelInfo || options.modelInfo.supportsReasoning ? { reasoning: { effort: options.reasoning, summary: "auto" } } : {}),
         stream: true,
-        temperature: 0.35,
+        ...(!options.modelInfo ? { temperature: 0.35 } : {}),
       }),
       signal: options.signal,
     });

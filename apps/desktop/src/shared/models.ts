@@ -1,4 +1,5 @@
-export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "deepseek" | "opencode-go";
+import { findCatalogModel } from "./providerCatalog";
+export type ProviderId = "openai" | "anthropic" | "cliproxy" | "gemini" | "openrouter" | "deepseek" | "opencode-go";
 
 import { OPENCODE_GO_DEFAULT_OUTPUT_TOKENS, OPENCODE_GO_ID_PREFIX, isGoModelId, synthesizeGoModelOption } from "./opencodeGo";
 import { findRegisteredOpenRouterModel } from "./openRouterModels";
@@ -101,6 +102,8 @@ const modelProviderOrder: Array<Omit<ModelProviderGroup, "models">> = [
   },
 ];
 
+// Compatibility metadata for existing chats. These entries are never a picker
+// roster; current availability and inference are governed by provider catalogs.
 const modelOptions: ModelOption[] = [
   {
     id: GEMINI_37_FLASH_MODEL_ID,
@@ -296,15 +299,14 @@ const modelOptions: ModelOption[] = [
 
 export const normalizeModelId = (modelId: string | undefined) => {
   const normalizedId = modelId?.trim();
+  if (findCatalogModel(normalizedId)) return normalizedId!;
   if (findRegisteredOpenRouterModel(normalizedId)) return normalizedId!;
-  const retiredDeepSeekIds = new Set([
-    DEEPSEEK_V41_FLASH_EXP_MODEL_ID, DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID,
-    OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID, OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID, OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID,
-  ]);
-  return normalizedId && retiredDeepSeekIds.has(normalizedId) ? OPENCODE_GO_DEEPSEEK_V41_FLASH_MODEL_ID : normalizedId || GEMINI_37_FLASH_MODEL_ID;
+  return normalizedId || GEMINI_37_FLASH_MODEL_ID;
 };
 
 export const findModelOption = (modelId: string | undefined) => {
+  const live = findCatalogModel(modelId);
+  if (live) return live;
   const discovered = findRegisteredOpenRouterModel(modelId);
   if (discovered) return discovered;
   const normalizedId = normalizeModelId(modelId);
@@ -376,13 +378,9 @@ export const resolveModelRuntimeBudget = (
   };
 };
 
-export const getModelProviderGroups = (): ModelProviderGroup[] =>
-  modelProviderOrder
-    .map((provider) => ({
-      ...provider,
-      models: modelOptions.filter((option) => option.provider === provider.id),
-    }))
-    .filter((group) => group.models.length > 0);
+// Historical model definitions above are retained only to render saved chats.
+// Active picker groups come exclusively from provider discovery and user selections.
+export const getModelProviderGroups = (): ModelProviderGroup[] => [];
 
 // Merges live-discovered Go model ids into the picker groups. Static entries
 // win; unknown ids synthesize safe defaults; unsupported routes are dropped.

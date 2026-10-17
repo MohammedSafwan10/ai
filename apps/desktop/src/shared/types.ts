@@ -876,6 +876,8 @@ export interface SettingsRecord {
   keepRunningInTray: boolean;
   theme: "light" | "dark" | "system";
   cliproxyBaseUrl: string;
+  openaiApiKeyStored?: boolean;
+  anthropicApiKeyStored?: boolean;
   openRouterApiKeyStored: boolean;
   geminiApiKeyStored: boolean;
   deepseekApiKeyStored: boolean;
@@ -1392,6 +1394,7 @@ export interface SubagentRecord {
 }
 
 export interface AppSnapshot {
+  providerModels?: import("./providerCatalog").CatalogModel[];
   openRouterModels?: import("./models").ModelOption[];
   settings: SettingsRecord;
   workspaces: WorkspaceRecord[];
@@ -1716,6 +1719,8 @@ export interface SaveSettingsInput {
   keepRunningInTray?: boolean;
   theme?: "light" | "dark" | "system";
   cliproxyBaseUrl?: string;
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
   openRouterApiKey?: string;
   geminiApiKey?: string;
   deepseekApiKey?: string;
@@ -1815,6 +1820,8 @@ export interface PrivoraDesktopApi {
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   saveThreadSettings(input: SaveThreadSettingsInput): Promise<ThreadRecord | null>;
   listOpencodeGoModels(input?: ListOpencodeGoModelsInput): Promise<OpencodeGoModelListRecord>;
+  listProviderModels(input: { provider: import("./providerCatalog").CatalogProvider; refresh?: boolean; cachedOnly?: boolean }): Promise<import("./providerCatalog").ProviderCatalogState>;
+  updateProviderModels(input: import("zod").infer<typeof import("./providerCatalog").catalogSelectionSchema>): Promise<import("./providerCatalog").ProviderCatalogState>;
   listOpenRouterModels(input?: { refresh?: boolean; cachedOnly?: boolean }): Promise<import("./openRouterModels").OpenRouterCatalogState>;
   updateOpenRouterModels(input: { id?: string; enabled?: boolean; freeOnly?: boolean }): Promise<import("./openRouterModels").OpenRouterCatalogState>;
   getBrowserState(workspaceId: string): Promise<BrowserPanelStateRecord | null>;

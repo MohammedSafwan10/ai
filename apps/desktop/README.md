@@ -4,7 +4,7 @@ Privora is an Electron AI workspace for local development, browser research, and
 
 See the [repository overview](../../README.md) for the product introduction and the separate [marketing app](../marketing/README.md) for the public website.
 
-OpenRouter models are discovered using your saved key. Search the live catalog in **Settings → Providers → OpenRouter models**, then add the models you want in the composer and subagent picker. There is no hardcoded OpenRouter roster. See [model discovery, pricing and offline behavior](docs/openrouter-models.md).
+Provider model lists are discovered using your saved API key or local connection. In **Settings > Providers**, open a provider, browse its catalog, and add models to the composer and subagent picker. See [provider discovery and offline behavior](docs/provider-model-catalogs.md). OpenRouter also retains its [pricing controls](docs/openrouter-models.md).
 
 ## Setup
 
@@ -25,12 +25,15 @@ Open **Settings > Providers**, configure a provider, then select a project folde
 
 | Connection | Setup |
 | --- | --- |
+| **OpenAI** | Add an OpenAI API key for GPT and Codex API models; API billing applies. |
+| **Claude** | Add an Anthropic API key; API billing applies. |
+| **DeepSeek** | Add your DeepSeek API key. |
 | **Gemini** | Add your Gemini API key in provider settings. |
 | **OpenRouter** | Add your own OpenRouter API key. |
 | **OpenCode Go** | Add your Go credentials and select an available model. Named accounts can be selected explicitly. |
 | **CLIProxy** | Configure a local compatible endpoint; the default base URL is `http://127.0.0.1:8317`. |
 
-The model picker shows available choices. DeepSeek V4.1 Flash is currently offered through OpenCode Go. Access, quotas, and charges are handled by the selected provider. See [CLIProxy setup](../../docs/cliproxy-openai.md) and [Go accounts](docs/go-accounts-and-streaming-chat.md).
+The model picker shows your enabled discovered models. New and retired models are reconciled against provider catalogs. Access, quotas, and charges are handled by the selected provider. See [CLIProxy setup](../../docs/cliproxy-openai.md) and [Go accounts](docs/go-accounts-and-streaming-chat.md).
 
 Credentials use Electron's OS-backed secret storage. Chats and artifacts are stored locally. Configured remote providers receive the request context needed for inference.
 

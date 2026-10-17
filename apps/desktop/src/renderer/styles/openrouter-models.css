@@ -64,15 +64,18 @@
   margin: 22px 0 14px;
   flex-wrap: wrap;
 }
-.or-models-toolbar [role="tablist"] {
+.or-models-toolbar [role="tablist"],
+.or-models-toolbar [role="group"] {
   display: flex;
   gap: 4px;
 }
-.or-models-toolbar [role="tab"] {
+.or-models-toolbar [role="tab"],
+.or-models-toolbar [role="group"] button {
   border-color: transparent;
   color: var(--privora-muted);
 }
-.or-models-toolbar [aria-selected="true"] {
+.or-models-toolbar [aria-selected="true"],
+.or-models-toolbar [aria-pressed="true"] {
   color: var(--privora-text);
   background: var(--privora-surface-faint);
 }
@@ -212,3 +215,6 @@
     grid-template-columns: 1fr;
   }
 }
+
+.settings-section .provider-capability-option { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.settings-section .provider-capability-option input { width: 14px; height: 14px; padding: 0; }

@@ -18,11 +18,12 @@ import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
 
 describe("opencode go model discovery", () => {
   it("offers only DeepSeek V4.1 Flash Go and does not reintroduce retired models through discovery", () => {
-    const groups = withDiscoveredGoModels(getModelProviderGroups(), ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"]);
+    const groups = withDiscoveredGoModels([{ id: "opencode-go", label: "Go", description: "Legacy compatibility", models: [] }], ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"]);
     expect(groups.flatMap((group) => group.models).filter((model) => /deepseek/i.test(model.id)).map((model) => model.id)).toEqual(["opencode-go/deepseek-v4.1-flash"]);
     expect(groups.some((group) => group.id === "deepseek")).toBe(false);
     expect(findModelOption("deepseek/deepseek-v4-flash")).toBeUndefined();
-    expect(getModelOption("opencode-go/deepseek-v4-pro").id).toBe("opencode-go/deepseek-v4.1-flash");
+    expect(() => getModelOption("opencode-go/deepseek-v4-pro")).toThrow(/unknown or removed/i);
+    expect(getModelProviderGroups()).toEqual([]);
   });
   it.each([
     { model: "opencode-go/glm-5.3-flash", event: { choices: [{ delta: { refusal: "Cannot assist with that request." } }] }, expected: "model_refusal" },
@@ -136,7 +137,7 @@ describe("opencode go model discovery", () => {
   });
 
   it("merges discovered ids into the go picker group without duplicates", () => {
-    const groups = withDiscoveredGoModels(getModelProviderGroups(), [
+    const groups = withDiscoveredGoModels([{ id: "opencode-go", label: "Go", description: "Legacy compatibility", models: [] }], [
       "deepseek-v4.1-flash",
       "opencode-go/grok-4.5",
       "opencode-go/gpt-5.6-luna",
@@ -191,7 +192,7 @@ describe("opencode go model discovery", () => {
 
   it("retains verified image capabilities when static and discovered Go options are merged", () => {
     const ids = ["deepseek-v4.1-flash", "glm-5.3-flash", "qwen3.8-max", "mimo-v2.6-flash", "mimo-v2.6-pro", "longcat-2.5-preview-free"];
-    const group = withDiscoveredGoModels(getModelProviderGroups(), ids).find((entry) => entry.id === "opencode-go");
+    const group = withDiscoveredGoModels([{ id: "opencode-go", label: "Go", description: "Legacy compatibility", models: [] }], ids).find((entry) => entry.id === "opencode-go");
     for (const id of ids) {
       expect(getModelOption(`opencode-go/${id}`).supportsImageInput, id).toBe(true);
       expect(group?.models.find((model) => model.upstreamModelId === id)?.supportsImageInput, id).toBe(true);
@@ -208,7 +209,7 @@ describe("opencode go model discovery", () => {
           { type: "image", name: "screenshot.png", mimeType: "image/png", data: "c2NyZWVuc2hvdA==" },
         ],
       }] }));
-      expect(fetchMock.mock.calls[0][0]).toBe("https://opencode.ai/zen/go/v1/chat/completions");
+      expect(fetchMock.mock.calls[0][0]).toBe("https://opencode.ai/inference/go/openai/v1/chat/completions");
       const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
       expect(body.messages.find((message: { role: string }) => message.role === "user").content).toEqual([
         { type: "text", text: "Describe the screenshot" },
@@ -283,7 +284,7 @@ describe("opencode go model discovery", () => {
     try {
       await new OpenCodeGoAdapter().stream(goOptions({ threadId: "thread-123" }));
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-      expect(url).toBe("https://opencode.ai/zen/go/v1/chat/completions");
+      expect(url).toBe("https://opencode.ai/inference/go/openai/v1/chat/completions");
       const headers = init.headers as Record<string, string>;
       expect(headers["x-opencode-session"]).toBe("thread-123");
       expect(headers["User-Agent"]).toBe("Privora-Desktop");
@@ -310,7 +311,7 @@ describe("opencode go model discovery", () => {
         onToolCall,
       }));
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-      expect(url).toBe("https://opencode.ai/zen/go/v1/responses");
+      expect(url).toBe("https://opencode.ai/inference/go/openai/v1/responses");
       const body = JSON.parse(String(init.body));
       expect(body.model).toBe("gpt-5.6-luna");
       expect(body.instructions).toBe("system");
@@ -384,7 +385,7 @@ describe("opencode go model discovery", () => {
         onUsage,
       }));
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-      expect(url).toBe("https://opencode.ai/zen/go/v1/messages");
+      expect(url).toBe("https://opencode.ai/inference/go/anthropic/v1/messages");
       expect((init.headers as Record<string, string>)["anthropic-version"]).toBe("2023-06-01");
       expect((init.headers as Record<string, string>)["x-api-key"]).toBe("go-key");
       expect((init.headers as Record<string, string>)["x-opencode-session"]).toMatch(/^[a-z0-9-]+$/);

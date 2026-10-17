@@ -31,6 +31,7 @@ import {
   truncatedOutputError,
 } from "../../../shared/opencodeGo";
 import { getModelOption, type ReasoningEffort } from "../../../shared/models";
+import { streamDiscoveredGemini } from "./geminiCatalog";
 
 export const openCodeGoThinkingConfig = (modelId: string, effort: ReasoningEffort) => {
   const model = getModelOption(modelId);
@@ -78,6 +79,7 @@ const toMessages = (systemInstruction: string, messages: ProviderMessage[]) => {
       out.push({
         role: "assistant",
         content: message.content || "",
+        ...(parts.some((p) => p.type === "reasoning" && p.text) ? { reasoning_content: parts.filter((p) => p.type === "reasoning").map((p) => p.text).join("") } : {}),
         tool_calls: functionCalls.map((part) => ({
           id: part.id,
           type: "function",
@@ -147,10 +149,12 @@ const emitChatToolCalls = (
 
 export class OpenCodeGoAdapter implements ProviderAdapter {
   async stream(options: ProviderStreamOptions): Promise<void> {
+    if (options.provider === "anthropic") return this.streamMessages(options);
     if (!options.opencodeGoApiKey) {
       throw new Error("OpenCode Go API key is not configured in desktop settings.");
     }
-    const route = goRouteFor(options.model);
+    const route = options.modelInfo?.route || goRouteFor(options.model);
+    if (route === "gemini") return streamDiscoveredGemini(options);
     if (route === "responses") return this.streamResponses(options);
     if (route === "messages") return this.streamMessages(options);
     return this.streamChat(options);
@@ -161,7 +165,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       method: "POST",
       headers: authHeaders(options.opencodeGoApiKey, options.threadId),
       body: JSON.stringify({
-        model: stripGoPrefix(options.model),
+        model: options.modelInfo?.upstreamModelId || stripGoPrefix(options.model),
         messages: toMessages(options.systemInstruction, options.messages),
         ...(!options.disableTools ? {
           tools: openRouterDesktopTools(options.collaborationMode, options.toolEnvironment),
@@ -169,7 +173,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           parallel_tool_calls: true,
         } : {}),
         ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
-        ...openCodeGoThinkingConfig(options.model, options.reasoning),
+        ...(options.modelInfo ? options.modelInfo.supportsReasoning ? { ...(options.modelInfo.supportsReasoningToggle ? { thinking: { type: options.reasoning === "none" ? "disabled" : "enabled" } } : {}), ...(options.reasoning !== "none" ? { reasoning_effort: options.reasoning } : {}) } : {} : openCodeGoThinkingConfig(options.model, options.reasoning)),
         stream: true,
         stream_options: { include_usage: true },
         // No temperature: reasoning models behind the gateway (e.g. Luna)
@@ -180,12 +184,13 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
+      throw options.provider === "anthropic" ? new ProviderRequestError(`Claude request failed (HTTP ${response.status}). Check your API key, model access, and API billing.`, response.status, response.headers.get("retry-after")) : goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
     }
 
     const buffers = new Map<number, { id?: string; name?: string; argumentsText: string }>();
     const emitted = new Set<string>();
     let thoughtChars = 0;
+    let reasoningText = "";
     let truncated = false;
     const flush = () => {
       for (const value of buffers.values()) {
@@ -215,6 +220,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       const thought = delta.reasoning || delta.reasoning_content || delta.thought;
       if (typeof thought === "string") {
         thoughtChars += thought.length;
+        reasoningText += thought;
         options.onThoughtDelta(thought);
       }
 
@@ -229,6 +235,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       if (choice.finish_reason === "tool_calls" || choice.message?.tool_calls) flush();
     }, options.onStreamProgress, options.onStreamOutcome, goStreamError(options));
 
+    if (options.modelInfo && reasoningText) options.onProviderContextPart?.({ type: "reasoning", text: reasoningText });
     if (buffers.size > 0) flush();
     if (truncated) throw truncatedOutputError(options.maxOutputTokens, thoughtChars > 0);
   }
@@ -238,7 +245,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       method: "POST",
       headers: authHeaders(options.opencodeGoApiKey, options.threadId),
       body: JSON.stringify({
-        model: stripGoPrefix(options.model),
+        model: options.modelInfo?.upstreamModelId || stripGoPrefix(options.model),
         instructions: options.systemInstruction,
         input: toResponsesInput(options.messages),
         ...(!options.disableTools ? {
@@ -248,7 +255,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
         // GPT accepts explicit reasoning-off. Other Responses models such as
         // Muse reject it, so retain their omission behavior.
-        ...(options.reasoning === "none" && !stripGoPrefix(options.model).startsWith("gpt-") ? {} : { reasoning: { effort: options.reasoning, ...(options.reasoning !== "none" ? { summary: "auto" } : {}) } }),
+        ...(options.modelInfo ? options.modelInfo.supportsReasoning ? { reasoning: { effort: options.reasoning, ...(options.reasoning !== "none" ? { summary: "auto" } : {}) } } : {} : options.reasoning === "none" && !stripGoPrefix(options.model).startsWith("gpt-") ? {} : { reasoning: { effort: options.reasoning, ...(options.reasoning !== "none" ? { summary: "auto" } : {}) } }),
         stream: true,
         // No temperature: reasoning models behind the gateway (e.g. Luna)
         // reject non-default values, and omission is safe everywhere.
@@ -258,7 +265,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
+      throw options.provider === "anthropic" ? new ProviderRequestError(`Claude request failed (HTTP ${response.status}). Check your API key, model access, and API billing.`, response.status, response.headers.get("retry-after")) : goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
     }
 
     const toolCalls = new ResponsesToolCallTracker(options);
@@ -322,18 +329,20 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
   private async streamMessages(options: ProviderStreamOptions): Promise<void> {
     const model = getModelOption(options.model);
-    const response = await fetch(OPENCODE_GO_MESSAGES_URL, {
+    const direct = options.provider === "anthropic";
+    if (direct && !options.anthropicApiKey) throw new Error("Save a Claude API key in Settings > Providers.");
+    const response = await fetch(direct ? "https://api.anthropic.com/v1/messages" : OPENCODE_GO_MESSAGES_URL, {
       method: "POST",
       headers: {
-        ...authHeaders(options.opencodeGoApiKey, options.threadId),
+        ...(direct ? { "Content-Type": "application/json", "x-api-key": options.anthropicApiKey! } : authHeaders(options.opencodeGoApiKey, options.threadId)),
         // The Anthropic-protocol endpoint authenticates like Anthropic:
         // x-api-key, not (only) Authorization: Bearer. Send both.
-        "x-api-key": options.opencodeGoApiKey,
+        "x-api-key": direct ? options.anthropicApiKey! : options.opencodeGoApiKey,
         "anthropic-version": "2023-06-01",
-        ...(stripGoPrefix(options.model) === "claude-haiku-5-5" && options.reasoning !== "none" ? { "anthropic-beta": "thinking-binding-controls-2026-08-01" } : {}),
+        ...(!options.modelInfo && stripGoPrefix(options.model) === "claude-haiku-5-5" && options.reasoning !== "none" ? { "anthropic-beta": "thinking-binding-controls-2026-08-01" } : {}),
       },
       body: JSON.stringify({
-        model: stripGoPrefix(options.model),
+        model: options.modelInfo?.upstreamModelId || stripGoPrefix(options.model),
         ...(options.systemInstruction ? { system: options.systemInstruction } : {}),
         messages: toAnthropicMessages(options.messages, options.reasoning !== "none"),
         ...(!options.disableTools ? {
@@ -344,7 +353,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           })),
           tool_choice: { type: "auto" },
         } : {}),
-        ...(stripGoPrefix(options.model) === "claude-haiku-5-5" ? (options.reasoning === "none"
+        ...(options.modelInfo ? (options.modelInfo.thinkingType && options.reasoning !== "none" ? { thinking: options.modelInfo.thinkingType === "adaptive" ? { type: "adaptive" } : { type: "enabled", budget_tokens: Math.min(8192, Math.max(1024, (options.maxOutputTokens || 16384) - 1)) }, ...(options.modelInfo.thinkingType === "adaptive" ? { output_config: { effort: options.reasoning } } : {}) } : {}) : stripGoPrefix(options.model) === "claude-haiku-5-5" ? (options.reasoning === "none"
           ? { thinking: { type: "disabled" }, output_config: { effort: "low" } }
           : { thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } }, output_config: { effort: options.reasoning } }) : {}),
         max_tokens: options.maxOutputTokens || model.maxOutputTokens || 32_768,
@@ -356,10 +365,10 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      throw goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
+      throw options.provider === "anthropic" ? new ProviderRequestError(`Claude request failed (HTTP ${response.status}). Check your API key, model access, and API billing.`, response.status, response.headers.get("retry-after")) : goRequestError(options, errorText, response.status, response.headers.get("retry-after"));
     }
 
-    const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean; thinking?: string; signature?: string }>();
+    const blocks = new Map<number, { kind?: string; id?: string; name?: string; json: string; emitted: boolean; thinking?: string; signature?: string; redactedData?: string }>();
     let messageUsage: Record<string, unknown> = {};
     let thoughtChars = 0;
     let hitMaxTokens = false;
@@ -384,7 +393,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         return;
       }
       if (data?.type === "error") {
-        throw new Error(normalizeGoError(JSON.stringify(data.error || data), undefined));
+        throw new Error(direct ? "Claude returned a stream error. Check API access and try again." : normalizeGoError(JSON.stringify(data.error || data), undefined));
       }
       if (data?.type === "message_start" && data?.message?.usage) {
         messageUsage = { ...data.message.usage };
@@ -400,6 +409,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
           emitted: false,
           thinking: typeof block.thinking === "string" ? block.thinking : "",
           signature: typeof block.signature === "string" ? block.signature : "",
+          redactedData: typeof block.data === "string" ? block.data : undefined,
         });
         return;
       }
@@ -425,6 +435,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       if (data?.type === "content_block_stop") {
         const block = blocks.get(data.index);
         if (block?.kind === "thinking" && block.signature) options.onProviderContextPart?.({ type: "reasoning", text: block.thinking || "", signature: block.signature });
+        if (block?.kind === "redacted_thinking" && block.redactedData) options.onProviderContextPart?.({ type: "reasoning", text: "", redactedData: block.redactedData });
         flushBlock(data.index);
         blocks.delete(data.index);
         return;
@@ -441,7 +452,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         for (const index of blocks.keys()) flushBlock(index);
         blocks.clear();
       }
-    }, options.onStreamProgress, options.onStreamOutcome, goStreamError(options));
+    }, options.onStreamProgress, options.onStreamOutcome, direct ? undefined : goStreamError(options));
 
     for (const index of blocks.keys()) flushBlock(index);
     blocks.clear();
@@ -479,7 +490,7 @@ const toAnthropicMessages = (messages: ProviderMessage[], includeThinking = true
     }
 
     if (message.role === "assistant" && functionCalls.length > 0) {
-      const content: Array<Record<string, unknown>> = parts.flatMap((part) => includeThinking && part.type === "reasoning" && part.signature ? [{ type: "thinking", thinking: part.text, signature: part.signature }] : []);
+      const content: Array<Record<string, unknown>> = parts.flatMap((part): Record<string, unknown>[] => !includeThinking || part.type !== "reasoning" ? [] : part.redactedData ? [{ type: "redacted_thinking", data: part.redactedData }] : part.signature ? [{ type: "thinking", thinking: part.text, signature: part.signature }] : []);
       if (text) content.push({ type: "text", text });
       functionCalls.forEach((part) => {
         content.push({
