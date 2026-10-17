@@ -16,7 +16,7 @@ export const kaliToolDefinitions = [
     schema({ tools: strings("Optional executable names to check.") })),
   tool("kali_exec", "Run argv in the assigned Kali project and stream output until completion. No implicit shell. Use explicit bash argv only when shell syntax is needed. Stop cancels the supervised remote process group.",
     schema({
-      argv: { ...strings("Executable and its arguments."), minItems: 1, maxItems: 256 },
+      argv: { ...strings('Actual JSON array of strings: ["printf","hello"]. Do not serialize the array into a string. Put cwd and timeoutSeconds in their own top-level fields.'), minItems: 1, maxItems: 256 },
       cwd: text("Relative directory within this remote project; defaults to '.'."),
       timeoutSeconds: { type: "number", minimum: 1, maximum: 3600, description: "Maximum duration; defaults to 120 seconds." },
     }, ["argv"])),

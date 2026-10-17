@@ -456,7 +456,13 @@ export class SecurityWorkspaceService {
     context.signal?.throwIfAborted();
     const workspace = this.workspace(context.workspaceId);
     const argv = call.arguments.argv;
-    if (!Array.isArray(argv) || !argv.length || argv.length > 256 || argv.some((arg) => typeof arg !== "string" || arg.includes("\0")) || !argv[0]) throw new Error("Expected a nonempty argv array.");
+    if (!Array.isArray(argv)) {
+      const received = argv === null ? "null" : typeof argv;
+      throw new Error(`Invalid kali_exec argv: expected an array of strings, received ${received}. Pass a real JSON array, not a quoted JSON string. Example: {"argv":["printf","hello"],"cwd":".","timeoutSeconds":120}. Keep cwd and timeoutSeconds as separate top-level fields. The command was not executed.`);
+    }
+    if (!argv.length || argv.length > 256 || argv.some((arg) => typeof arg !== "string" || arg.includes("\0")) || !argv[0]) {
+      throw new Error("Invalid kali_exec argv: provide 1–256 strings, with a nonempty executable at argv[0] and no NUL characters. Example: {\"argv\":[\"printf\",\"hello\"]}. The command was not executed.");
+    }
     const timeoutSeconds = call.arguments.timeoutSeconds ?? 120;
     if (typeof timeoutSeconds !== "number" || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3600) throw new Error("Timeout must be 1–3600 seconds.");
     const cwd = call.arguments.cwd;

@@ -64,6 +64,29 @@ const completeTransport = (options: { events?: { stream: "stdout" | "stderr"; da
 };
 
 describe("Security workspace runtime", () => {
+  it.each([
+    { argv: '["printf","hello"]', expected: "received string" },
+    { argv: undefined, expected: "received undefined" },
+    { argv: null, expected: "received null" },
+    { argv: { command: "printf" }, expected: "received object" },
+    { argv: [], expected: "1–256 strings" },
+    { argv: [""], expected: "nonempty executable" },
+    { argv: ["printf", 123], expected: "1–256 strings" },
+    { argv: ["printf", "bad\0value"], expected: "no NUL characters" },
+    { argv: Array(257).fill("printf"), expected: "1–256 strings" },
+  ])("explains malformed command arguments without contacting Kali ($expected)", async ({ argv, expected }) => {
+    const request = completeTransport();
+    const test = fixture(request);
+    const result = await test.service().execute(call("kali_exec", { argv }), context);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(expected);
+    expect(result.error).toContain('"argv":["printf","hello"]');
+    expect(result.error).toContain("The command was not executed.");
+    expect(request).not.toHaveBeenCalled();
+    expect(test.jobs.size).toBe(0);
+    expect(result.error).not.toContain("bad\0value");
+  });
+
   it("refreshes an address only after verifying the same pinned runtime and preserves failed refreshes", async () => {
     const capabilities = { protocolVersion: 1, os: "Linux", architecture: "aarch64", pythonVersion: "3.14", jobRoot: environment.jobRoot, tools: {}, limits: { concurrentJobs: 4, outputBytes: 1_000_000, artifactBytes: 1_000_000 } };
     const request = vi.fn<KaliRpcTransport["request"]>(async (config, payload) => {
