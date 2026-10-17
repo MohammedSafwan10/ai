@@ -5,18 +5,7 @@ import type {
   ChatMessageRecord,
 } from "../../../../shared/types";
 
-const REPEAT_FINGERPRINT_MIN_CHARS = 72;
-const RECENT_VISIBLE_TEXT_CHARS = 5000;
 const now = () => Date.now();
-
-export const buildVisibleFingerprints = (text: string) => {
-  const fingerprints = new Set<string>();
-  splitVisibleUnits(text).forEach((unit) => {
-    const fingerprint = fingerprintVisibleText(unit);
-    if (fingerprint.length >= REPEAT_FINGERPRINT_MIN_CHARS) fingerprints.add(fingerprint);
-  });
-  return fingerprints;
-};
 
 export const recordAssistantTextPart = (
   message: ChatMessageRecord,
@@ -47,7 +36,6 @@ export const recordAssistantTextPart = (
     },
   ];
 };
-
 export const markAssistantTextRangePhase = (
   message: ChatMessageRecord,
   startOffset: number,
@@ -231,24 +219,6 @@ export const fallbackThreadTitle = (prompt: string) =>
     .replace(/[<>]/g, " ")
     .replace(/\s+/g, " "));
 
-export const filterVisibleDelta = (current: string, delta: string, fingerprints: Set<string>) => {
-  if (!delta || isInsideMarkdownCodeFence(current)) return delta;
-  const recent = fingerprintVisibleText(current.slice(-RECENT_VISIBLE_TEXT_CHARS));
-  const accepted: string[] = [];
-  splitVisibleUnits(delta).forEach((unit) => {
-    const fingerprint = fingerprintVisibleText(unit);
-    if (
-      fingerprint.length >= REPEAT_FINGERPRINT_MIN_CHARS &&
-      (fingerprints.has(fingerprint) || recent.includes(fingerprint))
-    ) {
-      return;
-    }
-    if (fingerprint.length >= REPEAT_FINGERPRINT_MIN_CHARS) fingerprints.add(fingerprint);
-    accepted.push(unit);
-  });
-  return accepted.join("");
-};
-
 export const looksLikeProcessNarration = (text: string) => {
   const normalized = text
     .replace(/[`*_#[\](){}<>]/g, " ")
@@ -259,16 +229,3 @@ export const looksLikeProcessNarration = (text: string) => {
   return /^(let'?s|now let'?s|now we need to|we need to|i need to|i'?ll|i will|wait|ah|awesome\b|okay|first let'?s|next let'?s)\b/.test(normalized) ||
     /\b(let'?s (check|write|create|run|edit|inspect|make|define|add|remove|fix)|we can use desktop|we will use desktop|i'?ll use desktop)/.test(normalized);
 };
-
-const splitVisibleUnits = (text: string) =>
-  text.match(/[^.!?\n]+[.!?\n]+|\n+|[^.!?\n]+$/g) || [text];
-
-const fingerprintVisibleText = (text: string) =>
-  text
-    .toLowerCase()
-    .replace(/[`*_#[\](){}<>.,!?;:'"\\/-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const isInsideMarkdownCodeFence = (text: string) =>
-  ((text.match(/```/g) || []).length % 2) === 1;

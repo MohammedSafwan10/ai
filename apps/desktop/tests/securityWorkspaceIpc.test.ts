@@ -39,6 +39,25 @@ beforeEach(() => {
 afterEach(() => { store.close(); fs.rmSync(mocked.directory, { recursive: true, force: true }); });
 
 describe("security workspace IPC", () => {
+  it("recovers legacy rewind data URLs and sends only verified app attachment references", async () => {
+    const thread = store.createThread(null);
+    const bytes = Buffer.from("legacy image fixture");
+    const artifactId = `${createHash("sha256").update(bytes).digest("hex")}.bin`;
+    const attachment = { id: "image", name: "fixture.png", mimeType: "image/png", size: bytes.length, artifactId,
+      url: `data:image/png;base64,${bytes.toString("base64")}`, createdAt: 1 };
+    const startTurn = vi.fn().mockResolvedValue(undefined);
+    registerIpc(store, { startTurn, getActiveRun: () => null } as unknown as AgentService, state, {} as BrowserSessionManager, {} as NotesStore);
+    await invoke(channels.startTurn, { threadId: thread.id, prompt: "Read image", attachments: [attachment] });
+    const sent = startTurn.mock.calls[0][0].attachments[0];
+    expect(sent.url).toMatch(/^privora-attachment:\/\/artifact\//);
+    expect(sent.base64).toBeUndefined();
+    expect(store.loadAttachment(artifactId)).toEqual(bytes);
+    invoke(channels.saveComposerDraft, thread.id, { revision: "draft", text: "Read image", attachments: [attachment], contextMentions: [], pastedBlocks: [] });
+    expect(store.getComposerDraft(thread.id)?.attachments[0]).toEqual(sent);
+    await expect(invoke(channels.startTurn, { threadId: thread.id, prompt: "Read image", attachments: [{ ...attachment, artifactId: `${"0".repeat(64)}.bin` }] })).rejects.toThrow("changed");
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("opens only a recorded evidence file's containing folder within the selected project", async () => {
     const workspace = store.createSecurityWorkspace({ name: "Lab", objective: "Inspect", scope: "Fixtures", environmentId: "kali" });
     const thread = store.createThread(workspace.id); state.activeWorkspaceId = workspace.id;

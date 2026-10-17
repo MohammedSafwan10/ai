@@ -23,6 +23,7 @@ import type { NotesStore } from "../notes/NotesStore";
 import { ImageGenerationManager } from "../imageGeneration/ImageGenerationManager";
 import type {
   ApprovalDecisionInput,
+  DesktopAttachmentRecord,
   BrowserBoundsInput,
   BrowserDownloadInput,
   BrowserFormAnalyzeInput,
@@ -83,6 +84,20 @@ export const registerIpc = (
   computerUseManager?: ComputerUseManager,
   options?: { onSettingsChanged?: () => void; securityService?: SecurityWorkspaceService },
 ) => {
+  const prepareAttachments = (attachments: DesktopAttachmentRecord[]) => attachments.map((attachment) => {
+    let bytes: Buffer;
+    try { bytes = store.loadAttachment(attachment.artifactId); }
+    catch {
+      if (!attachment.base64) throw new Error(`Image attachment ${attachment.name} is unavailable. Remove it and attach the image again.`);
+      bytes = Buffer.from(attachment.base64, "base64");
+    }
+    if (bytes.length !== attachment.size || `${createHash("sha256").update(bytes).digest("hex")}.bin` !== attachment.artifactId) {
+      throw new Error(`Image attachment ${attachment.name} changed. Remove it and attach the image again.`);
+    }
+    // Recover images returned by older rewind builds, and strip inline bytes
+    // before crossing into the runtime or durable composer draft.
+    return store.importAttachment({ id: attachment.id, name: attachment.name, mimeType: attachment.mimeType, bytes, createdAt: attachment.createdAt });
+  });
   let browserOverlayWindow: BrowserWindow | null = null;
   const overlayPreloadPath = ensureBrowserOverlayPreload(app.getPath("userData"));
   const storageCleanup = new StorageCleanupService({
@@ -206,7 +221,7 @@ export const registerIpc = (
     return store.importAttachment(input);
   });
   handle(channels.getComposerDraft, z.tuple([idSchema]), (_event, threadId) => store.getComposerDraft(threadId));
-  handle(channels.saveComposerDraft, z.tuple([idSchema, composerDraftSchema]), (_event, threadId, draft) => store.saveComposerDraft(threadId, draft));
+  handle(channels.saveComposerDraft, z.tuple([idSchema, composerDraftSchema]), (_event, threadId, draft) => store.saveComposerDraft(threadId, { ...draft, attachments: prepareAttachments(draft.attachments) }));
   handle(channels.clearComposerDraft, z.tuple([idSchema, idSchema]), (_event, threadId, revision) => store.clearComposerDraft(threadId, revision));
 
   handle(channels.createThread, z.tuple([optionalNullableId.optional()]), (_event, workspaceId?: string | null) => {
@@ -436,11 +451,11 @@ export const registerIpc = (
 
   handle(channels.startTurn, z.tuple([startTurnInputSchema]), async (_event, input: StartTurnInput) => {
     ensureNotRewinding(input.threadId);
-    await runtime.startTurn(input);
+    await runtime.startTurn({ ...input, attachments: input.attachments ? prepareAttachments(input.attachments) : undefined });
   });
 
   handle(channels.steerTurn, z.tuple([steerTurnInputSchema]), async (_event, input: SteerTurnInput) =>
-    runtime.steerTurn(input));
+    runtime.steerTurn({ ...input, attachments: input.attachments ? prepareAttachments(input.attachments) : undefined }));
 
   handle(channels.continueRun, z.tuple([idSchema]), async (_event, threadId: string) => {
     ensureNotRewinding(threadId);
@@ -1125,10 +1140,15 @@ const attachmentSchema = z.object({
   name: z.string().max(260),
   mimeType: z.string().max(120),
   size: z.number().nonnegative().max(20_000_000),
-  artifactId: z.string().min(1).max(200),
-  url: z.string().startsWith("privora-attachment://").max(1000),
+  artifactId: z.string().regex(/^[a-f0-9]{64}\.bin$/),
+  url: z.string().max(28_000_000).optional(),
+  base64: z.string().max(28_000_000).optional(),
   createdAt: z.number(),
-});
+}).transform(({ url, base64, ...attachment }) => ({
+  ...attachment,
+  url: `privora-attachment://artifact/${attachment.artifactId}?mime=${encodeURIComponent(attachment.mimeType)}`,
+  base64: base64 ?? (url?.startsWith(`data:${attachment.mimeType};base64,`) ? url.slice(url.indexOf(",") + 1) : undefined),
+}));
 const importAttachmentSchema = z.object({
   id: idSchema,
   name: z.string().max(260),

@@ -92,11 +92,13 @@ export class TurnUndoCoordinator {
       for (const record of records) this.store.upsertTurnUndo({ ...record, status: "partially_undone", updatedAt: now(), error: "Files were restored, but the Git reversal commit failed. Review Git before continuing." });
       throw error;
     }
-    // Hydrate attachments before pruning their stored artifacts.
-    message.attachments = message.attachments?.map((attachment) => ({
-      ...attachment,
-      url: attachment.base64 ? `data:${attachment.mimeType};base64,${attachment.base64}` : attachment.url,
-    }));
+    // The draft owns the attachment references before history pruning runs.
+    // Return compact app URLs; renderer preview data must never become send input.
+    message.attachments = message.attachments?.map(({ base64: _base64, ...attachment }) => attachment);
+    this.store.saveComposerDraft(thread.id, {
+      revision: crypto.randomUUID(), text: message.content,
+      attachments: message.attachments ?? [], contextMentions: message.contextMentions ?? [], pastedBlocks: [],
+    });
     this.store.pruneThreadAfterMessage(thread.id, message.id, true);
     return { message, removedMessageIds: removed.map((item) => item.id), gitCommit, notice };
   }

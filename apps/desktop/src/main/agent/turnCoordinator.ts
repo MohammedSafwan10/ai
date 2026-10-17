@@ -86,11 +86,9 @@ import {
   titleForTool,
 } from "./harness/support/toolActivity";
 import {
-  buildVisibleFingerprints,
   createThreadTitleFilterState,
   fallbackThreadTitle,
   filterThreadTitleDelta,
-  filterVisibleDelta,
   looksLikeProcessNarration,
   markAssistantTextRangePhase,
   recordAssistantTextPart,
@@ -862,7 +860,6 @@ export class TurnCoordinator implements AgentHarnessApi {
       this.finalizeStoppedRun(options);
       return;
     }
-    const visibleFingerprints = buildVisibleFingerprints(assistantText);
     let handoff = false;
     let controller = options.controller;
     let run = this.activeRuns.get(options.threadId) || this.createRun(options.threadId, options.assistantMessage.id, controller);
@@ -1181,7 +1178,9 @@ export class TurnCoordinator implements AgentHarnessApi {
                 }
                 return;
               }
-              const filtered = filterVisibleDelta(assistantText, titleFiltered, visibleFingerprints);
+              // Provider deltas are arbitrary chunks, not sentences. Preserve every
+              // character, including leading punctuation and intentional repetition.
+              const filtered = titleFiltered;
               if (!filtered) return;
               successfulImageAwaitingFollowup = false;
               const startOffset = assistantText.length;

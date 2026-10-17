@@ -26,6 +26,7 @@ describe("incremental Markdown", () => {
     expect(render(next.blocks.at(-1)!.markdown)).toContain("<strong>Now streaming</strong>");
   });
   it.each([
+    "`nextdark.com` and `ns1.dropcatch.com`\n\nC:\\Privora Evidence\\file-final_package.md\n\n`file-v114_chan.json` !important 1.2.3",
     "# Heading\n\nParagraph with **bold** and `code`.\n\nMore text.",
     "- one\n\n- two\n  - nested\n\nAnother paragraph.",
     "| Name | Status |\n| --- | --- |\n| One | Ready |\n| Two | Done |\n\nAfter.",

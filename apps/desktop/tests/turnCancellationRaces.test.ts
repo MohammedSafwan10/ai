@@ -31,6 +31,19 @@ const fixture = () => {
 };
 
 describe("Turn cancellation boundaries", () => {
+  it.each([1, 2, 7, 1000])("preserves all streamed punctuation and repetition with chunk size %s", async (chunkSize) => {
+    const { thread, coordinator } = fixture();
+    const repeated = "This deliberately repeated sentence must remain intact even when the provider sends it again. ";
+    const text = "`nextdark.com` and `ns1.dropcatch.com`.\n\n" +
+      "C:\\Privora Evidence\\file-final_package.md\nfile-v114_chan.json\n" +
+      "!?..com .json !important 1.2.3\n" + repeated.repeat(2);
+    hooks.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      for (let start = 0; start < text.length; start += chunkSize) options.onTextDelta(text.slice(start, start + chunkSize));
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Return the exact fixture text" });
+    expect(store.listMessages(thread.id).find((message) => message.role === "assistant")?.content).toBe(text);
+  });
+
   it("publishes the actual process exit after its execution tool already yielded", () => {
     const { thread, coordinator } = fixture();
     const runtime = coordinator as any;

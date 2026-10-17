@@ -128,7 +128,10 @@ describe("edit message rewind", () => {
     const message = store.getMessage("prompt")!;
     store.upsertMessage({ ...message, attachments: [{ id: "attachment", name: "sample.txt", mimeType: "text/plain", size: 6, artifactId: "", url: "", base64: Buffer.from("sample").toString("base64"), createdAt: 1 }] });
     const result = await new TurnUndoCoordinator(store, () => false).rewind("prompt");
-    expect(result.message.attachments?.[0].url).toBe("data:text/plain;base64,c2FtcGxl");
+    expect(result.message.attachments?.[0].url).toMatch(/^privora-attachment:\/\/artifact\//);
+    expect(result.message.attachments?.[0].base64).toBeUndefined();
+    expect(store.getComposerDraft(result.message.threadId)?.attachments).toEqual(result.message.attachments);
+    expect(store.loadAttachment(result.message.attachments![0].artifactId).toString()).toBe("sample");
     store.upsertMessage({ ...result.message, id: "edited", content: "Edited prompt" });
     expect(store.getMessage("edited")?.attachments?.[0].base64).toBe("c2FtcGxl");
   });
