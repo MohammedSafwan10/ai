@@ -113,7 +113,7 @@ export function DownloadPage() {
         </div>
         <img
           className="download-icon reveal"
-          src="/privora-logo.png"
+          src="/media/portal-large.webp"
           alt="Privora Portal app icon"
           width="500"
           height="500"
