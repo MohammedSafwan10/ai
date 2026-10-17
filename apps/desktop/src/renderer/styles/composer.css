@@ -262,6 +262,7 @@
 }
 
 .composer {
+  position: relative;
   container-type: inline-size;
   container-name: composer;
   width: min(760px, calc(100% - 32px));
@@ -1203,89 +1204,6 @@
   transform: translateX(13px);
 }
 
-.model-reasoning-menu {
-  top: auto;
-  right: 0;
-  bottom: 44px;
-  width: 172px;
-}
-
-.model-picker-submenu {
-  top: auto;
-  right: 180px;
-  bottom: 44px;
-  width: 214px;
-  max-width: calc(100cqw - 16px);
-  max-height: min(310px, 54vh);
-  overflow: auto;
-}
-
-.model-picker-search {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--privora-surface);
-  padding: 5px 0 7px;
-}
-
-.model-picker-search input {
-  width: 100%;
-  box-sizing: border-box;
-  min-width: 0;
-  border: 1px solid var(--privora-border);
-  border-radius: 6px;
-  padding: 7px 8px;
-  background: var(--privora-bg);
-  color: var(--privora-text);
-  font: inherit;
-  font-size: 12px;
-}
-
-.model-picker-empty {
-  padding: 8px;
-  color: var(--privora-muted);
-  font-size: 12px;
-}
-
-.composer .floating-menu .model-picker-back {
-  display: none;
-}
-
-@container composer (max-width: 430px) {
-  .model-reasoning-menu.submenu-open {
-    display: none;
-  }
-
-  .model-picker-submenu {
-    right: 0;
-    width: min(214px, calc(100cqw - 16px));
-    max-height: min(360px, 58vh);
-  }
-
-  .composer .floating-menu .model-picker-back {
-    display: flex;
-    justify-content: flex-start;
-    gap: 6px;
-    margin-bottom: 3px;
-    border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 68%, transparent);
-    border-radius: 7px 7px 0 0;
-    color: var(--privora-muted);
-  }
-}
-
-.model-branch-row.active {
-  background: color-mix(in srgb, var(--privora-text) 10%, transparent);
-}
-
-.model-branch-row:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.model-branch-row:disabled:hover {
-  background: transparent;
-}
-
 .composer .floating-menu {
   border-color: color-mix(in srgb, var(--privora-border) 58%, transparent);
   background: var(--privora-surface);
@@ -1306,13 +1224,46 @@
   font-size: 12px;
 }
 
-.model-reasoning-menu > small {
-  padding: 4px 10px;
-}
-
 .composer .floating-menu button:hover {
   background: color-mix(in srgb, var(--privora-text) 10%, transparent);
 }
+
+.composer .model-picker-anchor { position: static; }
+.composer .unified-model-picker {
+  top: auto;
+  right: 8px;
+  bottom: 44px;
+  width: min(380px, calc(100cqw - 16px));
+  max-height: min(580px, calc(100dvh - 100px));
+  overflow: auto;
+  padding: 10px;
+}
+.model-provider-short { color: var(--privora-muted); font-size: 11px; flex-shrink: 0; }
+.model-provider-short::before { content: "·"; margin-right: 6px; }
+.model-picker-tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--privora-border); padding-bottom: 8px; }
+.composer .model-picker-tabs button { flex: 1; justify-content: center; font-size: 12px; min-height: 30px; }
+.composer .model-picker-tabs [aria-selected="true"] { background: color-mix(in srgb, var(--privora-text) 9%, transparent); }
+.unified-model-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--privora-border); border-radius: 7px; padding: 8px 10px; color: var(--privora-muted); }
+.unified-model-search:focus-within { border-color: var(--privora-muted); }
+.unified-model-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--privora-text); font: inherit; font-size: 12px; }
+.unified-model-list { max-height: min(300px, 38dvh); overflow: auto; margin: 8px 0; scrollbar-gutter: stable; }
+.unified-model-group { padding: 10px 8px 5px; color: var(--privora-muted); font-size: 10px; font-weight: 600; }
+.composer .unified-model-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; font-size: 12px; text-align: left; }
+.composer .unified-model-row.highlighted { background: color-mix(in srgb, var(--privora-text) 8%, transparent); }
+.composer .unified-model-row:disabled { opacity: .45; cursor: default; background: transparent; }
+.unified-model-name { min-width: 0; overflow-wrap: anywhere; }
+.unified-model-name small { display: block; color: var(--privora-muted); font-size: 10px; }
+.unified-model-icons { display: flex; align-items: center; gap: 9px; flex-shrink: 0; color: var(--privora-muted); }
+.model-selection-mark { width: 15px; height: 15px; color: var(--privora-text); }
+.composer .model-inherit-row { display: flex; width: 100%; align-items: center; justify-content: space-between; margin-top: 6px; padding: 8px; text-align: left; }
+.model-inherit-row small { display: block; margin-top: 4px; color: var(--privora-muted); font-size: 11px; font-weight: 400; }
+.unified-model-footer { border-top: 1px solid var(--privora-border); padding: 10px 6px 2px; }
+.model-effort-control { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.model-effort-control select { max-width: 60%; border: 1px solid var(--privora-border); border-radius: 6px; background: var(--privora-surface); color: var(--privora-text); padding: 5px 7px; font: inherit; }
+.model-scope-control { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 11px; }
+.model-scope-control input { accent-color: var(--privora-accent); }
+.unified-model-footer p, .model-picker-empty { color: var(--privora-muted); font-size: 11px; line-height: 1.5; margin: 8px 0; }
+.composer .unified-model-picker button:focus-visible { outline: 1px solid var(--privora-muted); outline-offset: -1px; }
 
 .mode-pill.active {
   color: var(--privora-text);
@@ -1463,38 +1414,6 @@
   left: auto;
 }
 
-.model-picker-submenu section {
-  display: grid;
-  gap: 0;
-}
-
-.model-group {
-  display: grid;
-  gap: 1px;
-}
-
-.model-group + .model-group {
-  margin-top: 4px;
-  border-top: 1px solid var(--privora-border);
-  padding-top: 4px;
-}
-
-.model-capability {
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 999px;
-  color: var(--privora-muted);
-}
-
-.model-capability.vision {
-  color: color-mix(in srgb, var(--privora-accent) 72%, var(--privora-text));
-}
-
-.model-reasoning-menu small,
-.model-picker-submenu small,
 .shortcuts-menu small {
   padding: 3px 7px;
   color: var(--privora-muted);
@@ -1573,6 +1492,3 @@
   font-weight: 650;
   line-height: 1.35;
 }
-
-.model-reasoning-menu .subagent-model-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.model-reasoning-menu .subagent-model-label small { padding: 0; color: var(--privora-muted); font-size: 11px; font-weight: 400; letter-spacing: normal; text-transform: none; overflow-wrap: anywhere; }

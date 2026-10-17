@@ -4,6 +4,12 @@ Privora discovers model IDs from the configured provider instead of shipping a f
 
 OpenAI and Claude use the user's API key and API billing. ChatGPT and Claude subscription credentials are not accepted. Keys remain in Electron's OS-backed encrypted secret storage, in the main process; catalogs and renderer snapshots contain metadata and saved-key flags, not keys.
 
+## Choosing models
+
+The composer opens one model panel with **Chat** and **Subagents** tabs. Search matches enabled models by name, upstream ID, or provider; identical names remain separate under their provider headings. The composer also shows the selected provider. Arrow keys navigate available search results, Enter selects, and Escape returns focus to the composer model button. Unavailable entries cannot be selected.
+
+Reasoning controls follow the selected model's capabilities. Subagents can inherit the chat model and reasoning, or use their own selections. Applying changes to existing agents affects their next turns; current runs retain their model and reasoning.
+
 ## Discovery sources
 
 | Provider | Source and inference protocol |

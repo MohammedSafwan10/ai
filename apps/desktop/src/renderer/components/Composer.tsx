@@ -1,11 +1,12 @@
 import { catalogLabels, catalogModelOptions, catalogProviders, registerCatalogModels, type CatalogModel } from "../../shared/providerCatalog";
-import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Eye, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, AtSign, Blocks, Check, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, ImageOff, Maximize2, Minimize2, MousePointer2, Paperclip, Plus, ShieldAlert, Square, TerminalSquare, UsersRound, X, Zap } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { findModelOption, type ModelOption, type PermissionMode, type ReasoningEffort } from "../../shared/models";
 import { isExpiredOpenRouterModel, isFreeOpenRouterModel, openRouterModelOption, registerOpenRouterModels, withOpenRouterModels } from "../../shared/openRouterModels";
 import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
+import { ModelPicker, modelProviderLabel } from "./ModelPicker";
 import { ContextMeter } from "./ContextMeter";
 import { PromptLibrary } from "../features/chat/PromptLibrary";
 import { canRunSavedPrompt, insertSavedPrompt } from "../../shared/promptLibrary";
@@ -80,10 +81,6 @@ export function Composer({
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
-  const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
-  const [subagentEffortOpen, setSubagentEffortOpen] = useState(false);
-  const [modelPickerTarget, setModelPickerTarget] = useState<"chat" | "subagent">("chat");
-  const [modelSearch, setModelSearch] = useState("");
   const [providerModels, setProviderModels] = useState<CatalogModel[]>([]);
   const [openRouterModels, setOpenRouterModels] = useState<ModelOption[]>([]);
 
@@ -94,21 +91,10 @@ export function Composer({
   const lastHistoryTextRef = useRef<string | null>(null);
   const activeModel = findModelOption(settings.model) ?? unavailableModel(settings.model);
   const subagentModel = settings.subagentModel ? findModelOption(settings.subagentModel) ?? unavailableModel(settings.subagentModel) : null;
-  const childModel = subagentModel ?? activeModel;
-  const activeReasoningOptions = reasoningOptions.filter((option) => activeModel.reasoningEfforts.includes(option.id));
   const modelProviderGroups = useMemo(
     () => withOpenRouterModels(catalogProviders.map((id) => ({ id, label: catalogLabels[id], description: "Your enabled models", models: providerModels.filter((m) => m.provider === id) })).filter((group) => group.models.length), openRouterModels),
     [providerModels, openRouterModels],
   );
-  const filteredModelGroups = useMemo(() => {
-    const terms = modelSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    return modelProviderGroups.map((group) => ({ ...group, models: group.models.filter((model) => {
-      const text = `${model.label} ${model.id} ${group.label}`.toLowerCase();
-      const compact = text.replace(/[^a-z0-9]/g, "");
-      return terms.every((term) => text.includes(term) || compact.includes(term.replace(/[^a-z0-9]/g, "")));
-    }) })).filter((group) => group.models.length > 0);
-  }, [modelProviderGroups, modelSearch]);
-  useEffect(() => { setModelSearch(""); }, [activeMenu, modelPickerTarget]);
   useEffect(() => {
     let cancelled = false;
     const load = () => { void window.privoraDesktop.listOpenRouterModels({ cachedOnly: true }).then((state) => {
@@ -140,11 +126,8 @@ export function Composer({
   const showLongPromptControls = value.length > COMPOSER_LONG_PROMPT_CHARS || lineCount > COMPOSER_LONG_PROMPT_LINES || expanded;
 
   const toggleMenu = (menu: ComposerMenu) => {
-    setSubagentEffortOpen(false);
-    setModelPickerTarget("chat");
     setActiveMenu((current) => {
       const next = current === menu ? null : menu;
-      setModelSubmenuOpen(false);
       return next;
     });
     setMentionToken(null);
@@ -153,7 +136,6 @@ export function Composer({
 
   const closeComposerPopovers = () => {
     setActiveMenu(null);
-    setModelSubmenuOpen(false);
     setMentionToken(null);
     setMentionSuggestions([]);
   };
@@ -782,107 +764,23 @@ export function Composer({
           </div>
         </div>
         <div className="toolbar-right">
-          <div className="menu-anchor">
+          <div className="menu-anchor model-picker-anchor">
             <button
               type="button"
               className="model-reasoning-button"
-              title={`${activeModel.label} · ${reasoningLabel(settings.reasoningEffort, activeModel)}`}
+              aria-haspopup="dialog"
+              aria-expanded={activeMenu === "model"}
+              title={`${activeModel.label} · ${modelProviderLabel(activeModel)} · ${reasoningLabel(settings.reasoningEffort, activeModel)}`}
               onClick={() => toggleMenu("model")}
             >
               <span className="model-short">{modelDisplayLabel(activeModel.label)}</span>
+              <span className="model-provider-short">{modelProviderLabel(activeModel)}</span>
               <span className="reasoning-short">{reasoningLabel(settings.reasoningEffort, activeModel)}</span>
               <ChevronDown size={13} />
             </button>
-            {activeMenu === "model" && (
-              <>
-              <div className={clsx("floating-menu model-reasoning-menu", (modelSubmenuOpen || subagentEffortOpen) && "submenu-open")}>
-                <button
-                  type="button"
-                  className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "chat" && "active")}
-                  onFocus={() => { setSubagentEffortOpen(false); setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
-                  onClick={() => { setModelPickerTarget("chat"); setModelSubmenuOpen(true); }}
-                >
-                  <span>{modelDisplayLabel(activeModel.label)}</span>
-                  <ChevronRight size={17} />
-                </button>
-                <button
-                  type="button"
-                  className={clsx("model-branch-row", modelSubmenuOpen && modelPickerTarget === "subagent" && "active")}
-                  title={settings.subagentSettingsScope === "next_turn" ? "Choose the model for new agents and existing agents' next turns. Current runs keep their model." : "Choose the model for new subagents. Enable the option below to also update existing agents' next turns."}
-                  onFocus={() => { setSubagentEffortOpen(false); setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
-                  onClick={() => { setModelPickerTarget("subagent"); setModelSubmenuOpen(true); }}
-                >
-                  <span className="subagent-model-label"><span>{settings.subagentSettingsScope === "next_turn" ? "Subagent model" : "New subagent model"}</span><small>{subagentModel ? modelDisplayLabel(subagentModel.label) : "Same as parent"}</small></span>
-                  <ChevronRight size={17} />
-                </button>
-                <button type="button" className={clsx("model-branch-row", subagentEffortOpen && "active")} onClick={() => { setSubagentEffortOpen(true); setModelSubmenuOpen(false); }} title="Reasoning applies to new agents, and to existing agents' next turns when the option below is enabled."><span className="subagent-model-label"><span>Subagent reasoning</span><small>{settings.subagentReasoningEffort ? reasoningLabel(settings.subagentReasoningEffort, childModel) : "Same as parent"}</small></span><ChevronRight size={17} /></button>
-                {activeThreadId && <button type="button" role="menuitemcheckbox" aria-checked={settings.subagentSettingsScope === "next_turn"} title="Apply this chat's subagent model and reasoning when an existing agent starts its next turn. Current runs and resumed checkpoints keep their model." onClick={() => onSettings({ subagentSettingsScope: settings.subagentSettingsScope === "next_turn" ? "new" : "next_turn" })}><span>Apply to existing agents’ next turns</span>{settings.subagentSettingsScope === "next_turn" && <Check size={14} />}</button>}
-                <div className="composer-menu-divider" />
-                {activeReasoningOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => {
-                      onSettings({ reasoningEffort: option.id });
-                      setActiveMenu(null);
-                    }}
-                  >
-                    <span>{reasoningLabel(option.id, activeModel)}</span>
-                    {settings.reasoningEffort === option.id && <Check size={14} />}
-                  </button>
-                ))}
-              </div>
-              {subagentEffortOpen && <div className="floating-menu model-picker-submenu"><button type="button" onClick={() => setSubagentEffortOpen(false)}><ChevronLeft size={15} /><span>Subagent reasoning</span></button><button type="button" onClick={() => { onSettings({ subagentReasoningEffort: null }); setActiveMenu(null); }}><span>Same as parent</span>{!settings.subagentReasoningEffort && <Check size={14} />}</button>{reasoningOptions.filter((option) => childModel.reasoningEfforts.includes(option.id)).map((option) => <button type="button" key={option.id} onClick={() => { onSettings({ subagentReasoningEffort: option.id }); setActiveMenu(null); }}><span>{reasoningLabel(option.id, childModel)}</span>{settings.subagentReasoningEffort === option.id && <Check size={14} />}</button>)}</div>}
-              {modelSubmenuOpen && !subagentEffortOpen && (
-                <div
-                  className="floating-menu model-picker-submenu"
-                >
-                  <button
-                    type="button"
-                    className="model-picker-back"
-                    onClick={() => setModelSubmenuOpen(false)}
-                  >
-                    <ChevronLeft size={15} />
-                    <span>{modelPickerTarget === "subagent" ? "Subagent model" : "Model and effort"}</span>
-                  </button>
-                  {modelPickerTarget === "subagent" && <button type="button" onClick={() => { onSettings({ subagentModel: null }); setActiveMenu(null); }}><span>Same as parent</span>{!settings.subagentModel && <Check size={14} />}</button>}
-                  <div className="model-picker-search">
-                    <input type="search" autoFocus aria-label="Search models" placeholder="Search models…" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } }} />
-                  </div>
-                  {filteredModelGroups.length === 0 && <p className="model-picker-empty" role="status">No matching models. Add models in Settings &gt; Providers.</p>}
-                  {filteredModelGroups.map((group) => (
-                    <div className="model-group" key={group.id}>
-                      <small>{group.label}</small>
-                      {group.models.map((model) => (
-                        <button
-                          key={model.id}
-                          type="button"
-                          title={model.unavailable ? "Unavailable or blocked. Review this provider’s models in Settings." : `${model.supportsImageInput ? "Supports image input" : "Text input only"} · ${model.supportsTools ? "Tools supported" : "Chat only"} · ${formatTokenCount(model.contextWindowTokens)} context · ${formatTokenCount(model.maxOutputTokens)} max output`}
-                          disabled={model.unavailable}
-                          onClick={() => {
-                            if (modelPickerTarget === "subagent") onSettings({ subagentModel: model.id, ...(settings.subagentReasoningEffort && !model.reasoningEfforts.includes(settings.subagentReasoningEffort) ? { subagentReasoningEffort: null } : {}) });
-                            else onSettings({
-                              model: model.id,
-                              reasoningEffort: model.reasoningEfforts.includes(settings.reasoningEffort)
-                                ? settings.reasoningEffort
-                                : model.defaultReasoningEffort,
-                            });
-                            setActiveMenu(null);
-                          }}
-                        >
-                          <span>{model.label}</span>
-                          <span className={clsx("model-capability", model.supportsImageInput ? "vision" : "text-only")}>
-                            {model.supportsImageInput ? <Eye size={13} /> : <ImageOff size={13} />}
-                          </span>
-                          {(modelPickerTarget === "subagent" ? settings.subagentModel === model.id : activeModel.id === model.id) && <Check size={14} />}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-              </>
-            )}
+            {activeMenu === "model" && <ModelPicker groups={modelProviderGroups} settings={settings}
+              activeModel={activeModel} subagentModel={subagentModel} hasThread={Boolean(activeThreadId)}
+              onSettings={onSettings} onClose={() => { setActiveMenu(null); composerRef.current?.querySelector<HTMLButtonElement>(".model-reasoning-button")?.focus(); }} />}
           </div>
           <ContextMeter usage={contextUsage} model={activeModel} attachedContextCount={contextMentions.length} />
           <button
@@ -935,12 +833,6 @@ const permissionOptions: Array<{ id: PermissionMode; label: string }> = [
 const reasoningLabel = (value: ReasoningEffort, model?: ModelOption) => {
   if (model?.reasoningControl === "toggle" && value !== "none") return "On";
   return reasoningOptions.find((option) => option.id === value)?.label || "Medium";
-};
-
-const formatTokenCount = (tokens?: number) => {
-  if (!tokens) return "unknown";
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}M`;
-  return `${Math.round(tokens / 1_000)}k`;
 };
 
 const modelDisplayLabel = (label: string) =>
