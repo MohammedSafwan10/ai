@@ -996,10 +996,25 @@ export class BrowserSessionManager {
   async clearProfileData() {
     const partitions = new Set(Array.from(this.workspaceTabs.values()).flat().map((tab) => tab.partition));
     this.listKnownWorkspaceIds?.().forEach((workspaceId) => partitions.add(partitionForWorkspace(workspaceId)));
+    const errors: string[] = [];
     for (const partition of partitions) {
       const browserSession = electronSession.fromPartition(partition);
-      await browserSession.clearCache().catch(() => undefined);
-      await browserSession.clearStorageData().catch(() => undefined);
+      await browserSession.clearCache().catch(() => { errors.push("Some browser cache could not be cleared."); });
+      await browserSession.clearStorageData().catch(() => { errors.push("Some website data could not be cleared."); });
+    }
+    if (errors.length) throw new Error([...new Set(errors)].join(" "));
+  }
+
+  clearWorkflowHistory() {
+    if (this.replayingWorkflows.size) throw new Error("Finish running browser workflows before clearing history.");
+    this.workflows.clearHistory();
+    for (const tab of Array.from(this.workspaceTabs.values()).flat()) this.updateState(tab, {});
+  }
+
+  assertStorageCleanupAvailable(categories: string[]) {
+    if (this.replayingWorkflows.size) throw new Error("Finish running browser workflows before clearing browser storage.");
+    if (categories.includes("browser_downloads") && this.activeDownloadItems.size) {
+      throw new Error("Finish or cancel active browser downloads before clearing downloads.");
     }
   }
 

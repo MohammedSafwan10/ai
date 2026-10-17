@@ -108,6 +108,7 @@ export const registerIpc = (
     userDataPath: app.getPath("userData"),
     downloadsPath: app.getPath("downloads"),
     clearBrowserProfileData: () => browserManager.clearProfileData(),
+    clearWorkflowHistory: () => browserManager.clearWorkflowHistory(),
   });
   const imageGeneration = new ImageGenerationManager(app.getPath("userData"));
   const undoCoordinator = new TurnUndoCoordinator(store, (threadId) => {
@@ -890,6 +891,10 @@ export const registerIpc = (
   });
 
   handle(channels.cleanupStorage, z.tuple([storageCleanupInputSchema]), async (_event, input: StorageCleanupInput) => {
+    if (runtime.listActiveRuns().some((run) => !["completed", "stopped", "stalled", "failed", "idle"].includes(run.status))) {
+      throw new Error("Finish or stop active chats before clearing browser storage.");
+    }
+    browserManager.assertStorageCleanupAvailable(input.categoryIds);
     return storageCleanup.cleanup(input);
   });
 

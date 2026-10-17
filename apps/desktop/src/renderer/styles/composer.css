@@ -1233,36 +1233,58 @@
   top: auto;
   right: 8px;
   bottom: 44px;
-  width: min(380px, calc(100cqw - 16px));
-  max-height: min(580px, calc(100dvh - 100px));
+  width: min(352px, calc(100cqw - 16px));
+  max-height: min(560px, calc(100dvh - 100px));
   overflow: auto;
-  padding: 10px;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--privora-border) 70%, transparent);
+  box-shadow: 0 12px 36px #0003, 0 2px 8px #0002;
 }
 .model-provider-short { color: var(--privora-muted); font-size: 11px; flex-shrink: 0; }
 .model-provider-short::before { content: "·"; margin-right: 6px; }
-.model-picker-tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--privora-border); padding-bottom: 8px; }
-.composer .model-picker-tabs button { flex: 1; justify-content: center; font-size: 12px; min-height: 30px; }
-.composer .model-picker-tabs [aria-selected="true"] { background: color-mix(in srgb, var(--privora-text) 9%, transparent); }
-.unified-model-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--privora-border); border-radius: 7px; padding: 8px 10px; color: var(--privora-muted); }
-.unified-model-search:focus-within { border-color: var(--privora-muted); }
+.model-picker-tabs { display: flex; gap: 22px; margin: 0 16px; border-bottom: 1px solid color-mix(in srgb, var(--privora-border) 60%, transparent); }
+.composer .model-picker-tabs button {
+  position: relative;
+  width: auto;
+  min-height: 43px;
+  padding: 0 1px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--privora-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.composer .model-picker-tabs button:hover { background: transparent; color: var(--privora-text); }
+.composer .model-picker-tabs [aria-selected="true"] { color: var(--privora-text); }
+.model-picker-tabs [aria-selected="true"]::after { content: ""; position: absolute; height: 2px; bottom: -1px; inset-inline: 0; background: var(--privora-text); border-radius: 2px; }
+.unified-model-search { display: flex; align-items: center; gap: 9px; margin: 10px 10px 2px; padding: 9px 10px; color: var(--privora-muted); border-radius: 7px; background: color-mix(in srgb, var(--privora-text) 4%, transparent); }
+.unified-model-search:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--privora-border) 70%, transparent); }
 .unified-model-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--privora-text); font: inherit; font-size: 12px; }
-.unified-model-list { max-height: min(300px, 38dvh); overflow: auto; margin: 8px 0; scrollbar-gutter: stable; }
-.unified-model-group { padding: 10px 8px 5px; color: var(--privora-muted); font-size: 10px; font-weight: 600; }
-.composer .unified-model-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; font-size: 12px; text-align: left; }
-.composer .unified-model-row.highlighted { background: color-mix(in srgb, var(--privora-text) 8%, transparent); }
+.unified-model-search input::placeholder { color: var(--privora-muted); opacity: .8; }
+.unified-model-list { max-height: min(270px, 36dvh); overflow: auto; padding: 0 7px 7px; scrollbar-width: thin; scrollbar-color: var(--privora-border) transparent; }
+.unified-model-group { padding: 14px 10px 4px; color: var(--privora-muted); font-size: 10px; font-weight: 500; line-height: 1.4; }
+.composer .unified-model-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 8px 10px; font-size: 12px; font-weight: 450; line-height: 1.45; text-align: left; border-radius: 6px; }
+.composer .unified-model-row.highlighted { background: color-mix(in srgb, var(--privora-text) 6%, transparent); }
 .composer .unified-model-row:disabled { opacity: .45; cursor: default; background: transparent; }
 .unified-model-name { min-width: 0; overflow-wrap: anywhere; }
 .unified-model-name small { display: block; color: var(--privora-muted); font-size: 10px; }
-.unified-model-icons { display: flex; align-items: center; gap: 9px; flex-shrink: 0; color: var(--privora-muted); }
-.model-selection-mark { width: 15px; height: 15px; color: var(--privora-text); }
-.composer .model-inherit-row { display: flex; width: 100%; align-items: center; justify-content: space-between; margin-top: 6px; padding: 8px; text-align: left; }
-.model-inherit-row small { display: block; margin-top: 4px; color: var(--privora-muted); font-size: 11px; font-weight: 400; }
-.unified-model-footer { border-top: 1px solid var(--privora-border); padding: 10px 6px 2px; }
-.model-effort-control { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
-.model-effort-control select { max-width: 60%; border: 1px solid var(--privora-border); border-radius: 6px; background: var(--privora-surface); color: var(--privora-text); padding: 5px 7px; font: inherit; }
-.model-scope-control { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 11px; }
+.unified-model-icons { display: flex; align-items: center; gap: 10px; flex-shrink: 0; color: var(--privora-muted); }
+.unified-model-icons > svg { opacity: .55; }
+.model-selection-mark { display: grid; place-items: center; width: 15px; height: 15px; color: var(--privora-text); }
+.composer .model-inherit-row { display: flex; width: calc(100% - 14px); align-items: center; justify-content: space-between; margin: 8px 7px 0; padding: 8px 10px; text-align: left; font-size: 12px; }
+.model-inherit-row small { display: block; margin-top: 3px; color: var(--privora-muted); font-size: 10px; font-weight: 400; line-height: 1.5; }
+.unified-model-footer { border-top: 1px solid color-mix(in srgb, var(--privora-border) 60%, transparent); padding: 12px 16px; }
+.model-effort-control { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; }
+.model-effort-label { color: var(--privora-muted); font-size: 11px; }
+.model-effort-options { display: flex; flex-wrap: wrap; gap: 3px; }
+.composer .model-effort-options button { width: auto; padding: 4px 8px; min-height: 26px; border-radius: 5px; font-size: 11px; color: var(--privora-muted); }
+.composer .model-effort-options [aria-pressed="true"] { background: color-mix(in srgb, var(--privora-text) 9%, transparent); color: var(--privora-text); }
+.model-effort-unavailable { color: var(--privora-muted); font-size: 11px; padding-block: 4px; }
+.model-scope-control { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 11px; line-height: 1.5; }
 .model-scope-control input { accent-color: var(--privora-accent); }
-.unified-model-footer p, .model-picker-empty { color: var(--privora-muted); font-size: 11px; line-height: 1.5; margin: 8px 0; }
+.unified-model-footer p, .model-picker-empty { color: var(--privora-muted); font-size: 10px; line-height: 1.5; margin: 7px 0 0; }
+.model-picker-empty { padding: 12px 10px; font-size: 12px; }
 .composer .unified-model-picker button:focus-visible { outline: 1px solid var(--privora-muted); outline-offset: -1px; }
 
 .mode-pill.active {

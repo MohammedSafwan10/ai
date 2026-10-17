@@ -1,4 +1,4 @@
-import { Check, Eye, Search, Wrench } from "lucide-react";
+import { Check, Eye, Search } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ModelOption, ModelProviderGroup, ProviderId, ReasoningEffort } from "../../shared/models";
 import type { SettingsRecord } from "../../shared/types";
@@ -93,23 +93,27 @@ export function ModelPicker({ groups, settings, activeModel, subagentModel, hasT
           {group.models.map((model) => <button type="button" role="option" key={model.id} id={optionId(model.id)}
             aria-selected={selectedId === model.id} aria-disabled={model.unavailable || undefined} disabled={model.unavailable}
             className={`unified-model-row${focusedId === model.id ? " highlighted" : ""}`} tabIndex={-1}
-            title={`${model.upstreamModelId ?? model.id} · ${modelProviderLabel(model)}${model.unavailable ? " · Unavailable; review Settings > Providers" : ""}`}
+            title={`${model.upstreamModelId ?? model.id} · ${modelProviderLabel(model)} · ${model.supportsTools ? "Tools supported" : "Chat only"}${model.unavailable ? " · Unavailable; review Settings > Providers" : ""}`}
             onMouseMove={() => { if (!model.unavailable) setHighlight(model.id); }} onClick={() => choose(model)}>
             <span className="unified-model-name">{model.label}{model.unavailable && <small>Unavailable</small>}</span>
-            <span className="unified-model-icons">{model.supportsTools && <Wrench size={13} aria-label="Tools supported" />}{model.supportsImageInput && <Eye size={14} aria-label="Image input" />}
+            <span className="unified-model-icons">{model.supportsImageInput && <Eye size={13} aria-label="Image input" />}
               <span className="model-selection-mark">{selectedId === model.id && <Check size={15} />}</span></span>
           </button>)}
         </div>)}
         {!filtered.length && <p className="model-picker-empty" role="status">{groups.length ? "No matching models." : "Add models in Settings > Providers."}</p>}
       </div>
       <div className="unified-model-footer">
-        <label className="model-effort-control"><span>Reasoning</span><select aria-label={target === "chat" ? "Chat reasoning" : "Subagent reasoning"}
-          value={effort ?? "inherit"} disabled={!selected.reasoningEfforts.length && target === "chat"}
-          onChange={(event) => { const value = event.target.value; onSettings(target === "chat" ? { reasoningEffort: value as ReasoningEffort } : { subagentReasoningEffort: value === "inherit" ? null : value as ReasoningEffort }); }}>
-          {target === "subagent" && <option value="inherit">Same as chat</option>}
-          {!selected.reasoningEfforts.length && target === "chat" && <option value={effort ?? "none"}>Not available</option>}
-          {selected.reasoningEfforts.map((value) => <option key={value} value={value}>{selected.reasoningControl === "toggle" && value !== "none" ? "On" : effortNames[value]}</option>)}
-        </select></label>
+        <div className="model-effort-control" role="group" aria-label={target === "chat" ? "Chat reasoning" : "Subagent reasoning"}>
+          <span className="model-effort-label">Reasoning</span>
+          <div className="model-effort-options">
+            {target === "subagent" && <button type="button" aria-pressed={!effort} onClick={() => onSettings({ subagentReasoningEffort: null })}>Same as chat</button>}
+            {!selected.reasoningEfforts.length && target === "chat" && <span className="model-effort-unavailable">Not available</span>}
+            {selected.reasoningEfforts.map((value) => <button type="button" key={value} aria-pressed={effort === value}
+              onClick={() => onSettings(target === "chat" ? { reasoningEffort: value } : { subagentReasoningEffort: value })}>
+              {selected.reasoningControl === "toggle" && value !== "none" ? "On" : effortNames[value]}
+            </button>)}
+          </div>
+        </div>
         {target === "subagent" && hasThread && <label className="model-scope-control"><input type="checkbox" checked={settings.subagentSettingsScope === "next_turn"}
           onChange={(event) => onSettings({ subagentSettingsScope: event.target.checked ? "next_turn" : "new" })} />Apply to existing agents’ next turns</label>}
         {target === "subagent" && <p>Current runs keep their model and reasoning.</p>}

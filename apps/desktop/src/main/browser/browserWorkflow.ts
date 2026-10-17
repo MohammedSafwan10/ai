@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { atomicWriteFileSync } from "../storage/atomicWrite";
 import type {
   BrowserEvidenceRecord,
   BrowserWorkflowAssertion,
@@ -89,6 +90,15 @@ export class BrowserWorkflowManager {
       recentEvidence: this.evidenceForWorkspace(workspaceId).slice(0, 12),
       updatedAt: Date.now(),
     };
+  }
+
+  clearHistory() {
+    if (this.activeRecordings.size) {
+      throw new Error("Finish browser workflow recording and running workflows before clearing history.");
+    }
+    const next = { ...this.data, runs: [], evidence: [] };
+    atomicWriteFileSync(path.join(this.userDataPath, "browser-workflows-v1.json"), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    this.data = next;
   }
 
   startRecording(workspaceId: string, name?: string, description?: string) {

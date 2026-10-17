@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
+import { atomicWriteFile } from "./atomicWrite";
 import type {
   StorageCleanupCategoryId,
   StorageCleanupInput,
@@ -13,6 +14,7 @@ interface StorageCleanupServiceOptions {
   userDataPath: string;
   downloadsPath: string;
   clearBrowserProfileData?: () => Promise<void>;
+  clearWorkflowHistory?: () => void;
 }
 
 interface DirectoryStats {
@@ -28,6 +30,7 @@ const PRIVORA_DOWNLOADS_DIR = "Privora";
 const YIELD_EVERY = 160;
 
 export class StorageCleanupService {
+  private cleaning = false;
   constructor(private options: StorageCleanupServiceOptions) {}
 
   async usage(): Promise<StorageUsageSnapshot> {
@@ -45,26 +48,32 @@ export class StorageCleanupService {
   }
 
   async cleanup(input: StorageCleanupInput): Promise<StorageCleanupResult> {
-    const selected = new Set(input.categoryIds);
-    const before = await this.usage();
-    const results: StorageCleanupResult["categories"] = [];
+    if (this.cleaning) throw new Error("Storage cleanup is already running. Wait for it to finish.");
+    this.cleaning = true;
+    try {
+      const selected = new Set(input.categoryIds);
+      const before = await this.usage();
+      const results: StorageCleanupResult["categories"] = [];
 
-    for (const category of CATEGORY_ORDER) {
-      if (!selected.has(category)) continue;
-      if (category === "browser_artifacts") results.push(await this.cleanupDirectoryCategory(category, this.browserArtifactsPath()));
-      if (category === "browser_workflow_history") results.push(await this.cleanupWorkflowHistory());
-      if (category === "browser_cache") results.push(await this.cleanupBrowserCache());
-      if (category === "browser_downloads") results.push(await this.cleanupDirectoryCategory(category, this.privoraDownloadsPath()));
+      for (const category of CATEGORY_ORDER) {
+        if (!selected.has(category)) continue;
+        if (category === "browser_artifacts") results.push(await this.cleanupDirectoryCategory(category, this.browserArtifactsPath()));
+        if (category === "browser_workflow_history") results.push(await this.cleanupWorkflowHistory());
+        if (category === "browser_cache") results.push(await this.cleanupBrowserCache());
+        if (category === "browser_downloads") results.push(await this.cleanupDirectoryCategory(category, this.privoraDownloadsPath()));
+      }
+
+      const after = await this.usage();
+      return {
+        before,
+        after,
+        categories: results,
+        totalBytesFreed: results.reduce((sum, category) => sum + category.bytesFreed, 0),
+        completedAt: Date.now(),
+      };
+    } finally {
+      this.cleaning = false;
     }
-
-    const after = await this.usage();
-    return {
-      before,
-      after,
-      categories: results,
-      totalBytesFreed: results.reduce((sum, category) => sum + category.bytesFreed, 0),
-      completedAt: Date.now(),
-    };
   }
 
   private async browserArtifactsCategory(): Promise<StorageUsageCategoryRecord> {
@@ -105,8 +114,8 @@ export class StorageCleanupService {
     const stats = await scanManyDirectories(roots);
     return {
       id: "browser_cache",
-      label: "Browser cache and profiles",
-      description: "Per-workspace browser cache, cookies, storage, and Chromium profile data.",
+      label: "Browser data",
+      description: "Cache, cookies, and website storage. Clearing this may sign you out of websites; some profile metadata is kept.",
       bytes: stats.bytes,
       files: stats.files,
       directories: stats.directories,
@@ -149,7 +158,9 @@ export class StorageCleanupService {
     const before = await workflowHistoryStats(this.workflowPath());
     const errors: string[] = [];
     try {
-      await pruneWorkflowHistory(this.workflowPath());
+      await assertUnlinkedPath(this.workflowPath());
+      if (this.options.clearWorkflowHistory) this.options.clearWorkflowHistory();
+      else await pruneWorkflowHistory(this.workflowPath());
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
@@ -172,11 +183,13 @@ export class StorageCleanupService {
       errors.push(error instanceof Error ? error.message : String(error));
     }
     for (const root of roots) {
-      const cacheDirs = await knownCacheSubdirectories(root);
-      for (const cacheDir of cacheDirs) {
-        const deleted = await deleteDirectoryContents(cacheDir);
-        errors.push(...deleted.errors);
-      }
+      try {
+        const cacheDirs = await knownCacheSubdirectories(root);
+        for (const cacheDir of cacheDirs) {
+          const deleted = await deleteDirectoryContents(cacheDir);
+          errors.push(...deleted.errors);
+        }
+      } catch (error) { errors.push(compactError(error)); }
     }
     const after = await scanManyDirectories(roots);
     return {
@@ -224,6 +237,7 @@ const scanManyDirectories = async (roots: string[]) => {
 const scanDirectory = async (root: string): Promise<DirectoryStats> => {
   const resolvedRoot = path.resolve(root);
   const stats = emptyStats();
+  try { await assertUnlinkedPath(resolvedRoot); } catch (error) { stats.errors.push(compactError(error)); return stats; }
   if (!fsSync.existsSync(resolvedRoot)) return stats;
 
   const stack = [resolvedRoot];
@@ -232,6 +246,7 @@ const scanDirectory = async (root: string): Promise<DirectoryStats> => {
     const current = stack.pop()!;
     let entries: fsSync.Dirent[];
     try {
+      await assertUnlinkedPath(current);
       entries = await fs.readdir(current, { withFileTypes: true });
     } catch (error) {
       stats.errors.push(compactError(error));
@@ -245,7 +260,8 @@ const scanDirectory = async (root: string): Promise<DirectoryStats> => {
       } else if (entry.isFile()) {
         stats.files += 1;
         try {
-          stats.bytes += (await fs.stat(entryPath)).size;
+          const info = await fs.lstat(entryPath);
+          if (info.isFile()) stats.bytes += info.size;
         } catch (error) {
           stats.errors.push(compactError(error));
         }
@@ -260,6 +276,7 @@ const scanDirectory = async (root: string): Promise<DirectoryStats> => {
 const deleteDirectoryContents = async (root: string) => {
   const resolvedRoot = path.resolve(root);
   const errors: string[] = [];
+  try { await assertUnlinkedPath(resolvedRoot); } catch (error) { return { errors: [compactError(error)] }; }
   if (!fsSync.existsSync(resolvedRoot)) return { errors };
   let entries: fsSync.Dirent[];
   try {
@@ -276,6 +293,7 @@ const deleteDirectoryContents = async (root: string) => {
       continue;
     }
     try {
+      await assertUnlinkedPath(resolvedRoot);
       await fs.rm(entryPath, { recursive: true, force: true, maxRetries: 2, retryDelay: 80 });
     } catch (error) {
       errors.push(compactError(error));
@@ -292,6 +310,7 @@ const workflowHistoryStats = async (filePath: string) => {
   let bytes = 0;
   let records = 0;
   try {
+    await assertUnlinkedPath(filePath);
     bytes = (await fs.stat(filePath)).size;
     const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as { runs?: unknown[]; evidence?: unknown[] };
     records = (Array.isArray(parsed.runs) ? parsed.runs.length : 0) + (Array.isArray(parsed.evidence) ? parsed.evidence.length : 0);
@@ -304,19 +323,25 @@ const workflowHistoryStats = async (filePath: string) => {
 const pruneWorkflowHistory = async (filePath: string) => {
   if (!fsSync.existsSync(filePath)) return;
   const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
-  await fs.writeFile(filePath, `${JSON.stringify({ ...parsed, runs: [], evidence: [] }, null, 2)}\n`, "utf8");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid workflow file; history was not changed.");
+  await atomicWriteFile(filePath, `${JSON.stringify({ ...parsed, runs: [], evidence: [] }, null, 2)}\n`, "utf8");
 };
 
 const browserCacheRoots = async (userDataPath: string) => {
   const partitionsRoot = path.join(userDataPath, "Partitions");
+  // Return the root for the scanner to report errors rather than hiding a
+  // redirected/unreadable profile directory as an empty successful scan.
+  try { await assertUnlinkedPath(partitionsRoot); } catch { return [partitionsRoot]; }
   if (!fsSync.existsSync(partitionsRoot)) return [];
-  const entries = await fs.readdir(partitionsRoot, { withFileTypes: true }).catch(() => []);
+  const entries = await fs.readdir(partitionsRoot, { withFileTypes: true }).catch(() => null);
+  if (!entries) return [partitionsRoot];
   return entries
-    .filter((entry) => entry.isDirectory() && entry.name.includes("privora-browser"))
+    .filter((entry) => (entry.isDirectory() || entry.isSymbolicLink()) && /^privora-browser(?:_|%3a|:)/i.test(entry.name))
     .map((entry) => path.join(partitionsRoot, entry.name));
 };
 
 const knownCacheSubdirectories = async (profileRoot: string) => {
+  await assertUnlinkedPath(profileRoot);
   const candidates = [
     "Cache",
     "Code Cache",
@@ -337,6 +362,22 @@ const isPathInside = (root: string, target: string) => {
 const compactError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/\s+/g, " ").slice(0, 300);
+};
+
+// Check every existing ancestor: a junction at Cache, Partitions, or the
+// category root must never turn an app cleanup into deletion elsewhere.
+const assertUnlinkedPath = async (target: string) => {
+  let current = path.resolve(target);
+  while (true) {
+    try {
+      if ((await fs.lstat(current)).isSymbolicLink()) throw new Error(`Skipped linked storage path: ${current}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
 };
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));

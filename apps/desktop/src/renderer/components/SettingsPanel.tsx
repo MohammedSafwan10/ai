@@ -1,3 +1,4 @@
+import { StorageSettings } from "./StorageSettings";
 import { ProviderModelsSettings } from "./ProviderModelsSettings";
 import type { CatalogProvider } from "../../shared/providerCatalog";
 import {
@@ -11,7 +12,6 @@ import {
   Keyboard,
   Monitor,
   Moon,
-  RefreshCw,
   Settings as SettingsIcon,
   Sun,
   Trash2,
@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState, type ReactNode } from "react";
-import type { SaveSettingsInput, SettingsRecord, StorageCleanupCategoryId, StorageUsageSnapshot, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
+import type { SaveSettingsInput, SettingsRecord, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
 import { GoAccountsSettings } from "./GoAccountsSettings";
 import { OpenRouterModelsSettings } from "./OpenRouterModelsSettings";
@@ -65,10 +65,6 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
   const [workspaceTargets, setWorkspaceTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
-  const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
-  const [storageLoading, setStorageLoading] = useState(false);
-  const [storageCleaning, setStorageCleaning] = useState<StorageCleanupCategoryId | "app_owned" | null>(null);
-  const [storageMessage, setStorageMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [providerSaveError, setProviderSaveError] = useState("");
@@ -126,36 +122,6 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
     };
   }, [open]);
 
-  const refreshStorageUsage = async () => {
-    setStorageLoading(true);
-    setStorageMessage("");
-    try {
-      setStorageUsage(await window.privoraDesktop.getStorageUsage());
-    } catch (error) {
-      setStorageMessage(error instanceof Error ? error.message : "Could not scan storage.");
-    } finally {
-      setStorageLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!open || activeTab !== "storage") return;
-    void refreshStorageUsage();
-  }, [activeTab, open]);
-
-  const cleanupStorage = async (categoryIds: StorageCleanupCategoryId[], mode: StorageCleanupCategoryId | "app_owned") => {
-    setStorageCleaning(mode);
-    setStorageMessage("");
-    try {
-      const result = await window.privoraDesktop.cleanupStorage({ categoryIds });
-      setStorageUsage(result.after);
-      setStorageMessage(`Cleaned ${formatBytes(result.totalBytesFreed)} across ${result.categories.length} ${result.categories.length === 1 ? "category" : "categories"}.`);
-    } catch (error) {
-      setStorageMessage(error instanceof Error ? error.message : "Cleanup failed.");
-    } finally {
-      setStorageCleaning(null);
-    }
-  };
 
   return (
     <div className="settings-screen">
@@ -292,70 +258,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                 </div>
               )}
 
-              {activeTab === "storage" && (
-                <div className="settings-section settings-storage">
-                  <div className="settings-storage-summary">
-                    <div>
-                      <span>Total stored</span>
-                      <strong>{storageUsage ? formatBytes(storageUsage.totalBytes) : storageLoading ? "Scanning..." : "Not scanned"}</strong>
-                      {storageUsage?.scannedAt ? <small>Scanned {new Date(storageUsage.scannedAt).toLocaleTimeString()}</small> : null}
-                    </div>
-                    <div className="settings-button-row">
-                      <button type="button" className="settings-row-button" disabled={storageLoading || Boolean(storageCleaning)} onClick={() => void refreshStorageUsage()}>
-                        <RefreshCw size={15} />
-                        <span>{storageLoading ? "Scanning" : "Refresh"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="settings-row-button"
-                        disabled={storageLoading || Boolean(storageCleaning) || !storageUsage?.categories.some((category) => category.safeToClean && category.bytes > 0)}
-                        onClick={() => void cleanupStorage(["browser_artifacts", "browser_workflow_history", "browser_cache"], "app_owned")}
-                      >
-                        <Trash2 size={15} />
-                        <span>{storageCleaning === "app_owned" ? "Cleaning" : "Clean app-owned browser storage"}</span>
-                      </button>
-                    </div>
-                  </div>
-                  <div className="settings-muted-panel">
-                    Cleanup runs in chunks so large artifact folders do not freeze the app. Privora downloads are kept separate because they are user files in your Downloads folder.
-                  </div>
-                  <div className="settings-storage-grid">
-                    {(storageUsage?.categories || []).map((category) => (
-                      <div className={clsx("settings-storage-card", category.userFiles && "user-files")} key={category.id}>
-                        <div className="settings-storage-card-head">
-                          <div>
-                            <strong>{category.label}</strong>
-                            <span>{category.description}</span>
-                          </div>
-                          <b>{formatBytes(category.bytes)}</b>
-                        </div>
-                        <div className="settings-storage-meta">
-                          <span>{category.files.toLocaleString()} files</span>
-                          <span>{category.directories.toLocaleString()} folders</span>
-                          {category.userFiles && <span>User files</span>}
-                        </div>
-                        {category.path && <code>{category.path}</code>}
-                        {category.errors.length > 0 && (
-                          <p className="settings-storage-error">{category.errors.slice(0, 2).join(" ")}</p>
-                        )}
-                        <button
-                          type="button"
-                          className="settings-row-button"
-                          disabled={category.bytes <= 0 || storageLoading || Boolean(storageCleaning)}
-                          onClick={() => void cleanupStorage([category.id], category.id)}
-                        >
-                          <Trash2 size={14} />
-                          <span>{storageCleaning === category.id ? "Cleaning" : category.userFiles ? "Clean downloads" : "Clean"}</span>
-                        </button>
-                      </div>
-                    ))}
-                    {!storageLoading && !storageUsage && (
-                      <div className="settings-muted-panel">Scan storage to see browser artifacts, workflow history, cache, and downloads.</div>
-                    )}
-                  </div>
-                  {storageMessage && <p className="settings-storage-message">{storageMessage}</p>}
-                </div>
-              )}
+              {activeTab === "storage" && <StorageSettings />}
 
               {activeTab === "about" && (
                 <div className="settings-section settings-about">
