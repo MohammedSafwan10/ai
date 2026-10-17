@@ -207,7 +207,7 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                 {toolFailureLabel(tool) && <p className="tool-failure-source">{toolFailureLabel(tool)}</p>}
                 {tool.approvalReason && tool.status === "awaiting_approval" && !isNoisyCommandReason(tool.approvalReason) && <p>{tool.approvalReason}</p>}
                 {expandedOutputIds.has(tool.id) && detailErrors[tool.id] && <p role="alert">{detailErrors[tool.id]}</p>}
-                {(hasUsefulOutput(displayOutput(tool)) || isTerminalOutputTool(tool) || liveFileDraftOutput(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
+                {(hasUsefulOutput(displayOutput(tool)) || tool.detailAvailable || isTerminalOutputTool(tool) || liveFileDraftOutput(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool)) && (
                   isLiveFileDraft(tool) ? (
                     expandedOutputIds.has(tool.id) && <LiveFileDraft tool={tool} />
                   ) : isTerminalOutputTool(tool) ? (
@@ -235,14 +235,9 @@ export function ToolTimeline({ tools, subagents = [], messageStatus, defaultOpen
                       <SubagentInspector tool={tool} subagents={subagents} onOpen={onOpenSubagent} />
                     )
                   ) : (
-                    isLiveOutput(tool)
-                      ? <LiveOutput output={displayOutput(tool).slice(-9000)} />
-                      : shouldShowOutputDetail(tool) && (
-                        <details className="tool-detail">
-                          <summary>Output</summary>
-                          <pre>{displayOutput(tool).slice(0, 5000)}</pre>
-                        </details>
-                      )
+                    expandedOutputIds.has(tool.id) && (
+                      <TerminalOutputPanel tool={tool} output={displayOutput(tool)} />
+                    )
                   )
                 )}
                 {tool.diff && shouldShowDiffDetail(tool) && !hasFileDiffs(tool) && (
@@ -378,7 +373,7 @@ function ToolTitleLine({
   }, [commandRunning, tool.id]);
   const canExpand = (
     isTerminalOutputTool(tool) ||
-    (isQuestionTool(tool) && hasUsefulOutput(output))
+    hasUsefulOutput(output) || tool.detailAvailable
   ) || isLiveFileDraft(tool) || isSubagentTool(tool) || isBrowserTool(tool) || isComputerTool(tool) || isImageTool(tool);
   const label = commandActivityLabel(tool, clock);
   const command = isTerminalOutputTool(tool) ? terminalCommandText(tool).replace(/\s+/g, " ").trim() : "";
@@ -734,6 +729,7 @@ const isTerminalApproval = (tool: ToolEventRecord) =>
 
 export const isTerminalOutputTool = (tool: ToolEventRecord) =>
   [
+    "kali_capabilities",
     "kali_exec",
     "kali_job_output",
     "kali_job_status",
@@ -1355,10 +1351,6 @@ const shouldShowActivity = (tool: ToolEventRecord) =>
 
 const shouldShowDiffDetail = (tool: ToolEventRecord) =>
   tool.status !== "done" || toolActivityItems(tool).length !== 1;
-
-const shouldShowOutputDetail = (tool: ToolEventRecord) =>
-  tool.status !== "done" ||
-  Boolean(tool.result?.error);
 
 function ToolActivity({ tool, active }: { tool: ToolEventRecord; active: boolean }) {
   const items = toolActivityItems(tool);

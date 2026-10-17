@@ -11,6 +11,31 @@ const tool = (overrides: Partial<ToolEventRecord> = {}): ToolEventRecord => ({
 });
 
 describe("terminal output history", () => {
+  it.each(["done", "failed", "running"] as const)("keeps the environment check inspectable when %s", (status) => {
+    const event = tool({ name: "kali_capabilities", title: "Kali · Check environment", args: {}, status, output: '{"connected":true,"runner":"ready"}' });
+    const html = renderToStaticMarkup(createElement(ToolTimeline, {
+      tools: [event], messageStatus: status === "running" ? "running" : "completed", defaultOpen: true,
+      onApprove: () => {}, onApproveAll: () => {},
+    }));
+    expect(html).toContain('title="Expand output"');
+    expect(html).toContain("Kali · Check environment");
+    const panel = renderToStaticMarkup(createElement(TerminalOutputPanel, { tool: event, output: event.output! }));
+    expect(panel).toContain(status === "running" ? 'aria-label="Copy live output"' : 'aria-label="Copy output"');
+    expect(panel).toContain("runner");
+    expect(panel).not.toContain('aria-label="Copy command"');
+  });
+  it.each(["security_finding_list", "security_finding_save", "kali_artifact", "desktop_read_file", "web_search"])("keeps successful %s output accessible", (name) => {
+    const event = tool({ name, title: "Inspect result", args: {}, output: "Saved diagnostic result", risk: "safe" });
+    const html = renderToStaticMarkup(createElement(ToolTimeline, { tools: [event], messageStatus: "completed", defaultOpen: true, onApprove: () => {}, onApproveAll: () => {} }));
+    expect(html).toContain('title="Expand output"');
+    // Full output is shown only after the user opens the row.
+    expect(html).not.toContain('class="terminal-output-panel"');
+  });
+  it("keeps archived details inspectable even when their inline output is empty", () => {
+    const event = tool({ name: "security_finding_list", args: {}, output: "", detailAvailable: true });
+    const html = renderToStaticMarkup(createElement(ToolTimeline, { tools: [event], messageStatus: "completed", defaultOpen: true, onApprove: () => {}, onApproveAll: () => {} }));
+    expect(html).toContain('title="Expand output"');
+  });
   it("shows a runner startup error once when it is also the tool output", () => {
     const error = "Runner worker exited before command startup. The command was not executed.";
     const event = tool({ status: "failed", output: error, result: { success: false, error } });
