@@ -1,5 +1,6 @@
 import {
   Check,
+  ArrowLeft,
   ChevronRight,
   Code2,
   Database,
@@ -40,6 +41,14 @@ interface SettingsScreenProps {
 }
 
 type SettingsTab = "general" | "providers" | "workspace" | "storage" | "shortcuts" | "about";
+type ProviderId = "openrouter" | "go" | "gemini" | "deepseek" | "cliproxy";
+const providers: { id: ProviderId; name: string; description: string }[] = [
+  { id: "openrouter", name: "OpenRouter", description: "API key and model library" },
+  { id: "go", name: "OpenCode Go", description: "Accounts and model access" },
+  { id: "gemini", name: "Gemini", description: "Direct Google API access" },
+  { id: "deepseek", name: "DeepSeek", description: "Direct DeepSeek API access" },
+  { id: "cliproxy", name: "CLIProxy", description: "Local proxy connection" },
+];
 
 export function SettingsPanel({ onOpenTab, onClose }: SettingsPanelProps) {
   return <button className="sidebar-settings-button" onClick={() => onOpenTab ? onOpenTab("general") : onClose()} title="Settings"><SettingsIcon size={16} /><span>Settings</span></button>;
@@ -47,7 +56,9 @@ export function SettingsPanel({ onOpenTab, onClose }: SettingsPanelProps) {
 
 export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open, onOpen, onClose, onSave, initialTab = "general" }: SettingsScreenProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const [provider, setProvider] = useState<ProviderId | null>(null);
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
+  const [openRouterKeyRevision, setOpenRouterKeyRevision] = useState(0);
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [goModelsStatus, setGoModelsStatus] = useState("");
@@ -67,6 +78,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
     setProviderSaveError("");
     try {
       await onSave(input);
+      if ("openRouterApiKey" in input) setOpenRouterKeyRevision((revision) => revision + 1);
       setStatus("saved");
       window.setTimeout(() => setStatus("idle"), 1800);
       return true;
@@ -160,14 +172,19 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
             <div className="settings-content">
               <div className="settings-modal-header">
                 <h2>{tabTitle(activeTab)}</h2>
-                <button type="button" className="settings-close-button" title="Close settings" onClick={onClose}>
+                <button type="button" className="settings-close-button" aria-label="Close settings" title="Close settings" onClick={onClose}>
                   <X size={16} />
                 </button>
               </div>
 
               {activeTab === "general" && (
-                <div className="settings-section">
-                  <div className="theme-control" aria-label="Theme">
+                <div className="settings-section settings-general">
+                  <div className="settings-preference-row">
+                    <div className="settings-preference-copy">
+                      <strong>Appearance</strong>
+                      <small>Use your device theme or choose your own.</small>
+                    </div>
+                  <div className="theme-control" role="group" aria-label="Appearance">
                     {themeOptions.map((option) => {
                       const Icon = option.icon;
                       return (
@@ -176,6 +193,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                           key={option.id}
                           className={clsx(settings.theme === option.id && "active")}
                           title={option.label}
+                          aria-pressed={settings.theme === option.id}
                           onClick={() => onSave({ theme: option.id })}
                         >
                           <Icon size={16} />
@@ -184,29 +202,51 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                       );
                     })}
                   </div>
+                  </div>
                   <button
                     type="button"
-                    className="settings-row-button settings-toggle-row"
+                    className="settings-preference-row settings-toggle-row"
+                    role="switch"
+                    aria-checked={settings.keepRunningInTray}
+                    aria-label="Run in background"
                     onClick={() => onSave({ keepRunningInTray: !settings.keepRunningInTray })}
                   >
-                    <span>
-                      <strong>Keep Privora running in background</strong>
+                    <span className="settings-preference-copy">
+                      <strong>Run in background</strong>
                       <small>Closing the window hides it to the Windows tray.</small>
                     </span>
-                    <span className={settings.keepRunningInTray ? "settings-toggle-pill active" : "settings-toggle-pill"}>
-                      {settings.keepRunningInTray ? "On" : "Off"}
-                    </span>
+                    <span aria-hidden="true" className={clsx("settings-switch", settings.keepRunningInTray && "active")} />
                   </button>
                 </div>
               )}
 
               {activeTab === "providers" && (
-                <div className="settings-section">
-                  <label>
+                <div className="settings-section settings-providers">
+                  {!provider ? <>
+                    <p className="settings-description">Manage each provider’s connection, accounts, and models.</p>
+                    <div className="settings-provider-list">
+                      {providers.map((item) => {
+                        const detail = item.id === "openrouter" ? settings.openRouterApiKeyStored ? "Key saved" : "Not configured"
+                          : item.id === "gemini" ? settings.geminiApiKeyStored ? "Key saved" : "Not configured"
+                          : item.id === "deepseek" ? settings.deepseekApiKeyStored ? "Key saved" : "Not configured"
+                          : item.id === "go" ? `${settings.opencodeGoAccounts?.length || (settings.opencodeGoApiKeyStored ? 1 : 0)} saved`
+                          : "Local endpoint";
+                        return <button type="button" key={item.id} onClick={() => { setProvider(item.id); setStatus("idle"); setProviderSaveError(""); }}>
+                          <span className="settings-preference-copy"><strong>{item.name}</strong><small>{item.description}</small></span>
+                          <span className="settings-provider-status">{detail}<ChevronRight size={15} /></span>
+                        </button>;
+                      })}
+                    </div>
+                  </> : <>
+                  <div className="settings-provider-heading">
+                    <button type="button" className="settings-row-button" disabled={saving} onClick={() => { setProvider(null); setStatus("idle"); setProviderSaveError(""); }}><ArrowLeft size={14} /> All providers</button>
+                    <h3>{providers.find((item) => item.id === provider)?.name}</h3>
+                  </div>
+                  {provider === "cliproxy" && <label>
                     CLIProxy base URL
                     <input value={cliproxyBaseUrl} onChange={(event) => setCliproxyBaseUrl(event.target.value)} />
-                  </label>
-                  <label>
+                  </label>}
+                  {provider === "gemini" && <label>
                     <span className="settings-secret-label">
                       Gemini API key
                       <small>{settings.geminiApiKeyStored ? "Saved securely" : "Not saved"}</small>
@@ -224,6 +264,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         <button
                           type="button"
                           className="secret-clear-button"
+                          disabled={saving}
                           title="Clear saved Gemini key"
                           onClick={() => {
                             setGeminiApiKey("");
@@ -234,8 +275,8 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         </button>
                       )}
                     </div>
-                  </label>
-                  <label>
+                  </label>}
+                  {provider === "openrouter" && <label>
                     <span className="settings-secret-label">
                       OpenRouter API key
                       <small>{settings.openRouterApiKeyStored ? "Saved securely" : "Not saved"}</small>
@@ -253,6 +294,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         <button
                           type="button"
                           className="secret-clear-button"
+                          disabled={saving}
                           title="Clear saved OpenRouter key"
                           onClick={() => {
                             setOpenRouterApiKey("");
@@ -263,8 +305,8 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         </button>
                       )}
                     </div>
-                  </label>
-                  <label>
+                  </label>}
+                  {provider === "deepseek" && <label>
                     <span className="settings-secret-label">
                       DeepSeek API key
                       <small>{settings.deepseekApiKeyStored ? "Saved securely" : "Not saved"}</small>
@@ -282,6 +324,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         <button
                           type="button"
                           className="secret-clear-button"
+                          disabled={saving}
                           title="Clear saved DeepSeek key"
                           onClick={() => {
                             setDeepseekApiKey("");
@@ -292,8 +335,8 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         </button>
                       )}
                     </div>
-                    <small>Direct api.deepseek.com key for V4.1 Flash Temp (expires 09-10) + Vision Exp. Same pricing as v4-flash.</small>
-                  </label>
+                  </label>}
+                  {provider === "go" && <>
                   <GoAccountsSettings settings={settings} busy={saving} onSave={saveProviderSettings} />
                   {settings.opencodeGoApiKeyStored && (
                     <div className="settings-button-row">
@@ -318,20 +361,19 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                     </div>
                   )}
                   {goModelsStatus && <p className="settings-storage-message">{goModelsStatus}</p>}
-                  <button
+                  </>}
+                  {provider !== "go" && <button
                     className="settings-primary-button"
-                    disabled={saving}
+                    disabled={saving || (provider === "openrouter" && !openRouterApiKey.trim()) || (provider === "gemini" && !geminiApiKey.trim()) || (provider === "deepseek" && !deepseekApiKey.trim())}
                     onClick={async () => {
-                      const saved = await saveProviderSettings({
-                        cliproxyBaseUrl,
-                        ...(geminiApiKey ? { geminiApiKey } : {}),
-                        ...(openRouterApiKey ? { openRouterApiKey } : {}),
-                        ...(deepseekApiKey ? { deepseekApiKey } : {}),
-                      });
+                      const saved = await saveProviderSettings(provider === "cliproxy" ? { cliproxyBaseUrl }
+                        : provider === "gemini" ? { geminiApiKey }
+                        : provider === "openrouter" ? { openRouterApiKey }
+                        : { deepseekApiKey });
                       if (!saved) return;
-                      setGeminiApiKey("");
-                      setOpenRouterApiKey("");
-                      setDeepseekApiKey("");
+                      if (provider === "gemini") setGeminiApiKey("");
+                      if (provider === "openrouter") setOpenRouterApiKey("");
+                      if (provider === "deepseek") setDeepseekApiKey("");
                     }}
                   >
                     {saving ? "Saving..." : status === "saved" ? (
@@ -339,12 +381,13 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                         <Check size={15} />
                         Saved
                       </>
-                    ) : "Save provider settings"}
-                  </button>
+                    ) : provider === "cliproxy" ? "Save connection" : "Save API key"}
+                  </button>}
                   {status === "error" && (
                     <p className="settings-error">{providerSaveError}</p>
                   )}
-                  <OpenRouterModelsSettings keyStored={settings.openRouterApiKeyStored} />
+                  {provider === "openrouter" && <OpenRouterModelsSettings key={openRouterKeyRevision} keyStored={settings.openRouterApiKeyStored} />}
+                  </>}
                 </div>
               )}
 
@@ -477,7 +520,7 @@ function SettingsTabButton({
   onSelect: (tab: SettingsTab) => void;
 }) {
   return (
-    <button type="button" className={clsx(active === id && "active")} onClick={() => onSelect(id)}>
+    <button type="button" className={clsx(active === id && "active")} aria-current={active === id ? "page" : undefined} onClick={() => onSelect(id)}>
       {icon}
       <span>{label}</span>
     </button>
