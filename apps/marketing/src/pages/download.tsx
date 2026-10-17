@@ -111,13 +111,15 @@ export function DownloadPage() {
             )}
           </div>
         </div>
-        <img
-          className="download-icon reveal"
-          src="/media/portal-large.webp"
-          alt="Privora Portal app icon"
-          width="500"
-          height="500"
-        />
+        <figure className="download-product reveal">
+          <img
+            src="/media/download-pulse.webp"
+            alt="Privora on a laptop, with a collapsed sidebar, project chat and a Pulse status page in the browser preview"
+            width="1000"
+            height="774"
+          />
+          <figcaption>Illustrative demo project in Privora.</figcaption>
+        </figure>
       </section>
       <section className="setup-section shell">
         <h2 className="reveal">A short setup.</h2>

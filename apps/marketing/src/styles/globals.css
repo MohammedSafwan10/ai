@@ -442,9 +442,20 @@ figcaption {
 .download-hero .button {
   margin-top: 28px;
 }
-.download-icon {
-  width: min(100%, 440px);
+.download-product {
+  width: 100%;
+  margin: 0;
   justify-self: end;
+}
+.download-product img {
+  width: 100%;
+  height: auto;
+}
+.download-product figcaption {
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 12px;
 }
 .release-status {
   max-width: 42ch;
@@ -785,9 +796,9 @@ figcaption {
     width: 100%;
     padding: 14px;
   }
-  .download-icon {
+  .download-product {
     align-self: center;
-    width: 160px;
+    width: 100%;
   }
   .setup-section {
     padding-bottom: 80px;
