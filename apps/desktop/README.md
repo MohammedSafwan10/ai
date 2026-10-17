@@ -65,7 +65,7 @@ Security projects route commands to an assigned Kali environment over pinned SSH
 
 Collected artifacts are retained internally and can have automatic PC copies with source metadata and hashes. Use **Saved to PC** to check the current local file and copy its path or open its folder. Remote files must first be collected; this is not a VM folder sync.
 
-Host filesystem, terminal, and Computer Use tools are blocked in Security projects. Public browser research uses the desktop's connection; target commands execute in Kali. Connection loss does not redirect commands to the host or automatically replay uncertain jobs. Remote GUI control and interactive Kali PTY sessions are not included.
+Security projects can read, create, edit, rename, and delete files inside their local PC project folder. Dedicated evidence tools list verified exported PC copies and move explicitly selected collections to Recycle Bin. Arbitrary host paths, host terminals, and Computer Use remain blocked. Public browser research uses the desktop's connection; target commands execute in Kali. Connection loss does not redirect commands to the host or automatically replay uncertain jobs. Remote GUI control and interactive Kali PTY sessions are not included.
 
 See the [Security guide](docs/security-workspace/README.md), [Kali operations](docs/security-workspace/KALI_OPERATIONS.md), and [connection recovery](docs/security-workspace/CONNECTION_RECOVERY.md).
 

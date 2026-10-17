@@ -5,6 +5,7 @@ export const SECURITY_TOOL_NAMES = [
   "kali_capabilities", "kali_exec", "kali_job_status", "kali_job_output",
   "kali_job_cancel", "kali_artifact", "security_finding_list", "security_finding_save",
   "security_knowledge_list", "security_knowledge_read",
+  "security_evidence_list", "security_evidence_trash",
 ] as const;
 
 export const isSecurityTool = (name: string) => SECURITY_TOOL_NAMES.some((tool) => tool === name);

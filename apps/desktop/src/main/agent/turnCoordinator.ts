@@ -911,7 +911,7 @@ export class TurnCoordinator implements AgentHarnessApi {
               ? buildSecuritySystemPrompt(
                 workspace.security,
                 this.store.getSecurityEnvironment(workspace.security.environmentId),
-                [buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
+                [`Local PC project folder: ${options.workspaceRoot}`, buildRuntimeContext(this.store, options.threadId, options.workspaceRoot),
                   subagent ? buildSubagentRuntimeContext(subagent, loadSubagentRoles(options.workspaceRoot)) : "",
                 ].filter(Boolean).join("\n\n"),
                 effectiveCollaborationMode,

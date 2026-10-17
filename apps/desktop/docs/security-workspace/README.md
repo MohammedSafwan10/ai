@@ -67,8 +67,10 @@ Create a separate Security project from the sidebar shield button, import a
 private connection profile, check access, and set its objective and scope.
 Existing chats, model selection, reasoning, Plan Mode, and access controls are
 reused. The chat header opens jobs, output, Stop, findings, and evidence on demand.
-Host filesystem, terminal, computer controls and browser form actions are blocked
-in Security projects. Built-in browser search, navigation and page-reading tools
+Project-scoped PC file tools are available for local reports and files. Separate
+evidence tools list verified PC copies and recycle explicitly requested collections.
+Arbitrary host paths, host terminals, computer controls and browser form actions
+remain blocked in Security projects. Built-in browser search, navigation and page-reading tools
 are available for public research, including screenshots, evidence capture, and
 PDF reading; their traffic originates on the desktop host.
 Target commands and browser-automation scripts run in the assigned Kali environment.

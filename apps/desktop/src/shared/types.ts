@@ -1480,6 +1480,8 @@ export type DesktopToolName =
   | "kali_job_output"
   | "kali_job_cancel"
   | "kali_artifact"
+  | "security_evidence_list"
+  | "security_evidence_trash"
   | "security_finding_list"
   | "security_knowledge_list"
   | "security_knowledge_read"

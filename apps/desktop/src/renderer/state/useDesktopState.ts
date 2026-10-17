@@ -133,6 +133,10 @@ export const useDesktopState = () => {
   }, []);
 
   const enqueueEvent = useCallback((event: PrivoraEventEnvelope) => {
+    if (event.payload.type === "tool.upserted" && event.payload.tool.name === "security_evidence_trash" &&
+        Array.isArray(event.payload.tool.result?.data?.results) && event.payload.tool.result.data.results.some((item: unknown) => Boolean(item && typeof item === "object" && "state" in item && item.state === "trashed"))) {
+      window.dispatchEvent(new Event("privora:pc-evidence-changed"));
+    }
     if (event.payload.type === "thread.rewound") {
       recoveryGenerationRef.current++;
       if (historyRequestRef.current?.threadId === event.payload.threadId) {

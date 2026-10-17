@@ -279,6 +279,11 @@ export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
   const [verifiedPath, setVerifiedPath] = useState<string | null>(null);
   const [verifyAttempt, setVerifyAttempt] = useState(0);
   useEffect(() => {
+    const changed = () => { setVerifiedPath(null); setCopied(false); setVerifyAttempt((value) => value + 1); };
+    window.addEventListener("privora:pc-evidence-changed", changed);
+    return () => window.removeEventListener("privora:pc-evidence-changed", changed);
+  }, []);
+  useEffect(() => {
     if (!saved) return;
     let current = true;
     setVerifiedPath(null); setError(""); setCopied(false);
@@ -291,12 +296,12 @@ export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
   const copy = async () => {
     setError("");
     try { const result = await window.privoraDesktop.verifySavedSecurityEvidence(tool.id); await navigator.clipboard.writeText(result.localPath); setVerifiedPath(result.localPath); setCopied(true); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    catch (failure) { setVerifiedPath(null); setCopied(false); setError(failure instanceof Error ? failure.message : String(failure)); }
   };
   const open = async () => {
     setOpening(true); setError("");
     try { await window.privoraDesktop.openSavedSecurityEvidenceFolder(tool.id); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    catch (failure) { setVerifiedPath(null); setCopied(false); setError(failure instanceof Error ? failure.message : String(failure)); }
     finally { setOpening(false); }
   };
   return <section className="saved-evidence" aria-label="Saved evidence on this PC">

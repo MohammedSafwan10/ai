@@ -183,7 +183,9 @@ describe("Security model loop", () => {
     expect(security).toContain("browser_pdf");
     expect(security).not.toContain("browser_form_submit");
     expect(security).not.toContain("exec_command");
-    expect(security).not.toContain("desktop_write_file");
+    expect(security).toContain("desktop_write_file");
+    expect(security).toContain("security_evidence_list");
+    expect(security).toContain("security_evidence_trash");
     const development = desktopToolDefinitionsForMode("default", "development").map((tool) => tool.name);
     expect(development).toContain("exec_command");
     expect(development).not.toContain("kali_exec");
@@ -219,7 +221,7 @@ describe("Security model loop", () => {
     expect(store.listToolEvents(thread.id).find((event) => event.callId === "research")?.result?.success).toBe(true);
   });
 
-  it("persists the first user message before model startup and blocks a host tool even with Full access", async () => {
+  it("persists the first user message before model startup and blocks files outside the PC project even with Full access", async () => {
     const { thread, coordinator } = fixture();
     let rounds = 0;
     provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
@@ -228,16 +230,38 @@ describe("Security model loop", () => {
       expect(options.toolEnvironment).toBe("security");
       expect(options.systemInstruction).toContain("Only the isolated VM");
       expect(store.listMessages(thread.id)[0].content).toBe("Inspect my lab");
-      if (rounds++ === 0) options.onToolCall({ id: "host-bypass", name: "desktop_write_file", arguments: { path: "escaped.txt", content: "unsafe" } });
+      if (rounds++ === 0) options.onToolCall({ id: "host-bypass", name: "desktop_write_file", arguments: { path: path.join(directory, "escaped.txt"), content: "unsafe" } });
       else options.onTextDelta("Host access was blocked.");
     });
     await coordinator.startTurn({ threadId: thread.id, prompt: "Inspect my lab" });
     await coordinator.waitForIdle();
     expect(fs.existsSync(path.join(store.getWorkspace(store.getThread(thread.id)?.workspaceId)!.path, "escaped.txt"))).toBe(false);
     const events = store.listToolEvents(thread.id);
-    expect(events.find((event) => event.callId === "host-bypass")?.result?.error).toMatch(/Security|environment|host/i);
+    expect(events.find((event) => event.callId === "host-bypass")?.result?.error).toMatch(/outside|workspace/i);
     expect(store.listMessages(thread.id).at(-1)?.status).toBe("completed");
     expect(coordinator.listActiveRuns()).toHaveLength(0);
+  });
+
+  it("creates, reads, edits, and renames files inside the Security PC project", async () => {
+    const { workspace, thread, coordinator } = fixture();
+    let round = 0;
+    const calls = [
+      { name: "desktop_write_file" as const, arguments: { path: "report.md", content: "Original report", createOnly: true } },
+      { name: "desktop_read_file" as const, arguments: { path: "report.md" } },
+      { name: "desktop_edit_file" as const, arguments: { path: "report.md", operations: [{ type: "replace_text", match: "Original", replacement: "Updated" }] } },
+      { name: "desktop_rename_path" as const, arguments: { fromPath: "report.md", toPath: "final.md" } },
+      { name: "desktop_delete_path" as const, arguments: { path: ".", recursive: true } },
+    ];
+    provider.stream.mockImplementation(async (options: ProviderStreamOptions) => {
+      expect(options.systemInstruction).toContain(`Local PC project folder: ${workspace.path}`);
+      if (round < calls.length) options.onToolCall({ id: `local-${round}`, ...calls[round++] });
+      else options.onTextDelta("Saved the local report.");
+    });
+    await coordinator.startTurn({ threadId: thread.id, prompt: "Create and edit a local PC report" }); await coordinator.waitForIdle();
+    expect(fs.readFileSync(path.join(workspace.path, "final.md"), "utf8")).toBe("Updated report");
+    expect(store.listToolEvents(thread.id).filter((tool) => ["local-0", "local-1", "local-2", "local-3"].includes(tool.callId)).every((tool) => tool.result?.success)).toBe(true);
+    expect(store.listToolEvents(thread.id).find((tool) => tool.callId === "local-4")?.result?.error).toContain("project root");
+    expect(fs.existsSync(path.join(workspace.path, "report.md"))).toBe(false);
   });
 });
 

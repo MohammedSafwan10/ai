@@ -17,6 +17,7 @@ interface PermissionContext {
 }
 
 export const classifyToolCall = (call: DesktopToolCall, mode: PermissionMode, context: PermissionContext = {}): PermissionDecision => {
+  if (call.name === "security_evidence_trash") return { risk: "risky", requiresApproval: mode !== "yolo", reason: "Move selected saved PC evidence collections to Recycle Bin. VM originals and Privora attachments are kept." };
   if (call.name === "kali_exec") {
     return {
       risk: "risky", requiresApproval: mode !== "yolo",

@@ -48,7 +48,7 @@ Connect OpenAI, Claude, Gemini, DeepSeek, OpenRouter, OpenCode Go, or a local CL
 
 Chats, settings, drafts, prompts, notes, artifacts, and recovery state are stored locally. Provider credentials use OS-backed secret storage. Remote model providers receive the context needed for their requests; local persistence does not make remote inference offline. Browser research also makes network requests from the desktop.
 
-Build projects run workspace tools on your computer. Security projects route commands to their assigned Kali environment and keep remote jobs and evidence tied to that project. Collected evidence can have automatic PC copies. The **Saved to PC** controls check the recorded local file before copying its path or opening its folder.
+Build projects run workspace tools on your computer. Security projects route commands to their assigned Kali environment and keep remote jobs and evidence tied to that project. Security projects also support file editing inside their own local PC folder. Collected evidence can have automatic PC copies; dedicated tools can list and recycle these copies when requested. The **Saved to PC** controls check the recorded local file before copying its path or opening its folder.
 
 **Ask risky** and **Full access** control ordinary approvals. Plan Mode restricts mutations. Full access does not change OS privileges, expand a Security project's target scope, or remove Computer Use's hard boundaries.
 

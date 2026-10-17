@@ -524,6 +524,7 @@ export class FileMutationCoordinator {
 
   async deletePath(call: DesktopToolCall, context: ToolExecutionContext): Promise<ToolResult & { diff?: string; diffFiles?: ToolDiffFileRecord[] }> {
     const target = resolveExistingWorkspacePath(context.workspaceRoot, String(call.arguments.path || ""));
+    if (!target.relativePath) throw new Error("Cannot delete the project root with a file tool. Use Remove project for project removal.");
     context.onCommandOutput(call.id, `Deleting ${target.relativePath}\n`);
     const stat = await fs.stat(target.absolutePath);
     const snapshot = stat.isFile() ? await this.files.snapshot(context.workspaceRoot, target.relativePath) : null;

@@ -14,6 +14,6 @@ describe("Security read scheduling and evidence", () => {
   });
   it("allows browser evidence without granting general host access", () => {
     for (const name of ["browser_screenshot", "browser_evidence", "browser_pdf"] as const) expect(securityWorkspaceBlockReason(call(name), true)).toBeNull();
-    for (const name of ["exec_command", "desktop_write_file", "computer_act"] as const) expect(securityWorkspaceBlockReason(call(name), true)).toBeTruthy();
+    for (const name of ["exec_command", "computer_act"] as const) expect(securityWorkspaceBlockReason(call(name), true)).toBeTruthy();
   });
 });

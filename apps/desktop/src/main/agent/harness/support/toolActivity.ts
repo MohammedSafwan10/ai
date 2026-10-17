@@ -182,6 +182,10 @@ export const titleForTool = (call: DesktopToolCall) => {
       return "Kali · Stop job";
     case "kali_artifact":
       return `Kali · Collect ${compactToolLabel(redactSecrets(String(args.path || "evidence")), "evidence")}`;
+    case "security_evidence_list":
+      return "PC evidence · List saved copies";
+    case "security_evidence_trash":
+      return "PC evidence · Move selected copies to Recycle Bin";
     case "security_finding_list":
       return "Security · Read findings";
     case "security_finding_save":
@@ -342,6 +346,8 @@ export const titleForTool = (call: DesktopToolCall) => {
 };
 
 export const categoryForTool = (call: DesktopToolCall): ToolEventRecord["category"] => {
+  if (call.name === "security_evidence_list") return "read";
+  if (call.name === "security_evidence_trash") return "edit";
   if (["kali_exec", "kali_job_status", "kali_job_output", "kali_job_cancel"].includes(call.name)) return "terminal";
   if (call.name === "kali_capabilities") return "diagnostic";
   if (["kali_artifact", "security_finding_list"].includes(call.name)) return "read";

@@ -177,6 +177,25 @@ describe("Security workspace runtime", () => {
       expect(test.store.getSecurityEnvironment().status).not.toBe("error");
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
+  it("lists and trashes recorded PC evidence without contacting an offline Kali environment", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "privora-offline-pc-"));
+    try {
+      const request = vi.fn(async () => { throw new Error("Kali offline"); }); const test = fixture(request);
+      const trash = vi.fn(async (target: string) => { fs.renameSync(target, path.join(directory, "recycled")); });
+      const service = new SecurityWorkspaceService(test.store as unknown as DesktopStore, undefined, (config) => new KaliConnector(config, { request }), directory, trash);
+      const { autoSaveSecurityEvidence } = await import("../src/main/attachments/securityEvidenceAutoSave");
+      const bytes = Buffer.from("local evidence"); const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const workspace = test.store.getWorkspace(context.workspaceId)!;
+      if (!("security" in workspace) || !("name" in workspace)) throw new Error("Expected Security fixture workspace.");
+      await autoSaveSecurityEvidence({ root: directory, workspaceId: context.workspaceId, workspaceName: workspace.name, jobId: "old-job", remotePath: "report.md", name: "report.md", sha256, bytes });
+      const listed = await service.execute(call("security_evidence_list", {}), context);
+      expect(listed.success).toBe(true);
+      const items = listed.data?.items as { id: string; sha256: string }[];
+      expect(items).toHaveLength(1);
+      const removed = await service.execute(call("security_evidence_trash", { collections: [{ id: items[0].id, sha256: items[0].sha256 }] }), context);
+      expect(removed.success).toBe(true); expect(trash).toHaveBeenCalledTimes(1); expect(request).not.toHaveBeenCalled();
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
   it("peeks at running output without remote requests and follows only when requested", async () => {
     const request = completeTransport({ events: [{ stream: "stdout", data: Buffer.from("final output") }] });
     const test = fixture(request);

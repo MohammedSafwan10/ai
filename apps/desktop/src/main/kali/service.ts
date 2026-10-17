@@ -15,6 +15,7 @@ import { listSecurityKnowledge, readSecurityKnowledge } from "./knowledge";
 import { SECURITY_CONNECTION_MAX_AGE_MS, securityConnectionStatus } from "../../shared/securityConnection";
 import { assessReportReadiness } from "../../shared/reportReadiness";
 import { reportReviewInputSchema } from "./reportReview";
+import { listLocalEvidence, trashLocalEvidence } from "./localEvidence";
 
 export interface SecurityExecutionContext {
   workspaceId: string;
@@ -47,6 +48,7 @@ export class SecurityWorkspaceService {
     private readonly onChange?: () => void,
     private readonly connectorFactory: (environment: KaliEnvironment) => KaliConnector = (environment) => new KaliConnector(environment),
     private readonly localEvidenceRoot?: string,
+    private readonly trashEvidence: (filename: string) => Promise<void> = async (filename) => { const { shell } = await import("electron"); await shell.trashItem(filename); },
   ) {
     // A saved connection label does not establish that the VM is still online.
     for (const environment of store.listSecurityEnvironments()) {
@@ -399,6 +401,8 @@ export class SecurityWorkspaceService {
       if (thread?.workspaceId !== workspace.id) throw new Error("Thread does not belong to this Security workspace.");
       const args = call.arguments;
       switch (call.name) {
+        case "security_evidence_list": return { success: true, data: await listLocalEvidence(await this.ensureEvidenceFolder(workspace.id), workspace.id, args) };
+        case "security_evidence_trash": return await trashLocalEvidence(await this.ensureEvidenceFolder(workspace.id), workspace.id, args, this.trashEvidence, context.signal);
         case "security_knowledge_list": {
           if (!this.localEvidenceRoot) throw new Error("The shared evidence folder is not configured.");
           const result = await waitWithAbort(listSecurityKnowledge(this.localEvidenceRoot, args.query === undefined ? "" : args.query as string, args.limit === undefined ? 50 : args.limit as number), context.signal);
