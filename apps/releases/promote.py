@@ -91,6 +91,11 @@ def promote(root, stage_name):
             previous = json.loads(current.read_text())["version"]
             if tuple(map(int, version.split("."))) <= tuple(map(int, previous.split("."))):
                 raise ValueError("Version must be newer than the current release")
+        # SCP can retain a private staging-directory mode. Public artifacts must
+        # be readable by the Nginx worker through its read-only mount.
+        folder.chmod(0o755)
+        for artifact in [folder / "metadata.json", folder / "RELEASES", folder / "PrivoraSetup.exe", *packages]:
+            artifact.chmod(0o644)
         for name in ("versions", "packages", "installers"):
             (root / name).mkdir(exist_ok=True)
         for package in packages:

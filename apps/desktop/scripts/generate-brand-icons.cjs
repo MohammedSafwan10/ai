@@ -5,7 +5,7 @@ const fs = require("node:fs"),
 const { execFileSync } = require("node:child_process");
 const source = path.resolve(
   process.argv[2] ||
-    path.join(__dirname, "../../marketing/public/privora-logo.png"),
+    path.join(__dirname, "../../../docs/design/privora-marketing-v2/portal-icon-production.png"),
 );
 const assets = path.resolve(__dirname, "../assets");
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "privora-icons-"));

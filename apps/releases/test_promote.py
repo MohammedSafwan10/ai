@@ -44,6 +44,13 @@ class ReleaseTests(unittest.TestCase):
         (folder / "RELEASES").write_bytes(original)
         promote.promote(self.root,"windows")
         self.assertEqual((self.root / "current/RELEASES").read_bytes(),original)
+    def test_private_upload_becomes_readable_by_nginx(self):
+        folder=self.bundle("1.0.0", "private")
+        folder.chmod(0o700)
+        for item in folder.iterdir():item.chmod(0o600)
+        promote.promote(self.root,"private")
+        self.assertEqual((self.root / "versions/1.0.0").stat().st_mode & 0o777,0o755)
+        self.assertEqual((self.root / "current/metadata.json").stat().st_mode & 0o777,0o644)
     def test_duplicate_version_rejected(self):
         self.bundle("1.0.0", "first");promote.promote(self.root, "first");self.bundle("1.0.0", "again")
         with self.assertRaises(ValueError):promote.promote(self.root, "again")
