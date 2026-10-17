@@ -108,10 +108,10 @@ On Windows x64, `npm run build` produces `out/Privora-win32-x64/`. Portable pack
 Publishing is separate:
 
 ```powershell
-npm run release:win:x64 -- --notes "Release notes"
+npm run release:win:x64 -- --notes "Release notes" --publish
 ```
 
-The release command builds and publishes the existing update feed and requires release credentials. Source pushes, local packaging, and website builds do not publish an installer. See the [release guide](../../docs/desktop-auto-updates.md).
+The release command prepares verified Windows artifacts; `--publish` uploads them over SSH to the self-hosted update service. Source pushes, local packaging, and website builds do not publish an installer. See the [release guide](../../docs/desktop-auto-updates.md).
 
 ## Architecture
 

@@ -67,7 +67,7 @@ Each app owns its dependencies and lockfile. Root commands are shortcuts to thos
 | `npm run marketing:preview` | Preview the built website. |
 | `npm run lint` | Check both apps after installing both sets of dependencies. |
 
-For website development, first run `npm --prefix apps/marketing ci`. The build produces `apps/marketing/dist/`, ready for a static host with directory-index support. It includes product, download, BYOK, and legal pages without a server runtime or account SDK.
+For website development, first run `npm --prefix apps/marketing ci`. The build produces `apps/marketing/dist/`, ready for a static host with directory-index support. It includes product, download, BYOK, and legal pages without a server runtime or account SDK. The site and persistent release service deploy independently on Coolify; source pushes do not publish a desktop binary.
 
 Desktop packaging uses Electron Forge. `desktop:build` produces a local package; it does not publish downloads or an update feed. See [Windows releases and updates](docs/desktop-auto-updates.md) for distribution commands and credentials.
 
@@ -77,6 +77,7 @@ Desktop packaging uses Electron Forge. `desktop:build` produces a local package;
 apps/
   desktop/       Electron app, agent runtime, tools, UI, and tests
   marketing/     Static product, download, BYOK, and legal pages
+  releases/      Read-only Nginx update feed and verified promotion tools
 docs/            Repository and desktop operations guides
 ```
 

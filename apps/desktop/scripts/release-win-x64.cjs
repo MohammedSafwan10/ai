@@ -1,493 +1,245 @@
 #!/usr/bin/env node
-
-const { execFileSync } = require("node:child_process");
+// Windows artifacts are built here; the ARM VPS only verifies and serves them.
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
-
-const desktopRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(desktopRoot, "..", "..");
-const packagePath = path.join(desktopRoot, "package.json");
-
-const config = {
-  endpoint: "https://sgp.cloud.appwrite.io/v1",
-  projectId: "69af9f0700103b7f3482",
-  databaseId: "privora_desktop",
-  collectionId: "desktop_releases",
-  bucketId: "desktop-releases",
-  platform: "win32",
-  arch: "x64",
-  channel: "stable",
-  feedUrl: "https://updates.nexdark.com/win32/x64/stable",
-};
-
-const args = parseArgs(process.argv.slice(2));
-
-main();
-
-function main() {
-  if (args.help) {
-    printHelp();
-    return;
-  }
-
-  const signingEnabled = validateSigningConfig();
-  assertCommand("git", ["--version"]);
-  assertCommand("npm", ["--version"]);
-  assertCommand("appwrite", ["--version"]);
-  configureAppwriteClient();
-  assertAppwriteAccess();
-  assertCleanGitUnlessAllowed();
-
-  const previousPackageVersion = readPackageVersion();
-  const targetVersion = resolveTargetVersion(previousPackageVersion);
-  const versionToken = toVersionToken(targetVersion);
-
-  log(`Preparing Windows x64 release ${targetVersion}.`);
-  updatePackageVersion(targetVersion, previousPackageVersion);
-
-  run("npm", ["--prefix", "apps/desktop", "run", "lint"], { cwd: repoRoot });
-  run("npm", ["--prefix", "apps/desktop", "test"], { cwd: repoRoot });
-  run("npm", ["--prefix", "apps/desktop", "run", "make:win:x64"], { cwd: repoRoot });
-
-  const artifactRoot = path.join(desktopRoot, "out", "make", "squirrel.windows", "x64");
-  const installerSourcePath = path.join(artifactRoot, "PrivoraSetup.exe");
-  const versionedInstallerPath = path.join(artifactRoot, `PrivoraSetup-${targetVersion}.exe`);
-  if (!fs.existsSync(installerSourcePath)) {
-    throw new Error(`Missing release artifact: ${installerSourcePath}`);
-  }
-  fs.copyFileSync(installerSourcePath, versionedInstallerPath);
-
-  const artifacts = {
-    releases: {
-      id: `win-x64-${versionToken}-releases`,
-      path: path.join(artifactRoot, "RELEASES"),
-    },
-    package: {
-      id: `win-x64-${versionToken}-nupkg`,
-      path: path.join(artifactRoot, `Privora-${targetVersion}-full.nupkg`),
-    },
-    installer: {
-      id: `win-x64-${versionToken}-setup`,
-      path: versionedInstallerPath,
-    },
-  };
-
-  Object.values(artifacts).forEach((artifact) => {
-    if (!fs.existsSync(artifact.path)) {
-      throw new Error(`Missing release artifact: ${artifact.path}`);
-    }
-  });
-  if (signingEnabled) {
-    assertValidAuthenticodeSignature(path.join(desktopRoot, "out", "Privora-win32-x64", "Privora.exe"));
-    assertValidAuthenticodeSignature(artifacts.installer.path);
-  }
-
-  uploadFileIfNeeded(artifacts.releases);
-  uploadFileIfNeeded(artifacts.package);
-  uploadFileIfNeeded(artifacts.installer);
-
-  const releaseDocumentId = `win-x64-stable-${versionToken}`;
-  const existingReleases = listReleaseDocuments();
-  const latestRelease = existingReleases.find((doc) => isTargetRelease(doc) && doc.latest);
-
-  if (latestRelease && compareVersions(targetVersion, latestRelease.version) <= 0 && !args.force) {
-    throw new Error(
-      `Refusing to publish ${targetVersion}; latest Appwrite release is ${latestRelease.version}. Use --force to override.`,
+const os = require("node:os");
+const crypto = require("node:crypto");
+const { execFileSync } = require("node:child_process");
+const desktop = path.resolve(__dirname, ".."),
+  repo = path.resolve(desktop, "../..");
+const FEED = "https://updates.nexdark.com/win32/x64/stable";
+function run(command, args, options = {}) {
+  if (process.platform === "win32" && command === "npm")
+    return execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `& 'npm' ${args.map((x) => "'" + String(x).replace(/'/g, "''") + "'").join(" ")}; exit $LASTEXITCODE`,
+      ],
+      { cwd: repo, stdio: "inherit", ...options },
     );
-  }
-
-  const releaseDate = new Date().toISOString();
-  const notes = args.notes || `Windows desktop release ${targetVersion}.`;
-  const releaseData = {
-    platform: config.platform,
-    arch: config.arch,
-    channel: config.channel,
-    version: targetVersion,
-    releasesFileId: artifacts.releases.id,
-    packageFileId: artifacts.package.id,
-    installerFileId: artifacts.installer.id,
-    notes,
-    releaseDate,
-    latest: false,
-  };
-
-  upsertReleaseDocument(releaseDocumentId, releaseData, existingReleases.some((doc) => doc.$id === releaseDocumentId));
-
-  existingReleases
-    .filter((doc) => isTargetRelease(doc) && doc.latest && doc.$id !== releaseDocumentId)
-    .forEach((doc) => updateReleaseDocument(doc.$id, { latest: false }));
-
-  updateReleaseDocument(releaseDocumentId, { latest: true });
-  verifyFeed(targetVersion, artifacts.releases.path);
-
-  log(`Published ${targetVersion}.`);
-  log(`Installer: ${artifacts.installer.path}`);
-  log(`Feed: ${config.feedUrl}`);
-  log("Commit and push the version bump after reviewing git status.");
-}
-
-function parseArgs(rawArgs) {
-  const parsed = {
-    bump: "patch",
-    notes: "",
-    force: false,
-    allowDirty: false,
-    help: false,
-  };
-
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const arg = rawArgs[index];
-    const next = rawArgs[index + 1];
-
-    if (arg === "--help" || arg === "-h") parsed.help = true;
-    else if (arg === "--version") {
-      parsed.version = requireValue(arg, next);
-      index += 1;
-    } else if (arg === "--bump") {
-      parsed.bump = requireValue(arg, next);
-      index += 1;
-    } else if (arg === "--notes") {
-      parsed.notes = requireValue(arg, next);
-      index += 1;
-    } else if (arg === "--force") parsed.force = true;
-    else if (arg === "--allow-dirty") parsed.allowDirty = true;
-    else throw new Error(`Unknown argument: ${arg}`);
-  }
-
-  return parsed;
-}
-
-function requireValue(flag, value) {
-  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value.`);
-  return value;
-}
-
-function printHelp() {
-  console.log(`
-Usage:
-  npm run desktop:release:win:x64
-  npm run desktop:release:win:x64 -- --version 0.1.2 --notes "Fix updater"
-
-Options:
-  --version <x.y.z>    Publish an exact version instead of bumping patch.
-  --bump <kind>        patch, minor, major, or none. Default: patch.
-  --notes <text>       Release notes stored in Appwrite metadata.
-  --allow-dirty        Allow releasing with pre-existing uncommitted changes.
-  --force              Allow publishing a version <= the current latest metadata.
-
-Auth:
-  Set APPWRITE_RELEASE_API_KEY or APPWRITE_API_KEY for non-interactive Appwrite publishing.
-`);
-}
-
-function assertCommand(command, commandArgs) {
-  try {
-    execCommand(command, commandArgs, { cwd: repoRoot, stdio: "ignore" });
-  } catch {
-    throw new Error(`Required command is not available: ${command}`);
-  }
-}
-
-function validateSigningConfig() {
-  const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
-  const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
-  if (!certificateFile && !certificatePassword) {
-    log("WARNING: Publishing unsigned Windows artifacts because no signing certificate is configured.");
-    return false;
-  }
-  if (!certificateFile || !certificatePassword) {
-    throw new Error("Set both WINDOWS_CERTIFICATE_FILE and WINDOWS_CERTIFICATE_PASSWORD, or leave both unset to publish unsigned artifacts.");
-  }
-  if (!fs.existsSync(certificateFile)) throw new Error(`Windows signing certificate was not found: ${certificateFile}`);
-  return true;
-}
-
-function assertValidAuthenticodeSignature(filePath) {
-  const status = runPowerShell([
-    "-NoProfile",
-    "-Command",
-    `(Get-AuthenticodeSignature -LiteralPath ${quotePs(filePath)}).Status.ToString()`,
-  ]).trim();
-  if (status !== "Valid") throw new Error(`Authenticode verification failed for ${filePath}: ${status || "unknown status"}`);
-}
-
-function configureAppwriteClient() {
-  const apiKey = process.env.APPWRITE_RELEASE_API_KEY || process.env.APPWRITE_API_KEY;
-  const commandArgs = [
-    "client",
-    "--endpoint",
-    config.endpoint,
-    "--project-id",
-    config.projectId,
-  ];
-
-  if (apiKey) commandArgs.push("--key", apiKey);
-
-  execCommand("appwrite", commandArgs, { cwd: repoRoot, stdio: "ignore" });
-}
-
-function assertAppwriteAccess() {
-  try {
-    listReleaseDocuments();
-  } catch {
-    throw new Error(
-      "Appwrite CLI cannot access the Privora project. Set APPWRITE_RELEASE_API_KEY to a temporary Appwrite API key with storage/databases access, then rerun.",
-    );
-  }
-}
-
-function assertCleanGitUnlessAllowed() {
-  if (args.allowDirty) return;
-
-  const status = execCommand("git", ["status", "--porcelain"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
-  if (status) {
-    throw new Error("Working tree has uncommitted changes. Commit/stash them first, or rerun with --allow-dirty.");
-  }
-}
-
-function readPackageVersion() {
-  return JSON.parse(fs.readFileSync(packagePath, "utf8")).version;
-}
-
-function resolveTargetVersion(currentVersion) {
-  if (args.version) {
-    assertSemver(args.version);
-    return args.version;
-  }
-
-  if (!["patch", "minor", "major", "none"].includes(args.bump)) {
-    throw new Error("--bump must be patch, minor, major, or none.");
-  }
-
-  if (args.bump === "none") return currentVersion;
-
-  const [major, minor, patch] = parseVersion(currentVersion);
-  if (args.bump === "major") return `${major + 1}.0.0`;
-  if (args.bump === "minor") return `${major}.${minor + 1}.0`;
-  return `${major}.${minor}.${patch + 1}`;
-}
-
-function updatePackageVersion(targetVersion, previousVersion) {
-  if (targetVersion === previousVersion) {
-    log(`Keeping package version ${targetVersion}.`);
-    return;
-  }
-
-  run("npm", ["--prefix", "apps/desktop", "version", targetVersion, "--no-git-tag-version"], { cwd: repoRoot });
-}
-
-function uploadFileIfNeeded(artifact) {
-  const existing = getStorageFile(artifact.id);
-  if (existing) {
-    const localSize = fs.statSync(artifact.path).size;
-    const remoteSize = Number(existing.sizeOriginal ?? existing.sizeActual ?? -1);
-    if (remoteSize === localSize) {
-      log(`Storage file exists, skipping upload: ${artifact.id}`);
-      return;
-    }
-
-    log(`Storage file differs, replacing: ${artifact.id} (${remoteSize} -> ${localSize} bytes)`);
-    run("appwrite", ["storage", "delete-file", "--bucket-id", config.bucketId, "--file-id", artifact.id]);
-  }
-
-  run("appwrite", [
-    "storage",
-    "create-file",
-    "--bucket-id",
-    config.bucketId,
-    "--file-id",
-    artifact.id,
-    "--file",
-    artifact.path,
-  ]);
-}
-
-function getStorageFile(fileId) {
-  try {
-    return runJson("appwrite", ["-j", "storage", "get-file", "--bucket-id", config.bucketId, "--file-id", fileId]);
-  } catch {
-    return null;
-  }
-}
-
-function listReleaseDocuments() {
-  const documents = [];
-  let offset = 0;
-  let total = Infinity;
-  const pageSize = 100;
-
-  while (documents.length < total) {
-    const params = new URLSearchParams();
-    params.append("queries[]", JSON.stringify({ method: "limit", values: [pageSize] }));
-    params.append("queries[]", JSON.stringify({ method: "offset", values: [offset] }));
-    params.append("ttl", "0");
-    const response = appwriteRequest(
-      "GET",
-      `/databases/${config.databaseId}/collections/${config.collectionId}/documents?${params.toString()}`,
-    );
-    const page = response.documents || [];
-    documents.push(...page);
-    total = Number.isFinite(Number(response.total)) ? Number(response.total) : documents.length;
-    if (page.length === 0) break;
-    offset += page.length;
-  }
-
-  return documents;
-}
-
-function upsertReleaseDocument(documentId, data, exists) {
-  if (exists) {
-    updateReleaseDocument(documentId, data);
-    return;
-  }
-
-  appwriteRequest("POST", `/databases/${config.databaseId}/collections/${config.collectionId}/documents`, {
-    documentId,
-    data,
-  });
-}
-
-function updateReleaseDocument(documentId, data) {
-  appwriteRequest("PATCH", `/databases/${config.databaseId}/collections/${config.collectionId}/documents/${documentId}`, {
-    data,
-  });
-}
-
-function appwriteRequest(method, route, body) {
-  const apiKey = process.env.APPWRITE_RELEASE_API_KEY || process.env.APPWRITE_API_KEY;
-  if (!apiKey) throw new Error("APPWRITE_RELEASE_API_KEY or APPWRITE_API_KEY is required.");
-
-  let response;
-  const commandArgs = [
-    "-NoProfile",
-    "-Command",
-    [
-      `$headers = @{ 'X-Appwrite-Project' = ${quotePs(config.projectId)}; 'X-Appwrite-Key' = ${quotePs(apiKey)}; 'Content-Type' = 'application/json' }`,
-      body === undefined ? "$body = $null" : `$body = ${quotePs(JSON.stringify(body))}`,
-      "$params = @{ Method = " +
-        quotePs(method) +
-        "; Uri = " +
-        quotePs(`${config.endpoint}${route}`) +
-        "; Headers = $headers }",
-      "if ($body) { $params.Body = $body }",
-      "try { Invoke-RestMethod @params | ConvertTo-Json -Depth 20 -Compress } catch { $status = [int]$_.Exception.Response.StatusCode; $content = $_.ErrorDetails.Message; Write-Output (@{ status = $status; body = $content } | ConvertTo-Json -Compress); exit 66 }",
-    ].join("; "),
-  ];
-
-  try {
-    response = runPowerShell(commandArgs);
-  } catch (error) {
-    if (error.status !== 66 || !error.stdout) throw error;
-    response = String(error.stdout).trim();
-  }
-
-  const parsed = response ? JSON.parse(response) : {};
-  if (parsed && typeof parsed.status === "number" && Object.prototype.hasOwnProperty.call(parsed, "body")) {
-    const error = new Error(`Appwrite API ${method} ${route} failed with ${parsed.status}: ${parsed.body}`);
-    error.status = parsed.status;
-    throw error;
-  }
-
-  return parsed;
-}
-
-function verifyFeed(expectedVersion, localReleasesPath) {
-  const feed = fetchJson(config.feedUrl);
-  if (feed.version !== expectedVersion) {
-    throw new Error(`Feed verification failed. Expected ${expectedVersion}, got ${feed.version || "unknown"}.`);
-  }
-
-  const releasesText = fetchText(`${config.feedUrl}/RELEASES`);
-  const localReleasesText = fs.readFileSync(localReleasesPath, "utf8").trim();
-  if (releasesText !== localReleasesText) {
-    throw new Error("RELEASES verification failed; public feed does not match the generated manifest.");
-  }
-}
-
-function fetchJson(url) {
-  const output = fetchText(url);
-  return JSON.parse(output);
-}
-
-function fetchText(url) {
-  return execCommand(process.platform === "win32" ? "curl.exe" : "curl", ["-fsSL", url], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
-}
-
-function runPowerShell(commandArgs) {
-  const executable = process.platform === "win32" ? "powershell" : "pwsh";
-  return execFileSync(executable, commandArgs, { cwd: repoRoot, encoding: "utf8" }).trim();
-}
-
-function run(command, commandArgs, options = {}) {
-  log(`$ ${[command, ...commandArgs].join(" ")}`);
-  execCommand(command, commandArgs, {
-    cwd: options.cwd || repoRoot,
+  return execFileSync(command, args, {
+    cwd: repo,
     stdio: "inherit",
+    ...options,
   });
 }
-
-function runJson(command, commandArgs) {
-  const output = execCommand(command, commandArgs, { cwd: repoRoot, encoding: "utf8" });
-  const normalizedOutput = stripAnsi(output).trim();
-
+function sha(file, algorithm = "sha256") {
+  const result = crypto.createHash(algorithm);
+  const fd = fs.openSync(file, "r");
   try {
-    return JSON.parse(normalizedOutput);
-  } catch {
-    return vm.runInNewContext(`(${normalizedOutput})`, Object.create(null), { timeout: 1000 });
+    const buffer = Buffer.alloc(1024 * 1024);
+    let count;
+    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)))
+      result.update(buffer.subarray(0, count));
+  } finally {
+    fs.closeSync(fd);
+  }
+  return result.digest("hex");
+}
+function semver(value) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value))
+    throw Error("Expected x.y.z version");
+  return value.split(".").map(Number);
+}
+function parse(argv) {
+  const options = { bump: "patch" };
+  for (let i = 0; i < argv.length; i++) {
+    const key = argv[i].replace(/^--/, "");
+    if (["help", "publish", "skip-build", "allow-dirty"].includes(key))
+      options[key] = true;
+    else if (
+      [
+        "version",
+        "bump",
+        "notes",
+        "release-date",
+        "artifacts",
+        "host",
+        "root",
+      ].includes(key)
+    ) {
+      const value = argv[++i];
+      if (!value || value.startsWith("--"))
+        throw Error(`Missing --${key} value`);
+      options[key] = value;
+    } else throw Error(`Unknown option: ${argv[i]}`);
+  }
+  return options;
+}
+function main() {
+  const args = parse(process.argv.slice(2));
+  if (args.help) {
+    console.log(
+      'Prepare: npm run desktop:release:win:x64 -- --version x.y.z --notes "Release notes"\nPublish: add --publish. Defaults: host oci-coolify, root /home/ubuntu/privora-releases.\n--skip-build --artifacts <directory> imports existing verified Squirrel artifacts.\n--allow-dirty bypasses the source-tree check. --bump patch|minor|major|none.\nUse SSH agent/config; no cloud API keys. --release-date preserves an imported release timestamp.',
+    );
+    return;
+  }
+  const host =
+      args.host || process.env.PRIVORA_RELEASE_SSH_HOST || "oci-coolify",
+    remoteRoot =
+      args.root ||
+      process.env.PRIVORA_RELEASE_ROOT ||
+      "/home/ubuntu/privora-releases";
+  if (
+    !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(host) ||
+    !/^\/[a-zA-Z0-9_/-]+$/.test(remoteRoot) ||
+    remoteRoot.includes("..") ||
+    remoteRoot === "/" ||
+    remoteRoot.endsWith("/")
+  )
+    throw Error(
+      "Use a safe SSH config alias and a dedicated absolute release root",
+    );
+  if (
+    !args["allow-dirty"] &&
+    run("git", ["status", "--porcelain"], {
+      encoding: "utf8",
+      stdio: "pipe",
+    }).trim()
+  )
+    throw Error(
+      "Commit the intended source first, or explicitly use --allow-dirty",
+    );
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(desktop, "package.json"), "utf8"),
+  );
+  let version = args.version;
+  if (!version) {
+    const parts = semver(pkg.version);
+    const index = { major: 0, minor: 1, patch: 2 }[args.bump];
+    if (args.bump !== "none") {
+      if (index === undefined) throw Error("Invalid bump");
+      parts[index]++;
+      for (let i = index + 1; i < 3; i++) parts[i] = 0;
+    }
+    version = parts.join(".");
+  }
+  semver(version);
+  if (args["skip-build"] && !args.version)
+    throw Error("Importing existing artifacts requires an explicit --version");
+  if (!args["skip-build"]) {
+    if (process.platform !== "win32")
+      throw Error("Build Windows installers on Windows");
+    const cert = process.env.WINDOWS_CERTIFICATE_FILE,
+      password = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+    if (Boolean(cert) !== Boolean(password))
+      throw Error("Configure both signing values, or neither");
+    if (pkg.version !== version)
+      run("npm", [
+        "--prefix",
+        "apps/desktop",
+        "version",
+        version,
+        "--no-git-tag-version",
+      ]);
+    run("npm", ["--prefix", "apps/desktop", "run", "lint"]);
+    run("npm", ["--prefix", "apps/desktop", "test"]);
+    run("npm", ["--prefix", "apps/desktop", "run", "make:win:x64"]);
+    if (cert) {
+      for (const file of [
+        path.join(desktop, "out/Privora-win32-x64/Privora.exe"),
+        path.join(desktop, "out/make/squirrel.windows/x64/PrivoraSetup.exe"),
+      ]) {
+        const quoted = "'" + file.replace(/'/g, "''") + "'";
+        const status = run(
+          "powershell",
+          [
+            "-NoProfile",
+            "-Command",
+            `(Get-AuthenticodeSignature -LiteralPath ${quoted}).Status.ToString()`,
+          ],
+          { encoding: "utf8", stdio: "pipe" },
+        ).trim();
+        if (status !== "Valid")
+          throw Error("Authenticode signature verification failed");
+      }
+    } else
+      console.log("Signing is not configured. Windows artifacts are unsigned.");
+  }
+  const artifacts = path.resolve(
+    args.artifacts || path.join(desktop, "out/make/squirrel.windows/x64"),
+  );
+  const bundle = fs.mkdtempSync(path.join(os.tmpdir(), "privora-release-"));
+  const manifest = fs
+    .readFileSync(path.join(artifacts, "RELEASES"), "utf8")
+    .trim();
+  const packages = [];
+  for (const line of manifest.split(/\r?\n/)) {
+    const match = line.match(
+      /^([a-f\d]{40}) (Privora-\d+\.\d+\.\d+-full\.nupkg) (\d+)$/i,
+    );
+    if (!match) throw Error("Invalid Squirrel RELEASES manifest");
+    const file = path.join(artifacts, match[2]);
+    if (
+      fs.lstatSync(file).isSymbolicLink() ||
+      sha(file, "sha1") !== match[1].toLowerCase() ||
+      fs.statSync(file).size !== Number(match[3])
+    )
+      throw Error(`Package failed verification: ${match[2]}`);
+    packages.push(match[2]);
+  }
+  if (!packages.includes(`Privora-${version}-full.nupkg`))
+    throw Error("Requested version is absent from artifacts");
+  for (const name of [...packages, "PrivoraSetup.exe", "RELEASES"])
+    fs.copyFileSync(path.join(artifacts, name), path.join(bundle, name));
+  const installer = path.join(bundle, "PrivoraSetup.exe");
+  const releaseDate = args["release-date"] || new Date().toISOString();
+  if (Number.isNaN(Date.parse(releaseDate)))
+    throw Error("Invalid release date");
+  const metadata = {
+    platform: "win32",
+    arch: "x64",
+    channel: "stable",
+    version,
+    releaseDate,
+    notes: args.notes || `Privora Desktop ${version}.`,
+    sha256: sha(installer),
+    size: fs.statSync(installer).size,
+    files: {
+      releases: `${FEED}/RELEASES`,
+      package: `${FEED}/Privora-${version}-full.nupkg`,
+      installer: `${FEED}/PrivoraSetup-${version}.exe`,
+    },
+    squirrelFeed: "/win32/x64/stable",
+  };
+  fs.writeFileSync(
+    path.join(bundle, "metadata.json"),
+    JSON.stringify(metadata, null, 2) + "\n",
+  );
+  console.log(`Verified release bundle: ${bundle}`);
+  if (!args.publish) {
+    console.log(
+      "Prepared locally. Add --publish to upload and atomically promote.",
+    );
+    return;
+  }
+  const stage = `${version.replace(/\./g, "_")}-${crypto.randomBytes(8).toString("hex")}`;
+  run("ssh", ["-o", "BatchMode=yes", host, `mkdir -p ${remoteRoot}/staging`]);
+  run("scp", [
+    "-q",
+    path.join(repo, "apps/releases/promote.py"),
+    `${host}:${remoteRoot}/promote.py`,
+  ]);
+  run("scp", ["-q", "-r", bundle, `${host}:${remoteRoot}/staging/${stage}`]);
+  run("ssh", [
+    "-o",
+    "BatchMode=yes",
+    host,
+    `python3 ${remoteRoot}/promote.py --root ${remoteRoot} --promote ${stage}`,
+  ]);
+  console.log(`Promoted ${version}. Public feed: ${FEED}`);
+  console.log(
+    "Before a DNS cutover, verify through the new origin. Published bytes remain immutable; rollback changes only the current pointer.",
+  );
+}
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`[desktop-release] ${error.message}`);
+    process.exitCode = 1;
   }
 }
-
-function execCommand(command, commandArgs, options = {}) {
-  if (process.platform !== "win32") {
-    return execFileSync(command, commandArgs, options);
-  }
-
-  const psCommand = ["&", quotePs(command), ...commandArgs.map((arg) => quotePs(arg))].join(" ");
-  return execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psCommand], options);
-}
-
-function log(message) {
-  console.log(`[desktop-release] ${message}`);
-}
-
-function quotePs(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function stripAnsi(value) {
-  return String(value).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function isTargetRelease(doc) {
-  return doc.platform === config.platform && doc.arch === config.arch && doc.channel === config.channel;
-}
-
-function toVersionToken(version) {
-  return version.replace(/\./g, "_");
-}
-
-function assertSemver(version) {
-  parseVersion(version);
-}
-
-function parseVersion(version) {
-  const match = String(version).match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!match) throw new Error(`Expected semantic version x.y.z, got: ${version}`);
-  return match.slice(1).map((value) => Number(value));
-}
-
-function compareVersions(left, right) {
-  const a = parseVersion(left);
-  const b = parseVersion(right);
-  for (let index = 0; index < 3; index += 1) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return 0;
-}
+module.exports = { sha, semver, parse };

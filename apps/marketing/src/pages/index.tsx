@@ -1,219 +1,260 @@
-import * as React from "react";
-import { Link } from "@/components/marketing-link";
-import {
-  ArrowDownToLine,
-  ArrowRight,
-  Bot,
-  Braces,
-  Check,
-  ChevronRight,
-  CirclePlay,
-  Code2,
-  Eye,
-  FolderCode,
-  Globe2,
-  KeyRound,
-  LoaderCircle,
-  LockKeyhole,
-  ShieldCheck,
-  Sparkles,
-  TerminalSquare,
-} from "lucide-react";
-import { buttonVariants } from "@/components/ui/button";
-import { PRIVORA_DEMO_VIDEO_URL } from "@/lib/marketing-assets";
-import { cn } from "@/lib/utils";
-
-
-const capabilities = [
-  { icon: TerminalSquare, label: "Real tools", copy: "Terminal, files, browser, and scripts—the tools you already trust." },
-  { icon: Eye, label: "Reviewable changes", copy: "See every edit, approve with confidence, and keep full context." },
-  { icon: KeyRound, label: "Your models", copy: "Connect Gemini, OpenRouter, or CLIProxy without changing your flow." },
-  { icon: LockKeyhole, label: "Local control", copy: "Your workspace and chat history stay local. Selected providers receive the context needed for your requests." },
+import { useState, type KeyboardEvent } from "react";
+const views = [
+  {
+    name: "Files",
+    image: "workspace-files.png",
+    title: "Start with your folder.",
+    copy: "Read project files beside the conversation. Keep the work grounded in the code you already have.",
+    crop: "files-crop",
+    alt: "Current Privora file viewer showing the sample Fieldnotes README",
+  },
+  {
+    name: "Browser",
+    image: "browser-preview.png",
+    title: "See what you’re building.",
+    copy: "Open a local preview in the built-in browser. Check desktop, tablet and phone views without losing the conversation.",
+    crop: "browser-crop",
+    alt: "Current Privora browser showing the sample Fieldnotes page",
+  },
+  {
+    name: "Chat & tools",
+    image: "chat-tools.png",
+    title: "Follow the whole task.",
+    copy: "Read the conversation in order. Expand tool activity when you need the detail, then return to the result.",
+    crop: "chat-crop",
+    alt: "Actual Privora chat components with an illustrative conversation and plain tool summaries",
+  },
 ];
-
-const modelNames = ["Gemini", "OpenRouter", "CLIProxy", "Bring your own key"];
-
-function ProductDemo({ playing, onPlay, onReset }: { playing: boolean; onPlay: () => void; onReset: () => void }) {
-  const [videoStatus, setVideoStatus] = React.useState<"loading" | "ready" | "error">("loading");
-
-  React.useEffect(() => {
-    if (playing) setVideoStatus("loading");
-  }, [playing]);
-
+function WorkspaceExplorer() {
+  const [selected, setSelected] = useState(0);
+  const view = views[selected];
+  function navigate(e: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const next =
+      e.key === "ArrowRight"
+        ? (index + 1) % views.length
+        : e.key === "ArrowLeft"
+          ? (index + views.length - 1) % views.length
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? views.length - 1
+              : null;
+    if (next === null) return;
+    e.preventDefault();
+    setSelected(next);
+    document.getElementById(`view-tab-${next}`)?.focus();
+  }
   return (
-    <div id="demo" className="product-stage scroll-mt-24">
-      <div className="product-glow" />
-      <div className="product-window">
-        <div className="product-titlebar">
-          <div className="flex items-center gap-1.5" aria-hidden="true">
-            <span className="window-dot bg-[#ff6d63]" />
-            <span className="window-dot bg-[#f6bd4f]" />
-            <span className="window-dot bg-[#56c56d]" />
-          </div>
-          <span className="text-[11px] font-medium text-white/60">Privora</span>
-          <div className="flex gap-2 text-white/35" aria-hidden="true"><span>□</span><span>◇</span><span>⌗</span></div>
-        </div>
-        <div className="product-tabs" aria-hidden="true">
-          <span className="product-tab product-tab-active"><FolderCode className="h-3.5 w-3.5" /> Workspace</span>
-          <span className="product-tab"><Code2 className="h-3.5 w-3.5" /> Files</span>
-          <span className="product-tab"><Eye className="h-3.5 w-3.5" /> Review</span>
-          <span className="product-tab"><Globe2 className="h-3.5 w-3.5" /> Browser</span>
-        </div>
-        <div className="relative aspect-video overflow-hidden bg-[#080b13]">
-          {playing ? (
-            <>
-              <video
-                className="block h-full w-full bg-[#080b13] object-cover"
-                src={PRIVORA_DEMO_VIDEO_URL}
-                poster="/privora-poster.png"
-                controls
-                autoPlay
-                muted
-                playsInline
-                preload="auto"
-                onCanPlay={() => setVideoStatus("ready")}
-                onPlaying={() => setVideoStatus("ready")}
-                onError={() => setVideoStatus("error")}
-                aria-label="Privora product demonstration"
-              />
-              {videoStatus === "loading" ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-[#080b13]/45 backdrop-blur-[2px]" role="status" aria-live="polite">
-                  <span className="flex items-center gap-2.5 rounded-full border border-white/15 bg-black/70 px-4 py-2 text-xs font-medium text-white">
-                    <LoaderCircle className="h-4 w-4 animate-spin text-primary" /> Loading demo…
-                  </span>
-                </div>
-              ) : null}
-              {videoStatus === "error" ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-[#080b13]/80 px-6 text-center">
-                  <div>
-                    <p className="text-sm font-semibold text-white">The demo could not load.</p>
-                    <button type="button" onClick={onReset} className="mt-3 rounded-md border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/15">
-                      Try again
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <button type="button" className="group block h-full w-full overflow-hidden text-left" onClick={onPlay} aria-label="Play the Privora product demonstration">
-              <img src="/privora-poster.png" alt="Privora running a polished browser game inside its desktop workspace" className="h-full w-full object-cover object-[center_32%] opacity-90 transition duration-500 group-hover:scale-[1.015] group-hover:opacity-100" />
-              <span className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/20 bg-black/75 px-5 py-2.5 text-[10px] font-bold uppercase tracking-[.16em] text-white backdrop-blur-md"><CirclePlay className="h-4 w-4 text-primary" /> Play demo</span>
+    <div className="workspace-explorer">
+      <div className="explorer-copy">
+        <h2 className="reveal">
+          One place.
+          <br />
+          The whole task.
+        </h2>
+        <div
+          className="view-tabs reveal"
+          role="tablist"
+          aria-label="Explore the Privora workspace"
+        >
+          {views.map((item, index) => (
+            <button
+              key={item.name}
+              id={`view-tab-${index}`}
+              role="tab"
+              aria-selected={selected === index}
+              aria-controls="workspace-view"
+              tabIndex={selected === index ? 0 : -1}
+              onKeyDown={(e) => navigate(e, index)}
+              onClick={() => setSelected(index)}
+            >
+              {item.name}
             </button>
-          )}
+          ))}
         </div>
-        <div className="product-statusbar">
-          <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> main</span>
-          <span className="ml-auto flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-primary" /> Local</span>
+        <div
+          id="workspace-view"
+          role="tabpanel"
+          aria-labelledby={`view-tab-${selected}`}
+          tabIndex={0}
+          className="view-description"
+          aria-live="polite"
+        >
+          <h3>{view.title}</h3>
+          <p>{view.copy}</p>
         </div>
+        <p className="caption reveal">
+          Current interface. Sample project and conversation.
+        </p>
       </div>
-      <div className="product-callout-list" aria-label="Privora capabilities">
-        <div className="product-callout"><Bot /><span><strong>Reviewer Swarm</strong><small>Two agents check the work</small></span></div>
-        <div className="product-callout"><Globe2 /><span><strong>Built-in browser</strong><small>Research, test, and debug</small></span></div>
-        <div className="product-callout"><KeyRound /><span><strong>BYOK</strong><small>Your models, your rules</small></span></div>
+      <div
+        className={`interface-crop explorer-image ${view.crop} reveal`}
+        key={view.name}
+      >
+        <img src={`/media/${view.image}`} alt={view.alt} loading="lazy" />
       </div>
     </div>
   );
 }
-
+const questions = [
+  [
+    "Is Privora free?",
+    "Yes. The desktop app is free to download and use. Bring your own model access; your chosen provider may charge for usage.",
+  ],
+  [
+    "Do I need a Privora account?",
+    "No. Open the desktop app, connect your model provider in Settings, and choose a project folder.",
+  ],
+  [
+    "Does everything run offline?",
+    "Your project files and chat history are stored locally. Hosted models, web research and connected remote tools need a network connection. Relevant prompts and tool context are sent to the provider you choose.",
+  ],
+  [
+    "What is the Kali connection for?",
+    "Security projects can use a connected Kali environment for authorized testing. Those commands run in that environment; collected evidence can be saved back to your PC.",
+  ],
+];
 export function HomePage() {
-  const [demoPlaying, setDemoPlaying] = React.useState(false);
-
-  function playDemo() {
-    setDemoPlaying(true);
-    window.requestAnimationFrame(() => document.getElementById("demo")?.scrollIntoView({ behavior: "smooth", block: "center" }));
-  }
-
   return (
     <>
-      <section className="hero-grid overflow-hidden border-b border-white/[0.07]">
-        <div className="wide-shell relative py-16 md:py-20">
-          <div className="hero-copy relative z-10">
-            <div className="eyebrow"><span className="status-pulse" /> Local-first coding agent</div>
-            <h1>Your codebase.<br />Your tools.<br /><span>Your agent.</span></h1>
-            <p>A local-first coding agent with real tools, reviewable changes, and your choice of models.</p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link to="/download" className={cn(buttonVariants({ size: "lg" }), "hero-primary w-full sm:w-auto")}>
-                <ArrowDownToLine className="h-5 w-5" /> Download for Windows
-              </Link>
-              <button type="button" onClick={playDemo} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "hero-secondary w-full sm:w-auto")}>
-                <CirclePlay className="h-5 w-5" /> Watch the demo
-              </button>
-            </div>
-            <div className="hero-assurances">
-              <span><LockKeyhole /> Runs locally</span>
-              <span><Braces /> Open providers</span>
-              <span><ShieldCheck /> Your data stays yours</span>
+      <section className="hero shell">
+        <h1 className="reveal">
+          Your work.
+          <br />
+          Within reach.
+        </h1>
+        <p className="hero-description reveal">
+          A free AI desktop for your projects. Bring your own model key.
+        </p>
+        <a className="button primary reveal" href="/download/">
+          Get Privora for Windows
+        </a>
+        <figure className="hero-product reveal">
+          <div className="product-motion">
+            <img
+              src="/media/desktop-demo.webp"
+              alt="Illustrative Privora desktop conversation using GPT-6 Astra, with the built-in browser beside the chat"
+              width="2031"
+              height="774"
+              fetchPriority="high"
+            />
+          </div>
+          <figcaption>
+            Privora desktop · Illustrative demo conversation
+          </figcaption>
+        </figure>
+      </section>
+      <section id="product" className="product-section shell">
+        <WorkspaceExplorer />
+      </section>
+      <section className="work-section dark-field">
+        <div className="shell">
+          <div className="section-lead">
+            <h2 className="reveal">
+              Make progress.
+              <br />
+              Keep the detail.
+            </h2>
+            <p className="reveal">
+              Read files, run commands, inspect changes and hand focused work to
+              subagents. The activity stays with the conversation, so you can
+              check how a result was reached.
+            </p>
+          </div>
+          <div className="proof-pair">
+            <figure className="reveal">
+              <div className="interface-crop proof-files">
+                <img
+                  src="/media/workspace-files.png"
+                  alt="Privora’s current file viewer displaying a README in a demo workspace"
+                  width="1920"
+                  height="1032"
+                  loading="lazy"
+                />
+              </div>
+              <figcaption>Local project files, beside the work.</figcaption>
+            </figure>
+            <div className="proof-chat">
+              <figure className="reveal">
+                <div className="interface-crop chat-detail">
+                  <img
+                    src="/media/chat-tools.png"
+                    alt="Actual Privora message and tool-summary rendering with sample content"
+                    width="680"
+                    height="680"
+                    loading="lazy"
+                  />
+                </div>
+                <figcaption>
+                  Plain tool summaries. Expand for the details.
+                </figcaption>
+              </figure>
+              <p className="reveal">
+                Choose an access mode for the task. Review tool activity and
+                file changes before you take the next step.
+              </p>
+              <a className="text-link reveal" href="/security/">
+                How access works
+              </a>
             </div>
           </div>
-          <div className="hero-product"><ProductDemo playing={demoPlaying} onPlay={playDemo} onReset={() => setDemoPlaying(false)} /></div>
         </div>
       </section>
-
-      <section className="capability-strip">
-        <div className="wide-shell grid md:grid-cols-2 xl:grid-cols-4">
-          {capabilities.map((item) => (
-            <article key={item.label} className="capability-item">
-              <span className="capability-icon"><item.icon /></span>
-              <div><h2>{item.label}</h2><p>{item.copy}</p></div>
-            </article>
+      <section className="model-section shell" id="models">
+        <div>
+          <h2 className="reveal">
+            Your models.
+            <br />
+            Your choice.
+          </h2>
+          <p className="reveal">
+            Connect a supported provider with your own key or endpoint. Pick the
+            model and reasoning level in the composer, and set a separate model
+            for subagents when the work calls for it.
+          </p>
+          <p className="reveal">
+            Privora is free. Model usage is between you and your provider.
+          </p>
+        </div>
+        <figure className="reveal">
+          <div className="interface-crop model-detail">
+            <img
+              src="/media/desktop-demo.webp"
+              alt="The Privora composer with its GPT-6 Astra model selector, reasoning level and access mode"
+              width="2031"
+              height="774"
+              loading="lazy"
+            />
+          </div>
+          <figcaption>
+            Model selection in the desktop composer. Illustrative demo.
+          </figcaption>
+        </figure>
+      </section>
+      <section className="faq-section shell" id="questions">
+        <h2 className="reveal">Before you start.</h2>
+        <div className="faq-list">
+          {questions.map(([q, a]) => (
+            <details className="reveal" key={q}>
+              <summary>{q}</summary>
+              <p>{a}</p>
+            </details>
           ))}
         </div>
       </section>
-
-      <section id="features" className="page-shell py-24 md:py-32">
-        <div className="section-intro">
-          <div><p className="section-kicker">Built for real work</p><h2>One focused workspace.<br />Every tool your agent needs.</h2></div>
-          <p>Privora works inside your project, not around it. Give the agent a goal, stay in control of each meaningful action, and review the result before it lands.</p>
-        </div>
-        <div className="feature-editorial mt-14">
-          <article className="feature-main">
-            <div className="feature-number">01 / AGENT WORKSPACE</div>
-            <TerminalSquare className="mt-12 h-9 w-9 text-primary" />
-            <h3>Files, terminal, browser—one continuous flow.</h3>
-            <p>The agent reads your codebase, runs commands, tests in the built-in browser, and keeps project context across long sessions.</p>
-            <div className="terminal-sample" aria-label="Example Privora agent activity">
-              <div><span className="text-primary">●</span> Inspecting workspace</div>
-              <div><span className="text-violet-300">◆</span> Updating the renderer</div>
-              <div><span className="text-primary">✓</span> Tests passed · 24/24</div>
-            </div>
-          </article>
-          <article className="feature-review">
-            <div className="feature-number">02 / REVIEWER SWARM</div>
-            <div className="review-orbit" aria-hidden="true"><span>MAIN</span><i>R1</i><i>R2</i></div>
-            <h3>More eyes before the final answer.</h3>
-            <p>Two read-only reviewers inspect the work independently, then the main agent resolves their findings before handing it back.</p>
-          </article>
-          <article className="feature-approval">
-            <div className="feature-number">03 / APPROVALS</div>
-            <div className="approval-card"><span><ShieldCheck /> Permission required</span><p>Run a command outside the workspace?</p><div><button type="button">Deny</button><button type="button">Approve</button></div></div>
-            <h3>You decide what runs.</h3>
-            <p>Guardrails keep sensitive computer and terminal actions visible and deliberate.</p>
-          </article>
-        </div>
-      </section>
-
-      <section className="models-section border-y border-white/[0.07]">
-        <div className="page-shell grid gap-14 py-24 lg:grid-cols-[0.88fr_1.12fr] lg:items-center">
-          <div>
-            <p className="section-kicker">Bring your own models</p>
-            <h2 className="mt-4 text-4xl font-semibold leading-tight tracking-[-0.045em] md:text-6xl">Your stack.<br />No lock-in.</h2>
-            <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground">Use the providers you already trust. Switch models without leaving the workspace or changing how you work.</p>
-            <Link to="/pricing" className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-primary">Explore access options <ArrowRight className="h-4 w-4" /></Link>
-          </div>
-          <div className="provider-list">
-            {modelNames.map((name, index) => <div key={name}><span>0{index + 1}</span><strong>{name}</strong><Check className="ml-auto h-4 w-4 text-primary" /></div>)}
-          </div>
-        </div>
-      </section>
-
-      <section className="page-shell py-24 md:py-32">
-        <div className="final-cta">
-          <div className="eyebrow"><Sparkles className="h-3.5 w-3.5" /> Built to stay out of your way</div>
-          <h2>Put an agent inside<br />your real workflow.</h2>
-          <p>Download Privora for Windows and start with your own models.</p>
-          <Link to="/download" className={cn(buttonVariants({ size: "lg" }), "hero-primary mt-8")}>
-            Download Privora <ChevronRight className="h-5 w-5" />
-          </Link>
+      <section className="closing shell">
+        <h2 className="reveal">
+          Bring a project.
+          <br />
+          Make it happen.
+        </h2>
+        <div>
+          <p className="reveal">
+            Download Privora for Windows, connect your model, and open a folder.
+          </p>
+          <a className="button primary reveal" href="/download/">
+            Get Privora for Windows
+          </a>
         </div>
       </section>
     </>

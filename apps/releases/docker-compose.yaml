@@ -1,0 +1,15 @@
+services:
+  releases:
+    build: .
+    expose:
+      - "8080"
+    volumes:
+      - /home/ubuntu/privora-releases:/srv/privora:ro
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

@@ -1,6 +1,5 @@
 import { LegalPage } from "@/components/legal/legal-page";
 
-
 export function PrivacyPage() {
   return (
     <LegalPage

@@ -1,29 +1,81 @@
-import { Link } from "@/components/marketing-link";
-import { ArrowRight, KeyRound, Laptop, LockKeyhole, Server, ShieldCheck } from "lucide-react";
-
-
-const principles = [
-  { icon: Laptop, number: "01", title: "Local workspace", body: "Project files stay on your machine. Privora works where your code already lives." },
-  { icon: ShieldCheck, number: "02", title: "Visible approvals", body: "Sensitive terminal and computer actions wait for your explicit approval." },
-  { icon: KeyRound, number: "03", title: "Keys stay yours", body: "Provider keys use the desktop operating system-backed secret store. Requests use your configured provider." },
-];
-
 export function SecurityPage() {
   return (
     <>
-      <section className="hero-grid border-b border-white/[0.07]">
-        <div className="page-shell grid gap-10 py-20 md:py-28 lg:grid-cols-[1.15fr_.85fr] lg:items-end">
-          <div><div className="eyebrow"><LockKeyhole className="h-3.5 w-3.5" /> Security by design</div><h1 className="mt-6 text-5xl font-semibold leading-[.98] tracking-[-0.06em] md:text-7xl">Your machine.<br />Your permission.</h1></div>
-          <p className="max-w-lg text-base leading-7 text-muted-foreground">Privora keeps workspace access local and makes tool activity reviewable. You choose your model provider and supply your own key.</p>
+      <section className="page-hero shell">
+        <h1 className="reveal">
+          Know where
+          <br />
+          work happens.
+        </h1>
+        <p className="reveal">
+          Local files, your chosen model provider, and an optional connected
+          Kali environment. Each has a different role.
+        </p>
+      </section>
+      <section className="security-flow shell">
+        <article className="reveal">
+          <h2>Your computer.</h2>
+          <p>
+            Normal projects use a folder you choose. Local tools can read and
+            change files and run commands within the access you grant. Chats and
+            project state are stored on the desktop.
+          </p>
+        </article>
+        <article className="reveal">
+          <h2>Your provider.</h2>
+          <p>
+            Hosted model requests send prompts and relevant tool context to your
+            configured provider using your credentials. Its retention policy,
+            terms, charges and usage limits apply.
+          </p>
+        </article>
+        <article className="reveal">
+          <h2>Your environment.</h2>
+          <p>
+            Security projects can run tools in a connected Kali environment.
+            Remote commands run there. Collected artifacts can be brought back
+            to Privora and saved to your PC.
+          </p>
+        </article>
+      </section>
+      <section className="security-access dark-field">
+        <div className="shell section-lead">
+          <h2 className="reveal">
+            Set the access.
+            <br />
+            Review the work.
+          </h2>
+          <div>
+            <p className="reveal">
+              Choose an access mode before running a task. Approval behavior
+              depends on that mode; Full access permits broader actions without
+              asking at each step.
+            </p>
+            <p className="reveal">
+              Tool activity and file changes remain available for review. Use
+              connected security tools only against systems you own or are
+              authorized to test.
+            </p>
+            <a className="text-link reveal" href="/legal/privacy/">
+              Read the privacy policy
+            </a>
+          </div>
         </div>
       </section>
-      <section className="page-shell py-16 md:py-24">
-        <div className="grid gap-px border border-white/10 bg-white/10 md:grid-cols-3">
-          {principles.map((item) => <article key={item.number} className="min-h-[330px] bg-background p-8"><div className="flex items-center justify-between"><item.icon className="h-7 w-7 text-primary" /><span className="font-mono text-[10px] text-white/35">{item.number}</span></div><h2 className="mt-20 text-2xl font-semibold tracking-[-0.04em]">{item.title}</h2><p className="mt-4 text-sm leading-6 text-muted-foreground">{item.body}</p></article>)}
-        </div>
-        <div className="mt-16 grid gap-8 border-y border-white/10 py-10 lg:grid-cols-[1fr_1.2fr] lg:items-center">
-          <div className="flex items-center gap-4"><span className="capability-icon"><Server /></span><div><p className="font-semibold">Your provider, your key</p><p className="mt-1 text-sm text-muted-foreground">Model requests use your configured provider. Privora does not sell hosted AI credits.</p></div></div>
-          <Link to="/legal/privacy" className="inline-flex items-center gap-2 text-sm font-semibold text-primary lg:justify-self-end">Read the privacy policy <ArrowRight className="h-4 w-4" /></Link>
+      <section className="closing shell">
+        <h2 className="reveal">
+          Keep control
+          <br />
+          of the context.
+        </h2>
+        <div>
+          <p className="reveal">
+            Review what you attach and the permissions you grant. Your provider
+            receives the context used for a request.
+          </p>
+          <a className="button primary reveal" href="/download/">
+            Get Privora for Windows
+          </a>
         </div>
       </section>
     </>
