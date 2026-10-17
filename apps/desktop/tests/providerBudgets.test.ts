@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { openRouterModelOption, registerOpenRouterModels } from "../src/shared/openRouterModels";
 import { CliproxyAdapter, cliproxyPromptCacheKey, resolveCliproxyModelId } from "../src/main/agent/providers/cliproxy";
 import { OpenRouterAdapter } from "../src/main/agent/providers/openrouter";
 import type { ProviderStreamOptions } from "../src/main/agent/providers/types";
@@ -50,6 +51,8 @@ const requestHeadersAt = (fetchMock: ReturnType<typeof vi.fn>, index: number) =>
   return init?.headers as Record<string, string> | undefined;
 };
 
+beforeEach(() => registerOpenRouterModels(["fixture/budget", "fixture/reasoning"].map((id) => openRouterModelOption({ id, name: id, description: "Test catalog model", contextLength: 262144, maxOutputTokens: 64000, inputModalities: ["text"], supportedParameters: ["tools", "tool_choice", "max_tokens", "reasoning", "temperature"], pricing: { prompt: 0, completion: 0 } }))));
+afterEach(() => registerOpenRouterModels([]));
 describe("provider output budgets", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -175,13 +178,13 @@ describe("provider output budgets", () => {
     const fetchMock = vi.fn(async () => sseResponse());
     vi.stubGlobal("fetch", fetchMock);
 
-    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "deepseek/deepseek-v4-flash", maxOutputTokens: undefined }));
+    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "openrouter/fixture/budget", maxOutputTokens: undefined }));
     let body = requestBodyAt(fetchMock, 0);
     expect(body.max_tokens).toBeUndefined();
     expect(body.prompt_cache_key).toBeUndefined();
     expect(requestHeadersAt(fetchMock, 0)?.Session_id).toBeUndefined();
 
-    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "deepseek/deepseek-v4-flash", maxOutputTokens: 12_000 }));
+    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "openrouter/fixture/budget", maxOutputTokens: 12_000 }));
     body = requestBodyAt(fetchMock, 1);
     expect(body.max_tokens).toBe(12_000);
   });
@@ -198,7 +201,7 @@ describe("provider output budgets", () => {
 
     await expect(new OpenRouterAdapter().stream(baseOptions({
       provider: "openrouter",
-      model: "minimax/minimax-m3",
+      model: "openrouter/fixture/reasoning",
       maxOutputTokens: 4_096,
     }))).rejects.toThrow(/can only afford 1,050 output tokens/i);
 
@@ -206,15 +209,15 @@ describe("provider output budgets", () => {
     expect(requestBodyAt(fetchMock, 0).max_tokens).toBe(4_096);
   });
 
-  it("uses effort controls only where OpenRouter exposes them", async () => {
+  it("uses on/off reasoning for discovered OpenRouter reasoning models", async () => {
     const fetchMock = vi.fn(async () => sseResponse());
     vi.stubGlobal("fetch", fetchMock);
 
-    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "deepseek/deepseek-v4-flash", reasoning: "xhigh" }));
-    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "minimax/minimax-m3", reasoning: "medium" }));
-    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "minimax/minimax-m3", reasoning: "none" }));
+    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "openrouter/fixture/budget", reasoning: "xhigh" }));
+    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "openrouter/fixture/reasoning", reasoning: "medium" }));
+    await new OpenRouterAdapter().stream(baseOptions({ provider: "openrouter", model: "openrouter/fixture/reasoning", reasoning: "none" }));
 
-    expect(requestBodyAt(fetchMock, 0).reasoning).toEqual({ effort: "xhigh", exclude: false });
+    expect(requestBodyAt(fetchMock, 0).reasoning).toEqual({ enabled: true, exclude: false });
     expect(requestBodyAt(fetchMock, 1).reasoning).toEqual({ enabled: true, exclude: false });
     expect(requestBodyAt(fetchMock, 2).reasoning).toEqual({ enabled: false, exclude: false });
   });

@@ -4,6 +4,8 @@ Privora is an Electron AI workspace for local development, browser research, and
 
 See the [repository overview](../../README.md) for the product introduction and the separate [marketing app](../marketing/README.md) for the public website.
 
+OpenRouter models are discovered using your saved key. Search the live catalog in **Settings → Providers → OpenRouter models**, then add the models you want in the composer and subagent picker. There is no hardcoded OpenRouter roster. See [model discovery, pricing and offline behavior](docs/openrouter-models.md).
+
 ## Setup
 
 Requirements: Git, npm, and Node.js 22.12 or newer. Windows is the primary development and verified packaging target. The default development command uses Windows shell syntax; native Computer Use also targets Windows.

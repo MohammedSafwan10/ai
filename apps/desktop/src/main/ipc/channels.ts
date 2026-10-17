@@ -65,6 +65,8 @@ export const channels = {
   saveSettings: "desktop:saveSettings",
   saveThreadSettings: "desktop:saveThreadSettings",
   listOpencodeGoModels: "desktop:listOpencodeGoModels",
+  listOpenRouterModels: "desktop:listOpenRouterModels",
+  updateOpenRouterModels: "desktop:updateOpenRouterModels",
   getBrowserState: "desktop:getBrowserState",
   setBrowserVisible: "desktop:setBrowserVisible",
   setBrowserOccluded: "desktop:setBrowserOccluded",

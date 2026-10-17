@@ -184,7 +184,7 @@ describe("reliable compaction lifecycle", () => {
     expect(store.listMessages(threadId)).toHaveLength(45);
   });
 
-  it.each(["opencode-go/glm-5.3-flash", "opencode-go/claude-haiku-5-5", "gemini-3.7-flash", "deepseek/deepseek-v4-flash"])("preserves portable state when sanitizing for %s", async (model) => {
+  it.each(["opencode-go/glm-5.3-flash", "opencode-go/claude-haiku-5-5", "gemini-3.7-flash", "opencode-go/deepseek-v4.1-flash"])("preserves portable state when sanitizing for %s", async (model) => {
     await runReliableCompaction(input());
     const restored = sanitizeProviderHistoryForModel(buildProviderHistoryWithCompaction(store, threadId, "next"), model);
     expect(JSON.stringify(restored)).toContain("Do not submit reports");

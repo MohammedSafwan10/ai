@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { findModelOption, getModelProviderGroups, withDiscoveredGoModels, type ModelOption, type PermissionMode, type ReasoningEffort } from "../../shared/models";
+import { isExpiredOpenRouterModel, isFreeOpenRouterModel, openRouterModelOption, registerOpenRouterModels, withOpenRouterModels } from "../../shared/openRouterModels";
 import type { ContextMentionRecord, ContextMentionSuggestion, ContextUsageRecord, DesktopAttachmentRecord, SettingsRecord } from "../../shared/types";
 import { ContextMeter } from "./ContextMeter";
 import { PromptLibrary } from "../features/chat/PromptLibrary";
@@ -83,6 +84,7 @@ export function Composer({
   const [modelPickerTarget, setModelPickerTarget] = useState<"chat" | "subagent">("chat");
   const [modelSearch, setModelSearch] = useState("");
   const [goModelIds, setGoModelIds] = useState<string[]>([]);
+  const [openRouterModels, setOpenRouterModels] = useState<ModelOption[]>([]);
   const goFetchedRef = useRef(false);
   const [confirmFullAccessOpen, setConfirmFullAccessOpen] = useState(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
@@ -94,8 +96,8 @@ export function Composer({
   const childModel = subagentModel ?? activeModel;
   const activeReasoningOptions = reasoningOptions.filter((option) => activeModel.reasoningEfforts.includes(option.id));
   const modelProviderGroups = useMemo(
-    () => withDiscoveredGoModels(getModelProviderGroups(), goModelIds),
-    [goModelIds],
+    () => withOpenRouterModels(withDiscoveredGoModels(getModelProviderGroups(), goModelIds), openRouterModels),
+    [goModelIds, openRouterModels],
   );
   const filteredModelGroups = useMemo(() => {
     const terms = modelSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -106,6 +108,17 @@ export function Composer({
     }) })).filter((group) => group.models.length > 0);
   }, [modelProviderGroups, modelSearch]);
   useEffect(() => { setModelSearch(""); }, [activeMenu, modelPickerTarget]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => { void window.privoraDesktop.listOpenRouterModels({ cachedOnly: true }).then((state) => {
+      if (cancelled) return;
+      const models = state.models.map((m) => ({ ...openRouterModelOption(m), unavailable: Boolean(state.unavailableIds?.includes(m.id) || isExpiredOpenRouterModel(m) || (state.freeOnly && !isFreeOpenRouterModel(m))) }));
+      registerOpenRouterModels(models);
+      setOpenRouterModels(models.filter((m) => state.selections.some((s) => s.id === m.upstreamModelId)));
+    }).catch(() => undefined); };
+    load(); window.addEventListener("privora:openrouter-models", load);
+    return () => { cancelled = true; window.removeEventListener("privora:openrouter-models", load); };
+  }, [activeMenu, settings.openRouterApiKeyStored]);
   useEffect(() => { goFetchedRef.current = false; setGoModelIds([]); }, [settings.activeOpencodeGoAccountId, settings.opencodeGoApiKeyStored]);
   useEffect(() => {
     if (activeMenu !== "model" || !settings.opencodeGoApiKeyStored || goFetchedRef.current) return;
@@ -842,7 +855,8 @@ export function Composer({
                         <button
                           key={model.id}
                           type="button"
-                          title={`${model.supportsImageInput ? "Supports image input" : "Text input only"} · ${formatTokenCount(model.contextWindowTokens)} context · ${formatTokenCount(model.maxOutputTokens)} max output`}
+                          title={model.unavailable ? "Unavailable or blocked by Free models only. Review OpenRouter models in Settings." : `${model.supportsImageInput ? "Supports image input" : "Text input only"} · ${model.supportsTools ? "Tools supported" : "Chat only"} · ${formatTokenCount(model.contextWindowTokens)} context · ${formatTokenCount(model.maxOutputTokens)} max output`}
+                          disabled={model.unavailable}
                           onClick={() => {
                             if (modelPickerTarget === "subagent") onSettings({ subagentModel: model.id, ...(settings.subagentReasoningEffort && !model.reasoningEfforts.includes(settings.subagentReasoningEffort) ? { subagentReasoningEffort: null } : {}) });
                             else onSettings({

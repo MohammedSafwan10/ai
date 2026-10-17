@@ -1,6 +1,7 @@
 export type ProviderId = "cliproxy" | "gemini" | "openrouter" | "deepseek" | "opencode-go";
 
 import { OPENCODE_GO_DEFAULT_OUTPUT_TOKENS, OPENCODE_GO_ID_PREFIX, isGoModelId, synthesizeGoModelOption } from "./opencodeGo";
+import { findRegisteredOpenRouterModel } from "./openRouterModels";
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -26,6 +27,8 @@ export interface ModelOption {
   defaultOutputTokens?: number;
   upstreamModelId?: string;
   description: string;
+  supportedParameters?: string[];
+  unavailable?: boolean;
 }
 
 export interface ModelProviderGroup {
@@ -36,11 +39,6 @@ export interface ModelProviderGroup {
 }
 
 export const GEMINI_37_FLASH_MODEL_ID = "gemini-3.7-flash";
-export const OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID = "deepseek/deepseek-v4-flash";
-export const OPENROUTER_MINIMAX_M3_MODEL_ID = "minimax/minimax-m3";
-export const OPENROUTER_OX_ALPHA_MODEL_ID = "stealth/ox-alpha";
-export const PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID = "privora/deepseek-v4-flash";
-export const PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID = "privora/deepseek-v4-pro";
 export const DEEPSEEK_V41_FLASH_EXP_MODEL_ID = "deepseek-v4.1-flash-expires-on-0910";
 export const DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID = "deepseek-v4-flash-vision-exp";
 export const OPENCODE_GO_DEEPSEEK_V41_FLASH_MODEL_ID = "opencode-go/deepseek-v4.1-flash";
@@ -56,7 +54,6 @@ export const OPENCODE_GO_GROK_46_MODEL_ID = "opencode-go/grok-4.6";
 export const OPENCODE_GO_MUSE_SPK_13_MODEL_ID = "opencode-go/muse-spark-1.3-contributor";
 export const OPENCODE_GO_GPT_6_LUNA_MODEL_ID = "opencode-go/gpt-6-luna";
 export const OPENCODE_GO_HAIKU_55_MODEL_ID = "opencode-go/claude-haiku-5-5";
-export const PRIVORA_MINIMAX_M3_MODEL_ID = "privora/minimax-m3";
 export const GPT_56_SOL_MODEL_ID = "gpt-5.6-sol";
 export const GPT_56_TERRA_MODEL_ID = "gpt-5.6-terra";
 export const GPT_56_LUNA_MODEL_ID = "gpt-5.6-luna";
@@ -65,7 +62,6 @@ const GPT_56_SOL_TERRA_CONTEXT_TOKENS = 1_050_000;
 const GPT_56_MAX_OUTPUT_TOKENS = 128_000;
 const GEMINI_LONG_CONTEXT_TOKENS = 1_048_576;
 const GEMINI_MAX_OUTPUT_TOKENS = 65_536;
-const OPENROUTER_DEFAULT_OUTPUT_TOKENS = 4_096;
 
 const geminiLongContext = {
   supportsImageInput: true,
@@ -295,63 +291,22 @@ const modelOptions: ModelOption[] = [
     defaultOutputTokens: 32_000,
     description: "Efficient high-volume GPT-5.6 model through CLIProxy.",
   },
-  {
-    id: "nvidia/nemotron-3-super-120b-a12b:free",
-    label: "Nemotron 3 Super",
-    provider: "openrouter",
-    supportsTools: true,
-    supportsImageInput: false,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "low", "medium"],
-    defaultReasoningEffort: "medium",
-    contextWindowTokens: 262_144,
-    maxOutputTokens: 262_144,
-    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
-    description: "Free OpenRouter 120B hybrid MoE model for long-context reasoning and agent workflows.",
-  },
-  {
-    id: OPENROUTER_MINIMAX_M3_MODEL_ID,
-    label: "MiniMax M3",
-    provider: "openrouter",
-    supportsTools: true,
-    supportsImageInput: true,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "medium"],
-    defaultReasoningEffort: "medium",
-    reasoningControl: "toggle",
-    contextWindowTokens: 524_288,
-    maxOutputTokens: 512_000,
-    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
-    description: "Multimodal long-context MiniMax model through your OpenRouter key.",
-  },
-  {
-    id: OPENROUTER_OX_ALPHA_MODEL_ID,
-    label: "Ox Alpha",
-    provider: "openrouter",
-    supportsTools: true,
-    supportsImageInput: true,
-    supportsReasoning: true,
-    reasoningEfforts: ["none", "low", "high", "max"],
-    defaultReasoningEffort: "high",
-    contextWindowTokens: 1_048_576,
-    maxOutputTokens: 131_072,
-    defaultOutputTokens: OPENROUTER_DEFAULT_OUTPUT_TOKENS,
-    description: "Free OpenRouter 1M context reasoning model for coding, agentic workflows, and multimodal tasks.",
-  },
+
 ];
 
 export const normalizeModelId = (modelId: string | undefined) => {
   const normalizedId = modelId?.trim();
-  if (normalizedId === PRIVORA_MINIMAX_M3_MODEL_ID) return OPENROUTER_MINIMAX_M3_MODEL_ID;
+  if (findRegisteredOpenRouterModel(normalizedId)) return normalizedId!;
   const retiredDeepSeekIds = new Set([
     DEEPSEEK_V41_FLASH_EXP_MODEL_ID, DEEPSEEK_V4_FLASH_VISION_EXP_MODEL_ID,
     OPENCODE_GO_DEEPSEEK_V4_FLASH_MODEL_ID, OPENCODE_GO_DEEPSEEK_V4_PRO_MODEL_ID, OPENCODE_GO_DEEPSEEK_VISION_EXP_MODEL_ID,
-    OPENROUTER_DEEPSEEK_V4_FLASH_MODEL_ID, PRIVORA_DEEPSEEK_V4_FLASH_MODEL_ID, PRIVORA_DEEPSEEK_V4_PRO_MODEL_ID,
   ]);
   return normalizedId && retiredDeepSeekIds.has(normalizedId) ? OPENCODE_GO_DEEPSEEK_V41_FLASH_MODEL_ID : normalizedId || GEMINI_37_FLASH_MODEL_ID;
 };
 
 export const findModelOption = (modelId: string | undefined) => {
+  const discovered = findRegisteredOpenRouterModel(modelId);
+  if (discovered) return discovered;
   const normalizedId = normalizeModelId(modelId);
   return modelOptions.find((option) => option.id === normalizedId)
     // Auto-discovered Go models resolve with safe family defaults so new
@@ -371,6 +326,7 @@ export const getProviderForModel = (modelId: string): ProviderId =>
 
 export const assertModelSupportsReasoningEffort = (modelId: string, effort: ReasoningEffort) => {
   const model = getModelOption(modelId);
+  if (model.reasoningControl === "toggle" && model.supportsReasoning && effort !== "none") return;
   if (model.reasoningEfforts.includes(effort)) return;
   throw new Error(`${model.label} does not support ${effort} reasoning. Choose one of: ${model.reasoningEfforts.join(", ")}.`);
 };
@@ -401,9 +357,9 @@ export const resolveModelRuntimeBudget = (
     ? Math.min(defaultOutputTokens, maxOutputTokens)
     : defaultOutputTokens;
 
-  const safetyReserve = contextWindowTokens ? Math.max(8_000, Math.floor(contextWindowTokens * 0.03)) : undefined;
+  const safetyReserve = contextWindowTokens ? Math.min(Math.max(8_000, Math.floor(contextWindowTokens * 0.03)), Math.floor(contextWindowTokens * 0.2)) : undefined;
   const hardInputBudgetTokens = contextWindowTokens
-    ? Math.max(8_000, contextWindowTokens - (outputTokens || 0) - (safetyReserve || 0))
+    ? Math.max(1, contextWindowTokens - (outputTokens || 0) - (safetyReserve || 0))
     : undefined;
   const inputBudgetTokens = hardInputBudgetTokens ?? 28_000;
 

@@ -1392,6 +1392,7 @@ export interface SubagentRecord {
 }
 
 export interface AppSnapshot {
+  openRouterModels?: import("./models").ModelOption[];
   settings: SettingsRecord;
   workspaces: WorkspaceRecord[];
   threads: ThreadRecord[];
@@ -1814,6 +1815,8 @@ export interface PrivoraDesktopApi {
   saveSettings(input: SaveSettingsInput): Promise<SettingsRecord>;
   saveThreadSettings(input: SaveThreadSettingsInput): Promise<ThreadRecord | null>;
   listOpencodeGoModels(input?: ListOpencodeGoModelsInput): Promise<OpencodeGoModelListRecord>;
+  listOpenRouterModels(input?: { refresh?: boolean; cachedOnly?: boolean }): Promise<import("./openRouterModels").OpenRouterCatalogState>;
+  updateOpenRouterModels(input: { id?: string; enabled?: boolean; freeOnly?: boolean }): Promise<import("./openRouterModels").OpenRouterCatalogState>;
   getBrowserState(workspaceId: string): Promise<BrowserPanelStateRecord | null>;
   setBrowserVisible(workspaceId: string, visible: boolean): Promise<BrowserPanelStateRecord | null>;
   setBrowserOccluded(occluded: boolean): Promise<void>;

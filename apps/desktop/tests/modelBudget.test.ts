@@ -4,8 +4,6 @@ import {
   GPT_56_LUNA_MODEL_ID,
   GPT_56_SOL_MODEL_ID,
   GPT_56_TERRA_MODEL_ID,
-  OPENROUTER_MINIMAX_M3_MODEL_ID,
-  OPENROUTER_OX_ALPHA_MODEL_ID,
   assertModelSupportsReasoningEffort,
   getModelOption,
   resolveModelRuntimeBudget,
@@ -44,42 +42,15 @@ describe("desktop model metadata and runtime budgets", () => {
       defaultOutputTokens: 16_384,
       supportsImageInput: true,
     });
-    expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free")).toMatchObject({
-      contextWindowTokens: 262_144,
-      maxOutputTokens: 262_144,
-      defaultOutputTokens: 4_096,
-    });
-    expect(getModelOption(OPENROUTER_MINIMAX_M3_MODEL_ID)).toMatchObject({
-      provider: "openrouter",
-      contextWindowTokens: 524_288,
-      maxOutputTokens: 512_000,
-      defaultOutputTokens: 4_096,
-      supportsImageInput: true,
-      supportsReasoning: true,
-      supportsTools: true,
-    });
-    expect(getModelOption(OPENROUTER_OX_ALPHA_MODEL_ID)).toMatchObject({
-      label: "Ox Alpha",
-      provider: "openrouter",
-      contextWindowTokens: 1_048_576,
-      maxOutputTokens: 131_072,
-      defaultOutputTokens: 4_096,
-      supportsImageInput: true,
-      supportsReasoning: true,
-      supportsTools: true,
-    });
+
   });
 
   it("exposes only verified reasoning levels and rejects unsupported selections", () => {
     expect(getModelOption(GPT_56_SOL_MODEL_ID).reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(getModelOption(GEMINI_37_FLASH_MODEL_ID).reasoningEfforts).toEqual(["low", "medium", "high"]);
     expect(getModelOption("opencode-go/deepseek-v4.1-flash").reasoningEfforts).toEqual(["none", "high", "xhigh"]);
-    expect(getModelOption("nvidia/nemotron-3-super-120b-a12b:free").reasoningEfforts).toEqual(["none", "low", "medium"]);
-    expect(getModelOption(OPENROUTER_OX_ALPHA_MODEL_ID).reasoningEfforts).toEqual(["none", "low", "high", "max"]);
-    expect(getModelOption(OPENROUTER_MINIMAX_M3_MODEL_ID).reasoningControl).toBe("toggle");
     expect(() => assertModelSupportsReasoningEffort(GEMINI_37_FLASH_MODEL_ID, "minimal")).toThrow(/does not support minimal/i);
     expect(() => assertModelSupportsReasoningEffort(GPT_56_SOL_MODEL_ID, "max")).not.toThrow();
-    expect(() => assertModelSupportsReasoningEffort(OPENROUTER_OX_ALPHA_MODEL_ID, "max")).not.toThrow();
   });
 
   it("uses the verified model budget in both standard and large-attachment modes", () => {
@@ -93,19 +64,4 @@ describe("desktop model metadata and runtime budgets", () => {
     expect(large.toolResultCharLimit).toBe(60_000);
   });
 
-  it("uses cost-safe OpenRouter output defaults while preserving long input budgets", () => {
-    const deepseek = resolveModelRuntimeBudget("opencode-go/deepseek-v4.1-flash", "normal");
-    const nemotron = resolveModelRuntimeBudget("nvidia/nemotron-3-super-120b-a12b:free", "normal");
-    const minimax = resolveModelRuntimeBudget(OPENROUTER_MINIMAX_M3_MODEL_ID, "normal");
-    const oxAlpha = resolveModelRuntimeBudget(OPENROUTER_OX_ALPHA_MODEL_ID, "normal");
-
-    expect(deepseek.outputTokens).toBe(16_384);
-    expect(deepseek.inputBudgetTokens).toBe(1_000_735);
-    expect(nemotron.outputTokens).toBe(4_096);
-    expect(nemotron.hardInputBudgetTokens).toBe(250_048);
-    expect(minimax.outputTokens).toBe(4_096);
-    expect(minimax.inputBudgetTokens).toBe(504_464);
-    expect(oxAlpha.outputTokens).toBe(4_096);
-    expect(oxAlpha.inputBudgetTokens).toBe(1_013_023);
-  });
 });

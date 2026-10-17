@@ -6,6 +6,8 @@ import { ProviderStreamError } from "./streamOutcome";
 import { emitChatDisposition } from "./disposition";
 import { normalizeProviderUsage } from "./usage";
 import { getModelOption, type ReasoningEffort } from "../../../shared/models";
+import { prepareOpenRouterModel } from "./openRouterCatalog";
+import { waitWithAbort } from "../../abort";
 
 export const openRouterReasoningConfig = (modelId: string, effort: ReasoningEffort) => {
   const model = getModelOption(modelId);
@@ -113,6 +115,12 @@ export class OpenRouterAdapter implements ProviderAdapter {
     if (!options.openRouterApiKey) {
       throw new Error("OpenRouter API key is not configured in desktop settings.");
     }
+    const policy = await waitWithAbort(prepareOpenRouterModel(options.model), options.signal);
+    const model = getModelOption(options.model);
+    const supports = (parameter: string) => !model.supportedParameters || model.supportedParameters.includes(parameter);
+    const useTools = !options.disableTools && model.supportsTools;
+    const hasImages = options.messages.some((m) => m.parts?.some((p) => p.type === "image"));
+    if (hasImages && !model.supportsImageInput) throw new Error(`${model.label} does not support image input.`);
 
     const request = (maxOutputTokens: number | undefined) => fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -123,18 +131,19 @@ export class OpenRouterAdapter implements ProviderAdapter {
         "X-Title": "Privora Desktop",
       },
       body: JSON.stringify({
-        model: options.model,
+        model: model.upstreamModelId || options.model,
         messages: toMessages(options.systemInstruction, options.messages),
-        ...(!options.disableTools ? {
+        ...(useTools ? {
           tools: openRouterDesktopTools(options.collaborationMode, options.toolEnvironment),
-          tool_choice: "auto",
-          parallel_tool_calls: true,
+          ...(supports("tool_choice") ? { tool_choice: "auto" } : {}),
+          ...(supports("parallel_tool_calls") ? { parallel_tool_calls: true } : {}),
         } : {}),
         ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
-        reasoning: openRouterReasoningConfig(options.model, options.reasoning),
+        ...(model.supportsReasoning ? supports("reasoning") ? { reasoning: openRouterReasoningConfig(options.model, options.reasoning) } : { include_reasoning: options.reasoning !== "none" } : {}),
         stream: true,
         stream_options: { include_usage: true },
-        temperature: 0.35,
+        ...(supports("temperature") ? { temperature: 0.35 } : {}),
+        provider: { require_parameters: true, ...(policy ? { max_price: policy.maxPrice } : {}) },
       }),
       signal: options.signal,
     });

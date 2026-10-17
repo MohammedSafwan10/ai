@@ -19,6 +19,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { SaveSettingsInput, SettingsRecord, StorageCleanupCategoryId, StorageUsageSnapshot, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
 import { GoAccountsSettings } from "./GoAccountsSettings";
+import { OpenRouterModelsSettings } from "./OpenRouterModelsSettings";
 
 interface SettingsPanelProps {
   settings: SettingsRecord;
@@ -343,6 +344,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                   {status === "error" && (
                     <p className="settings-error">{providerSaveError}</p>
                   )}
+                  <OpenRouterModelsSettings keyStored={settings.openRouterApiKeyStored} />
                 </div>
               )}
 

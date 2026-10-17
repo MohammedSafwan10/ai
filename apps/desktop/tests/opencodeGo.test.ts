@@ -21,7 +21,7 @@ describe("opencode go model discovery", () => {
     const groups = withDiscoveredGoModels(getModelProviderGroups(), ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"]);
     expect(groups.flatMap((group) => group.models).filter((model) => /deepseek/i.test(model.id)).map((model) => model.id)).toEqual(["opencode-go/deepseek-v4.1-flash"]);
     expect(groups.some((group) => group.id === "deepseek")).toBe(false);
-    expect(getModelOption("deepseek/deepseek-v4-flash").id).toBe("opencode-go/deepseek-v4.1-flash");
+    expect(findModelOption("deepseek/deepseek-v4-flash")).toBeUndefined();
     expect(getModelOption("opencode-go/deepseek-v4-pro").id).toBe("opencode-go/deepseek-v4.1-flash");
   });
   it.each([

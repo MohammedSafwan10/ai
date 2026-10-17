@@ -23,6 +23,7 @@ import type {
   WorkspaceRecord,
 } from "../../shared/types";
 import type { OpenCodeGoModelCache } from "../../shared/opencodeGo";
+import { openRouterModelOption, registerOpenRouterModels, type OpenRouterCatalogState } from "../../shared/openRouterModels";
 import { applyGoAccountAction, goAccountVaultSchema, type GoAccountAction, type GoAccountVault } from "../../shared/goAccounts";
 import { encodeHistoryCursor } from "../../shared/historyCursor";
 import { reorderPinnedPromptSchema, type ReorderPinnedPromptInput } from "../../shared/promptLibrary";
@@ -106,6 +107,7 @@ export class DesktopStore {
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;");
     this.createSchema();
     this.ensureDefaultSettings();
+    registerOpenRouterModels(this.getOpenRouterCatalog()?.models.map(openRouterModelOption) || []);
     this.run("DELETE FROM kv WHERE scope = 'secrets' AND key IN ('privora_session_cookie','privora_user_jwt','privora_pending_auth','privora_account_profile')");
     const localSettings = this.getKv<Record<string, unknown>>("settings", "default");
     if (localSettings) {
@@ -217,10 +219,15 @@ export class DesktopStore {
 
   snapshot(activeThreadId: string | null, activeWorkspaceId: string | null): AppSnapshot {
     const page = activeThreadId ? this.getThreadHistoryPage(activeThreadId, { limit: INITIAL_HISTORY_LIMIT }) : emptyPage();
+    const threads = this.listThreads();
+    const catalog = this.getOpenRouterCatalog();
+    const settings = this.getSettings();
+    const referencedModels = new Set([...(catalog?.selections.map((s) => s.id) || []), ...threads.flatMap((t) => [t.model, t.subagentModel]), settings.model, settings.subagentModel]);
     return {
-      settings: this.getSettings(),
+      settings,
+      openRouterModels: (catalog?.models || []).filter((m) => referencedModels.has(m.id) || referencedModels.has(`openrouter/${m.id}`)).map(openRouterModelOption),
       workspaces: this.listWorkspaces(),
-      threads: this.listThreads(),
+      threads,
       messages: page.messages,
       toolEvents: page.toolEvents,
       subagents: activeThreadId ? this.listSubagents(activeThreadId) : [],
@@ -328,6 +335,11 @@ export class DesktopStore {
   }
   getOpencodeGoModelCache(): OpenCodeGoModelCache | null {
     return this.getKv<OpenCodeGoModelCache>("opencode_go", "models");
+  }
+  getOpenRouterCatalog(): OpenRouterCatalogState | null { return this.getKv<OpenRouterCatalogState>("openrouter", "catalog"); }
+  setOpenRouterCatalog(state: OpenRouterCatalogState) {
+    this.putKv("openrouter", "catalog", state);
+    registerOpenRouterModels(state.models.map(openRouterModelOption));
   }
   private getGoAccountVault(strict = false): GoAccountVault {
     const envelope = this.getKv<StoredSecretEnvelope>("secrets", "opencode_go_accounts");

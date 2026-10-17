@@ -68,6 +68,8 @@ import type {
 import { envelopePrivoraEvent } from "../agent/harness/eventBus";
 import { OPENCODE_GO_CACHE_TTL_MS, fetchGoModelIds } from "../../shared/opencodeGo";
 import { goAccountActionSchema } from "../../shared/goAccounts";
+import { openRouterSelectionInputSchema } from "../../shared/openRouterModels";
+import { OpenRouterCatalogService, setOpenRouterCatalogGuard } from "../agent/providers/openRouterCatalog";
 import type { SecurityWorkspaceService, CreateSecurityWorkspaceInput } from "../../shared/securityWorkspace";
 
 export interface IpcState {
@@ -611,10 +613,21 @@ export const registerIpc = (
 
   handle(channels.saveSettings, z.tuple([saveSettingsInputSchema]), (_event, input: SaveSettingsInput) => {
     const settings = store.saveSettings(input);
+    if (input.openRouterApiKey !== undefined) {
+      const cached = store.getOpenRouterCatalog();
+      if (cached) store.setOpenRouterCatalog({ ...cached, fetchedAt: 0 });
+    }
     if (typeof input.computerUseEnabled === "boolean") computerUseManager?.setEnabled(input.computerUseEnabled);
     options?.onSettingsChanged?.();
     return settings;
   });
+
+  const openRouterCatalog = new OpenRouterCatalogService(store, emitSnapshot);
+  setOpenRouterCatalogGuard((id) => openRouterCatalog.prepare(id));
+  handle(channels.listOpenRouterModels, z.tuple([z.object({ refresh: z.boolean().optional(), cachedOnly: z.boolean().optional() }).optional()]), (_event, input) => input?.cachedOnly ? openRouterCatalog.cached() : openRouterCatalog.list(input?.refresh));
+  handle(channels.updateOpenRouterModels, z.tuple([openRouterSelectionInputSchema]), (_event, input) => openRouterCatalog.update(input));
+  // Load locally first; a bounded background refresh never delays app startup.
+  void openRouterCatalog.list().catch(() => undefined);
 
   handle(channels.listOpencodeGoModels, z.tuple([z.object({ refresh: z.boolean().optional() }).optional()]), async (_event, input) => {
     const credential = store.getOpencodeGoCredential();
@@ -1178,7 +1191,7 @@ const startTurnInputSchema = z.object({
   prompt: z.string().max(1_000_000),
   attachments: z.array(attachmentSchema).max(12).optional(),
   contextMentions: z.array(contextMentionSchema).max(24).optional(),
-  model: z.string().max(160).optional(),
+  model: z.string().max(256).optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),
@@ -1221,8 +1234,8 @@ const searchContextMentionsInputSchema = z.object({
 
 const saveSettingsInputSchema = z.object({
   subagentReasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
-  model: z.string().max(160).optional(),
-  subagentModel: z.string().min(1).max(160).nullable().optional(),
+  model: z.string().max(256).optional(),
+  subagentModel: z.string().min(1).max(256).nullable().optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   permissionMode: z.enum(["ask_risky", "yolo"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
@@ -1242,8 +1255,8 @@ const saveThreadSettingsInputSchema = z.object({
   subagentSettingsScope: z.enum(["new", "next_turn"]).optional(),
   subagentReasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
   threadId: idSchema,
-  model: z.string().max(160).optional(),
-  subagentModel: z.string().min(1).max(160).nullable().optional(),
+  model: z.string().max(256).optional(),
+  subagentModel: z.string().min(1).max(256).nullable().optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   collaborationMode: z.enum(["default", "plan"]).optional(),
   agentHarnessMode: z.enum(["standard", "review_swarm"]).optional(),

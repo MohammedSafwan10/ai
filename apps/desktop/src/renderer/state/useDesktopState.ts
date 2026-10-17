@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { registerOpenRouterModels } from "../../shared/openRouterModels";
 import type {
   AppSnapshot,
   ActiveRunState,
@@ -345,6 +346,7 @@ export const reducePrivoraEvents = (snapshot: DesktopUiSnapshot, events: Privora
 };
 
 const applySnapshot = (current: DesktopUiSnapshot, snapshot: AppSnapshot, authoritative = false): DesktopUiSnapshot => {
+  if (snapshot.openRouterModels) registerOpenRouterModels(snapshot.openRouterModels);
   const activeThreadId = snapshot.activeThreadId;
   const sameThread = Boolean(activeThreadId && activeThreadId === current.activeThreadId);
   // A direct IPC refresh is not sequenced with pushed events. Never let an

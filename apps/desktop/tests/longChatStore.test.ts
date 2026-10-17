@@ -243,7 +243,7 @@ describe("long chat SQLite repository", () => {
     expect(reopened.getKv("secrets", "openrouter_api_key")).toEqual(providerEnvelope);
     for (const key of ["privora_session_cookie", "privora_user_jwt", "privora_pending_auth", "privora_account_profile"]) expect(reopened.getKv("secrets", key)).toBeNull();
     expect(store.getMessage("kept")?.threadId).toBe(thread.id);
-    expect(store.getSettings().model).toBe("minimax/minimax-m3");
+    expect(store.getSettings().model).toBe("privora/minimax-m3");
     expect(store.getSettings()).not.toHaveProperty("appwriteEndpoint");
   });
   it("does not expose retired cloud settings and rejects remote CLI proxy settings", () => {
