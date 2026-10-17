@@ -1,3 +1,5 @@
+import { AboutSettings } from "./AboutSettings";
+import { ShortcutSettings } from "./ShortcutSettings";
 import { StorageSettings } from "./StorageSettings";
 import { ProviderModelsSettings } from "./ProviderModelsSettings";
 import type { CatalogProvider } from "../../shared/providerCatalog";
@@ -18,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { SaveSettingsInput, SettingsRecord, UpdateStatus, WorkspaceOpenTargetInfo } from "../../shared/types";
 import { TargetIcon } from "./AppLauncher";
 import { GoAccountsSettings } from "./GoAccountsSettings";
@@ -36,7 +38,7 @@ interface SettingsScreenProps {
   updateStatus: UpdateStatus | null;
   workspaceDisabled: boolean;
   open: boolean;
-  onOpen: () => void;
+  onOpen: (tab?: SettingsTab) => void;
   onClose: () => void;
   onSave: (settings: SaveSettingsInput) => Promise<void> | void;
   initialTab?: SettingsTab;
@@ -64,6 +66,11 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
   const [openRouterKeyRevision, setOpenRouterKeyRevision] = useState(0);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [cliproxyBaseUrl, setCliproxyBaseUrl] = useState(settings.cliproxyBaseUrl);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceTargetsLoading, setWorkspaceTargetsLoading] = useState(true);
+  const workspaceOpeningRef = useRef(false);
+  const [workspaceOpening, setWorkspaceOpening] = useState<string | null>(null);
   const [workspaceTargets, setWorkspaceTargets] = useState<WorkspaceOpenTargetInfo[]>([]);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
@@ -93,10 +100,10 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && open) onClose();
-      if (event.ctrlKey && event.key === "/") {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === "/") {
         event.preventDefault();
         setActiveTab("shortcuts");
-        onOpen();
+        onOpen("shortcuts");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -110,23 +117,26 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
   useEffect(() => {
     if (!open) return;
     let alive = true;
+    setWorkspaceTargetsLoading(true); setWorkspaceError("");
     void window.privoraDesktop.listWorkspaceOpenTargets()
       .then((targets) => {
         if (alive) setWorkspaceTargets(targets);
       })
       .catch(() => {
-        if (alive) setWorkspaceTargets([]);
-      });
+        if (alive) { setWorkspaceTargets([]); setWorkspaceError("Could not load available applications."); }
+      }).finally(() => { if (alive) setWorkspaceTargetsLoading(false); });
     return () => {
       alive = false;
     };
   }, [open]);
 
 
+  useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [activeTab, provider]);
+
   return (
     <div className="settings-screen">
       <section className="settings-screen-shell" aria-label="Settings">
-            <aside className="settings-tabs">
+            <nav className="settings-tabs" aria-label="Settings sections">
               <strong>Settings</strong>
               <SettingsTabButton id="general" active={activeTab} icon={<Sun size={15} />} label="General" onSelect={setActiveTab} />
               <SettingsTabButton id="providers" active={activeTab} icon={<KeyRound size={15} />} label="Providers" onSelect={setActiveTab} />
@@ -134,9 +144,9 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
               <SettingsTabButton id="storage" active={activeTab} icon={<Database size={15} />} label="Storage" onSelect={setActiveTab} />
               <SettingsTabButton id="shortcuts" active={activeTab} icon={<Keyboard size={15} />} label="Shortcuts" onSelect={setActiveTab} />
               <SettingsTabButton id="about" active={activeTab} icon={<Info size={15} />} label="About" onSelect={setActiveTab} />
-            </aside>
+            </nav>
 
-            <div className="settings-content">
+            <div className="settings-content" ref={contentRef}>
               <div className="settings-modal-header">
                 <h2>{tabTitle(activeTab)}</h2>
                 <button type="button" className="settings-close-button" aria-label="Close settings" title="Close settings" onClick={onClose}>
@@ -146,6 +156,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
 
               {activeTab === "general" && (
                 <div className="settings-section settings-general">
+                  <p className="settings-description">Appearance and background behavior.</p>
                   <div className="settings-preference-row">
                     <div className="settings-preference-copy">
                       <strong>Appearance</strong>
@@ -161,7 +172,8 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                           className={clsx(settings.theme === option.id && "active")}
                           title={option.label}
                           aria-pressed={settings.theme === option.id}
-                          onClick={() => onSave({ theme: option.id })}
+                          disabled={saving}
+                          onClick={() => void saveProviderSettings({ theme: option.id })}
                         >
                           <Icon size={16} />
                           <span>{option.label}</span>
@@ -176,7 +188,8 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                     role="switch"
                     aria-checked={settings.keepRunningInTray}
                     aria-label="Run in background"
-                    onClick={() => onSave({ keepRunningInTray: !settings.keepRunningInTray })}
+                    disabled={saving}
+                    onClick={() => void saveProviderSettings({ keepRunningInTray: !settings.keepRunningInTray })}
                   >
                     <span className="settings-preference-copy">
                       <strong>Run in background</strong>
@@ -184,6 +197,7 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                     </span>
                     <span aria-hidden="true" className={clsx("settings-switch", settings.keepRunningInTray && "active")} />
                   </button>
+                  {providerSaveError && <p className="settings-inline-error" role="alert">{providerSaveError}</p>}
                 </div>
               )}
 
@@ -230,52 +244,32 @@ export function SettingsScreen({ settings, updateStatus, workspaceDisabled, open
                 </div>
               )}
 
-              {activeTab === "workspace" && (
-                <div className="settings-section settings-action-grid">
-                  {workspaceTargets.map((target) => {
-                    return (
-                      <button
-                        type="button"
-                        key={target.id}
-                        disabled={workspaceDisabled}
-                        onClick={() => void window.privoraDesktop.openWorkspaceTarget(target.id)}
-                      >
-                        <TargetIcon target={target} size={16} />
-                        <span>{target.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              {activeTab === "workspace" && <div className="settings-section settings-workspace">
+                <p className="settings-description">Open the current project in another application.</p>
+                {workspaceDisabled && <p className="settings-description">Select a project to use these actions.</p>}
+                <section className="settings-detail-group" aria-label="Available applications"><h3>Applications</h3>
+                  {workspaceTargets.map((target) => <div className="settings-workspace-row" key={target.id}>
+                    <TargetIcon target={target} size={20} /><div><strong>{target.label}</strong>{target.isDefault && <small>Default application</small>}</div>
+                    <button type="button" className="settings-row-button settings-outlined-button" disabled={workspaceDisabled || Boolean(workspaceOpening)} onClick={async () => {
+                      if (workspaceOpeningRef.current) return;
+                      workspaceOpeningRef.current = true;
+                      setWorkspaceOpening(target.id); setWorkspaceError("");
+                      try { await window.privoraDesktop.openWorkspaceTarget(target.id); }
+                      catch { setWorkspaceError(`Could not open ${target.label}.`); }
+                      finally { workspaceOpeningRef.current = false; setWorkspaceOpening(null); }
+                    }}>{workspaceOpening === target.id ? "Opening…" : "Open"}</button>
+                  </div>)}
+                  {workspaceTargetsLoading && <p className="settings-description" role="status">Finding applications…</p>}
+                  {!workspaceTargetsLoading && !workspaceTargets.length && !workspaceError && <p className="settings-description">No supported applications were found.</p>}
+                </section>
+                {workspaceError && <p className="settings-inline-error" role="alert">{workspaceError}</p>}
+              </div>}
 
-              {activeTab === "shortcuts" && (
-                <div className="settings-section settings-shortcuts">
-                  <ShortcutRow keys="Enter" label="Send or queue follow-up" />
-                  <ShortcutRow keys="Shift+Enter" label="New line" />
-                  <ShortcutRow keys="Up / Down" label="Current chat prompts" />
-                  <ShortcutRow keys="Ctrl+/" label="Open shortcuts" />
-                  <ShortcutRow keys="Ctrl+R" label="Reload app" />
-                </div>
-              )}
+              {activeTab === "shortcuts" && <ShortcutSettings />}
 
               {activeTab === "storage" && <StorageSettings />}
 
-              {activeTab === "about" && (
-                <div className="settings-section settings-about">
-                  <InfoRow label="Version" value={updateStatus?.currentVersion || "Unknown"} />
-                  {updateStatus?.latestVersion && <InfoRow label="Latest" value={updateStatus.latestVersion} />}
-                  <InfoRow label="Updates" value={formatUpdateState(updateStatus)} />
-                  <InfoRow label="Channel" value={formatUpdateChannel(updateStatus)} />
-                  {updateStatus?.releaseName && <InfoRow label="Ready update" value={updateStatus.releaseName} />}
-                  {updateStatus?.releaseDate && <InfoRow label="Release date" value={updateStatus.releaseDate} />}
-                  {(updateStatus?.releaseNotes || updateStatus?.latestReleaseNotes) && (
-                    <InfoRow label="Release notes" value={updateStatus.releaseNotes || updateStatus.latestReleaseNotes || ""} />
-                  )}
-                  {updateStatus?.lastCheckedAt && (
-                    <InfoRow label="Last checked" value={new Date(updateStatus.lastCheckedAt).toLocaleString()} />
-                  )}
-                </div>
-              )}
+              {activeTab === "about" && <AboutSettings updateStatus={updateStatus} />}
             </div>
       </section>
     </div>
@@ -303,40 +297,6 @@ function SettingsTabButton({
   );
 }
 
-function ShortcutRow({ keys, label }: { keys: string; label: string }) {
-  return (
-    <div className="shortcut-row">
-      <kbd>{keys}</kbd>
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function InfoRow({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
-  return (
-    <div className="settings-info-row">
-      <span>{label}</span>
-      {code ? <code>{value}</code> : <strong>{value}</strong>}
-    </div>
-  );
-}
-
-const formatUpdateState = (status: UpdateStatus | null) => {
-  if (!status) return "Loading";
-  if (status.state === "ready") return "Ready to install";
-  if (status.state === "checking") return "Checking";
-  if (status.state === "downloading") return "Downloading";
-  if (status.state === "installing") return "Installing";
-  if (status.state === "error") return status.error || "Update failed";
-  if (status.state === "unsupported") return status.message || "Unsupported";
-  return status.message || "Up to date";
-};
-const formatUpdateChannel = (status: UpdateStatus | null) => {
-  if (!status?.feedUrl) return "Not configured";
-  if (status.feedUrl.includes("/win32/x64/stable")) return "Windows x64 stable";
-  return "Custom update feed";
-};
-
 const tabTitle = (tab: SettingsTab) => {
   if (tab === "providers") return "Providers";
   if (tab === "workspace") return "Workspace";
@@ -351,18 +311,6 @@ const themeOptions = [
   { id: "light" as const, label: "Light", icon: Sun },
   { id: "dark" as const, label: "Dark", icon: Moon },
 ];
-
-const formatBytes = (bytes: number) => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-};
 
 function providerKeyField(provider: ProviderId): "openaiApiKey" | "anthropicApiKey" | "openRouterApiKey" | "geminiApiKey" | "deepseekApiKey" {
   return provider === "openai" ? "openaiApiKey" : provider === "anthropic" ? "anthropicApiKey" : provider === "openrouter" ? "openRouterApiKey" : provider === "gemini" ? "geminiApiKey" : "deepseekApiKey";

@@ -444,6 +444,7 @@ export function Composer({
           }
         }}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
           if (mentionToken && mentionSuggestions.length > 0 && (event.key === "Enter" || event.key === "Tab")) {
             event.preventDefault();
             selectMention(mentionSuggestions[0]);

@@ -760,8 +760,8 @@ export default function App() {
             workspaceDisabled={!activeWorkspace}
             open={settingsOpen}
             initialTab={settingsInitialTab}
-            onOpen={() => {
-              setSettingsInitialTab("general");
+            onOpen={(tab = "general") => {
+              setSettingsInitialTab(tab);
               setSettingsOpen(true);
             }}
             onClose={() => setSettingsOpen(false)}
