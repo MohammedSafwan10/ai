@@ -19,13 +19,16 @@ export function RequestUserInputPanel({
   const question = request.questions[Math.min(index, request.questions.length - 1)];
   const isFirst = index === 0;
   const isLast = index === request.questions.length - 1;
+  // Snapshots clone the questions array even when the question has not changed.
+  const questionsKey = JSON.stringify(request.questions);
 
   useEffect(() => {
     setSelected(Object.fromEntries(request.questions.map((question) => [question.id, question.options[0]?.label || ""])));
     setNotes({});
     setIndex(0);
     setSubmitting(false);
-  }, [request.callId, request.questions]);
+    setError("");
+  }, [request.callId, questionsKey]);
 
   const submit = async () => {
     if (submitting) return;

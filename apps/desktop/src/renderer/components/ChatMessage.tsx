@@ -943,9 +943,10 @@ function AttachmentGrid({ attachments }: { attachments: DesktopAttachmentRecord[
   const [zoom, setZoom] = useState(1);
   const selected = selectedIndex === null ? null : attachments[selectedIndex] || null;
   const selectedSrc = selected ? attachmentSrc(selected) : "";
+  const hasSelected = Boolean(selected);
+  useEffect(() => { setZoom(1); }, [selected?.id, selectedSrc]);
   useEffect(() => {
     if (!selected) return;
-    setZoom(1);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedIndex(null);
       if (event.key === "ArrowLeft") setSelectedIndex((index) => index === null ? index : Math.max(0, index - 1));
@@ -953,7 +954,7 @@ function AttachmentGrid({ attachments }: { attachments: DesktopAttachmentRecord[
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [attachments.length, selected]);
+  }, [attachments.length, hasSelected]);
 
   if (attachments.length === 0) return null;
   return (

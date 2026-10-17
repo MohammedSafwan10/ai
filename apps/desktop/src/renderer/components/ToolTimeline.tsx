@@ -277,15 +277,16 @@ export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
   const [verifiedPath, setVerifiedPath] = useState<string | null>(null);
+  const [verifyAttempt, setVerifyAttempt] = useState(0);
   useEffect(() => {
     if (!saved) return;
     let current = true;
-    setVerifiedPath(null); setError("");
+    setVerifiedPath(null); setError(""); setCopied(false);
     void window.privoraDesktop.verifySavedSecurityEvidence(tool.id)
       .then((result) => { if (current) setVerifiedPath(result.localPath); })
       .catch((failure) => { if (current) setError(failure instanceof Error ? failure.message : String(failure)); });
     return () => { current = false; };
-  }, [saved, tool.id]);
+  }, [tool.id, saved?.localPath, saved?.sha256, saved?.size, verifyAttempt]);
   if (!saved) return null;
   const copy = async () => {
     setError("");
@@ -305,7 +306,8 @@ export function SavedEvidenceActions({ tool }: { tool: ToolEventRecord }) {
     </div>
     <code className="saved-evidence-path">{verifiedPath ?? saved.localPath}</code>
     {saved.sha256 && <details><summary>SHA-256</summary><code>{saved.sha256}</code></details>}
-    <small>{verifiedPath ? "Verified on this PC now." : "Checking the recorded PC copy..."}</small>
+    <small className="saved-evidence-verification" role="status">{verifiedPath ? "PC copy verified." : error ? "Could not verify this PC copy." : "Checking the recorded PC copy..."}</small>
+    {!verifiedPath && error && <button type="button" onClick={() => setVerifyAttempt((value) => value + 1)}>Retry verification</button>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }
@@ -314,7 +316,7 @@ function LiveOutput({ output }: { output: string }) {
   return (
     <pre className="tool-live-output">
       {output.split(/\r?\n/).map((line, index) => (
-        <span className={clsx("live-line", liveLineClass(line))} key={`${index}-${line.slice(0, 16)}`}>
+        <span className={clsx("live-line", liveLineClass(line))} key={index}>
           {line || " "}
         </span>
       ))}

@@ -884,4 +884,5 @@
 .saved-evidence-heading button { display: inline-flex; align-items: center; gap: 4px; background: transparent; color: var(--privora-text); border: 1px solid var(--privora-border); border-radius: 5px; padding: 3px 6px; font: inherit; cursor: pointer; }
 .saved-evidence code { display: block; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
 .saved-evidence small, .saved-evidence summary { color: var(--privora-muted); }
+.saved-evidence-verification { display: block; min-height: 18px; line-height: 18px; }
 .saved-evidence p[role="alert"] { color: var(--danger); margin: 6px 0 0; }
