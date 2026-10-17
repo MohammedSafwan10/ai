@@ -2,7 +2,7 @@
 
 ## Stage 0 — Baseline and contracts
 
-Inspect current runtime and tests before editing. Measure normal chat startup,
+Inspect current runtime and tests before editing. Measure Build chat startup,
 idle memory, input responsiveness, first-token timing and long-chat rendering.
 Separate provider latency from app and remote-job overhead. Record host/hardware
 and workloads; do not promise universal speed or memory numbers.
@@ -43,7 +43,7 @@ network outage. A source build does not automatically update installed desktops.
 Connect to a manually configured Kali ARM64 VM. Discover capabilities; submit a
 harmless diagnostic job; stream stdout/stderr; inspect exit state; cancel a long
 job; reconnect; retrieve a sample artifact. Keep this behind an explicit opt-in
-without changing normal chat routing.
+without changing Build chat routing.
 
 The operator's VM uses 4 GB RAM, 4 virtual CPUs and a 40 GB dynamic virtual disk.
 Keep 4 GB as the initial CLI baseline and limit concurrent heavy workloads; model
@@ -97,7 +97,7 @@ with custom hypervisors, eBPF drivers, scanners or a universal plugin platform.
 
 | Area | Required evidence |
 | --- | --- |
-| Normal chat | Existing workflows, models, history and approvals retain behavior |
+| Build chat | Existing workflows, models, history and approvals retain behavior |
 | Routing | Security job cannot silently execute on Windows after disconnect |
 | Connection | Host identity verified; credentials absent from renderer/log output |
 | Capabilities | Missing tools and ARM incompatibility are reported honestly |

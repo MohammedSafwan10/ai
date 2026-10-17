@@ -16,7 +16,7 @@ export function SecurityPage() {
         <article className="reveal">
           <h2>Your computer.</h2>
           <p>
-            Normal projects use a folder you choose. Local tools can read and
+            Build projects use a folder you choose. Local tools can read and
             change files and run commands within the access you grant. Chats and
             project state are stored on the desktop.
           </p>

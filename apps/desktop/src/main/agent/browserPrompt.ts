@@ -1,4 +1,4 @@
-/** Browser rules shared by normal/Security prompts, including their child-agent turns. */
+/** Browser rules shared by Build/Security prompts, including their child-agent turns. */
 export const browserWorkflowInstructions = [
   "Browser reliability and ownership:",
   "- Use only browser tools exposed in this workspace. If a capability matters and is uncertain, check browser_capabilities once; do not invent unavailable tools or silently change execution environments.",

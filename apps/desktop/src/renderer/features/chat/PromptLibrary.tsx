@@ -118,10 +118,10 @@ export function PromptLibrary({ currentDraft, remoteEnvironment, canRun, onInser
     try { await window.privoraDesktop.reorderPinnedPrompt({ id, targetId, position }); reload(); }
     catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
   };
-  const scopeName = (value: string) => value === "all" ? "All chats" : value === "security" ? "Security" : "Normal chats";
+  const scopeName = (value: string) => value === "all" ? "All chats" : value === "security" ? "Security" : "Build chats";
 
   return <dialog ref={dialog} className={`prompt-library${fullscreen ? " prompt-library-fullscreen" : ""}`} aria-labelledby="prompt-library-title" onCancel={(event) => { event.preventDefault(); close(); }}>
-    <header><div><h2 id="prompt-library-title"><BookOpen size={18} />Prompt library</h2><p>Reusable prompts for normal and Security chats.</p></div><div className="prompt-library-header-actions"><button type="button" onClick={() => setFullscreen((value) => !value)} title={fullscreen ? "Exit full screen" : "Expand to full screen"} aria-label={fullscreen ? "Exit full screen" : "Expand to full screen"}>{fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button><button type="button" disabled={busy} onClick={close} aria-label="Close prompt library"><X size={18} /></button></div></header>
+    <header><div><h2 id="prompt-library-title"><BookOpen size={18} />Prompt library</h2><p>Reusable prompts for Build and Security chats.</p></div><div className="prompt-library-header-actions"><button type="button" onClick={() => setFullscreen((value) => !value)} title={fullscreen ? "Exit full screen" : "Expand to full screen"} aria-label={fullscreen ? "Exit full screen" : "Expand to full screen"}>{fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button><button type="button" disabled={busy} onClick={close} aria-label="Close prompt library"><X size={18} /></button></div></header>
     {error && <p className="prompt-library-error" role="alert">{error}</p>}
     {discard && <div className="prompt-library-discard" role="alert"><span>Keep or discard your unsaved changes?</span><button type="button" onClick={() => setDiscard(false)}>Keep editing</button><button type="button" onClick={() => { setEditor(null); setOriginal(null); setDiscard(false); }}>Discard changes</button></div>}
     <div className="prompt-library-layout">

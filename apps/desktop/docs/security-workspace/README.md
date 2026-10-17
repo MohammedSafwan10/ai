@@ -15,14 +15,14 @@ skipped), TypeScript and Windows packaging. Live validation of every provider
 and representative assessments remain separate.
 
 Privora Security extends the existing desktop app into a security research
-workspace. It keeps the normal chat interface and connects the agent to testing
+workspace. It keeps the Build chat interface and connects the agent to testing
 environments, tools, files and evidence. Web assessment is one workflow among
 repository review, application analysis, network assessment and investigation.
 
 ## Agreed direction
 
 - Build within Privora Desktop, using its TypeScript runtime and React/Electron UI.
-- Keep normal workspaces unchanged and make Security an explicit workspace type.
+- Keep Build workspaces unchanged and make Security an explicit workspace type.
 - Reuse chat, model adapters, streaming, tool activity, approvals, recovery and storage.
 - Add environment connectors, security task context and findings with evidence.
 - No mandatory Docker, Rust rewrite, second agent runtime or standalone Dex app.

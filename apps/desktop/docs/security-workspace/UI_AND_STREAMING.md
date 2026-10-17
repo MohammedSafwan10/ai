@@ -7,7 +7,7 @@ views are future adapters.
 
 ## Preserve the familiar chat
 
-Use Privora's normal chat layout, composer, typography, tool rows and side panels.
+Use Privora's Build chat layout, composer, typography, tool rows and side panels.
 The earlier standalone Dex mockups were rejected; they are not approved production
 references. Do not introduce a dense dashboard or a new global theme.
 
@@ -41,7 +41,7 @@ Reviewer Swarm. Hide unsupported actions rather than show misleading placeholder
 Open a Development folder with the existing folder button, or choose the sidebar
 shield button for a separate Security project. Enter name, objective and scope,
 select/import an environment, optionally check its connection, and create the
-project. Continue in the normal chat and use its existing access selector.
+project. Continue in the Build chat and use its existing access selector.
 Missing environment access is actionable setup, not a false ready state.
 
 ## Live behavior
@@ -76,7 +76,7 @@ Windows host. Bound output previews and fetch complete details on demand.
 
 Verify keyboard interaction, accessible labels, long filenames, narrow windows,
 expanded logs, large text and scrolling during streaming. Preserve code-block copy
-and normal chat behavior. Implementation was authorized by the operator after
+and Build chat behavior. Implementation was authorized by the operator after
 the original planning stage; this document records current behavior and goals.
 
 ## Existing output defect confirmed during review

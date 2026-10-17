@@ -111,7 +111,7 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="sidebar-type-filter" role="group" aria-label="Filter projects">{(["all", "security", "normal"] as const).map((type) => <button type="button" key={type} aria-pressed={filter === type} onClick={() => { setFilter(type); try { localStorage.setItem("privora.sidebar.filter", type); } catch { /* Keep the session preference when storage is unavailable. */ } }}>{type === "all" ? "All" : type === "security" ? "Security" : "Normal"}</button>)}</div>
+      <div className="sidebar-type-filter" role="group" aria-label="Filter projects">{(["all", "security", "normal"] as const).map((type) => <button type="button" key={type} aria-pressed={filter === type} onClick={() => { setFilter(type); try { localStorage.setItem("privora.sidebar.filter", type); } catch { /* Keep the session preference when storage is unavailable. */ } }}>{type === "all" ? "All" : type === "security" ? "Security" : "Build"}</button>)}</div>
       {organizationError && <div className="sidebar-organization-error" role="alert">{organizationError}<button type="button" onClick={() => setOrganizationError(null)} aria-label="Dismiss organization error">×</button></div>}
       <div className={clsx("project-list", dragging && "sidebar-dragging")} ref={projectListRef}>
         <div className="sidebar-virtual-spacer" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
@@ -207,7 +207,7 @@ function MoveChatDialog({ thread, workspaces, initialWorkspaceId, onClose, onMov
   return <dialog ref={dialog} className="sidebar-move-dialog" aria-labelledby="move-chat-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
     <h2 id="move-chat-title">Move chat</h2><p className="sidebar-move-title">{thread?.title ?? "Chat no longer available"}</p>
     <p>History and completed subagents move with the chat. Files stay in their original folders. Previous approvals won’t carry over, and rewinding messages from the previous project will be disabled.</p>
-    <fieldset disabled={busy}><legend>Destination project</legend><div className="sidebar-move-projects">{destinations.map((workspace) => <label key={workspace.id}><input type="radio" name="move-chat-project" value={workspace.id} checked={selected === workspace.id} onChange={() => setSelected(workspace.id)} /><span>{workspace.name}<small>{workspace.path}</small></span></label>)}{!destinations.length && <p>Add another normal project folder first.</p>}</div></fieldset>
+    <fieldset disabled={busy}><legend>Destination project</legend><div className="sidebar-move-projects">{destinations.map((workspace) => <label key={workspace.id}><input type="radio" name="move-chat-project" value={workspace.id} checked={selected === workspace.id} onChange={() => setSelected(workspace.id)} /><span>{workspace.name}<small>{workspace.path}</small></span></label>)}{!destinations.length && <p>Add another Build project folder first.</p>}</div></fieldset>
     <p>Security chats remain in their original project to keep scope, jobs and evidence together.</p>
     {error && <p className="sidebar-organization-error" role="alert">{error}</p>}
     {(discardStoppedRun || error?.includes("resumable runs")) && <label className="sidebar-discard-run"><input type="checkbox" checked={discardStoppedRun} disabled={busy} onChange={(event) => setDiscardStoppedRun(event.target.checked)} /><span>Discard saved stopped-run progress and move. Chat history and files stay saved, but this run cannot be resumed. Pending approvals and unconfirmed tools still block the move.</span></label>}
@@ -461,7 +461,7 @@ function ThreadButton({
                 <Trash2 size={15} />
                 <span>Delete</span>
               </button>
-              <button type="button" disabled={!onMove || Boolean(run)} title={!onMove ? "Security chats stay with their project’s scope and evidence." : run ? "Finish the current run before moving this chat." : "Move this chat to another normal project"} onClick={() => { setMenuOpen(false); onMove?.(); }}><Folder size={15} /><span>Move to project…</span></button>
+              <button type="button" disabled={!onMove || Boolean(run)} title={!onMove ? "Security chats stay with their project’s scope and evidence." : run ? "Finish the current run before moving this chat." : "Move this chat to another Build project"} onClick={() => { setMenuOpen(false); onMove?.(); }}><Folder size={15} /><span>Move to project…</span></button>
             </>
           )}
         </div>,

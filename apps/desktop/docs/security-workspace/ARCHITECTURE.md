@@ -27,7 +27,7 @@ flowchart TB
     Runtime --> Model[OpenCode Go model adapter]
     Model --> Runtime
     Runtime --> Policy[Tool routing and execution policy]
-    Policy --> Local[Host tools for normal projects only]
+    Policy --> Local[Host tools for Build projects only]
     Policy --> Connector[Remote environment connector]
     Connector --> SSH[Authenticated SSH transport]
     SSH --> Runner[Job runner inside Kali VM]
