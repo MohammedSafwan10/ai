@@ -42,7 +42,7 @@ In Privora:
 3. Choose a model and access mode, then describe the task in chat.
 4. Follow tool activity, expand output when needed, and review the result.
 
-The model picker includes Gemini, OpenRouter, OpenCode Go, and a local CLIProxy connection. Models, image support, reasoning levels, and provider quotas depend on your configuration. See [provider setup](apps/desktop/README.md#providers).
+Connect OpenAI, Claude, Gemini, DeepSeek, OpenRouter, OpenCode Go, or a local CLIProxy endpoint. Browse each provider's live catalog in Settings and add models to the composer and subagent picker. Capabilities and availability depend on the provider and your account; missing metadata is identified rather than guessed. See [provider setup](apps/desktop/README.md#providers) and [catalog refresh and recovery](apps/desktop/docs/provider-model-catalogs.md).
 
 ## Data and execution
 
