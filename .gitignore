@@ -6,6 +6,7 @@ coverage/
 out/
 apps/desktop/.vite/
 apps/desktop/out/
+apps/desktop/out-release/
 apps/desktop/dist/
 apps/desktop/build-resources/
 .DS_Store
